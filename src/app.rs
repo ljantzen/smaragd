@@ -27,6 +27,7 @@ impl TachyliteApp {
     fn open_project(&mut self, path: &Path) {
         match Project::load_from_folder(path) {
             Ok(project) => {
+                self.project_path_input = path.display().to_string();
                 self.project = Some(project);
                 self.selected_path = None;
                 self.status_message = None;
@@ -34,6 +35,14 @@ impl TachyliteApp {
             Err(err) => {
                 self.status_message = Some(format!("Couldn't open {}: {err}", path.display()));
             }
+        }
+    }
+
+    /// Open the OS's native folder-picker dialog and, if the user selects a folder,
+    /// open it as a project immediately.
+    fn browse_for_project(&mut self) {
+        if let Some(path) = rfd::FileDialog::new().pick_folder() {
+            self.open_project(&path);
         }
     }
 
@@ -108,6 +117,9 @@ impl eframe::App for TachyliteApp {
                 if ui.button("Open Project").clicked() {
                     let path = PathBuf::from(self.project_path_input.trim());
                     self.open_project(&path);
+                }
+                if ui.button("Browse…").clicked() {
+                    self.browse_for_project();
                 }
                 if ui.button("Save").clicked()
                     && let Err(err) = self.editor.save()
