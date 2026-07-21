@@ -1,0 +1,182 @@
+use std::path::{Path, PathBuf};
+
+use uuid::Uuid;
+
+/// A project's binder: the nested tree of folders and markdown documents, mirroring
+/// the project's directory structure on disk.
+#[derive(Debug, Clone)]
+pub struct BinderTree {
+    pub root: BinderNode,
+}
+
+#[derive(Debug, Clone)]
+pub struct BinderNode {
+    /// Stable identity for this node within a single scan, used for egui widget IDs
+    /// (e.g. `CollapsingHeader` open/close state). Regenerated on every rescan — M1
+    /// has no need for identity to survive across scans.
+    pub id: Uuid,
+    pub name: String,
+    pub path: PathBuf,
+    pub kind: BinderNodeKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum BinderNodeKind {
+    Folder { children: Vec<BinderNode> },
+    Document,
+}
+
+impl BinderNode {
+    pub fn new_folder(
+        name: impl Into<String>,
+        path: impl Into<PathBuf>,
+        children: Vec<BinderNode>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            path: path.into(),
+            kind: BinderNodeKind::Folder { children },
+        }
+    }
+
+    pub fn new_document(name: impl Into<String>, path: impl Into<PathBuf>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            path: path.into(),
+            kind: BinderNodeKind::Document,
+        }
+    }
+
+    pub fn children(&self) -> &[BinderNode] {
+        match &self.kind {
+            BinderNodeKind::Folder { children } => children,
+            BinderNodeKind::Document => &[],
+        }
+    }
+
+    /// Find a node by its absolute path, searching this node and its descendants.
+    pub fn find_by_path(&self, path: &Path) -> Option<&BinderNode> {
+        if self.path == path {
+            return Some(self);
+        }
+        self.children()
+            .iter()
+            .find_map(|child| child.find_by_path(path))
+    }
+
+    /// Insert `node` as a child of the folder at `parent_path`. Returns `true` if a
+    /// matching folder was found and the node was inserted.
+    pub fn insert_under(&mut self, parent_path: &Path, node: BinderNode) -> bool {
+        if self.path == parent_path {
+            return match &mut self.kind {
+                BinderNodeKind::Folder { children } => {
+                    children.push(node);
+                    true
+                }
+                BinderNodeKind::Document => false,
+            };
+        }
+        if let BinderNodeKind::Folder { children } = &mut self.kind {
+            for child in children.iter_mut() {
+                if child.insert_under(parent_path, node.clone()) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+impl BinderTree {
+    pub fn find_by_path(&self, path: &Path) -> Option<&BinderNode> {
+        self.root.find_by_path(path)
+    }
+
+    pub fn insert_under(&mut self, parent_path: &Path, node: BinderNode) -> bool {
+        self.root.insert_under(parent_path, node)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn doc(name: &str, path: &str) -> BinderNode {
+        BinderNode::new_document(name, PathBuf::from(path))
+    }
+
+    fn folder(name: &str, path: &str, children: Vec<BinderNode>) -> BinderNode {
+        BinderNode::new_folder(name, PathBuf::from(path), children)
+    }
+
+    #[test]
+    fn find_by_path_locates_nested_document() {
+        let tree = BinderTree {
+            root: folder(
+                "root",
+                "/vault",
+                vec![folder(
+                    "Chapter 1",
+                    "/vault/Chapter 1",
+                    vec![doc("scene", "/vault/Chapter 1/scene.md")],
+                )],
+            ),
+        };
+
+        let found = tree.find_by_path(Path::new("/vault/Chapter 1/scene.md"));
+        assert_eq!(found.map(|n| n.name.as_str()), Some("scene"));
+    }
+
+    #[test]
+    fn find_by_path_returns_none_for_missing_path() {
+        let tree = BinderTree {
+            root: folder("root", "/vault", vec![doc("a", "/vault/a.md")]),
+        };
+
+        assert!(tree.find_by_path(Path::new("/vault/missing.md")).is_none());
+    }
+
+    #[test]
+    fn insert_under_adds_child_to_matching_folder() {
+        let mut tree = BinderTree {
+            root: folder(
+                "root",
+                "/vault",
+                vec![folder("Chapter 1", "/vault/Chapter 1", vec![])],
+            ),
+        };
+
+        let inserted = tree.insert_under(
+            Path::new("/vault/Chapter 1"),
+            doc("new scene", "/vault/Chapter 1/new.md"),
+        );
+
+        assert!(inserted);
+        let chapter = tree.find_by_path(Path::new("/vault/Chapter 1")).unwrap();
+        assert_eq!(chapter.children().len(), 1);
+        assert_eq!(chapter.children()[0].name, "new scene");
+    }
+
+    #[test]
+    fn insert_under_returns_false_for_missing_parent() {
+        let mut tree = BinderTree {
+            root: folder("root", "/vault", vec![]),
+        };
+
+        let inserted =
+            tree.insert_under(Path::new("/vault/missing"), doc("x", "/vault/missing/x.md"));
+        assert!(!inserted);
+    }
+
+    #[test]
+    fn insert_under_returns_false_when_target_is_a_document() {
+        let mut tree = BinderTree {
+            root: folder("root", "/vault", vec![doc("a", "/vault/a.md")]),
+        };
+
+        let inserted = tree.insert_under(Path::new("/vault/a.md"), doc("b", "/vault/b.md"));
+        assert!(!inserted);
+    }
+}
