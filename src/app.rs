@@ -54,6 +54,24 @@ impl TachyliteApp {
         }
     }
 
+    /// Resolve a `[[wikilink]]` target clicked in the preview to a document in the
+    /// current project (matched by filename, case-insensitively) and open it.
+    fn open_wikilink(&mut self, target: &str) {
+        let Some(project) = &self.project else {
+            self.status_message = Some(format!("No project open — can't resolve [[{target}]]"));
+            return;
+        };
+        match project.tree.find_document_by_stem(target) {
+            Some(node) => {
+                let path = node.path.clone();
+                self.open_document(&path);
+            }
+            None => {
+                self.status_message = Some(format!("No note found for [[{target}]]"));
+            }
+        }
+    }
+
     fn handle_binder_event(&mut self, event: BinderEvent) {
         match event {
             BinderEvent::Selected(path) => self.open_document(&path),
@@ -162,11 +180,12 @@ impl eframe::App for TachyliteApp {
 
         egui::CentralPanel::default().show(ui, |ui| {
             if self.preview_mode {
-                match &self.editor.open_path {
-                    Some(_) => ui::markdown_preview::show(ui, &self.editor.buffer),
-                    None => {
-                        ui.label("Select a file from the binder to preview.");
+                if self.editor.open_path.is_some() {
+                    if let Some(target) = ui::markdown_preview::show(ui, &self.editor.buffer) {
+                        self.open_wikilink(&target);
                     }
+                } else {
+                    ui.label("Select a file from the binder to preview.");
                 }
             } else if let Some(err) = ui::editor_panel::show(ui, &mut self.editor) {
                 self.status_message = Some(err);

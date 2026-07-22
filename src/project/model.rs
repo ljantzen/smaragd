@@ -66,6 +66,23 @@ impl BinderNode {
             .find_map(|child| child.find_by_path(path))
     }
 
+    /// Find a document whose filename (without extension) matches `stem`,
+    /// case-insensitively — used to resolve `[[wikilink]]` targets to a file.
+    pub fn find_document_by_stem(&self, stem: &str) -> Option<&BinderNode> {
+        if matches!(self.kind, BinderNodeKind::Document)
+            && self
+                .path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| s.eq_ignore_ascii_case(stem))
+        {
+            return Some(self);
+        }
+        self.children()
+            .iter()
+            .find_map(|child| child.find_document_by_stem(stem))
+    }
+
     /// Insert `node` as a child of the folder at `parent_path`. Returns `true` if a
     /// matching folder was found and the node was inserted.
     pub fn insert_under(&mut self, parent_path: &Path, node: BinderNode) -> bool {
@@ -96,6 +113,10 @@ impl BinderTree {
 
     pub fn insert_under(&mut self, parent_path: &Path, node: BinderNode) -> bool {
         self.root.insert_under(parent_path, node)
+    }
+
+    pub fn find_document_by_stem(&self, stem: &str) -> Option<&BinderNode> {
+        self.root.find_document_by_stem(stem)
     }
 }
 
@@ -178,5 +199,37 @@ mod tests {
 
         let inserted = tree.insert_under(Path::new("/vault/a.md"), doc("b", "/vault/b.md"));
         assert!(!inserted);
+    }
+
+    #[test]
+    fn find_document_by_stem_matches_case_insensitively() {
+        let tree = BinderTree {
+            root: folder(
+                "root",
+                "/vault",
+                vec![folder(
+                    "Chapter 1",
+                    "/vault/Chapter 1",
+                    vec![doc("Opening Scene", "/vault/Chapter 1/Opening Scene.md")],
+                )],
+            ),
+        };
+
+        let found = tree.find_document_by_stem("opening scene");
+        assert_eq!(found.map(|n| n.name.as_str()), Some("Opening Scene"));
+    }
+
+    #[test]
+    fn find_document_by_stem_returns_none_for_missing_or_folder_name() {
+        let tree = BinderTree {
+            root: folder(
+                "root",
+                "/vault",
+                vec![folder("Chapter 1", "/vault/Chapter 1", vec![])],
+            ),
+        };
+
+        assert!(tree.find_document_by_stem("Chapter 1").is_none());
+        assert!(tree.find_document_by_stem("nonexistent").is_none());
     }
 }

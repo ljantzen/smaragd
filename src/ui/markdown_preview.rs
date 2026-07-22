@@ -19,6 +19,7 @@ const QUOTE_TEXT: Color32 = Color32::from_rgb(0xA0, 0xA6, 0xC4);
 const CODE_BG: Color32 = Color32::from_rgb(0x28, 0x2A, 0x36);
 const CODE_INLINE_BG: Color32 = Color32::from_rgb(0x44, 0x47, 0x5A);
 const LINK_COLOR: Color32 = Color32::from_rgb(0x8B, 0xE9, 0xFD);
+const WIKILINK_COLOR: Color32 = Color32::from_rgb(0x50, 0xFA, 0x7B);
 
 const BODY_SIZE: f32 = 15.0;
 const BLOCK_SPACING: f32 = 10.0;
@@ -26,31 +27,40 @@ const INDENT_PER_DEPTH: f32 = 20.0;
 
 /// Render `markdown` styled like the `glow` CLI's terminal preview: colored heading
 /// hierarchy, a barred blockquote, and a boxed code block, laid out with egui widgets.
-pub fn show(ui: &mut egui::Ui, markdown_text: &str) {
+///
+/// Returns `Some(target)` if the user clicked a `[[wikilink]]` during this frame, where
+/// `target` is the note name to resolve — the caller is responsible for finding and
+/// opening the matching document.
+pub fn show(ui: &mut egui::Ui, markdown_text: &str) -> Option<String> {
     let blocks = markdown::parse(markdown_text);
     egui::ScrollArea::vertical()
         .id_salt("markdown_preview_scroll")
         .show(ui, |ui| {
             if blocks.is_empty() {
                 ui.weak("Nothing to preview yet.");
-                return;
+                return None;
             }
+            let mut clicked = None;
             for block in &blocks {
-                render_block(ui, block);
+                if let Some(target) = render_block(ui, block) {
+                    clicked = Some(target);
+                }
                 ui.add_space(BLOCK_SPACING);
             }
-        });
+            clicked
+        })
+        .inner
 }
 
-fn render_block(ui: &mut egui::Ui, block: &Block) {
+fn render_block(ui: &mut egui::Ui, block: &Block) -> Option<String> {
     match &block.kind {
         BlockKind::Heading(level) => render_heading(ui, *level, &block.spans),
         BlockKind::Paragraph => {
-            let job = build_layout_job(&block.spans, FontId::proportional(BODY_SIZE), BODY_TEXT);
-            ui.label(job);
+            render_spans(ui, &block.spans, FontId::proportional(BODY_SIZE), BODY_TEXT)
         }
         BlockKind::CodeBlock { language } => {
-            render_code_block(ui, language.as_deref(), &block.spans)
+            render_code_block(ui, language.as_deref(), &block.spans);
+            None
         }
         BlockKind::BlockQuote => render_blockquote(ui, &block.spans),
         BlockKind::ListItem {
@@ -61,11 +71,12 @@ fn render_block(ui: &mut egui::Ui, block: &Block) {
         BlockKind::Rule => {
             ui.add_space(4.0);
             ui.separator();
+            None
         }
     }
 }
 
-fn render_heading(ui: &mut egui::Ui, level: u8, spans: &[Span]) {
+fn render_heading(ui: &mut egui::Ui, level: u8, spans: &[Span]) -> Option<String> {
     let color = HEADING_COLORS[(level.saturating_sub(1).min(5)) as usize];
     let size = match level {
         1 => 28.0,
@@ -75,12 +86,12 @@ fn render_heading(ui: &mut egui::Ui, level: u8, spans: &[Span]) {
         5 => 16.5,
         _ => 15.5,
     };
-    let job = build_layout_job(spans, FontId::proportional(size), color);
-    ui.label(job);
+    let clicked = render_spans(ui, spans, FontId::proportional(size), color);
     if level == 1 {
         ui.add_space(2.0);
         ui.separator();
     }
+    clicked
 }
 
 fn render_code_block(ui: &mut egui::Ui, language: Option<&str>, spans: &[Span]) {
@@ -101,7 +112,7 @@ fn render_code_block(ui: &mut egui::Ui, language: Option<&str>, spans: &[Span]) 
         });
 }
 
-fn render_blockquote(ui: &mut egui::Ui, spans: &[Span]) {
+fn render_blockquote(ui: &mut egui::Ui, spans: &[Span]) -> Option<String> {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(3.0, ui.spacing().interact_size.y),
@@ -112,9 +123,14 @@ fn render_blockquote(ui: &mut egui::Ui, spans: &[Span]) {
         for span in &mut italic_spans {
             span.italic = true;
         }
-        let job = build_layout_job(&italic_spans, FontId::proportional(BODY_SIZE), QUOTE_TEXT);
-        ui.label(job);
-    });
+        render_spans(
+            ui,
+            &italic_spans,
+            FontId::proportional(BODY_SIZE),
+            QUOTE_TEXT,
+        )
+    })
+    .inner
 }
 
 fn render_list_item(
@@ -123,7 +139,7 @@ fn render_list_item(
     index: Option<u64>,
     depth: u8,
     spans: &[Span],
-) {
+) -> Option<String> {
     ui.horizontal(|ui| {
         ui.add_space(depth as f32 * INDENT_PER_DEPTH);
         let bullet = if ordered {
@@ -134,9 +150,46 @@ fn render_list_item(
             "◦".to_string()
         };
         ui.label(RichText::new(bullet).color(BODY_TEXT).strong());
-        let job = build_layout_job(spans, FontId::proportional(BODY_SIZE), BODY_TEXT);
-        ui.label(job);
-    });
+        render_spans(ui, spans, FontId::proportional(BODY_SIZE), BODY_TEXT)
+    })
+    .inner
+}
+
+/// Render a run of spans, laying out plain-text runs as wrapped, styled text and each
+/// `[[wikilink]]` span as a clickable link. Returns the clicked wikilink's target note
+/// name, if any.
+fn render_spans(
+    ui: &mut egui::Ui,
+    spans: &[Span],
+    base_font: FontId,
+    base_color: Color32,
+) -> Option<String> {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let mut clicked = None;
+        let mut buffer: Vec<Span> = Vec::new();
+        for span in spans {
+            if let Some(target) = &span.wikilink {
+                if !buffer.is_empty() {
+                    ui.label(build_layout_job(&buffer, base_font.clone(), base_color));
+                    buffer.clear();
+                }
+                if ui
+                    .link(RichText::new(&span.text).color(WIKILINK_COLOR))
+                    .clicked()
+                {
+                    clicked = Some(target.clone());
+                }
+            } else {
+                buffer.push(span.clone());
+            }
+        }
+        if !buffer.is_empty() {
+            ui.label(build_layout_job(&buffer, base_font, base_color));
+        }
+        clicked
+    })
+    .inner
 }
 
 /// Push `color` halfway toward white, approximating a "stronger" emphasis color

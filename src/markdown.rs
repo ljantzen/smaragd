@@ -32,6 +32,9 @@ pub struct Span {
     pub code: bool,
     pub strikethrough: bool,
     pub link: Option<String>,
+    /// Set for an Obsidian-style `[[Topic]]`/`[[Topic|Alias]]` span: the target note
+    /// name to resolve, separate from `link` (which holds a real URL destination).
+    pub wikilink: Option<String>,
 }
 
 struct ListLevel {
@@ -44,6 +47,9 @@ struct ListLevel {
 /// tables/images/footnotes — a flat block list with single-level list nesting covers
 /// what an author actually writes, and matches what the glow-style preview renders.
 pub fn parse(markdown: &str) -> Vec<Block> {
+    let (markdown, wikilinks) = extract_wikilinks(markdown);
+    let markdown = markdown.as_str();
+
     let mut blocks = Vec::new();
     let mut current_kind: Option<BlockKind> = None;
     let mut spans: Vec<Span> = Vec::new();
@@ -160,14 +166,22 @@ pub fn parse(markdown: &str) -> Vec<Block> {
 
             Event::Text(text) => {
                 if current_kind.is_some() {
-                    spans.push(Span {
-                        text: text.to_string(),
+                    let template = Span {
                         bold: bold_depth > 0,
                         italic: italic_depth > 0,
                         code: in_code_block,
                         strikethrough: strike_depth > 0,
                         link: link_stack.last().cloned(),
-                    });
+                        ..Default::default()
+                    };
+                    if in_code_block {
+                        spans.push(Span {
+                            text: text.to_string(),
+                            ..template
+                        });
+                    } else {
+                        expand_placeholders(&mut spans, &text, &template, &wikilinks);
+                    }
                 }
             }
             Event::Code(text) => {
@@ -179,6 +193,7 @@ pub fn parse(markdown: &str) -> Vec<Block> {
                         code: true,
                         strikethrough: strike_depth > 0,
                         link: link_stack.last().cloned(),
+                        wikilink: None,
                     });
                 }
             }
@@ -209,6 +224,104 @@ pub fn parse(markdown: &str) -> Vec<Block> {
     flush!();
 
     blocks
+}
+
+/// A private-use-area character marking the start/end of a wikilink placeholder.
+/// Not valid in ordinary markdown input, so it can't collide with real content, and
+/// isn't treated specially by pulldown-cmark's inline tokenizer — the placeholder
+/// (this char, a decimal index, this char again) survives inline parsing (emphasis,
+/// links, etc.) as ordinary text, unlike the literal `[[...]]` source, which
+/// pulldown-cmark's bracket-matching splits into several separate text events.
+const WIKILINK_MARK: char = '\u{E000}';
+
+/// Replace `[[Topic]]` / `[[Topic|Alias]]` wikilinks in `markdown` with placeholders
+/// pulldown-cmark's inline parser won't fragment, skipping fenced code blocks (whose
+/// content must stay literal). Returns the rewritten markdown plus a side table of
+/// `(target, display)` pairs, indexed by the number embedded in each placeholder.
+fn extract_wikilinks(markdown: &str) -> (String, Vec<(String, String)>) {
+    let mut output = String::with_capacity(markdown.len());
+    let mut table = Vec::new();
+    let mut in_fence = false;
+    for line in markdown.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            output.push_str(line);
+        } else if in_fence {
+            output.push_str(line);
+        } else {
+            replace_wikilinks_in_line(line, &mut table, &mut output);
+        }
+    }
+    (output, table)
+}
+
+fn replace_wikilinks_in_line(line: &str, table: &mut Vec<(String, String)>, output: &mut String) {
+    let mut rest = line;
+    while let Some(start) = rest.find("[[") {
+        output.push_str(&rest[..start]);
+        let after_open = &rest[start + 2..];
+        match after_open.find("]]") {
+            Some(end) => {
+                let inner = &after_open[..end];
+                let (target, display) = match inner.split_once('|') {
+                    Some((target, alias)) => (target.trim().to_string(), alias.trim().to_string()),
+                    None => (inner.trim().to_string(), inner.trim().to_string()),
+                };
+                table.push((target, display));
+                output.push(WIKILINK_MARK);
+                output.push_str(&(table.len() - 1).to_string());
+                output.push(WIKILINK_MARK);
+                rest = &after_open[end + 2..];
+            }
+            None => {
+                // Unterminated "[[": no wikilink here, keep the rest as plain text.
+                output.push_str(&rest[start..]);
+                return;
+            }
+        }
+    }
+    output.push_str(rest);
+}
+
+/// Split `text` (already through pulldown-cmark) on wikilink placeholders inserted by
+/// [`extract_wikilinks`], pushing plain-text spans and wikilink spans in order, all
+/// inheriting `template`'s formatting.
+fn expand_placeholders(
+    spans: &mut Vec<Span>,
+    text: &str,
+    template: &Span,
+    table: &[(String, String)],
+) {
+    let mut rest = text;
+    while let Some(start) = rest.find(WIKILINK_MARK) {
+        if start > 0 {
+            spans.push(Span {
+                text: rest[..start].to_string(),
+                ..template.clone()
+            });
+        }
+        let after = &rest[start + WIKILINK_MARK.len_utf8()..];
+        let end = after
+            .find(WIKILINK_MARK)
+            .expect("well-formed wikilink placeholder");
+        let index: usize = after[..end]
+            .parse()
+            .expect("well-formed wikilink placeholder");
+        let (target, display) = &table[index];
+        spans.push(Span {
+            text: display.clone(),
+            wikilink: Some(target.clone()),
+            ..template.clone()
+        });
+        rest = &after[end + WIKILINK_MARK.len_utf8()..];
+    }
+    if !rest.is_empty() {
+        spans.push(Span {
+            text: rest.to_string(),
+            ..template.clone()
+        });
+    }
 }
 
 fn heading_level_to_u8(level: HeadingLevel) -> u8 {
@@ -379,5 +492,50 @@ mod tests {
     fn strikethrough_is_flagged() {
         let blocks = parse("~~gone~~");
         assert!(blocks[0].spans[0].strikethrough);
+    }
+
+    #[test]
+    fn parses_wikilink_with_alias() {
+        let blocks = parse("See [[Topic|Alias]] for details.");
+        assert_eq!(
+            blocks[0].spans,
+            vec![
+                plain("See "),
+                Span {
+                    text: "Alias".to_string(),
+                    wikilink: Some("Topic".to_string()),
+                    ..Default::default()
+                },
+                plain(" for details."),
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_wikilink_without_alias() {
+        let blocks = parse("[[Topic]]");
+        assert_eq!(
+            blocks[0].spans,
+            vec![Span {
+                text: "Topic".to_string(),
+                wikilink: Some("Topic".to_string()),
+                ..Default::default()
+            }]
+        );
+    }
+
+    #[test]
+    fn wikilink_inside_fenced_code_block_is_left_as_plain_text() {
+        let blocks = parse("```\n[[Topic]]\n```\n");
+        assert_eq!(blocks[0].spans[0].text, "[[Topic]]\n");
+        assert!(blocks[0].spans[0].wikilink.is_none());
+    }
+
+    #[test]
+    fn unterminated_wikilink_is_left_as_plain_text() {
+        let blocks = parse("open [[Topic without close");
+        let joined: String = blocks[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(joined, "open [[Topic without close");
+        assert!(blocks[0].spans.iter().all(|s| s.wikilink.is_none()));
     }
 }
