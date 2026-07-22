@@ -538,4 +538,69 @@ mod tests {
         assert_eq!(joined, "open [[Topic without close");
         assert!(blocks[0].spans.iter().all(|s| s.wikilink.is_none()));
     }
+
+    #[test]
+    fn multiple_wikilinks_in_one_paragraph_resolve_to_distinct_targets() {
+        let blocks = parse("[[A]] and [[B|b]] and [[C]]");
+        let links: Vec<(Option<String>, &str)> = blocks[0]
+            .spans
+            .iter()
+            .filter(|s| s.wikilink.is_some())
+            .map(|s| (s.wikilink.clone(), s.text.as_str()))
+            .collect();
+        assert_eq!(
+            links,
+            vec![
+                (Some("A".to_string()), "A"),
+                (Some("B".to_string()), "b"),
+                (Some("C".to_string()), "C"),
+            ]
+        );
+    }
+
+    #[test]
+    fn wikilink_inherits_surrounding_bold_formatting() {
+        let blocks = parse("**[[Topic]]**");
+        assert_eq!(blocks[0].spans.len(), 1);
+        assert!(blocks[0].spans[0].bold);
+        assert_eq!(blocks[0].spans[0].wikilink.as_deref(), Some("Topic"));
+    }
+
+    #[test]
+    fn parses_wikilink_in_heading() {
+        let blocks = parse("# See [[Topic]]\n");
+        assert_eq!(blocks[0].kind, BlockKind::Heading(1));
+        assert!(
+            blocks[0]
+                .spans
+                .iter()
+                .any(|s| s.wikilink.as_deref() == Some("Topic"))
+        );
+    }
+
+    #[test]
+    fn parses_wikilink_in_list_item() {
+        let blocks = parse("- see [[Topic]]\n");
+        assert_eq!(
+            blocks[0].kind,
+            BlockKind::ListItem {
+                ordered: false,
+                index: None,
+                depth: 0
+            }
+        );
+        assert!(
+            blocks[0]
+                .spans
+                .iter()
+                .any(|s| s.wikilink.as_deref() == Some("Topic"))
+        );
+    }
+
+    #[test]
+    fn wikilink_inside_tilde_fenced_code_block_is_left_as_plain_text() {
+        let blocks = parse("~~~\n[[Topic]]\n~~~\n");
+        assert_eq!(blocks[0].spans[0].text, "[[Topic]]\n");
+        assert!(blocks[0].spans[0].wikilink.is_none());
+    }
 }
