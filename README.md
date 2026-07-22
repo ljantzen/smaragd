@@ -14,10 +14,11 @@ A project is just a folder of `.md` files and subfolders — no proprietary bund
 - Glow-CLI-styled markdown preview (`View > Toggle preview`): colored heading hierarchy, barred blockquotes, boxed code blocks
 - Obsidian-style `[[Topic]]` / `[[Topic|Alias]]` wikilinks: rendered as clickable links in preview, resolved by filename within the project
 - Wikilink autocomplete while typing `[[`: filtered suggestions, arrow-key/Tab/Enter navigation, mouse click
+- Settings window (`File > Settings`) with a "Reopen project on launch" toggle, persisted to `tachylite.toml` in the platform's standard config directory (`~/.config/tachylite` on Linux, `~/Library/Application Support/tachylite` on macOS, `%APPDATA%\tachylite\config` on Windows)
 
 ## Not yet implemented
 
-Menu items present but stubbed: `File > Close Project`, `File > Settings`, `Edit > Cut/Copy/Paste`, `Help > About`, the whole `Tools` menu. Also deferred: the Excalidraw-style canvas, backlink index, compile/export, Longform-style scene metadata (POV, status, word-count targets), multi-tab editing, drag-and-drop reorder.
+Menu items present but stubbed: `File > Close Project`, `Edit > Cut/Copy/Paste`, `Help > About`, the whole `Tools` menu. Also deferred: the Excalidraw-style canvas, backlink index, compile/export, Longform-style scene metadata (POV, status, word-count targets), multi-tab editing, drag-and-drop reorder.
 
 ## Running
 
@@ -45,6 +46,7 @@ src/
   app.rs                 TachyliteApp: panel layout, menu bar, event routing
   markdown.rs            markdown -> Block/Span parser (pulldown-cmark + wikilinks)
   autocomplete.rs         wikilink-autocomplete query/filter/completion logic
+  settings.rs             app-wide preferences: load/save tachylite.toml
   editor/mod.rs          EditorState: open document, dirty tracking, save
   project/
     model.rs              BinderTree/BinderNode data model
@@ -54,4 +56,5 @@ src/
     binder_panel.rs        binder tree rendering
     editor_panel.rs         text editor + wikilink autocomplete popup
     markdown_preview.rs     glow-style preview rendering
+    settings_panel.rs       settings window rendering
 ```

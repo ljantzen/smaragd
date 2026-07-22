@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::editor::EditorState;
 use crate::project::Project;
+use crate::settings::Settings;
 use crate::ui;
 use crate::ui::binder_panel::BinderEvent;
 
@@ -11,17 +12,33 @@ pub struct TachyliteApp {
     selected_path: Option<PathBuf>,
     status_message: Option<String>,
     preview_mode: bool,
+    settings: Settings,
+    show_settings: bool,
 }
 
 impl TachyliteApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        Self {
+        let settings = crate::settings::config_file_path()
+            .map(|path| Settings::load_from_path(&path))
+            .unwrap_or_default();
+
+        let mut app = Self {
             project: None,
             editor: EditorState::default(),
             selected_path: None,
             status_message: None,
             preview_mode: false,
+            settings,
+            show_settings: false,
+        };
+
+        if app.settings.reopen_last_project
+            && let Some(path) = app.settings.last_project_path.clone()
+        {
+            app.open_project(&path);
         }
+
+        app
     }
 
     fn open_project(&mut self, path: &Path) {
@@ -30,10 +47,21 @@ impl TachyliteApp {
                 self.project = Some(project);
                 self.selected_path = None;
                 self.status_message = None;
+                self.settings.last_project_path = Some(path.to_path_buf());
+                self.persist_settings();
             }
             Err(err) => {
                 self.status_message = Some(format!("Couldn't open {}: {err}", path.display()));
             }
+        }
+    }
+
+    fn persist_settings(&mut self) {
+        let Some(path) = crate::settings::config_file_path() else {
+            return;
+        };
+        if let Err(err) = self.settings.save_to_path(&path) {
+            self.status_message = Some(format!("Couldn't save settings: {err}"));
         }
     }
 
@@ -135,7 +163,9 @@ impl eframe::App for TachyliteApp {
                         self.browse_for_project();
                     }
                     ui.add_enabled(false, egui::Button::new("Close Project"));
-                    ui.add_enabled(false, egui::Button::new("Settings"));
+                    if ui.button("Settings").clicked() {
+                        self.show_settings = true;
+                    }
                     ui.separator();
                     if ui.button("Exit").clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -155,6 +185,10 @@ impl eframe::App for TachyliteApp {
                 });
             });
         });
+
+        if ui::settings_panel::show(ui.ctx(), &mut self.show_settings, &mut self.settings) {
+            self.persist_settings();
+        }
 
         if let Some(msg) = self.status_message.clone() {
             egui::Panel::bottom("status_bar").show(ui, |ui| {
