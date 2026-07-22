@@ -11,6 +11,7 @@ pub struct TachyliteApp {
     selected_path: Option<PathBuf>,
     project_path_input: String,
     status_message: Option<String>,
+    preview_mode: bool,
 }
 
 impl TachyliteApp {
@@ -21,6 +22,7 @@ impl TachyliteApp {
             selected_path: None,
             project_path_input: ".".to_string(),
             status_message: None,
+            preview_mode: false,
         }
     }
 
@@ -126,6 +128,10 @@ impl eframe::App for TachyliteApp {
                 {
                     self.status_message = Some(format!("Save failed: {err}"));
                 }
+                let preview_label = if self.preview_mode { "Edit" } else { "Preview" };
+                if ui.button(preview_label).clicked() {
+                    self.preview_mode = !self.preview_mode;
+                }
                 if let Some(msg) = &self.status_message {
                     ui.colored_label(egui::Color32::from_rgb(200, 60, 60), msg);
                 }
@@ -149,7 +155,14 @@ impl eframe::App for TachyliteApp {
             });
 
         egui::CentralPanel::default().show(ui, |ui| {
-            if let Some(err) = ui::editor_panel::show(ui, &mut self.editor) {
+            if self.preview_mode {
+                match &self.editor.open_path {
+                    Some(_) => ui::markdown_preview::show(ui, &self.editor.buffer),
+                    None => {
+                        ui.label("Select a file from the binder to preview.");
+                    }
+                }
+            } else if let Some(err) = ui::editor_panel::show(ui, &mut self.editor) {
                 self.status_message = Some(err);
             }
         });
