@@ -8,11 +8,13 @@ pub enum BinderEvent {
     Selected(PathBuf),
     NewFile { parent: PathBuf },
     NewFolder { parent: PathBuf },
+    Rename { path: PathBuf },
+    Delete { path: PathBuf },
 }
 
 pub fn show(ui: &mut egui::Ui, tree: &BinderTree, selected: Option<&Path>) -> Option<BinderEvent> {
     let mut event = None;
-    show_node(ui, &tree.root, selected, &mut event);
+    show_node(ui, &tree.root, selected, &mut event, true);
     event
 }
 
@@ -21,35 +23,65 @@ fn show_node(
     node: &BinderNode,
     selected: Option<&Path>,
     event: &mut Option<BinderEvent>,
+    is_root: bool,
 ) {
     match &node.kind {
         BinderNodeKind::Folder { children } => {
-            egui::CollapsingHeader::new(&node.name)
+            let response = egui::CollapsingHeader::new(&node.name)
                 .id_salt(node.id)
                 .default_open(true)
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        if ui.small_button("+ file").clicked() {
-                            *event = Some(BinderEvent::NewFile {
-                                parent: node.path.clone(),
-                            });
-                        }
-                        if ui.small_button("+ folder").clicked() {
-                            *event = Some(BinderEvent::NewFolder {
-                                parent: node.path.clone(),
-                            });
-                        }
-                    });
                     for child in children {
-                        show_node(ui, child, selected, event);
+                        show_node(ui, child, selected, event, false);
                     }
                 });
+
+            response.header_response.context_menu(|ui| {
+                if ui.button("New File").clicked() {
+                    *event = Some(BinderEvent::NewFile {
+                        parent: node.path.clone(),
+                    });
+                }
+                if ui.button("New Folder").clicked() {
+                    *event = Some(BinderEvent::NewFolder {
+                        parent: node.path.clone(),
+                    });
+                }
+                // Renaming or deleting the project's root folder isn't something the
+                // binder should offer — that's the project folder itself, currently open.
+                if !is_root {
+                    ui.separator();
+                    if ui.button("Rename").clicked() {
+                        *event = Some(BinderEvent::Rename {
+                            path: node.path.clone(),
+                        });
+                    }
+                    if ui.button("Delete").clicked() {
+                        *event = Some(BinderEvent::Delete {
+                            path: node.path.clone(),
+                        });
+                    }
+                }
+            });
         }
         BinderNodeKind::Document => {
             let is_selected = selected == Some(node.path.as_path());
-            if ui.selectable_label(is_selected, &node.name).clicked() {
+            let response = ui.selectable_label(is_selected, &node.name);
+            if response.clicked() {
                 *event = Some(BinderEvent::Selected(node.path.clone()));
             }
+            response.context_menu(|ui| {
+                if ui.button("Rename").clicked() {
+                    *event = Some(BinderEvent::Rename {
+                        path: node.path.clone(),
+                    });
+                }
+                if ui.button("Delete").clicked() {
+                    *event = Some(BinderEvent::Delete {
+                        path: node.path.clone(),
+                    });
+                }
+            });
         }
     }
 }

@@ -96,6 +96,16 @@ impl BinderNode {
         }
     }
 
+    /// Collect the absolute path of every document in this subtree, in tree order.
+    pub fn document_paths(&self, out: &mut Vec<PathBuf>) {
+        if matches!(self.kind, BinderNodeKind::Document) {
+            out.push(self.path.clone());
+        }
+        for child in self.children() {
+            child.document_paths(out);
+        }
+    }
+
     /// Insert `node` as a child of the folder at `parent_path`. Returns `true` if a
     /// matching folder was found and the node was inserted.
     pub fn insert_under(&mut self, parent_path: &Path, node: BinderNode) -> bool {
@@ -138,6 +148,13 @@ impl BinderTree {
         let mut names = Vec::new();
         self.root.document_names(&mut names);
         names
+    }
+
+    /// The absolute path of every document in the project, in tree order.
+    pub fn document_paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        self.root.document_paths(&mut paths);
+        paths
     }
 }
 
@@ -285,5 +302,31 @@ mod tests {
         };
 
         assert!(tree.document_names().is_empty());
+    }
+
+    #[test]
+    fn document_paths_collects_absolute_paths_in_tree_order() {
+        let tree = BinderTree {
+            root: folder(
+                "root",
+                "/vault",
+                vec![
+                    doc("Intro", "/vault/Intro.md"),
+                    folder(
+                        "Chapter 1",
+                        "/vault/Chapter 1",
+                        vec![doc("Opening Scene", "/vault/Chapter 1/Opening Scene.md")],
+                    ),
+                ],
+            ),
+        };
+
+        assert_eq!(
+            tree.document_paths(),
+            vec![
+                PathBuf::from("/vault/Intro.md"),
+                PathBuf::from("/vault/Chapter 1/Opening Scene.md"),
+            ]
+        );
     }
 }

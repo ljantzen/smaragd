@@ -324,6 +324,78 @@ fn expand_placeholders(
     }
 }
 
+/// Rewrite every `[[Topic]]` / `[[Topic|Alias]]` wikilink in `markdown` whose target
+/// matches `old_target` case-insensitively to point at `new_target` instead, keeping
+/// any explicit alias unchanged (a link with no alias picks up the new name as its
+/// display text too, matching what the old, un-aliased text implied). Used to keep
+/// links pointing at a document that's just been renamed. Returns `None` if nothing
+/// changed, skipping fenced code blocks the same way [`extract_wikilinks`] does.
+pub fn rename_wikilink_target(
+    markdown: &str,
+    old_target: &str,
+    new_target: &str,
+) -> Option<String> {
+    let mut output = String::with_capacity(markdown.len());
+    let mut in_fence = false;
+    let mut changed = false;
+    for line in markdown.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            output.push_str(line);
+        } else if in_fence {
+            output.push_str(line);
+        } else {
+            changed |= rename_wikilink_target_in_line(line, old_target, new_target, &mut output);
+        }
+    }
+    changed.then_some(output)
+}
+
+fn rename_wikilink_target_in_line(
+    line: &str,
+    old_target: &str,
+    new_target: &str,
+    output: &mut String,
+) -> bool {
+    let mut rest = line;
+    let mut changed = false;
+    while let Some(start) = rest.find("[[") {
+        output.push_str(&rest[..start]);
+        let after_open = &rest[start + 2..];
+        match after_open.find("]]") {
+            Some(end) => {
+                let inner = &after_open[..end];
+                let (target, alias) = match inner.split_once('|') {
+                    Some((target, alias)) => (target.trim(), Some(alias.trim())),
+                    None => (inner.trim(), None),
+                };
+                if target.eq_ignore_ascii_case(old_target) {
+                    output.push_str("[[");
+                    output.push_str(new_target);
+                    if let Some(alias) = alias {
+                        output.push('|');
+                        output.push_str(alias);
+                    }
+                    output.push_str("]]");
+                    changed = true;
+                } else {
+                    output.push_str("[[");
+                    output.push_str(inner);
+                    output.push_str("]]");
+                }
+                rest = &after_open[end + 2..];
+            }
+            None => {
+                output.push_str(&rest[start..]);
+                return changed;
+            }
+        }
+    }
+    output.push_str(rest);
+    changed
+}
+
 fn heading_level_to_u8(level: HeadingLevel) -> u8 {
     match level {
         HeadingLevel::H1 => 1,
@@ -602,5 +674,52 @@ mod tests {
         let blocks = parse("~~~\n[[Topic]]\n~~~\n");
         assert_eq!(blocks[0].spans[0].text, "[[Topic]]\n");
         assert!(blocks[0].spans[0].wikilink.is_none());
+    }
+
+    #[test]
+    fn rename_wikilink_target_updates_a_bare_link() {
+        let updated =
+            rename_wikilink_target("See [[Old Name]] for more.", "Old Name", "New Name").unwrap();
+        assert_eq!(updated, "See [[New Name]] for more.");
+    }
+
+    #[test]
+    fn rename_wikilink_target_keeps_an_explicit_alias() {
+        let updated = rename_wikilink_target(
+            "See [[Old Name|the other note]] for more.",
+            "Old Name",
+            "New Name",
+        )
+        .unwrap();
+        assert_eq!(updated, "See [[New Name|the other note]] for more.");
+    }
+
+    #[test]
+    fn rename_wikilink_target_is_case_insensitive() {
+        let updated = rename_wikilink_target("[[old name]]", "Old Name", "New Name").unwrap();
+        assert_eq!(updated, "[[New Name]]");
+    }
+
+    #[test]
+    fn rename_wikilink_target_updates_every_matching_occurrence() {
+        let updated = rename_wikilink_target(
+            "[[Old Name]] and again [[Old Name|alias]]",
+            "Old Name",
+            "New Name",
+        )
+        .unwrap();
+        assert_eq!(updated, "[[New Name]] and again [[New Name|alias]]");
+    }
+
+    #[test]
+    fn rename_wikilink_target_leaves_other_links_untouched() {
+        let updated = rename_wikilink_target("[[Unrelated]]", "Old Name", "New Name");
+        assert_eq!(updated, None);
+    }
+
+    #[test]
+    fn rename_wikilink_target_skips_fenced_code_blocks() {
+        let updated = rename_wikilink_target("```\n[[Old Name]]\n```\n", "Old Name", "New Name");
+        assert_eq!(updated, None);
     }
 }

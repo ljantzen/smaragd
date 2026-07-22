@@ -9,7 +9,7 @@ A project is just a folder of `.md` files and subfolders — no proprietary bund
 
 - Binder tree view of a project folder (gitignore-aware, via the `ignore` crate)
 - Markdown text editor with save-on-`Ctrl+S` and save-on-focus-loss
-- Create new documents/folders from the binder
+- Right-click context menu in the binder: New File/New Folder (folders), Rename, Delete (native confirmation dialog)
 - Native folder picker for opening a project (`File > Open Project`)
 - Glow-CLI-styled markdown preview (`View > Toggle preview`): colored heading hierarchy, barred blockquotes, boxed code blocks
 - Obsidian-style `[[Topic]]` / `[[Topic|Alias]]` wikilinks: rendered as clickable links in preview, resolved by filename within the project
@@ -53,8 +53,9 @@ src/
     scan.rs                folder -> BinderTree via ignore::WalkBuilder
     mod.rs                 Project: load/save, metadata, create file/folder
   ui/
-    binder_panel.rs        binder tree rendering
+    binder_panel.rs        binder tree rendering + right-click context menu
     editor_panel.rs         text editor + wikilink autocomplete popup
     markdown_preview.rs     glow-style preview rendering
     settings_panel.rs       settings window rendering
+    rename_dialog.rs        rename modal rendering
 ```

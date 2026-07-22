@@ -5,6 +5,7 @@ use crate::project::Project;
 use crate::settings::Settings;
 use crate::ui;
 use crate::ui::binder_panel::BinderEvent;
+use crate::ui::rename_dialog::{RenameOutcome, RenameState};
 
 pub struct TachyliteApp {
     project: Option<Project>,
@@ -14,6 +15,7 @@ pub struct TachyliteApp {
     preview_mode: bool,
     settings: Settings,
     show_settings: bool,
+    renaming: Option<RenameState>,
 }
 
 impl TachyliteApp {
@@ -30,6 +32,7 @@ impl TachyliteApp {
             preview_mode: false,
             settings,
             show_settings: false,
+            renaming: None,
         };
 
         if app.settings.reopen_last_project
@@ -105,6 +108,86 @@ impl TachyliteApp {
             BinderEvent::Selected(path) => self.open_document(&path),
             BinderEvent::NewFile { parent } => self.create_document(&parent),
             BinderEvent::NewFolder { parent } => self.create_folder(&parent),
+            BinderEvent::Rename { path } => self.start_rename(&path),
+            BinderEvent::Delete { path } => self.delete_node(&path),
+        }
+    }
+
+    fn start_rename(&mut self, path: &Path) {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        self.renaming = Some(RenameState {
+            path: path.to_path_buf(),
+            name,
+        });
+    }
+
+    fn finish_rename(&mut self, outcome: RenameOutcome) {
+        let Some(state) = self.renaming.take() else {
+            return;
+        };
+        let RenameOutcome::Confirmed(new_name) = outcome else {
+            return;
+        };
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        match project.rename(&state.path, &new_name) {
+            Ok(new_path) => {
+                if self.selected_path.as_deref() == Some(state.path.as_path()) {
+                    self.open_document(&new_path);
+                } else if !self.editor.dirty
+                    && let Some(open_path) = self.editor.open_path.clone()
+                {
+                    // The rename may have rewritten a `[[wikilink]]` to this document
+                    // on disk; reload it so the editor reflects that. Skipped while
+                    // dirty so we don't clobber unsaved edits with the disk version.
+                    let _ = self.editor.open(&open_path);
+                }
+            }
+            Err(err) => {
+                self.status_message = Some(format!("Couldn't rename: {err}"));
+            }
+        }
+    }
+
+    /// Ask for confirmation via a native dialog, then delete the file or folder at
+    /// `path`, closing it in the editor first if it (or its containing folder) was
+    /// open.
+    fn delete_node(&mut self, path: &Path) {
+        let confirmed = rfd::MessageDialog::new()
+            .set_title("Delete")
+            .set_description(format!(
+                "Delete \"{}\"? This cannot be undone.",
+                path.display()
+            ))
+            .set_level(rfd::MessageLevel::Warning)
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show();
+        if confirmed != rfd::MessageDialogResult::Yes {
+            return;
+        }
+
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        match project.delete(path) {
+            Ok(()) => {
+                if self
+                    .selected_path
+                    .as_deref()
+                    .is_some_and(|selected| selected == path || selected.starts_with(path))
+                {
+                    self.editor = EditorState::default();
+                    self.selected_path = None;
+                }
+            }
+            Err(err) => {
+                self.status_message = Some(format!("Couldn't delete {}: {err}", path.display()));
+            }
         }
     }
 
@@ -188,6 +271,16 @@ impl eframe::App for TachyliteApp {
 
         if ui::settings_panel::show(ui.ctx(), &mut self.show_settings, &mut self.settings) {
             self.persist_settings();
+        }
+
+        if self.renaming.is_some() {
+            let outcome = {
+                let state = self.renaming.as_mut().expect("checked above");
+                ui::rename_dialog::show(ui.ctx(), state)
+            };
+            if let Some(outcome) = outcome {
+                self.finish_rename(outcome);
+            }
         }
 
         if let Some(msg) = self.status_message.clone() {
