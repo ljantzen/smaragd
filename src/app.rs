@@ -5,7 +5,19 @@ use crate::project::Project;
 use crate::settings::Settings;
 use crate::ui;
 use crate::ui::binder_panel::BinderEvent;
-use crate::ui::rename_dialog::{RenameOutcome, RenameState};
+use crate::ui::name_prompt::{NamePromptOutcome, NamePromptState};
+
+/// What a `NamePromptState` modal should do with the name once confirmed.
+enum PromptAction {
+    NewFile { parent: PathBuf },
+    NewFolder { parent: PathBuf },
+    Rename { path: PathBuf },
+}
+
+struct PendingPrompt {
+    action: PromptAction,
+    state: NamePromptState,
+}
 
 pub struct TachyliteApp {
     project: Option<Project>,
@@ -15,7 +27,7 @@ pub struct TachyliteApp {
     preview_mode: bool,
     settings: Settings,
     show_settings: bool,
-    renaming: Option<RenameState>,
+    prompt: Option<PendingPrompt>,
 }
 
 impl TachyliteApp {
@@ -32,7 +44,7 @@ impl TachyliteApp {
             preview_mode: false,
             settings,
             show_settings: false,
-            renaming: None,
+            prompt: None,
         };
 
         if app.settings.reopen_last_project
@@ -106,38 +118,70 @@ impl TachyliteApp {
     fn handle_binder_event(&mut self, event: BinderEvent) {
         match event {
             BinderEvent::Selected(path) => self.open_document(&path),
-            BinderEvent::NewFile { parent } => self.create_document(&parent),
-            BinderEvent::NewFolder { parent } => self.create_folder(&parent),
-            BinderEvent::Rename { path } => self.start_rename(&path),
+            BinderEvent::NewFile { parent } => {
+                self.prompt = Some(PendingPrompt {
+                    action: PromptAction::NewFile { parent },
+                    state: NamePromptState {
+                        title: "New File".to_string(),
+                        confirm_label: "Create".to_string(),
+                        name: String::new(),
+                    },
+                });
+            }
+            BinderEvent::NewFolder { parent } => {
+                self.prompt = Some(PendingPrompt {
+                    action: PromptAction::NewFolder { parent },
+                    state: NamePromptState {
+                        title: "New Folder".to_string(),
+                        confirm_label: "Create".to_string(),
+                        name: String::new(),
+                    },
+                });
+            }
+            BinderEvent::Rename { path } => {
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default()
+                    .to_string();
+                self.prompt = Some(PendingPrompt {
+                    action: PromptAction::Rename { path },
+                    state: NamePromptState {
+                        title: "Rename".to_string(),
+                        confirm_label: "Rename".to_string(),
+                        name,
+                    },
+                });
+            }
             BinderEvent::Delete { path } => self.delete_node(&path),
         }
     }
 
-    fn start_rename(&mut self, path: &Path) {
-        let name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default()
-            .to_string();
-        self.renaming = Some(RenameState {
-            path: path.to_path_buf(),
-            name,
-        });
+    fn finish_prompt(&mut self, outcome: NamePromptOutcome) {
+        let Some(pending) = self.prompt.take() else {
+            return;
+        };
+        let NamePromptOutcome::Confirmed(name) = outcome else {
+            return;
+        };
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        match pending.action {
+            PromptAction::NewFile { parent } => self.create_document(&parent, name),
+            PromptAction::NewFolder { parent } => self.create_folder(&parent, name),
+            PromptAction::Rename { path } => self.rename_node(&path, name),
+        }
     }
 
-    fn finish_rename(&mut self, outcome: RenameOutcome) {
-        let Some(state) = self.renaming.take() else {
-            return;
-        };
-        let RenameOutcome::Confirmed(new_name) = outcome else {
-            return;
-        };
+    fn rename_node(&mut self, path: &Path, new_name: &str) {
         let Some(project) = &mut self.project else {
             return;
         };
-        match project.rename(&state.path, &new_name) {
+        match project.rename(path, new_name) {
             Ok(new_path) => {
-                if self.selected_path.as_deref() == Some(state.path.as_path()) {
+                if self.selected_path.as_deref() == Some(path) {
                     self.open_document(&new_path);
                 } else if !self.editor.dirty
                     && let Some(open_path) = self.editor.open_path.clone()
@@ -191,42 +235,23 @@ impl TachyliteApp {
         }
     }
 
-    fn create_document(&mut self, parent: &Path) {
+    fn create_document(&mut self, parent: &Path, name: &str) {
         let Some(project) = &mut self.project else {
             return;
         };
-        let name = unique_name(parent, "New Document", ".md");
-        match project.create_document(parent, &name) {
+        match project.create_document(parent, name) {
             Ok(path) => self.open_document(&path),
             Err(err) => self.status_message = Some(format!("Couldn't create file: {err}")),
         }
     }
 
-    fn create_folder(&mut self, parent: &Path) {
+    fn create_folder(&mut self, parent: &Path, name: &str) {
         let Some(project) = &mut self.project else {
             return;
         };
-        let name = unique_name(parent, "New Folder", "");
-        if let Err(err) = project.create_folder(parent, &name) {
+        if let Err(err) = project.create_folder(parent, name) {
             self.status_message = Some(format!("Couldn't create folder: {err}"));
         }
-    }
-}
-
-/// Find an unused filename in `parent` starting from `{base}{ext}`, falling back to
-/// `{base} 2{ext}`, `{base} 3{ext}`, etc. to avoid clobbering an existing file.
-fn unique_name(parent: &Path, base: &str, ext: &str) -> String {
-    let candidate = format!("{base}{ext}");
-    if !parent.join(&candidate).exists() {
-        return candidate;
-    }
-    let mut n = 2;
-    loop {
-        let candidate = format!("{base} {n}{ext}");
-        if !parent.join(&candidate).exists() {
-            return candidate;
-        }
-        n += 1;
     }
 }
 
@@ -273,13 +298,13 @@ impl eframe::App for TachyliteApp {
             self.persist_settings();
         }
 
-        if self.renaming.is_some() {
+        if self.prompt.is_some() {
             let outcome = {
-                let state = self.renaming.as_mut().expect("checked above");
-                ui::rename_dialog::show(ui.ctx(), state)
+                let pending = self.prompt.as_mut().expect("checked above");
+                ui::name_prompt::show(ui.ctx(), &mut pending.state)
             };
             if let Some(outcome) = outcome {
-                self.finish_rename(outcome);
+                self.finish_prompt(outcome);
             }
         }
 

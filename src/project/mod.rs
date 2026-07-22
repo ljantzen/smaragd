@@ -68,15 +68,18 @@ impl Project {
     pub fn create_document(&mut self, parent: &Path, filename: &str) -> io::Result<PathBuf> {
         let filename = ensure_md_extension(filename);
         let path = parent.join(&filename);
+        ensure_does_not_exist(&path)?;
         fs::write(&path, "")?;
         self.record_new_child(parent, &filename)?;
         self.rescan();
         Ok(path)
     }
 
-    /// Create a new empty folder under `parent`, record it, and rescan.
+    /// Create a new empty folder under `parent`, record it, and rescan. Refuses to
+    /// overwrite an existing file or folder at the destination.
     pub fn create_folder(&mut self, parent: &Path, name: &str) -> io::Result<PathBuf> {
         let path = parent.join(name);
+        ensure_does_not_exist(&path)?;
         fs::create_dir_all(&path)?;
         self.record_new_child(parent, name)?;
         self.rescan();
@@ -107,12 +110,7 @@ impl Project {
             ensure_md_extension(new_name)
         };
         let new_path = parent.join(&new_name);
-        if new_path.exists() {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("{} already exists", new_path.display()),
-            ));
-        }
+        ensure_does_not_exist(&new_path)?;
 
         fs::rename(path, &new_path)?;
 
@@ -212,6 +210,19 @@ impl Project {
                 self.meta.node_order.insert(new_key, order);
             }
         }
+    }
+}
+
+/// Guard against silently clobbering an existing file or folder — used before any
+/// operation (create, rename) that's about to write to a new destination path.
+fn ensure_does_not_exist(path: &Path) -> io::Result<()> {
+    if path.exists() {
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{} already exists", path.display()),
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -480,6 +491,30 @@ mod tests {
 
         assert!(result.is_err());
         assert!(path.exists());
+    }
+
+    #[test]
+    fn create_document_refuses_to_overwrite_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        let path = project.create_document(dir.path(), "Existing").unwrap();
+        fs::write(&path, "original content").unwrap();
+
+        let result = project.create_document(dir.path(), "Existing");
+
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original content");
+    }
+
+    #[test]
+    fn create_folder_refuses_to_overwrite_an_existing_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        project.create_folder(dir.path(), "Existing").unwrap();
+
+        let result = project.create_folder(dir.path(), "Existing");
+
+        assert!(result.is_err());
     }
 
     #[test]

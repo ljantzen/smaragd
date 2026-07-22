@@ -9,7 +9,7 @@ A project is just a folder of `.md` files and subfolders — no proprietary bund
 
 - Binder tree view of a project folder (gitignore-aware, via the `ignore` crate)
 - Markdown text editor with save-on-`Ctrl+S` and save-on-focus-loss
-- Right-click context menu in the binder: New File/New Folder (folders), Rename, Delete (native confirmation dialog)
+- Right-click context menu in the binder: New File/New Folder (folders), Rename, Delete (native confirmation dialog) — New File/Folder and Rename each prompt for a name (Enter to confirm), and renaming a document updates any `[[wikilinks]]` to it elsewhere in the project
 - Native folder picker for opening a project (`File > Open Project`)
 - Glow-CLI-styled markdown preview (`View > Toggle preview`): colored heading hierarchy, barred blockquotes, boxed code blocks
 - Obsidian-style `[[Topic]]` / `[[Topic|Alias]]` wikilinks: rendered as clickable links in preview, resolved by filename within the project
@@ -57,5 +57,5 @@ src/
     editor_panel.rs         text editor + wikilink autocomplete popup
     markdown_preview.rs     glow-style preview rendering
     settings_panel.rs       settings window rendering
-    rename_dialog.rs        rename modal rendering
+    name_prompt.rs          new file/folder/rename name-prompt modal rendering
 ```
