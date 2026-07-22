@@ -9,7 +9,6 @@ pub struct TachyliteApp {
     project: Option<Project>,
     editor: EditorState,
     selected_path: Option<PathBuf>,
-    project_path_input: String,
     status_message: Option<String>,
     preview_mode: bool,
 }
@@ -20,7 +19,6 @@ impl TachyliteApp {
             project: None,
             editor: EditorState::default(),
             selected_path: None,
-            project_path_input: ".".to_string(),
             status_message: None,
             preview_mode: false,
         }
@@ -29,7 +27,6 @@ impl TachyliteApp {
     fn open_project(&mut self, path: &Path) {
         match Project::load_from_folder(path) {
             Ok(project) => {
-                self.project_path_input = path.display().to_string();
                 self.project = Some(project);
                 self.selected_path = None;
                 self.status_message = None;
@@ -113,30 +110,39 @@ impl eframe::App for TachyliteApp {
             self.status_message = Some(format!("Save failed: {err}"));
         }
 
-        egui::Panel::top("toolbar").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.text_edit_singleline(&mut self.project_path_input);
-                if ui.button("Open Project").clicked() {
-                    let path = PathBuf::from(self.project_path_input.trim());
-                    self.open_project(&path);
-                }
-                if ui.button("Browse…").clicked() {
-                    self.browse_for_project();
-                }
-                if ui.button("Save").clicked()
-                    && let Err(err) = self.editor.save()
-                {
-                    self.status_message = Some(format!("Save failed: {err}"));
-                }
-                let preview_label = if self.preview_mode { "Edit" } else { "Preview" };
-                if ui.button(preview_label).clicked() {
-                    self.preview_mode = !self.preview_mode;
-                }
-                if let Some(msg) = &self.status_message {
-                    ui.colored_label(egui::Color32::from_rgb(200, 60, 60), msg);
-                }
+        egui::Panel::top("menu_bar").show(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                egui::containers::menu::MenuButton::new("File").ui(ui, |ui| {
+                    if ui.button("Open Project").clicked() {
+                        self.browse_for_project();
+                    }
+                    ui.add_enabled(false, egui::Button::new("Close Project"));
+                    ui.add_enabled(false, egui::Button::new("Settings"));
+                    ui.separator();
+                    if ui.button("Exit").clicked() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                egui::containers::menu::MenuButton::new("Edit").ui(ui, |ui| {
+                    ui.add_enabled(false, egui::Button::new("Cut"));
+                    ui.add_enabled(false, egui::Button::new("Copy"));
+                    ui.add_enabled(false, egui::Button::new("Paste"));
+                });
+                egui::containers::menu::MenuButton::new("View").ui(ui, |ui| {
+                    ui.checkbox(&mut self.preview_mode, "Toggle preview");
+                });
+                ui.add_enabled(false, egui::Button::new("Tools"));
+                egui::containers::menu::MenuButton::new("Help").ui(ui, |ui| {
+                    ui.add_enabled(false, egui::Button::new("About"));
+                });
             });
         });
+
+        if let Some(msg) = self.status_message.clone() {
+            egui::Panel::bottom("status_bar").show(ui, |ui| {
+                ui.colored_label(egui::Color32::from_rgb(200, 60, 60), msg);
+            });
+        }
 
         egui::Panel::left("binder_panel")
             .resizable(true)
