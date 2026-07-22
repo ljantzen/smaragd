@@ -83,6 +83,19 @@ impl BinderNode {
             .find_map(|child| child.find_document_by_stem(stem))
     }
 
+    /// Collect the filename (without extension) of every document in this subtree, in
+    /// tree order — the candidate list for `[[wikilink]]` autocomplete.
+    pub fn document_names(&self, out: &mut Vec<String>) {
+        if matches!(self.kind, BinderNodeKind::Document)
+            && let Some(stem) = self.path.file_stem().and_then(|s| s.to_str())
+        {
+            out.push(stem.to_string());
+        }
+        for child in self.children() {
+            child.document_names(out);
+        }
+    }
+
     /// Insert `node` as a child of the folder at `parent_path`. Returns `true` if a
     /// matching folder was found and the node was inserted.
     pub fn insert_under(&mut self, parent_path: &Path, node: BinderNode) -> bool {
@@ -117,6 +130,14 @@ impl BinderTree {
 
     pub fn find_document_by_stem(&self, stem: &str) -> Option<&BinderNode> {
         self.root.find_document_by_stem(stem)
+    }
+
+    /// The filename (without extension) of every document in the project, in tree
+    /// order — the candidate list for `[[wikilink]]` autocomplete.
+    pub fn document_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        self.root.document_names(&mut names);
+        names
     }
 }
 
@@ -231,5 +252,38 @@ mod tests {
 
         assert!(tree.find_document_by_stem("Chapter 1").is_none());
         assert!(tree.find_document_by_stem("nonexistent").is_none());
+    }
+
+    #[test]
+    fn document_names_collects_every_document_but_no_folders() {
+        let tree = BinderTree {
+            root: folder(
+                "root",
+                "/vault",
+                vec![
+                    doc("Intro", "/vault/Intro.md"),
+                    folder(
+                        "Chapter 1",
+                        "/vault/Chapter 1",
+                        vec![doc("Opening Scene", "/vault/Chapter 1/Opening Scene.md")],
+                    ),
+                ],
+            ),
+        };
+
+        assert_eq!(tree.document_names(), vec!["Intro", "Opening Scene"]);
+    }
+
+    #[test]
+    fn document_names_is_empty_for_a_folder_only_tree() {
+        let tree = BinderTree {
+            root: folder(
+                "root",
+                "/vault",
+                vec![folder("empty", "/vault/empty", vec![])],
+            ),
+        };
+
+        assert!(tree.document_names().is_empty());
     }
 }

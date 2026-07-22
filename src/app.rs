@@ -187,8 +187,15 @@ impl eframe::App for TachyliteApp {
                 } else {
                     ui.label("Select a file from the binder to preview.");
                 }
-            } else if let Some(err) = ui::editor_panel::show(ui, &mut self.editor) {
-                self.status_message = Some(err);
+            } else {
+                let note_titles = self
+                    .project
+                    .as_ref()
+                    .map(|project| project.tree.document_names())
+                    .unwrap_or_default();
+                if let Some(err) = ui::editor_panel::show(ui, &mut self.editor, &note_titles) {
+                    self.status_message = Some(err);
+                }
             }
         });
     }

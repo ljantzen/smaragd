@@ -1,4 +1,5 @@
 pub mod app;
+pub mod autocomplete;
 pub mod editor;
 pub mod markdown;
 pub mod project;
