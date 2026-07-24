@@ -1,6 +1,8 @@
+use std::path::Path;
+
 use egui::{Color32, FontId, RichText, TextFormat, text::LayoutJob};
 
-use crate::markdown::{self, Block, BlockKind, Span};
+use crate::markdown::{self, Block, BlockKind, ImageRef, Span};
 use crate::ui::WikilinkActivation;
 
 // Approximates the "dark"/dracula-family palette glow (charmbracelet/glow) renders
@@ -27,12 +29,18 @@ const BLOCK_SPACING: f32 = 10.0;
 const INDENT_PER_DEPTH: f32 = 20.0;
 
 /// Render `markdown` styled like the `glow` CLI's terminal preview: colored heading
-/// hierarchy, a barred blockquote, and a boxed code block, laid out with egui widgets.
+/// hierarchy, a barred blockquote, a boxed code block, and a striped table, laid out
+/// with egui widgets. `base_dir` (typically the open document's folder) is used to
+/// resolve relative image paths — pass `None` if there's no meaningful base.
 ///
 /// Returns `Some` if the user clicked a `[[wikilink]]` during this frame — the caller
 /// is responsible for finding (and, if `force_create` is set because Ctrl/Cmd was
 /// held, creating) the matching document.
-pub fn show(ui: &mut egui::Ui, markdown_text: &str) -> Option<WikilinkActivation> {
+pub fn show(
+    ui: &mut egui::Ui,
+    markdown_text: &str,
+    base_dir: Option<&Path>,
+) -> Option<WikilinkActivation> {
     let blocks = markdown::parse(markdown_text);
     egui::ScrollArea::vertical()
         .id_salt("markdown_preview_scroll")
@@ -43,7 +51,7 @@ pub fn show(ui: &mut egui::Ui, markdown_text: &str) -> Option<WikilinkActivation
             }
             let mut clicked = None;
             for block in &blocks {
-                if let Some(target) = render_block(ui, block) {
+                if let Some(target) = render_block(ui, block, base_dir) {
                     clicked = Some(target);
                 }
                 ui.add_space(BLOCK_SPACING);
@@ -53,31 +61,45 @@ pub fn show(ui: &mut egui::Ui, markdown_text: &str) -> Option<WikilinkActivation
         .inner
 }
 
-fn render_block(ui: &mut egui::Ui, block: &Block) -> Option<WikilinkActivation> {
+fn render_block(
+    ui: &mut egui::Ui,
+    block: &Block,
+    base_dir: Option<&Path>,
+) -> Option<WikilinkActivation> {
     match &block.kind {
-        BlockKind::Heading(level) => render_heading(ui, *level, &block.spans),
-        BlockKind::Paragraph => {
-            render_spans(ui, &block.spans, FontId::proportional(BODY_SIZE), BODY_TEXT)
-        }
+        BlockKind::Heading(level) => render_heading(ui, *level, &block.spans, base_dir),
+        BlockKind::Paragraph => render_spans(
+            ui,
+            &block.spans,
+            FontId::proportional(BODY_SIZE),
+            BODY_TEXT,
+            base_dir,
+        ),
         BlockKind::CodeBlock { language } => {
             render_code_block(ui, language.as_deref(), &block.spans);
             None
         }
-        BlockKind::BlockQuote => render_blockquote(ui, &block.spans),
+        BlockKind::BlockQuote => render_blockquote(ui, &block.spans, base_dir),
         BlockKind::ListItem {
             ordered,
             index,
             depth,
-        } => render_list_item(ui, *ordered, *index, *depth, &block.spans),
+        } => render_list_item(ui, *ordered, *index, *depth, &block.spans, base_dir),
         BlockKind::Rule => {
             ui.add_space(4.0);
             ui.separator();
             None
         }
+        BlockKind::Table { header, rows, .. } => render_table(ui, header, rows, base_dir),
     }
 }
 
-fn render_heading(ui: &mut egui::Ui, level: u8, spans: &[Span]) -> Option<WikilinkActivation> {
+fn render_heading(
+    ui: &mut egui::Ui,
+    level: u8,
+    spans: &[Span],
+    base_dir: Option<&Path>,
+) -> Option<WikilinkActivation> {
     let color = HEADING_COLORS[(level.saturating_sub(1).min(5)) as usize];
     let size = match level {
         1 => 28.0,
@@ -87,7 +109,7 @@ fn render_heading(ui: &mut egui::Ui, level: u8, spans: &[Span]) -> Option<Wikili
         5 => 16.5,
         _ => 15.5,
     };
-    let clicked = render_spans(ui, spans, FontId::proportional(size), color);
+    let clicked = render_spans(ui, spans, FontId::proportional(size), color, base_dir);
     if level == 1 {
         ui.add_space(2.0);
         ui.separator();
@@ -113,7 +135,11 @@ fn render_code_block(ui: &mut egui::Ui, language: Option<&str>, spans: &[Span]) 
         });
 }
 
-fn render_blockquote(ui: &mut egui::Ui, spans: &[Span]) -> Option<WikilinkActivation> {
+fn render_blockquote(
+    ui: &mut egui::Ui,
+    spans: &[Span],
+    base_dir: Option<&Path>,
+) -> Option<WikilinkActivation> {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(3.0, ui.spacing().interact_size.y),
@@ -129,6 +155,7 @@ fn render_blockquote(ui: &mut egui::Ui, spans: &[Span]) -> Option<WikilinkActiva
             &italic_spans,
             FontId::proportional(BODY_SIZE),
             QUOTE_TEXT,
+            base_dir,
         )
     })
     .inner
@@ -140,6 +167,7 @@ fn render_list_item(
     index: Option<u64>,
     depth: u8,
     spans: &[Span],
+    base_dir: Option<&Path>,
 ) -> Option<WikilinkActivation> {
     ui.horizontal(|ui| {
         ui.add_space(depth as f32 * INDENT_PER_DEPTH);
@@ -151,26 +179,88 @@ fn render_list_item(
             "◦".to_string()
         };
         ui.label(RichText::new(bullet).color(BODY_TEXT).strong());
-        render_spans(ui, spans, FontId::proportional(BODY_SIZE), BODY_TEXT)
+        render_spans(
+            ui,
+            spans,
+            FontId::proportional(BODY_SIZE),
+            BODY_TEXT,
+            base_dir,
+        )
     })
     .inner
 }
 
-/// Render a run of spans, laying out plain-text runs as wrapped, styled text and each
-/// `[[wikilink]]` span as a clickable link. Returns the clicked wikilink, if any —
-/// holding Ctrl (Cmd on macOS) while clicking sets `force_create`.
+/// Render a GFM table as a striped grid. Column alignment (`:---:` etc.) is parsed
+/// into the block already but not yet reflected here — every cell is left-aligned.
+fn render_table(
+    ui: &mut egui::Ui,
+    header: &[Vec<Span>],
+    rows: &[Vec<Vec<Span>>],
+    base_dir: Option<&Path>,
+) -> Option<WikilinkActivation> {
+    let mut clicked = None;
+    egui::Frame::new()
+        .inner_margin(egui::Margin::same(4))
+        .show(ui, |ui| {
+            egui::Grid::new(ui.id().with("md_table"))
+                .striped(true)
+                .spacing(egui::vec2(16.0, 6.0))
+                .show(ui, |ui| {
+                    for cell in header {
+                        if let Some(activation) = render_spans(
+                            ui,
+                            cell,
+                            FontId::proportional(BODY_SIZE),
+                            brighten(BODY_TEXT),
+                            base_dir,
+                        ) {
+                            clicked = Some(activation);
+                        }
+                    }
+                    ui.end_row();
+                    for row in rows {
+                        for cell in row {
+                            if let Some(activation) = render_spans(
+                                ui,
+                                cell,
+                                FontId::proportional(BODY_SIZE),
+                                BODY_TEXT,
+                                base_dir,
+                            ) {
+                                clicked = Some(activation);
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
+        });
+    clicked
+}
+
+/// Render a run of spans, laying out plain-text runs as wrapped, styled text, each
+/// `[[wikilink]]` span as a clickable link, and each `![image](src)` span as a loaded
+/// image (falling back to its alt text while loading or on error). Returns the
+/// clicked wikilink, if any — holding Ctrl (Cmd on macOS) while clicking sets
+/// `force_create`.
 fn render_spans(
     ui: &mut egui::Ui,
     spans: &[Span],
     base_font: FontId,
     base_color: Color32,
+    base_dir: Option<&Path>,
 ) -> Option<WikilinkActivation> {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let mut clicked = None;
         let mut buffer: Vec<Span> = Vec::new();
         for span in spans {
-            if let Some(target) = &span.wikilink {
+            if let Some(image) = &span.image {
+                if !buffer.is_empty() {
+                    ui.label(build_layout_job(&buffer, base_font.clone(), base_color));
+                    buffer.clear();
+                }
+                render_image(ui, image, &span.text, base_dir);
+            } else if let Some(target) = &span.wikilink {
                 if !buffer.is_empty() {
                     ui.label(build_layout_job(&buffer, base_font.clone(), base_color));
                     buffer.clear();
@@ -193,6 +283,46 @@ fn render_spans(
         clicked
     })
     .inner
+}
+
+/// Load and display an image, resolving a relative `src` against `base_dir`. Loading
+/// state and failures are handled by egui's own image widget (spinner while pending,
+/// `alt` text if it can't be loaded) — remote `http(s)://` images won't load, since no
+/// network image loader is installed, and will just show their alt text.
+fn render_image(ui: &mut egui::Ui, image: &ImageRef, alt: &str, base_dir: Option<&Path>) {
+    let uri = resolve_image_uri(&image.src, base_dir);
+    let alt_text = if alt.is_empty() {
+        image.src.clone()
+    } else {
+        alt.to_string()
+    };
+    let available_width = ui.available_width();
+    ui.add(
+        egui::Image::from_uri(uri)
+            .max_width(available_width)
+            .shrink_to_fit()
+            .alt_text(alt_text),
+    );
+}
+
+/// Turn a markdown image `src` into a URI egui's image loaders understand: passed
+/// through unchanged if it's already a URI (`http://`, `file://`, `data:`, ...),
+/// otherwise resolved as a filesystem path (relative to `base_dir` if it's not
+/// already absolute) and turned into a `file://` URI.
+fn resolve_image_uri(src: &str, base_dir: Option<&Path>) -> String {
+    if src.starts_with("data:") || src.contains("://") {
+        return src.to_string();
+    }
+    let path = Path::new(src);
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        match base_dir {
+            Some(base) => base.join(path),
+            None => path.to_path_buf(),
+        }
+    };
+    format!("file://{}", resolved.display())
 }
 
 /// Push `color` halfway toward white, approximating a "stronger" emphasis color
@@ -235,4 +365,42 @@ fn build_layout_job(spans: &[Span], base_font: FontId, base_color: Color32) -> L
         job.append(&span.text, 0.0, format);
     }
     job
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_image_uri_passes_through_existing_uris() {
+        assert_eq!(
+            resolve_image_uri("https://example.com/pic.png", None),
+            "https://example.com/pic.png"
+        );
+        assert_eq!(
+            resolve_image_uri("data:image/png;base64,abc", None),
+            "data:image/png;base64,abc"
+        );
+    }
+
+    #[test]
+    fn resolve_image_uri_resolves_relative_paths_against_base_dir() {
+        assert_eq!(
+            resolve_image_uri("images/pic.png", Some(Path::new("/vault/notes"))),
+            "file:///vault/notes/images/pic.png"
+        );
+    }
+
+    #[test]
+    fn resolve_image_uri_leaves_absolute_paths_alone() {
+        assert_eq!(
+            resolve_image_uri("/abs/pic.png", Some(Path::new("/vault/notes"))),
+            "file:///abs/pic.png"
+        );
+    }
+
+    #[test]
+    fn resolve_image_uri_without_base_dir_uses_the_relative_path_as_is() {
+        assert_eq!(resolve_image_uri("pic.png", None), "file://pic.png");
+    }
 }

@@ -11,14 +11,14 @@ A project is just a folder of `.md` files and subfolders — no proprietary bund
 - Markdown text editor with save-on-`Ctrl+S` and save-on-focus-loss
 - Right-click context menu in the binder: New File/New Folder (folders), Rename, Delete (native confirmation dialog) — New File/Folder and Rename each prompt for a name (Enter to confirm), and renaming a document updates any `[[wikilinks]]` to it elsewhere in the project
 - Native folder picker for opening a project (`File > Open Project`)
-- Glow-CLI-styled markdown preview (`View > Toggle preview`): colored heading hierarchy, barred blockquotes, boxed code blocks
+- Glow-CLI-styled markdown preview (`View > Toggle preview`): colored heading hierarchy, barred blockquotes, boxed code blocks, striped GFM tables, and images — both standard `![alt](src)` and Obsidian-style `![[image.png]]` embeds — loaded via `egui_extras` (relative paths resolve against the open document's folder, remote `http(s)://` images aren't fetched)
 - Obsidian-style `[[Topic]]` / `[[Topic|Alias]]` wikilinks: rendered as clickable links in preview, resolved by filename within the project. Ctrl+Click a link in preview (or place the cursor on one and press Ctrl+Enter in the editor) to create the missing document, in the same folder as the note the link was in
 - Wikilink autocomplete while typing `[[`: filtered suggestions, arrow-key/Tab/Enter navigation, mouse click
 - Settings window (`File > Settings`) with a "Reopen project on launch" toggle, persisted to `tachylite.toml` in the platform's standard config directory (`~/.config/tachylite` on Linux, `~/Library/Application Support/tachylite` on macOS, `%APPDATA%\tachylite\config` on Windows)
 
 ## Not yet implemented
 
-Menu items present but stubbed: `File > Close Project`, `Edit > Cut/Copy/Paste`, `Help > About`, the whole `Tools` menu. Also deferred: the Excalidraw-style canvas, backlink index, compile/export, Longform-style scene metadata (POV, status, word-count targets), multi-tab editing, drag-and-drop reorder.
+Menu items present but stubbed: `File > Close Project`, `Edit > Cut/Copy/Paste`, `Help > About`, the whole `Tools` menu. Also deferred: the Excalidraw-style canvas, backlink index, compile/export, Longform-style scene metadata (POV, status, word-count targets), multi-tab editing, drag-and-drop reorder. In the markdown parser itself: raw HTML (blocks and inline) is dropped rather than passed through; table column alignment (`:---:`) is parsed but not yet reflected visually; GFM extras other than strikethrough/tables (task lists, footnotes) aren't enabled; mixing container types (e.g. a list inside a blockquote) doesn't preserve proper nesting; and `![[Note]]` embeds only actually embed when `Note` has an image extension — embedding another note's rendered content (transclusion) isn't implemented, so those fall back to behaving like a plain `[[Note]]` link — see `src/markdown.rs`'s doc comment.
 
 ## Running
 

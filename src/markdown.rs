@@ -1,4 +1,4 @@
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 /// A block-level markdown element, in document order.
 #[derive(Debug, Clone, PartialEq)]
@@ -21,6 +21,21 @@ pub enum BlockKind {
         depth: u8,
     },
     Rule,
+    /// A GFM table. `header` and each entry of `rows` hold one `Vec<Span>` per column;
+    /// row/cell content is inline-only, per the GFM table spec.
+    Table {
+        alignments: Vec<ColumnAlignment>,
+        header: Vec<Vec<Span>>,
+        rows: Vec<Vec<Vec<Span>>>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ColumnAlignment {
+    None,
+    Left,
+    Center,
+    Right,
 }
 
 /// A run of inline text sharing the same formatting.
@@ -35,6 +50,15 @@ pub struct Span {
     /// Set for an Obsidian-style `[[Topic]]`/`[[Topic|Alias]]` span: the target note
     /// name to resolve, separate from `link` (which holds a real URL destination).
     pub wikilink: Option<String>,
+    /// Set for an inline `![alt](src "title")` image. `text` holds the alt text, kept
+    /// as the fallback if the image can't be loaded/rendered.
+    pub image: Option<ImageRef>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageRef {
+    pub src: String,
+    pub title: String,
 }
 
 struct ListLevel {
@@ -42,10 +66,51 @@ struct ListLevel {
     next_index: Option<u64>,
 }
 
+/// Accumulates a table's rows while its events are being parsed — the flat
+/// `current_kind` + `spans` model the rest of `parse` uses doesn't fit a table's
+/// grid-of-cells shape.
+struct TableBuilder {
+    alignments: Vec<ColumnAlignment>,
+    header: Vec<Vec<Span>>,
+    rows: Vec<Vec<Vec<Span>>>,
+    current_row: Vec<Vec<Span>>,
+    current_cell: Vec<Span>,
+}
+
+/// Accumulates an image's alt text while its (possibly multi-event, e.g. `*em*`)
+/// inline content is being parsed, between `Tag::Image` and `TagEnd::Image`.
+struct PendingImage {
+    src: String,
+    title: String,
+    alt: String,
+}
+
+fn convert_alignment(alignment: Alignment) -> ColumnAlignment {
+    match alignment {
+        Alignment::None => ColumnAlignment::None,
+        Alignment::Left => ColumnAlignment::Left,
+        Alignment::Center => ColumnAlignment::Center,
+        Alignment::Right => ColumnAlignment::Right,
+    }
+}
+
+/// Where inline content (text, images, wikilinks) currently being parsed should be
+/// pushed: a table cell's own span list if we're inside one, otherwise the enclosing
+/// block's `spans`.
+fn current_sink<'a>(
+    table: &'a mut Option<TableBuilder>,
+    spans: &'a mut Vec<Span>,
+) -> &'a mut Vec<Span> {
+    match table {
+        Some(table) => &mut table.current_cell,
+        None => spans,
+    }
+}
+
 /// Parse `markdown` into a flat sequence of blocks. Deliberately does not model
 /// arbitrarily deep nesting (e.g. a blockquote inside a list inside a blockquote) or
-/// tables/images/footnotes — a flat block list with single-level list nesting covers
-/// what an author actually writes, and matches what the glow-style preview renders.
+/// footnotes — a flat block list with single-level list nesting covers what an author
+/// actually writes, and matches what the glow-style preview renders.
 pub fn parse(markdown: &str) -> Vec<Block> {
     let (markdown, wikilinks) = extract_wikilinks(markdown);
     let markdown = markdown.as_str();
@@ -60,6 +125,8 @@ pub fn parse(markdown: &str) -> Vec<Block> {
     let mut in_code_block = false;
     let mut link_stack: Vec<String> = Vec::new();
     let mut list_stack: Vec<ListLevel> = Vec::new();
+    let mut current_table: Option<TableBuilder> = None;
+    let mut pending_image: Option<PendingImage> = None;
 
     macro_rules! flush {
         () => {
@@ -76,7 +143,8 @@ pub fn parse(markdown: &str) -> Vec<Block> {
         };
     }
 
-    for event in Parser::new_ext(markdown, Options::ENABLE_STRIKETHROUGH) {
+    let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
+    for event in Parser::new_ext(markdown, options) {
         match event {
             Event::Start(Tag::Heading { level, .. }) => {
                 flush!();
@@ -164,8 +232,92 @@ pub fn parse(markdown: &str) -> Vec<Block> {
                 link_stack.pop();
             }
 
+            Event::Start(Tag::Image {
+                dest_url, title, ..
+            }) => {
+                pending_image = Some(PendingImage {
+                    src: dest_url.to_string(),
+                    title: title.to_string(),
+                    alt: String::new(),
+                });
+            }
+            Event::End(TagEnd::Image) => {
+                if let Some(image) = pending_image.take()
+                    && (current_kind.is_some() || current_table.is_some())
+                {
+                    current_sink(&mut current_table, &mut spans).push(Span {
+                        text: image.alt,
+                        image: Some(ImageRef {
+                            src: image.src,
+                            title: image.title,
+                        }),
+                        ..Default::default()
+                    });
+                }
+            }
+
+            Event::Start(Tag::Table(alignments)) => {
+                flush!();
+                current_table = Some(TableBuilder {
+                    alignments: alignments.into_iter().map(convert_alignment).collect(),
+                    header: Vec::new(),
+                    rows: Vec::new(),
+                    current_row: Vec::new(),
+                    current_cell: Vec::new(),
+                });
+            }
+            Event::End(TagEnd::Table) => {
+                if let Some(table) = current_table.take() {
+                    blocks.push(Block {
+                        kind: BlockKind::Table {
+                            alignments: table.alignments,
+                            header: table.header,
+                            rows: table.rows,
+                        },
+                        spans: Vec::new(),
+                    });
+                }
+            }
+            // `TableHead` wraps the header's cells directly (pulldown-cmark doesn't
+            // nest a `TableRow` inside it the way body rows get one), so it both
+            // starts and finalizes `current_row` itself.
+            Event::Start(Tag::TableHead) => {
+                if let Some(table) = current_table.as_mut() {
+                    table.current_row = Vec::new();
+                }
+            }
+            Event::End(TagEnd::TableHead) => {
+                if let Some(table) = current_table.as_mut() {
+                    table.header = std::mem::take(&mut table.current_row);
+                }
+            }
+            Event::Start(Tag::TableRow) => {
+                if let Some(table) = current_table.as_mut() {
+                    table.current_row = Vec::new();
+                }
+            }
+            Event::End(TagEnd::TableRow) => {
+                if let Some(table) = current_table.as_mut() {
+                    let row = std::mem::take(&mut table.current_row);
+                    table.rows.push(row);
+                }
+            }
+            Event::Start(Tag::TableCell) => {
+                if let Some(table) = current_table.as_mut() {
+                    table.current_cell = Vec::new();
+                }
+            }
+            Event::End(TagEnd::TableCell) => {
+                if let Some(table) = current_table.as_mut() {
+                    let cell = std::mem::take(&mut table.current_cell);
+                    table.current_row.push(cell);
+                }
+            }
+
             Event::Text(text) => {
-                if current_kind.is_some() {
+                if let Some(image) = pending_image.as_mut() {
+                    image.alt.push_str(&text);
+                } else if current_kind.is_some() || current_table.is_some() {
                     let template = Span {
                         bold: bold_depth > 0,
                         italic: italic_depth > 0,
@@ -174,19 +326,22 @@ pub fn parse(markdown: &str) -> Vec<Block> {
                         link: link_stack.last().cloned(),
                         ..Default::default()
                     };
+                    let target = current_sink(&mut current_table, &mut spans);
                     if in_code_block {
-                        spans.push(Span {
+                        target.push(Span {
                             text: text.to_string(),
                             ..template
                         });
                     } else {
-                        expand_placeholders(&mut spans, &text, &template, &wikilinks);
+                        expand_placeholders(target, &text, &template, &wikilinks);
                     }
                 }
             }
             Event::Code(text) => {
-                if current_kind.is_some() {
-                    spans.push(Span {
+                if let Some(image) = pending_image.as_mut() {
+                    image.alt.push_str(&text);
+                } else if current_kind.is_some() || current_table.is_some() {
+                    current_sink(&mut current_table, &mut spans).push(Span {
                         text: text.to_string(),
                         bold: bold_depth > 0,
                         italic: italic_depth > 0,
@@ -194,23 +349,35 @@ pub fn parse(markdown: &str) -> Vec<Block> {
                         strikethrough: strike_depth > 0,
                         link: link_stack.last().cloned(),
                         wikilink: None,
+                        image: None,
                     });
                 }
             }
             Event::SoftBreak => {
-                if let Some(last) = spans.last_mut() {
-                    last.text.push(' ');
+                if let Some(image) = pending_image.as_mut() {
+                    image.alt.push(' ');
                 } else {
-                    spans.push(Span {
-                        text: " ".to_string(),
+                    let target = current_sink(&mut current_table, &mut spans);
+                    if let Some(last) = target.last_mut() {
+                        last.text.push(' ');
+                    } else {
+                        target.push(Span {
+                            text: " ".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+            Event::HardBreak => {
+                if let Some(image) = pending_image.as_mut() {
+                    image.alt.push('\n');
+                } else {
+                    current_sink(&mut current_table, &mut spans).push(Span {
+                        text: "\n".to_string(),
                         ..Default::default()
                     });
                 }
             }
-            Event::HardBreak => spans.push(Span {
-                text: "\n".to_string(),
-                ..Default::default()
-            }),
             Event::Rule => {
                 flush!();
                 blocks.push(Block {
@@ -234,11 +401,38 @@ pub fn parse(markdown: &str) -> Vec<Block> {
 /// pulldown-cmark's bracket-matching splits into several separate text events.
 const WIKILINK_MARK: char = '\u{E000}';
 
-/// Replace `[[Topic]]` / `[[Topic|Alias]]` wikilinks in `markdown` with placeholders
-/// pulldown-cmark's inline parser won't fragment, skipping fenced code blocks (whose
-/// content must stay literal). Returns the rewritten markdown plus a side table of
-/// `(target, display)` pairs, indexed by the number embedded in each placeholder.
-fn extract_wikilinks(markdown: &str) -> (String, Vec<(String, String)>) {
+/// A `[[Target]]` / `[[Target|Alias]]` (optionally `!`-prefixed) found by
+/// [`extract_wikilinks`], recorded in its side table.
+struct WikilinkPlaceholder {
+    target: String,
+    display: String,
+    /// Set for Obsidian-style `![[Target]]` embeds, as opposed to a plain
+    /// `[[Target]]` link. Only image-extension targets actually embed as images
+    /// (see [`has_image_extension`]) — an embed of anything else (e.g. another note)
+    /// falls back to behaving like a plain link, since full note transclusion isn't
+    /// implemented.
+    is_embed: bool,
+}
+
+/// Image filename extensions recognized for `![[Target]]` embeds.
+const IMAGE_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "tif", "tiff", "ico",
+];
+
+fn has_image_extension(name: &str) -> bool {
+    name.rsplit('.').next().is_some_and(|ext| {
+        IMAGE_EXTENSIONS
+            .iter()
+            .any(|img| ext.eq_ignore_ascii_case(img))
+    })
+}
+
+/// Replace `[[Topic]]` / `[[Topic|Alias]]` wikilinks (and `![[Topic]]` embeds) in
+/// `markdown` with placeholders pulldown-cmark's inline parser won't fragment,
+/// skipping fenced code blocks (whose content must stay literal). Returns the
+/// rewritten markdown plus a side table indexed by the number embedded in each
+/// placeholder.
+fn extract_wikilinks(markdown: &str) -> (String, Vec<WikilinkPlaceholder>) {
     let mut output = String::with_capacity(markdown.len());
     let mut table = Vec::new();
     let mut in_fence = false;
@@ -256,10 +450,18 @@ fn extract_wikilinks(markdown: &str) -> (String, Vec<(String, String)>) {
     (output, table)
 }
 
-fn replace_wikilinks_in_line(line: &str, table: &mut Vec<(String, String)>, output: &mut String) {
+fn replace_wikilinks_in_line(
+    line: &str,
+    table: &mut Vec<WikilinkPlaceholder>,
+    output: &mut String,
+) {
     let mut rest = line;
     while let Some(start) = rest.find("[[") {
-        output.push_str(&rest[..start]);
+        // A "!" immediately before "[[" marks an embed; it's part of the marker, not
+        // literal text, so it isn't copied to `output`.
+        let is_embed = start > 0 && rest.as_bytes()[start - 1] == b'!';
+        let text_before_end = if is_embed { start - 1 } else { start };
+        output.push_str(&rest[..text_before_end]);
         let after_open = &rest[start + 2..];
         match after_open.find("]]") {
             Some(end) => {
@@ -268,7 +470,11 @@ fn replace_wikilinks_in_line(line: &str, table: &mut Vec<(String, String)>, outp
                     Some((target, alias)) => (target.trim().to_string(), alias.trim().to_string()),
                     None => (inner.trim().to_string(), inner.trim().to_string()),
                 };
-                table.push((target, display));
+                table.push(WikilinkPlaceholder {
+                    target,
+                    display,
+                    is_embed,
+                });
                 output.push(WIKILINK_MARK);
                 output.push_str(&(table.len() - 1).to_string());
                 output.push(WIKILINK_MARK);
@@ -276,7 +482,7 @@ fn replace_wikilinks_in_line(line: &str, table: &mut Vec<(String, String)>, outp
             }
             None => {
                 // Unterminated "[[": no wikilink here, keep the rest as plain text.
-                output.push_str(&rest[start..]);
+                output.push_str(&rest[text_before_end..]);
                 return;
             }
         }
@@ -285,13 +491,13 @@ fn replace_wikilinks_in_line(line: &str, table: &mut Vec<(String, String)>, outp
 }
 
 /// Split `text` (already through pulldown-cmark) on wikilink placeholders inserted by
-/// [`extract_wikilinks`], pushing plain-text spans and wikilink spans in order, all
-/// inheriting `template`'s formatting.
+/// [`extract_wikilinks`], pushing plain-text spans, wikilink spans, and image spans
+/// (for `![[image.ext]]` embeds) in order, all inheriting `template`'s formatting.
 fn expand_placeholders(
     spans: &mut Vec<Span>,
     text: &str,
     template: &Span,
-    table: &[(String, String)],
+    table: &[WikilinkPlaceholder],
 ) {
     let mut rest = text;
     while let Some(start) = rest.find(WIKILINK_MARK) {
@@ -308,12 +514,23 @@ fn expand_placeholders(
         let index: usize = after[..end]
             .parse()
             .expect("well-formed wikilink placeholder");
-        let (target, display) = &table[index];
-        spans.push(Span {
-            text: display.clone(),
-            wikilink: Some(target.clone()),
-            ..template.clone()
-        });
+        let placeholder = &table[index];
+        if placeholder.is_embed && has_image_extension(&placeholder.target) {
+            spans.push(Span {
+                text: placeholder.display.clone(),
+                image: Some(ImageRef {
+                    src: placeholder.target.clone(),
+                    title: String::new(),
+                }),
+                ..template.clone()
+            });
+        } else {
+            spans.push(Span {
+                text: placeholder.display.clone(),
+                wikilink: Some(placeholder.target.clone()),
+                ..template.clone()
+            });
+        }
         rest = &after[end + WIKILINK_MARK.len_utf8()..];
     }
     if !rest.is_empty() {
@@ -801,5 +1018,256 @@ mod tests {
         let text = "```\n[[Topic]]\n```\n";
         let inside = text.find("Topic").unwrap();
         assert_eq!(wikilink_target_at(text, inside), None);
+    }
+
+    #[test]
+    fn parses_inline_image_with_alt_and_title() {
+        let blocks = parse(r#"See ![a cat](cat.png "My Cat") here."#);
+        assert_eq!(blocks[0].kind, BlockKind::Paragraph);
+        assert_eq!(
+            blocks[0].spans,
+            vec![
+                plain("See "),
+                Span {
+                    text: "a cat".to_string(),
+                    image: Some(ImageRef {
+                        src: "cat.png".to_string(),
+                        title: "My Cat".to_string(),
+                    }),
+                    ..Default::default()
+                },
+                plain(" here."),
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_image_without_title() {
+        let blocks = parse("![alt](pic.png)");
+        assert_eq!(
+            blocks[0].spans,
+            vec![Span {
+                text: "alt".to_string(),
+                image: Some(ImageRef {
+                    src: "pic.png".to_string(),
+                    title: String::new(),
+                }),
+                ..Default::default()
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_simple_table_with_alignment_and_header() {
+        let blocks = parse("| A | B |\n|:---|---:|\n| 1 | 2 |\n| 3 | 4 |\n");
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0].kind {
+            BlockKind::Table {
+                alignments,
+                header,
+                rows,
+            } => {
+                assert_eq!(
+                    alignments,
+                    &vec![ColumnAlignment::Left, ColumnAlignment::Right]
+                );
+                assert_eq!(header, &vec![vec![plain("A")], vec![plain("B")]]);
+                assert_eq!(
+                    rows,
+                    &vec![
+                        vec![vec![plain("1")], vec![plain("2")]],
+                        vec![vec![plain("3")], vec![plain("4")]],
+                    ]
+                );
+            }
+            other => panic!("expected a table, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn table_cells_support_inline_formatting_and_wikilinks() {
+        let blocks = parse("| A |\n|---|\n| **bold** and [[Topic]] |\n");
+        match &blocks[0].kind {
+            BlockKind::Table { rows, .. } => {
+                let cell = &rows[0][0];
+                assert!(cell.iter().any(|s| s.bold && s.text == "bold"));
+                assert!(cell.iter().any(|s| s.wikilink.as_deref() == Some("Topic")));
+            }
+            other => panic!("expected a table, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn table_without_alignment_markers_defaults_to_none() {
+        let blocks = parse("| A |\n|---|\n| 1 |\n");
+        match &blocks[0].kind {
+            BlockKind::Table { alignments, .. } => {
+                assert_eq!(alignments, &vec![ColumnAlignment::None]);
+            }
+            other => panic!("expected a table, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_image_embed_with_no_alias() {
+        let blocks = parse("![[cat.png]]");
+        assert_eq!(
+            blocks[0].spans,
+            vec![Span {
+                text: "cat.png".to_string(),
+                image: Some(ImageRef {
+                    src: "cat.png".to_string(),
+                    title: String::new(),
+                }),
+                ..Default::default()
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_image_embed_with_alias_as_alt_text() {
+        let blocks = parse("![[cat.png|A cute cat]]");
+        assert_eq!(
+            blocks[0].spans,
+            vec![Span {
+                text: "A cute cat".to_string(),
+                image: Some(ImageRef {
+                    src: "cat.png".to_string(),
+                    title: String::new(),
+                }),
+                ..Default::default()
+            }]
+        );
+    }
+
+    #[test]
+    fn image_embed_extension_check_is_case_insensitive() {
+        let blocks = parse("![[cat.PNG]]");
+        assert!(blocks[0].spans[0].image.is_some());
+    }
+
+    #[test]
+    fn embed_of_a_non_image_target_falls_back_to_a_plain_wikilink() {
+        let blocks = parse("![[Some Note]]");
+        assert_eq!(
+            blocks[0].spans,
+            vec![Span {
+                text: "Some Note".to_string(),
+                wikilink: Some("Some Note".to_string()),
+                ..Default::default()
+            }]
+        );
+    }
+
+    #[test]
+    fn embed_marker_does_not_leak_a_literal_exclamation_mark() {
+        let blocks = parse("See ![[cat.png]] here.");
+        let joined: String = blocks[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(joined, "See cat.png here.");
+        assert!(!joined.contains('!'));
+    }
+
+    #[test]
+    fn unterminated_embed_marker_is_left_as_plain_text_including_the_bang() {
+        let blocks = parse("open ![[cat.png without close");
+        let joined: String = blocks[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(joined, "open ![[cat.png without close");
+    }
+
+    #[test]
+    fn table_row_shorter_than_header_is_padded_with_empty_cells() {
+        // pulldown-cmark itself normalizes ragged rows to the header's column count
+        // before we see the events; this just confirms our TableBuilder passes that
+        // shape through unchanged instead of e.g. dropping/collapsing empty cells.
+        let blocks = parse("| A | B | C |\n|---|---|---|\n| 1 |\n");
+        match &blocks[0].kind {
+            BlockKind::Table { rows, .. } => {
+                assert_eq!(rows, &vec![vec![vec![plain("1")], vec![], vec![]]]);
+            }
+            other => panic!("expected a table, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn table_row_longer_than_header_is_truncated_to_header_width() {
+        let blocks = parse("| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 | 4 |\n");
+        match &blocks[0].kind {
+            BlockKind::Table { rows, .. } => {
+                assert_eq!(
+                    rows,
+                    &vec![vec![vec![plain("1")], vec![plain("2")], vec![plain("3")]]]
+                );
+            }
+            other => panic!("expected a table, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn table_cell_can_contain_an_image() {
+        let blocks = parse("| A |\n|---|\n| ![alt](cat.png) |\n");
+        match &blocks[0].kind {
+            BlockKind::Table { rows, .. } => {
+                assert_eq!(
+                    rows,
+                    &vec![vec![vec![Span {
+                        text: "alt".to_string(),
+                        image: Some(ImageRef {
+                            src: "cat.png".to_string(),
+                            title: String::new(),
+                        }),
+                        ..Default::default()
+                    }]]]
+                );
+            }
+            other => panic!("expected a table, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_image_with_empty_alt_text() {
+        let blocks = parse("![](pic.png)");
+        assert_eq!(
+            blocks[0].spans,
+            vec![Span {
+                text: String::new(),
+                image: Some(ImageRef {
+                    src: "pic.png".to_string(),
+                    title: String::new(),
+                }),
+                ..Default::default()
+            }]
+        );
+    }
+
+    #[test]
+    fn embed_with_alias_for_non_image_target_uses_alias_as_wikilink_display() {
+        let blocks = parse("![[Some Note|Custom Text]]");
+        assert_eq!(
+            blocks[0].spans,
+            vec![Span {
+                text: "Custom Text".to_string(),
+                wikilink: Some("Some Note".to_string()),
+                ..Default::default()
+            }]
+        );
+    }
+
+    #[test]
+    fn has_image_extension_recognizes_all_supported_extensions() {
+        for ext in [
+            "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "tif", "tiff", "ico",
+        ] {
+            assert!(
+                has_image_extension(&format!("cat.{ext}")),
+                "expected {ext} to be recognized as an image extension"
+            );
+        }
+    }
+
+    #[test]
+    fn has_image_extension_rejects_non_image_extensions() {
+        assert!(!has_image_extension("video.mp4"));
+        assert!(!has_image_extension("Some Note"));
+        assert!(!has_image_extension("no_extension"));
     }
 }

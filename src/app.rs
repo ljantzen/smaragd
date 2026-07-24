@@ -33,7 +33,9 @@ pub struct TachyliteApp {
 }
 
 impl TachyliteApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        egui_extras::install_image_loaders(&cc.egui_ctx);
+
         let settings = crate::settings::config_file_path()
             .map(|path| Settings::load_from_path(&path))
             .unwrap_or_default();
@@ -362,7 +364,10 @@ impl eframe::App for TachyliteApp {
         egui::CentralPanel::default().show(ui, |ui| {
             if self.preview_mode {
                 if self.editor.open_path.is_some() {
-                    if let Some(activation) = ui::markdown_preview::show(ui, &self.editor.buffer) {
+                    let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
+                    if let Some(activation) =
+                        ui::markdown_preview::show(ui, &self.editor.buffer, base_dir)
+                    {
                         self.activate_wikilink(activation);
                     }
                 } else {
