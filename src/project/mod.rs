@@ -203,6 +203,40 @@ impl Project {
         self.save_metadata()
     }
 
+    /// Ensure a folder holding `role` exists, independently of any other role.
+    /// If a folder is already assigned `role` but has been deleted from disk since
+    /// (e.g. outside the app), recreates it at that same path, keeping the existing
+    /// assignment. If no folder holds `role` at all, creates a new one named
+    /// `default_name` at the project root (disambiguated via `unique_child_name` if
+    /// that name's already taken there) and assigns it. A no-op if the assigned
+    /// folder already exists.
+    pub fn ensure_role_folder(&mut self, role: FolderRole, default_name: &str) -> io::Result<()> {
+        let existing = self
+            .meta
+            .folder_roles
+            .iter()
+            .find(|(_, r)| **r == role)
+            .map(|(key, _)| key.clone());
+
+        if let Some(key) = existing {
+            let path = if key.is_empty() {
+                self.root.clone()
+            } else {
+                self.root.join(&key)
+            };
+            if !path.is_dir() {
+                fs::create_dir_all(&path)?;
+                self.rescan();
+            }
+            return Ok(());
+        }
+
+        let root = self.root.clone();
+        let name = unique_child_name(&root, default_name);
+        let path = self.create_folder(&root, &name)?;
+        self.set_folder_role(&path, Some(role))
+    }
+
     /// The absolute path of the project's designated Trash folder, if any.
     fn trash_path(&self) -> Option<PathBuf> {
         self.meta
@@ -816,6 +850,94 @@ mod tests {
         let result = project.set_folder_role(&doc, Some(FolderRole::Research));
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn ensure_role_folder_creates_and_assigns_when_no_folder_holds_the_role() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        project
+            .ensure_role_folder(FolderRole::Research, "Research")
+            .unwrap();
+
+        let path = dir.path().join("Research");
+        assert!(path.is_dir());
+        assert_eq!(project.folder_role(&path), Some(FolderRole::Research));
+    }
+
+    #[test]
+    fn ensure_role_folder_uniquifies_the_default_name_if_already_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        project.create_folder(dir.path(), "Research").unwrap();
+
+        project
+            .ensure_role_folder(FolderRole::Research, "Research")
+            .unwrap();
+
+        let path = dir.path().join("Research (2)");
+        assert!(path.is_dir());
+        assert_eq!(project.folder_role(&path), Some(FolderRole::Research));
+    }
+
+    #[test]
+    fn ensure_role_folder_is_a_no_op_when_the_assigned_folder_already_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+
+        project
+            .ensure_role_folder(FolderRole::Trash, "Trash")
+            .unwrap();
+
+        assert!(
+            !dir.path().join("Trash (2)").exists(),
+            "should not have created a second Trash-like folder"
+        );
+        assert_eq!(project.folder_role(&trash), Some(FolderRole::Trash));
+    }
+
+    #[test]
+    fn ensure_role_folder_recreates_a_missing_assigned_folder_at_its_original_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        fs::remove_dir(&trash).unwrap();
+
+        project
+            .ensure_role_folder(FolderRole::Trash, "Trash")
+            .unwrap();
+
+        assert!(trash.is_dir());
+        assert_eq!(project.folder_role(&trash), Some(FolderRole::Trash));
+    }
+
+    #[test]
+    fn ensure_role_folder_treats_research_and_trash_independently() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+
+        project
+            .ensure_role_folder(FolderRole::Research, "Research")
+            .unwrap();
+
+        assert!(dir.path().join("Research").is_dir());
+        assert_eq!(project.folder_role(&trash), Some(FolderRole::Trash));
+        assert_eq!(
+            project.folder_role(&dir.path().join("Research")),
+            Some(FolderRole::Research)
+        );
     }
 
     #[test]

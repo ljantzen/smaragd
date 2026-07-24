@@ -18,10 +18,11 @@ pub struct Settings {
     /// The most recently opened project folder, tracked regardless of
     /// `reopen_last_project` so toggling the setting on later works immediately.
     pub last_project_path: Option<PathBuf>,
-    /// When creating a new project (not when adopting an existing folder of notes),
-    /// pre-seed it with empty Research and Trash folders, roles already assigned —
-    /// Scrivener's Fiction-template starter experience. Off by default: a fresh
-    /// project starts completely empty unless the user opts in.
+    /// Ensure every opened project has a Research and a Trash folder (roles already
+    /// assigned — Scrivener's Fiction-template starter experience), each checked and
+    /// created independently on every open, not just when a project is first
+    /// created — see `Project::ensure_role_folder`. Off by default: a project's
+    /// folder layout is otherwise left exactly as found.
     pub create_starter_folders: bool,
     /// Keyboard shortcut bindings, remappable from the Settings window.
     pub shortcuts: ShortcutMap,

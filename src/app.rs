@@ -91,7 +91,10 @@ impl TachyliteApp {
         }
     }
 
-    fn set_project(&mut self, project: Project, path: &Path) {
+    fn set_project(&mut self, mut project: Project, path: &Path) {
+        if self.settings.create_starter_folders {
+            Self::ensure_starter_folders(&mut project);
+        }
         self.project = Some(project);
         self.editor = EditorState::default();
         self.selected_path = None;
@@ -177,31 +180,26 @@ impl TachyliteApp {
             return;
         }
         match Project::initialize(&root) {
-            Ok(mut project) => {
-                if self.settings.create_starter_folders {
-                    Self::seed_starter_folders(&mut project);
-                }
-                self.set_project(project, &root);
-            }
+            Ok(project) => self.set_project(project, &root),
             Err(err) => {
                 self.status_message = Some(format!("Couldn't create project: {err}"));
             }
         }
     }
 
-    /// Pre-seed a freshly created project with empty Research and Trash folders,
-    /// roles already assigned (Scrivener's Fiction-template starter experience).
-    /// Only called from `create_project` — adopting an existing folder of notes must
-    /// never have folders injected into it.
-    fn seed_starter_folders(project: &mut Project) {
-        let root = project.root.clone();
+    /// Ensure the project has a Research and a Trash folder, checked and healed
+    /// independently of each other (see `Project::ensure_role_folder`) — run every
+    /// time a project is opened, not just when freshly created, so turning the
+    /// "Create Research and Trash folders" setting on later, or manually deleting
+    /// one of these folders outside the app, gets fixed on the next open rather than
+    /// staying that way indefinitely. Best-effort: a failure here (e.g. a read-only
+    /// filesystem) shouldn't block opening the project.
+    fn ensure_starter_folders(project: &mut Project) {
         for (name, role) in [
             ("Research", crate::project::FolderRole::Research),
             ("Trash", crate::project::FolderRole::Trash),
         ] {
-            if let Ok(path) = project.create_folder(&root, name) {
-                let _ = project.set_folder_role(&path, Some(role));
-            }
+            let _ = project.ensure_role_folder(role, name);
         }
     }
 

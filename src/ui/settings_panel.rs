@@ -28,7 +28,7 @@ pub fn show(
             changed |= ui
                 .checkbox(
                     &mut settings.create_starter_folders,
-                    "Create Research and Trash folders in new projects",
+                    "Ensure Research and Trash folders exist in every project",
                 )
                 .changed();
 
