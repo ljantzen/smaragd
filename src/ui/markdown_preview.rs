@@ -41,7 +41,7 @@ pub fn show(
     markdown_text: &str,
     base_dir: Option<&Path>,
 ) -> Option<WikilinkActivation> {
-    let blocks = markdown::parse(markdown_text);
+    let blocks = markdown::parse(crate::frontmatter::strip(markdown_text));
     egui::ScrollArea::vertical()
         .id_salt("markdown_preview_scroll")
         .show(ui, |ui| {

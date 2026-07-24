@@ -2,6 +2,7 @@ pub mod model;
 mod scan;
 
 use std::collections::HashMap;
+use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,40 @@ use scan::scan_project;
 
 const METADATA_DIR: &str = ".tachylite";
 const METADATA_FILE: &str = "project.json";
+
+/// Failure to load a project from a folder.
+#[derive(Debug)]
+pub enum LoadError {
+    /// `root` doesn't exist or isn't a directory.
+    NotADirectory(PathBuf),
+    /// `root` is a plain folder tachylite has never opened before — no
+    /// `.tachylite/project.json` marker is present. Distinguished from other IO
+    /// failures so callers can offer to adopt/initialize the folder instead of just
+    /// reporting failure.
+    NotInitialized(PathBuf),
+    /// Any other IO failure while creating the marker or scanning the project.
+    Io(io::Error),
+}
+
+impl fmt::Display for LoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LoadError::NotADirectory(path) => write!(f, "{} is not a directory", path.display()),
+            LoadError::NotInitialized(path) => {
+                write!(f, "{} has not been set up as a tachylite project", path.display())
+            }
+            LoadError::Io(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for LoadError {}
+
+impl From<io::Error> for LoadError {
+    fn from(err: io::Error) -> Self {
+        LoadError::Io(err)
+    }
+}
 
 /// Manual ordering and (in future milestones) per-node metadata that the filesystem
 /// itself can't express. Keyed by a `/`-separated path relative to the project root
@@ -31,15 +66,16 @@ pub struct Project {
 }
 
 impl Project {
-    /// Load a project from `root`. Missing or corrupt `.tachylite/project.json` is not
-    /// an error — a plain folder of markdown files that's never been opened by
-    /// tachylite before must always be openable, falling back to alphabetical order.
-    pub fn load_from_folder(root: &Path) -> io::Result<Project> {
+    /// Load a project from `root`. `root` must already be a tachylite project (i.e.
+    /// have a `.tachylite/project.json` marker) — use [`Project::initialize`] to
+    /// create one first. A *corrupt* (as opposed to absent) marker file is still not
+    /// an error, falling back to default metadata.
+    pub fn load_from_folder(root: &Path) -> Result<Project, LoadError> {
         if !root.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("{} is not a directory", root.display()),
-            ));
+            return Err(LoadError::NotADirectory(root.to_path_buf()));
+        }
+        if !metadata_path(root).is_file() {
+            return Err(LoadError::NotInitialized(root.to_path_buf()));
         }
 
         let meta = load_metadata(root).unwrap_or_default();
@@ -51,6 +87,28 @@ impl Project {
             tree,
             meta,
         })
+    }
+
+    /// Ensure `root` exists and is marked as a tachylite project — creating it and/or
+    /// writing a fresh `.tachylite/project.json` with default metadata if one isn't
+    /// already there — then load it. Never overwrites existing metadata, so calling
+    /// this on an already-initialized project is a no-op beyond a normal
+    /// `load_from_folder`. Backs both "New Project" (a path that doesn't exist yet)
+    /// and adopting an existing folder of markdown files as a project.
+    pub fn initialize(root: &Path) -> Result<Project, LoadError> {
+        fs::create_dir_all(root)?;
+        if !metadata_path(root).is_file() {
+            save_metadata(root, &ProjectMeta::default())?;
+        }
+        Self::load_from_folder(root)
+    }
+
+    /// Read and parse the YAML frontmatter of the document at `path`. On-demand
+    /// only — nothing in `BinderNode`/`ProjectMeta` carries per-document metadata, so
+    /// call this only when a specific document's metadata is actually needed.
+    pub fn document_meta(&self, path: &Path) -> io::Result<crate::frontmatter::DocumentMeta> {
+        let contents = fs::read_to_string(path)?;
+        Ok(crate::frontmatter::parse(&contents))
     }
 
     pub fn rescan(&mut self) {
@@ -323,11 +381,32 @@ mod tests {
     }
 
     #[test]
-    fn load_from_folder_falls_back_gracefully_without_metadata() {
+    fn load_from_folder_errors_when_project_has_no_marker() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("notes.md"), "hello").unwrap();
 
-        let project = Project::load_from_folder(dir.path()).unwrap();
+        let result = Project::load_from_folder(dir.path());
+
+        assert!(matches!(result, Err(LoadError::NotInitialized(_))));
+    }
+
+    #[test]
+    fn load_from_folder_errors_on_nonexistent_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist");
+
+        assert!(matches!(
+            Project::load_from_folder(&missing),
+            Err(LoadError::NotADirectory(_))
+        ));
+    }
+
+    #[test]
+    fn initialize_lets_a_pre_existing_folder_of_markdown_files_load_with_default_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("notes.md"), "hello").unwrap();
+
+        let project = Project::initialize(dir.path()).unwrap();
 
         assert_eq!(project.meta, ProjectMeta::default());
         assert!(
@@ -339,17 +418,71 @@ mod tests {
     }
 
     #[test]
-    fn load_from_folder_errors_on_nonexistent_path() {
+    fn initialize_creates_the_folder_and_marker_for_a_brand_new_path() {
         let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("does-not-exist");
+        let root = dir.path().join("New Project");
 
-        assert!(Project::load_from_folder(&missing).is_err());
+        let project = Project::initialize(&root).unwrap();
+
+        assert!(root.is_dir());
+        assert!(root.join(METADATA_DIR).join(METADATA_FILE).is_file());
+        assert!(project.tree.root.children().is_empty());
+    }
+
+    #[test]
+    fn initialize_does_not_clobber_existing_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut node_order = HashMap::new();
+        node_order.insert("".to_string(), vec!["custom.md".to_string()]);
+        let meta = ProjectMeta {
+            version: 7,
+            node_order,
+        };
+        save_metadata(dir.path(), &meta).unwrap();
+
+        let project = Project::initialize(dir.path()).unwrap();
+
+        assert_eq!(project.meta, meta);
+    }
+
+    #[test]
+    fn document_meta_reads_frontmatter_from_a_project_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let path = project.create_document(dir.path(), "Scene 1").unwrap();
+        fs::write(&path, "---\ntype: Scene\npov: Alice\n---\nBody.\n").unwrap();
+
+        let meta = project.document_meta(&path).unwrap();
+
+        assert_eq!(meta.section_type.as_deref(), Some("Scene"));
+        assert_eq!(meta.pov.as_deref(), Some("Alice"));
+    }
+
+    #[test]
+    fn document_meta_returns_default_for_a_document_with_no_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let path = project.create_document(dir.path(), "Plain").unwrap();
+
+        let meta = project.document_meta(&path).unwrap();
+
+        assert_eq!(meta, crate::frontmatter::DocumentMeta::default());
+    }
+
+    #[test]
+    fn document_meta_errors_if_the_path_does_not_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+
+        let result = project.document_meta(&dir.path().join("missing.md"));
+
+        assert!(result.is_err());
     }
 
     #[test]
     fn create_document_writes_file_appends_order_and_appears_in_tree() {
         let dir = tempfile::tempdir().unwrap();
-        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
 
         let path = project.create_document(dir.path(), "New Scene").unwrap();
 
@@ -372,7 +505,7 @@ mod tests {
     #[test]
     fn create_folder_creates_directory_and_appears_in_tree() {
         let dir = tempfile::tempdir().unwrap();
-        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
 
         let path = project.create_folder(dir.path(), "Chapter 3").unwrap();
 
@@ -413,7 +546,7 @@ mod tests {
     #[test]
     fn rename_document_renames_file_and_updates_order() {
         let dir = tempfile::tempdir().unwrap();
-        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
         let path = project.create_document(dir.path(), "Old Name").unwrap();
 
         let new_path = project.rename(&path, "New Name").unwrap();
@@ -431,7 +564,7 @@ mod tests {
     #[test]
     fn rename_document_updates_wikilinks_pointing_at_it_in_other_documents() {
         let dir = tempfile::tempdir().unwrap();
-        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
         let target = project.create_document(dir.path(), "Old Name").unwrap();
         let referrer = project.create_document(dir.path(), "Referrer").unwrap();
         fs::write(
@@ -449,7 +582,7 @@ mod tests {
     #[test]
     fn rename_document_leaves_unrelated_wikilinks_untouched() {
         let dir = tempfile::tempdir().unwrap();
-        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
         let target = project.create_document(dir.path(), "Old Name").unwrap();
         let referrer = project.create_document(dir.path(), "Referrer").unwrap();
         fs::write(&referrer, "See [[Something Else]].").unwrap();
@@ -465,7 +598,7 @@ mod tests {
     #[test]
     fn rename_folder_updates_nested_order_keys() {
         let dir = tempfile::tempdir().unwrap();
-        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
         let folder = project.create_folder(dir.path(), "Old Chapter").unwrap();
         project.create_document(&folder, "Scene 1").unwrap();
 
@@ -483,7 +616,7 @@ mod tests {
     #[test]
     fn rename_refuses_to_overwrite_an_existing_name() {
         let dir = tempfile::tempdir().unwrap();
-        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
         let path = project.create_document(dir.path(), "A").unwrap();
         project.create_document(dir.path(), "B").unwrap();
 
@@ -496,7 +629,7 @@ mod tests {
     #[test]
     fn create_document_refuses_to_overwrite_an_existing_file() {
         let dir = tempfile::tempdir().unwrap();
-        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
         let path = project.create_document(dir.path(), "Existing").unwrap();
         fs::write(&path, "original content").unwrap();
 
@@ -509,7 +642,7 @@ mod tests {
     #[test]
     fn create_folder_refuses_to_overwrite_an_existing_folder() {
         let dir = tempfile::tempdir().unwrap();
-        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
         project.create_folder(dir.path(), "Existing").unwrap();
 
         let result = project.create_folder(dir.path(), "Existing");
@@ -520,7 +653,7 @@ mod tests {
     #[test]
     fn delete_document_removes_file_and_order_entry() {
         let dir = tempfile::tempdir().unwrap();
-        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
         let path = project.create_document(dir.path(), "Doomed").unwrap();
 
         project.delete(&path).unwrap();
@@ -533,7 +666,7 @@ mod tests {
     #[test]
     fn delete_folder_removes_directory_and_nested_order_entries() {
         let dir = tempfile::tempdir().unwrap();
-        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
         let folder = project.create_folder(dir.path(), "Chapter 1").unwrap();
         project.create_document(&folder, "Scene 1").unwrap();
 
