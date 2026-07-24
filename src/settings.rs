@@ -16,6 +16,11 @@ pub struct Settings {
     /// The most recently opened project folder, tracked regardless of
     /// `reopen_last_project` so toggling the setting on later works immediately.
     pub last_project_path: Option<PathBuf>,
+    /// When creating a new project (not when adopting an existing folder of notes),
+    /// pre-seed it with empty Research and Trash folders, roles already assigned —
+    /// Scrivener's Fiction-template starter experience. Off by default: a fresh
+    /// project starts completely empty unless the user opts in.
+    pub create_starter_folders: bool,
 }
 
 /// The full path to the settings file, e.g. `~/.config/tachylite/tachylite.toml` on
@@ -64,6 +69,7 @@ mod tests {
         let settings = Settings {
             reopen_last_project: true,
             last_project_path: Some(PathBuf::from("/home/author/my-novel")),
+            create_starter_folders: true,
         };
 
         settings.save_to_path(&path).unwrap();

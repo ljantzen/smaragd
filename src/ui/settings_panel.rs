@@ -10,10 +10,16 @@ pub fn show(ctx: &egui::Context, open: &mut bool, settings: &mut Settings) -> bo
         .resizable(false)
         .collapsible(false)
         .show(ctx, |ui| {
-            changed = ui
+            changed |= ui
                 .checkbox(
                     &mut settings.reopen_last_project,
                     "Reopen project on launch",
+                )
+                .changed();
+            changed |= ui
+                .checkbox(
+                    &mut settings.create_starter_folders,
+                    "Create Research and Trash folders in new projects",
                 )
                 .changed();
         });

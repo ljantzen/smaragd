@@ -102,7 +102,10 @@ mod tests {
 
     #[test]
     fn parse_returns_default_when_no_frontmatter_present() {
-        assert_eq!(parse("# Just a heading\n\nSome text."), DocumentMeta::default());
+        assert_eq!(
+            parse("# Just a heading\n\nSome text."),
+            DocumentMeta::default()
+        );
     }
 
     #[test]

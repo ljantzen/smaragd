@@ -1,25 +1,50 @@
 use std::path::{Path, PathBuf};
 
-use crate::project::model::{BinderNode, BinderNodeKind, BinderTree};
+use crate::project::model::{BinderNode, BinderNodeKind};
+use crate::project::{FolderRole, Project};
 
 /// Outcomes of user interaction with the binder tree, handled by the caller (`app.rs`)
-/// rather than mutated here — keeps this module a pure rendering layer over `&BinderTree`.
+/// rather than mutated here — keeps this module a pure rendering layer over `&Project`.
 pub enum BinderEvent {
     Selected(PathBuf),
-    NewFile { parent: PathBuf },
-    NewFolder { parent: PathBuf },
-    Rename { path: PathBuf },
-    Delete { path: PathBuf },
+    NewFile {
+        parent: PathBuf,
+    },
+    NewFolder {
+        parent: PathBuf,
+    },
+    Rename {
+        path: PathBuf,
+    },
+    Delete {
+        path: PathBuf,
+    },
+    SetFolderRole {
+        path: PathBuf,
+        role: Option<FolderRole>,
+    },
+    EmptyTrash {
+        path: PathBuf,
+    },
 }
 
-pub fn show(ui: &mut egui::Ui, tree: &BinderTree, selected: Option<&Path>) -> Option<BinderEvent> {
+pub fn show(ui: &mut egui::Ui, project: &Project, selected: Option<&Path>) -> Option<BinderEvent> {
     let mut event = None;
-    show_node(ui, &tree.root, selected, &mut event, true);
+    show_node(ui, project, &project.tree.root, selected, &mut event, true);
     event
+}
+
+fn role_suffix(role: Option<FolderRole>) -> &'static str {
+    match role {
+        Some(FolderRole::Research) => " (Research)",
+        Some(FolderRole::Trash) => " (Trash)",
+        None => "",
+    }
 }
 
 fn show_node(
     ui: &mut egui::Ui,
+    project: &Project,
     node: &BinderNode,
     selected: Option<&Path>,
     event: &mut Option<BinderEvent>,
@@ -27,12 +52,14 @@ fn show_node(
 ) {
     match &node.kind {
         BinderNodeKind::Folder { children } => {
-            let response = egui::CollapsingHeader::new(&node.name)
+            let role = project.folder_role(&node.path);
+            let label = format!("{}{}", node.name, role_suffix(role));
+            let response = egui::CollapsingHeader::new(label)
                 .id_salt(node.id)
                 .default_open(true)
                 .show(ui, |ui| {
                     for child in children {
-                        show_node(ui, child, selected, event, false);
+                        show_node(ui, project, child, selected, event, false);
                     }
                 });
 
@@ -47,8 +74,9 @@ fn show_node(
                         parent: node.path.clone(),
                     });
                 }
-                // Renaming or deleting the project's root folder isn't something the
-                // binder should offer — that's the project folder itself, currently open.
+                // Renaming, deleting, or assigning a role to the project's root
+                // folder isn't something the binder should offer — that's the
+                // project folder itself, currently open.
                 if !is_root {
                     ui.separator();
                     if ui.button("Rename").clicked() {
@@ -58,6 +86,38 @@ fn show_node(
                     }
                     if ui.button("Delete").clicked() {
                         *event = Some(BinderEvent::Delete {
+                            path: node.path.clone(),
+                        });
+                    }
+                    ui.separator();
+                    ui.menu_button("Folder Role", |ui| {
+                        if ui
+                            .radio(role == Some(FolderRole::Research), "Research")
+                            .clicked()
+                        {
+                            *event = Some(BinderEvent::SetFolderRole {
+                                path: node.path.clone(),
+                                role: Some(FolderRole::Research),
+                            });
+                            ui.close();
+                        }
+                        if ui.radio(role == Some(FolderRole::Trash), "Trash").clicked() {
+                            *event = Some(BinderEvent::SetFolderRole {
+                                path: node.path.clone(),
+                                role: Some(FolderRole::Trash),
+                            });
+                            ui.close();
+                        }
+                        if ui.radio(role.is_none(), "None").clicked() {
+                            *event = Some(BinderEvent::SetFolderRole {
+                                path: node.path.clone(),
+                                role: None,
+                            });
+                            ui.close();
+                        }
+                    });
+                    if role == Some(FolderRole::Trash) && ui.button("Empty Trash").clicked() {
+                        *event = Some(BinderEvent::EmptyTrash {
                             path: node.path.clone(),
                         });
                     }

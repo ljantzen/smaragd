@@ -34,7 +34,11 @@ impl fmt::Display for LoadError {
         match self {
             LoadError::NotADirectory(path) => write!(f, "{} is not a directory", path.display()),
             LoadError::NotInitialized(path) => {
-                write!(f, "{} has not been set up as a tachylite project", path.display())
+                write!(
+                    f,
+                    "{} has not been set up as a tachylite project",
+                    path.display()
+                )
             }
             LoadError::Io(err) => write!(f, "{err}"),
         }
@@ -49,14 +53,39 @@ impl From<io::Error> for LoadError {
     }
 }
 
-/// Manual ordering and (in future milestones) per-node metadata that the filesystem
-/// itself can't express. Keyed by a `/`-separated path relative to the project root
-/// ("" for the root folder itself) rather than `PathBuf`, so the file stays portable
-/// across platforms and serializes to plain JSON without ambiguity.
+/// A Scrivener-Research/Trash-style role assigned to a folder, decoupled from its
+/// position in the tree. At most one folder project-wide holds a given role at a
+/// time. `Research` is currently just a marker — a forward-looking extension point
+/// for features (Compile, word-count rollups) that don't exist yet. `Trash` has a
+/// real behavior change: see [`Project::delete`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FolderRole {
+    Research,
+    Trash,
+}
+
+/// Manual ordering and per-node metadata that the filesystem itself can't express.
+/// Keyed by a `/`-separated path relative to the project root ("" for the root folder
+/// itself) rather than `PathBuf`, so the file stays portable across platforms and
+/// serializes to plain JSON without ambiguity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ProjectMeta {
     pub version: u32,
     pub node_order: HashMap<String, Vec<String>>,
+    /// `#[serde(default)]` is required, not cosmetic: project.json files written
+    /// before this field existed have no `folder_roles`/`trashed_origins` keys at
+    /// all — without a default, deserializing them would fail outright and silently
+    /// discard their real, already-persisted `node_order` data.
+    #[serde(default)]
+    pub folder_roles: HashMap<String, FolderRole>,
+    /// A trashed item's *current* relative key (its path inside the Trash folder,
+    /// post-move) → its *original* relative key (where it lived pre-delete).
+    /// Disambiguates same-named items trashed from different folders and is what a
+    /// future "restore from trash" action needs to put something back where it came
+    /// from — the on-disk name alone (deduplicated with a " (2)" suffix on collision)
+    /// doesn't carry that.
+    #[serde(default)]
+    pub trashed_origins: HashMap<String, String>,
 }
 
 pub struct Project {
@@ -109,6 +138,58 @@ impl Project {
     pub fn document_meta(&self, path: &Path) -> io::Result<crate::frontmatter::DocumentMeta> {
         let contents = fs::read_to_string(path)?;
         Ok(crate::frontmatter::parse(&contents))
+    }
+
+    /// The role assigned to the folder at `path`, if any.
+    pub fn folder_role(&self, path: &Path) -> Option<FolderRole> {
+        self.meta
+            .folder_roles
+            .get(&relative_key(&self.root, path))
+            .copied()
+    }
+
+    /// Assign `role` to the folder at `path` (`None` clears it). At most one folder
+    /// project-wide holds a given role — assigning it here clears it from wherever it
+    /// was previously assigned, mirroring Scrivener's singular Draft/Trash. Errors if
+    /// `path` isn't a directory.
+    pub fn set_folder_role(&mut self, path: &Path, role: Option<FolderRole>) -> io::Result<()> {
+        if !path.is_dir() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a folder"));
+        }
+        let key = relative_key(&self.root, path);
+        match role {
+            Some(role) => {
+                self.meta.folder_roles.retain(|_, r| *r != role);
+                self.meta.folder_roles.insert(key, role);
+            }
+            None => {
+                self.meta.folder_roles.remove(&key);
+            }
+        }
+        self.save_metadata()
+    }
+
+    /// The absolute path of the project's designated Trash folder, if any.
+    fn trash_path(&self) -> Option<PathBuf> {
+        self.meta
+            .folder_roles
+            .iter()
+            .find(|(_, role)| **role == FolderRole::Trash)
+            .map(|(key, _)| {
+                if key.is_empty() {
+                    self.root.clone()
+                } else {
+                    self.root.join(key)
+                }
+            })
+    }
+
+    /// Whether deleting `path` right now would route it into Trash rather than
+    /// permanently removing it — exposed so callers can word a delete confirmation
+    /// accurately ("Move to Trash?" vs "This cannot be undone.").
+    pub fn deletes_to_trash(&self, path: &Path) -> bool {
+        self.trash_path()
+            .is_some_and(|trash| path != trash && !path.starts_with(&trash))
     }
 
     pub fn rescan(&mut self) {
@@ -222,9 +303,85 @@ impl Project {
         Ok(())
     }
 
-    /// Delete the file or folder at `path` (a folder is removed recursively), drop it
-    /// (and, for a folder, its descendants) from manual ordering, and rescan.
+    /// Delete `path`. If a Trash folder is designated and `path` isn't already inside
+    /// it (and isn't the Trash folder itself), moves it into Trash instead of
+    /// removing it from disk — see [`Project::move_to_trash`]. Otherwise permanently
+    /// removes it, as if there were no Trash configured.
     pub fn delete(&mut self, path: &Path) -> io::Result<()> {
+        if self.deletes_to_trash(path) {
+            let trash = self.trash_path().expect("checked by deletes_to_trash");
+            return self.move_to_trash(path, &trash);
+        }
+        self.permanently_delete(path)
+    }
+
+    /// Move `path` into the designated `trash` folder, renaming on a name collision
+    /// (" (2)", " (3)", ...) since two different folders can easily contain
+    /// same-named files. Records the item's original relative path in
+    /// `meta.trashed_origins`, keyed by its new (post-move) relative path — this is
+    /// what disambiguates same-named trashed items and is what a future "restore"
+    /// action would need, since the on-disk name alone doesn't carry it.
+    fn move_to_trash(&mut self, path: &Path, trash: &Path) -> io::Result<()> {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
+        let dest_name = unique_child_name(trash, name);
+        let dest = trash.join(&dest_name);
+        let is_dir = path.is_dir();
+
+        fs::rename(path, &dest)?;
+
+        if let Some(parent) = path.parent() {
+            let parent_key = relative_key(&self.root, parent);
+            if let Some(order) = self.meta.node_order.get_mut(&parent_key) {
+                order.retain(|entry| entry != name);
+            }
+        }
+        if is_dir {
+            self.rewrite_order_key_prefix(
+                &relative_key(&self.root, path),
+                &relative_key(&self.root, &dest),
+            );
+        }
+        let trash_key = relative_key(&self.root, trash);
+        self.meta
+            .node_order
+            .entry(trash_key)
+            .or_default()
+            .push(dest_name);
+        self.meta.trashed_origins.insert(
+            relative_key(&self.root, &dest),
+            relative_key(&self.root, path),
+        );
+
+        self.save_metadata()?;
+        self.rescan();
+        Ok(())
+    }
+
+    /// Permanently remove everything currently inside the designated Trash folder. A
+    /// no-op if no Trash folder is designated or it's already empty.
+    pub fn empty_trash(&mut self) -> io::Result<()> {
+        let Some(trash) = self.trash_path() else {
+            return Ok(());
+        };
+        let Some(node) = self.tree.find_by_path(&trash) else {
+            return Ok(());
+        };
+        let children: Vec<PathBuf> = node.children().iter().map(|c| c.path.clone()).collect();
+        for child in children {
+            self.permanently_delete(&child)?;
+        }
+        Ok(())
+    }
+
+    /// Delete the file or folder at `path` (a folder is removed recursively), drop it
+    /// (and, for a folder, its descendants) from manual ordering and any assigned
+    /// folder role / trashed-origin record, and rescan. Bypasses Trash entirely —
+    /// used both when no Trash is configured and to actually clear something out of
+    /// Trash (via [`Project::delete`]'s routing, or [`Project::empty_trash`]).
+    fn permanently_delete(&mut self, path: &Path) -> io::Result<()> {
         let is_dir = path.is_dir();
         if is_dir {
             fs::remove_dir_all(path)?;
@@ -240,11 +397,16 @@ impl Project {
                 order.retain(|entry| entry != name);
             }
         }
+        let key = relative_key(&self.root, path);
         if is_dir {
-            let prefix = relative_key(&self.root, path);
-            self.meta
-                .node_order
-                .retain(|key, _| *key != prefix && !key.starts_with(&format!("{prefix}/")));
+            let prefix = key;
+            let under_prefix = |k: &String| *k == prefix || k.starts_with(&format!("{prefix}/"));
+            self.meta.node_order.retain(|k, _| !under_prefix(k));
+            self.meta.folder_roles.retain(|k, _| !under_prefix(k));
+            self.meta.trashed_origins.retain(|k, _| !under_prefix(k));
+        } else {
+            self.meta.folder_roles.remove(&key);
+            self.meta.trashed_origins.remove(&key);
         }
 
         self.save_metadata()?;
@@ -290,6 +452,26 @@ fn ensure_md_extension(filename: &str) -> String {
     } else {
         format!("{filename}.md")
     }
+}
+
+/// Resolve a name collision under `parent` by appending " (2)", " (3)", ... before the
+/// extension (or at the end, for an extension-less name/a folder) until it no longer
+/// exists on disk. Returns `desired` unchanged if it's already free.
+fn unique_child_name(parent: &Path, desired: &str) -> String {
+    if !parent.join(desired).exists() {
+        return desired.to_string();
+    }
+    let (stem, ext) = match desired.rsplit_once('.') {
+        Some((stem, ext)) => (stem, format!(".{ext}")),
+        None => (desired, String::new()),
+    };
+    for n in 2.. {
+        let candidate = format!("{stem} ({n}){ext}");
+        if !parent.join(&candidate).exists() {
+            return candidate;
+        }
+    }
+    unreachable!()
 }
 
 /// Convert an absolute path within the project into the `/`-separated relative key
@@ -356,6 +538,7 @@ mod tests {
         let meta = ProjectMeta {
             version: 1,
             node_order,
+            ..Default::default()
         };
 
         save_metadata(dir.path(), &meta).unwrap();
@@ -437,6 +620,7 @@ mod tests {
         let meta = ProjectMeta {
             version: 7,
             node_order,
+            ..Default::default()
         };
         save_metadata(dir.path(), &meta).unwrap();
 
@@ -477,6 +661,255 @@ mod tests {
         let result = project.document_meta(&dir.path().join("missing.md"));
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_metadata_defaults_folder_roles_and_trashed_origins_when_absent_from_older_project_json()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let meta_dir = dir.path().join(METADATA_DIR);
+        fs::create_dir_all(&meta_dir).unwrap();
+        fs::write(
+            meta_dir.join(METADATA_FILE),
+            r#"{"version":1,"node_order":{"":["a.md"]}}"#,
+        )
+        .unwrap();
+
+        let meta = load_metadata(dir.path()).unwrap();
+
+        assert_eq!(meta.node_order.get(""), Some(&vec!["a.md".to_string()]));
+        assert!(meta.folder_roles.is_empty());
+        assert!(meta.trashed_origins.is_empty());
+    }
+
+    #[test]
+    fn set_folder_role_assigns_and_enforces_single_holder_per_role() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let a = project.create_folder(dir.path(), "A").unwrap();
+        let b = project.create_folder(dir.path(), "B").unwrap();
+
+        project
+            .set_folder_role(&a, Some(FolderRole::Trash))
+            .unwrap();
+        assert_eq!(project.folder_role(&a), Some(FolderRole::Trash));
+
+        project
+            .set_folder_role(&b, Some(FolderRole::Trash))
+            .unwrap();
+        assert_eq!(project.folder_role(&b), Some(FolderRole::Trash));
+        assert_eq!(project.folder_role(&a), None);
+    }
+
+    #[test]
+    fn set_folder_role_clears_with_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let a = project.create_folder(dir.path(), "A").unwrap();
+        project
+            .set_folder_role(&a, Some(FolderRole::Research))
+            .unwrap();
+
+        project.set_folder_role(&a, None).unwrap();
+
+        assert_eq!(project.folder_role(&a), None);
+    }
+
+    #[test]
+    fn set_folder_role_errors_for_a_document_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc").unwrap();
+
+        let result = project.set_folder_role(&doc, Some(FolderRole::Research));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn folder_role_returns_none_when_unassigned() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+
+        assert_eq!(project.folder_role(dir.path()), None);
+    }
+
+    #[test]
+    fn deletes_to_trash_reports_correctly_for_configured_vs_unconfigured_trash() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc").unwrap();
+
+        assert!(!project.deletes_to_trash(&doc));
+
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+
+        assert!(project.deletes_to_trash(&doc));
+        assert!(!project.deletes_to_trash(&trash));
+    }
+
+    #[test]
+    fn delete_moves_into_designated_trash_folder_instead_of_removing_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let doc = project.create_document(dir.path(), "Doomed").unwrap();
+
+        project.delete(&doc).unwrap();
+
+        assert!(!doc.exists());
+        let expected = trash.join("Doomed.md");
+        assert!(expected.exists());
+        assert!(project.tree.find_by_path(&expected).is_some());
+    }
+
+    #[test]
+    fn delete_of_the_trash_folder_itself_permanently_removes_it_and_clears_the_role() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+
+        project.delete(&trash).unwrap();
+
+        assert!(!trash.exists());
+        assert_eq!(project.folder_role(&trash), None);
+    }
+
+    #[test]
+    fn delete_of_an_item_already_inside_trash_permanently_removes_it_instead_of_re_trashing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let doc = project.create_document(&trash, "Already Trashed").unwrap();
+
+        project.delete(&doc).unwrap();
+
+        assert!(!doc.exists());
+        assert!(project.tree.find_by_path(&doc).is_none());
+    }
+
+    #[test]
+    fn move_to_trash_uniquifies_a_colliding_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        fs::write(trash.join("Doomed.md"), "").unwrap();
+        let doc = project.create_document(dir.path(), "Doomed").unwrap();
+
+        project.delete(&doc).unwrap();
+
+        assert!(trash.join("Doomed (2).md").exists());
+    }
+
+    #[test]
+    fn move_to_trash_preserves_nested_order_keys_for_a_trashed_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let chapter = project.create_folder(dir.path(), "Old Chapter").unwrap();
+        project.create_document(&chapter, "Scene 1").unwrap();
+
+        project.delete(&chapter).unwrap();
+
+        let moved = trash.join("Old Chapter");
+        assert!(moved.join("Scene 1.md").exists());
+        assert_eq!(
+            project.meta.node_order.get("Trash/Old Chapter"),
+            Some(&vec!["Scene 1.md".to_string()])
+        );
+        assert!(!project.meta.node_order.contains_key("Old Chapter"));
+    }
+
+    #[test]
+    fn move_to_trash_records_the_original_relative_path_in_trashed_origins() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let doc = project.create_document(&chapter, "Notes").unwrap();
+
+        project.delete(&doc).unwrap();
+
+        assert_eq!(
+            project.meta.trashed_origins.get("Trash/Notes.md"),
+            Some(&"Chapter 1/Notes.md".to_string())
+        );
+    }
+
+    #[test]
+    fn move_to_trash_disambiguates_two_same_named_items_from_different_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let chapter1 = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let chapter2 = project.create_folder(dir.path(), "Chapter 2").unwrap();
+        let doc1 = project.create_document(&chapter1, "notes").unwrap();
+        let doc2 = project.create_document(&chapter2, "notes").unwrap();
+
+        project.delete(&doc1).unwrap();
+        project.delete(&doc2).unwrap();
+
+        assert!(trash.join("notes.md").exists());
+        assert!(trash.join("notes (2).md").exists());
+        assert_eq!(
+            project.meta.trashed_origins.get("Trash/notes.md"),
+            Some(&"Chapter 1/notes.md".to_string())
+        );
+        assert_eq!(
+            project.meta.trashed_origins.get("Trash/notes (2).md"),
+            Some(&"Chapter 2/notes.md".to_string())
+        );
+    }
+
+    #[test]
+    fn empty_trash_permanently_removes_all_trashed_items_and_their_origin_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let doc = project.create_document(dir.path(), "Doomed").unwrap();
+        project.delete(&doc).unwrap();
+        assert!(!project.meta.trashed_origins.is_empty());
+
+        project.empty_trash().unwrap();
+
+        assert!(!trash.join("Doomed.md").exists());
+        assert!(project.meta.trashed_origins.is_empty());
+        assert_eq!(project.folder_role(&trash), Some(FolderRole::Trash));
+    }
+
+    #[test]
+    fn empty_trash_is_a_no_op_when_no_trash_folder_is_designated() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        assert!(project.empty_trash().is_ok());
     }
 
     #[test]
@@ -527,6 +960,7 @@ mod tests {
             &ProjectMeta {
                 version: 1,
                 node_order,
+                ..Default::default()
             },
         )
         .unwrap();

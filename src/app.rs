@@ -160,9 +160,30 @@ impl TachyliteApp {
             return;
         }
         match Project::initialize(&root) {
-            Ok(project) => self.set_project(project, &root),
+            Ok(mut project) => {
+                if self.settings.create_starter_folders {
+                    Self::seed_starter_folders(&mut project);
+                }
+                self.set_project(project, &root);
+            }
             Err(err) => {
                 self.status_message = Some(format!("Couldn't create project: {err}"));
+            }
+        }
+    }
+
+    /// Pre-seed a freshly created project with empty Research and Trash folders,
+    /// roles already assigned (Scrivener's Fiction-template starter experience).
+    /// Only called from `create_project` — adopting an existing folder of notes must
+    /// never have folders injected into it.
+    fn seed_starter_folders(project: &mut Project) {
+        let root = project.root.clone();
+        for (name, role) in [
+            ("Research", crate::project::FolderRole::Research),
+            ("Trash", crate::project::FolderRole::Trash),
+        ] {
+            if let Ok(path) = project.create_folder(&root, name) {
+                let _ = project.set_folder_role(&path, Some(role));
             }
         }
     }
@@ -260,6 +281,47 @@ impl TachyliteApp {
                 });
             }
             BinderEvent::Delete { path } => self.delete_node(&path),
+            BinderEvent::SetFolderRole { path, role } => self.set_folder_role(&path, role),
+            BinderEvent::EmptyTrash { path } => self.empty_trash_folder(&path),
+        }
+    }
+
+    fn set_folder_role(&mut self, path: &Path, role: Option<crate::project::FolderRole>) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        if let Err(err) = project.set_folder_role(path, role) {
+            self.status_message = Some(format!("Couldn't set folder role: {err}"));
+        }
+    }
+
+    /// Ask for confirmation, then permanently delete everything inside the
+    /// designated Trash folder at `path`.
+    fn empty_trash_folder(&mut self, path: &Path) {
+        let confirmed = rfd::MessageDialog::new()
+            .set_title("Empty Trash")
+            .set_description("Permanently delete everything in Trash? This cannot be undone.")
+            .set_level(rfd::MessageLevel::Warning)
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show();
+        if confirmed != rfd::MessageDialogResult::Yes {
+            return;
+        }
+
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        if let Err(err) = project.empty_trash() {
+            self.status_message = Some(format!("Couldn't empty Trash: {err}"));
+            return;
+        }
+        if self
+            .selected_path
+            .as_deref()
+            .is_some_and(|selected| selected.starts_with(path))
+        {
+            self.editor = EditorState::default();
+            self.selected_path = None;
         }
     }
 
@@ -307,17 +369,31 @@ impl TachyliteApp {
 
     /// Ask for confirmation via a native dialog, then delete the file or folder at
     /// `path`, closing it in the editor first if it (or its containing folder) was
-    /// open.
+    /// open. Worded accurately depending on whether this will move `path` into a
+    /// designated Trash folder or remove it from disk outright.
     fn delete_node(&mut self, path: &Path) {
-        let confirmed = rfd::MessageDialog::new()
-            .set_title("Delete")
-            .set_description(format!(
-                "Delete \"{}\"? This cannot be undone.",
-                path.display()
-            ))
-            .set_level(rfd::MessageLevel::Warning)
-            .set_buttons(rfd::MessageButtons::YesNo)
-            .show();
+        let to_trash = self
+            .project
+            .as_ref()
+            .is_some_and(|project| project.deletes_to_trash(path));
+        let confirmed = if to_trash {
+            rfd::MessageDialog::new()
+                .set_title("Move to Trash")
+                .set_description(format!("Move \"{}\" to Trash?", path.display()))
+                .set_level(rfd::MessageLevel::Info)
+                .set_buttons(rfd::MessageButtons::YesNo)
+                .show()
+        } else {
+            rfd::MessageDialog::new()
+                .set_title("Delete")
+                .set_description(format!(
+                    "Delete \"{}\"? This cannot be undone.",
+                    path.display()
+                ))
+                .set_level(rfd::MessageLevel::Warning)
+                .set_buttons(rfd::MessageButtons::YesNo)
+                .show()
+        };
         if confirmed != rfd::MessageDialogResult::Yes {
             return;
         }
@@ -430,7 +506,7 @@ impl eframe::App for TachyliteApp {
             .show(ui, |ui| match &self.project {
                 Some(project) => {
                     if let Some(event) =
-                        ui::binder_panel::show(ui, &project.tree, self.selected_path.as_deref())
+                        ui::binder_panel::show(ui, project, self.selected_path.as_deref())
                     {
                         self.handle_binder_event(event);
                     }
