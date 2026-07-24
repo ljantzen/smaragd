@@ -56,6 +56,7 @@ impl TachyliteApp {
         let settings = crate::settings::config_file_path()
             .map(|path| Settings::load_from_path(&path))
             .unwrap_or_default();
+        cc.egui_ctx.set_theme(settings.theme_preference);
 
         let mut app = Self {
             project: None,

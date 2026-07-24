@@ -33,6 +33,15 @@ pub fn show(
                 .changed();
 
             ui.separator();
+            ui.heading("Theme");
+            let previous_theme = settings.theme_preference;
+            settings.theme_preference.radio_buttons(ui);
+            if settings.theme_preference != previous_theme {
+                ctx.set_theme(settings.theme_preference);
+                changed = true;
+            }
+
+            ui.separator();
             ui.heading("Keyboard Shortcuts");
             egui::Grid::new("shortcuts_grid")
                 .num_columns(3)

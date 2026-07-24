@@ -26,6 +26,10 @@ pub struct Settings {
     pub create_starter_folders: bool,
     /// Keyboard shortcut bindings, remappable from the Settings window.
     pub shortcuts: ShortcutMap,
+    /// Dark/light/system theme preference, changeable from the Settings window.
+    /// Defaults to `System` (egui's own default), matching this struct's
+    /// otherwise-untouched-until-configured philosophy.
+    pub theme_preference: egui::ThemePreference,
 }
 
 /// The full path to the settings file, e.g. `~/.config/tachylite/tachylite.toml` on
@@ -68,6 +72,25 @@ mod tests {
     }
 
     #[test]
+    fn defaults_to_following_the_system_theme() {
+        assert_eq!(
+            Settings::default().theme_preference,
+            egui::ThemePreference::System
+        );
+    }
+
+    #[test]
+    fn settings_file_without_a_theme_preference_loads_the_system_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tachylite.toml");
+        std::fs::write(&path, "reopen_last_project = true\n").unwrap();
+
+        let loaded = Settings::load_from_path(&path);
+
+        assert_eq!(loaded.theme_preference, egui::ThemePreference::System);
+    }
+
+    #[test]
     fn settings_round_trip_through_disk() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("tachylite.toml");
@@ -84,6 +107,7 @@ mod tests {
             last_project_path: Some(PathBuf::from("/home/author/my-novel")),
             create_starter_folders: true,
             shortcuts,
+            theme_preference: egui::ThemePreference::Dark,
         };
 
         settings.save_to_path(&path).unwrap();
