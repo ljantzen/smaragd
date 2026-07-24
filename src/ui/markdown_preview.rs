@@ -1,6 +1,7 @@
 use egui::{Color32, FontId, RichText, TextFormat, text::LayoutJob};
 
 use crate::markdown::{self, Block, BlockKind, Span};
+use crate::ui::WikilinkActivation;
 
 // Approximates the "dark"/dracula-family palette glow (charmbracelet/glow) renders
 // markdown with in a terminal: pink/cyan/green/purple heading hierarchy, a muted
@@ -28,10 +29,10 @@ const INDENT_PER_DEPTH: f32 = 20.0;
 /// Render `markdown` styled like the `glow` CLI's terminal preview: colored heading
 /// hierarchy, a barred blockquote, and a boxed code block, laid out with egui widgets.
 ///
-/// Returns `Some(target)` if the user clicked a `[[wikilink]]` during this frame, where
-/// `target` is the note name to resolve — the caller is responsible for finding and
-/// opening the matching document.
-pub fn show(ui: &mut egui::Ui, markdown_text: &str) -> Option<String> {
+/// Returns `Some` if the user clicked a `[[wikilink]]` during this frame — the caller
+/// is responsible for finding (and, if `force_create` is set because Ctrl/Cmd was
+/// held, creating) the matching document.
+pub fn show(ui: &mut egui::Ui, markdown_text: &str) -> Option<WikilinkActivation> {
     let blocks = markdown::parse(markdown_text);
     egui::ScrollArea::vertical()
         .id_salt("markdown_preview_scroll")
@@ -52,7 +53,7 @@ pub fn show(ui: &mut egui::Ui, markdown_text: &str) -> Option<String> {
         .inner
 }
 
-fn render_block(ui: &mut egui::Ui, block: &Block) -> Option<String> {
+fn render_block(ui: &mut egui::Ui, block: &Block) -> Option<WikilinkActivation> {
     match &block.kind {
         BlockKind::Heading(level) => render_heading(ui, *level, &block.spans),
         BlockKind::Paragraph => {
@@ -76,7 +77,7 @@ fn render_block(ui: &mut egui::Ui, block: &Block) -> Option<String> {
     }
 }
 
-fn render_heading(ui: &mut egui::Ui, level: u8, spans: &[Span]) -> Option<String> {
+fn render_heading(ui: &mut egui::Ui, level: u8, spans: &[Span]) -> Option<WikilinkActivation> {
     let color = HEADING_COLORS[(level.saturating_sub(1).min(5)) as usize];
     let size = match level {
         1 => 28.0,
@@ -112,7 +113,7 @@ fn render_code_block(ui: &mut egui::Ui, language: Option<&str>, spans: &[Span]) 
         });
 }
 
-fn render_blockquote(ui: &mut egui::Ui, spans: &[Span]) -> Option<String> {
+fn render_blockquote(ui: &mut egui::Ui, spans: &[Span]) -> Option<WikilinkActivation> {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(3.0, ui.spacing().interact_size.y),
@@ -139,7 +140,7 @@ fn render_list_item(
     index: Option<u64>,
     depth: u8,
     spans: &[Span],
-) -> Option<String> {
+) -> Option<WikilinkActivation> {
     ui.horizontal(|ui| {
         ui.add_space(depth as f32 * INDENT_PER_DEPTH);
         let bullet = if ordered {
@@ -156,14 +157,14 @@ fn render_list_item(
 }
 
 /// Render a run of spans, laying out plain-text runs as wrapped, styled text and each
-/// `[[wikilink]]` span as a clickable link. Returns the clicked wikilink's target note
-/// name, if any.
+/// `[[wikilink]]` span as a clickable link. Returns the clicked wikilink, if any —
+/// holding Ctrl (Cmd on macOS) while clicking sets `force_create`.
 fn render_spans(
     ui: &mut egui::Ui,
     spans: &[Span],
     base_font: FontId,
     base_color: Color32,
-) -> Option<String> {
+) -> Option<WikilinkActivation> {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let mut clicked = None;
@@ -174,11 +175,13 @@ fn render_spans(
                     ui.label(build_layout_job(&buffer, base_font.clone(), base_color));
                     buffer.clear();
                 }
-                if ui
-                    .link(RichText::new(&span.text).color(WIKILINK_COLOR))
-                    .clicked()
-                {
-                    clicked = Some(target.clone());
+                let response = ui.link(RichText::new(&span.text).color(WIKILINK_COLOR));
+                if response.clicked() {
+                    let force_create = ui.input(|i| i.modifiers.command);
+                    clicked = Some(WikilinkActivation {
+                        target: target.clone(),
+                        force_create,
+                    });
                 }
             } else {
                 buffer.push(span.clone());

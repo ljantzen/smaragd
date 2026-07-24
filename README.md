@@ -12,7 +12,7 @@ A project is just a folder of `.md` files and subfolders — no proprietary bund
 - Right-click context menu in the binder: New File/New Folder (folders), Rename, Delete (native confirmation dialog) — New File/Folder and Rename each prompt for a name (Enter to confirm), and renaming a document updates any `[[wikilinks]]` to it elsewhere in the project
 - Native folder picker for opening a project (`File > Open Project`)
 - Glow-CLI-styled markdown preview (`View > Toggle preview`): colored heading hierarchy, barred blockquotes, boxed code blocks
-- Obsidian-style `[[Topic]]` / `[[Topic|Alias]]` wikilinks: rendered as clickable links in preview, resolved by filename within the project
+- Obsidian-style `[[Topic]]` / `[[Topic|Alias]]` wikilinks: rendered as clickable links in preview, resolved by filename within the project. Ctrl+Click a link in preview (or place the cursor on one and press Ctrl+Enter in the editor) to create the missing document, in the same folder as the note the link was in
 - Wikilink autocomplete while typing `[[`: filtered suggestions, arrow-key/Tab/Enter navigation, mouse click
 - Settings window (`File > Settings`) with a "Reopen project on launch" toggle, persisted to `tachylite.toml` in the platform's standard config directory (`~/.config/tachylite` on Linux, `~/Library/Application Support/tachylite` on macOS, `%APPDATA%\tachylite\config` on Windows)
 

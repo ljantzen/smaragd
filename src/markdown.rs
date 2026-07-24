@@ -396,6 +396,49 @@ fn rename_wikilink_target_in_line(
     changed
 }
 
+/// The byte range (covering the full `[[...]]`) and target of every wikilink in
+/// `markdown`, skipping fenced code blocks.
+fn wikilink_spans(markdown: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    let mut spans = Vec::new();
+    let mut in_fence = false;
+    let mut line_start = 0usize;
+    for line in markdown.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+        } else if !in_fence {
+            let mut cursor = 0usize;
+            while let Some(start) = line[cursor..].find("[[") {
+                let open_end = cursor + start + 2;
+                match line[open_end..].find("]]") {
+                    Some(end) => {
+                        let inner = &line[open_end..open_end + end];
+                        let target = inner.split_once('|').map_or(inner, |(t, _)| t).trim();
+                        let abs_start = line_start + cursor + start;
+                        let abs_end = line_start + open_end + end + 2;
+                        spans.push((abs_start..abs_end, target.to_string()));
+                        cursor = open_end + end + 2;
+                    }
+                    None => break,
+                }
+            }
+        }
+        line_start += line.len();
+    }
+    spans
+}
+
+/// If `cursor` (a byte offset into `markdown`) sits inside — or right after — a closed
+/// `[[Target]]` / `[[Target|Alias]]` wikilink, return its target. Used to activate the
+/// link the cursor is on via a keyboard shortcut (Ctrl+Enter), the editor's equivalent
+/// of clicking a link in the preview.
+pub fn wikilink_target_at(markdown: &str, cursor: usize) -> Option<String> {
+    wikilink_spans(markdown)
+        .into_iter()
+        .find(|(range, _)| range.contains(&cursor) || range.end == cursor)
+        .map(|(_, target)| target)
+}
+
 fn heading_level_to_u8(level: HeadingLevel) -> u8 {
     match level {
         HeadingLevel::H1 => 1,
@@ -721,5 +764,42 @@ mod tests {
     fn rename_wikilink_target_skips_fenced_code_blocks() {
         let updated = rename_wikilink_target("```\n[[Old Name]]\n```\n", "Old Name", "New Name");
         assert_eq!(updated, None);
+    }
+
+    #[test]
+    fn wikilink_target_at_finds_target_when_cursor_is_inside_the_brackets() {
+        let text = "See [[Topic]] please";
+        let inside = text.find("Top").unwrap();
+        assert_eq!(wikilink_target_at(text, inside), Some("Topic".to_string()));
+    }
+
+    #[test]
+    fn wikilink_target_at_finds_target_when_cursor_is_right_after_the_closing_brackets() {
+        let text = "[[Topic]]";
+        assert_eq!(
+            wikilink_target_at(text, text.len()),
+            Some("Topic".to_string())
+        );
+    }
+
+    #[test]
+    fn wikilink_target_at_strips_alias() {
+        let text = "[[Topic|Alias]]";
+        let inside = text.find("Alias").unwrap();
+        assert_eq!(wikilink_target_at(text, inside), Some("Topic".to_string()));
+    }
+
+    #[test]
+    fn wikilink_target_at_is_none_outside_any_wikilink() {
+        let text = "See [[Topic]] please";
+        let outside = text.find("please").unwrap();
+        assert_eq!(wikilink_target_at(text, outside), None);
+    }
+
+    #[test]
+    fn wikilink_target_at_ignores_fenced_code_blocks() {
+        let text = "```\n[[Topic]]\n```\n";
+        let inside = text.find("Topic").unwrap();
+        assert_eq!(wikilink_target_at(text, inside), None);
     }
 }

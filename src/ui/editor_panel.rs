@@ -7,6 +7,15 @@ use crate::autocomplete::{
     filter_wikilink_candidates,
 };
 use crate::editor::EditorState;
+use crate::markdown::wikilink_target_at;
+use crate::ui::WikilinkActivation;
+
+/// What happened this frame, for the caller to react to: a failed autosave, or the
+/// user asking (via Ctrl+Enter) to follow the `[[wikilink]]` the cursor is on.
+pub enum EditorEvent {
+    SaveError(String),
+    Wikilink(WikilinkActivation),
+}
 
 /// Cap on how many `[[wikilink]]` suggestions are shown at once, matching Obsidian's
 /// short, scannable popup rather than dumping the whole vault into a list.
@@ -35,10 +44,14 @@ enum PopupAction {
 }
 
 /// Renders the document editor, including an Obsidian-style `[[wikilink]]`
-/// autocomplete popup driven by `note_titles`. Returns `Some(error message)` if an
-/// autosave triggered by focus loss failed, for the caller to surface as a status
-/// message.
-pub fn show(ui: &mut egui::Ui, editor: &mut EditorState, note_titles: &[String]) -> Option<String> {
+/// autocomplete popup driven by `note_titles`. Returns `Some` if an autosave
+/// triggered by focus loss failed, or the user pressed Ctrl+Enter (Cmd+Enter on
+/// macOS) on a wikilink to follow it — the caller decides what to do with either.
+pub fn show(
+    ui: &mut egui::Ui,
+    editor: &mut EditorState,
+    note_titles: &[String],
+) -> Option<EditorEvent> {
     let Some(path) = editor.open_path.clone() else {
         ui.label("Select a file from the binder to start editing.");
         return None;
@@ -61,8 +74,12 @@ pub fn show(ui: &mut egui::Ui, editor: &mut EditorState, note_titles: &[String])
 
     // If the popup was showing after the last frame, steal navigation keys before the
     // `TextEdit` below gets a chance to treat them as ordinary cursor movement or
-    // newline insertion.
+    // newline insertion. Ctrl+Enter is stolen unconditionally — the `TextEdit` would
+    // otherwise turn it into a plain newline.
     let pending_action = state.open.then(|| steal_popup_key(ui)).flatten();
+    let activate_wikilink_requested = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter));
 
     let output = egui::TextEdit::multiline(&mut editor.buffer)
         .desired_width(f32::INFINITY)
@@ -73,6 +90,16 @@ pub fn show(ui: &mut egui::Ui, editor: &mut EditorState, note_titles: &[String])
 
     if output.response.changed() {
         editor.mark_dirty();
+    }
+
+    if activate_wikilink_requested && let Some(range) = output.cursor_range {
+        let cursor_byte = char_offset_to_byte(&editor.buffer, range.primary.index.0);
+        if let Some(target) = wikilink_target_at(&editor.buffer, cursor_byte) {
+            return Some(EditorEvent::Wikilink(WikilinkActivation {
+                target,
+                force_create: true,
+            }));
+        }
     }
 
     let active = output.cursor_range.and_then(|range| {
@@ -155,7 +182,7 @@ pub fn show(ui: &mut egui::Ui, editor: &mut EditorState, note_titles: &[String])
     if output.response.lost_focus()
         && let Err(err) = editor.save()
     {
-        return Some(format!("Save failed: {err}"));
+        return Some(EditorEvent::SaveError(format!("Save failed: {err}")));
     }
 
     None

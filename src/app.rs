@@ -4,7 +4,9 @@ use crate::editor::EditorState;
 use crate::project::Project;
 use crate::settings::Settings;
 use crate::ui;
+use crate::ui::WikilinkActivation;
 use crate::ui::binder_panel::BinderEvent;
+use crate::ui::editor_panel::EditorEvent;
 use crate::ui::name_prompt::{NamePromptOutcome, NamePromptState};
 
 /// What a `NamePromptState` modal should do with the name once confirmed.
@@ -97,22 +99,49 @@ impl TachyliteApp {
         }
     }
 
-    /// Resolve a `[[wikilink]]` target clicked in the preview to a document in the
-    /// current project (matched by filename, case-insensitively) and open it.
-    fn open_wikilink(&mut self, target: &str) {
+    /// Resolve a `[[wikilink]]` activated (clicked in the preview, or Ctrl+Enter in
+    /// the editor) to a document in the current project (matched by filename,
+    /// case-insensitively) and open it. If it doesn't exist and `force_create` was
+    /// requested (Ctrl/Cmd was held), create it in the same folder as the document
+    /// the link was activated from.
+    fn activate_wikilink(&mut self, activation: WikilinkActivation) {
+        let WikilinkActivation {
+            target,
+            force_create,
+        } = activation;
         let Some(project) = &self.project else {
             self.status_message = Some(format!("No project open — can't resolve [[{target}]]"));
             return;
         };
-        match project.tree.find_document_by_stem(target) {
-            Some(node) => {
-                let path = node.path.clone();
-                self.open_document(&path);
-            }
-            None => {
-                self.status_message = Some(format!("No note found for [[{target}]]"));
-            }
+        if let Some(node) = project.tree.find_document_by_stem(&target) {
+            let path = node.path.clone();
+            self.open_document(&path);
+            return;
         }
+        if !force_create {
+            self.status_message = Some(format!("No note found for [[{target}]]"));
+            return;
+        }
+        self.create_wikilink_target(&target);
+    }
+
+    /// Create a new document named `target` in the same folder as the document
+    /// currently open (i.e. the one containing the wikilink that was activated), then
+    /// open it.
+    fn create_wikilink_target(&mut self, target: &str) {
+        let Some(parent) = self
+            .editor
+            .open_path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf)
+        else {
+            self.status_message = Some(format!(
+                "Couldn't create a note for [[{target}]]: no document is open"
+            ));
+            return;
+        };
+        self.create_document(&parent, target);
     }
 
     fn handle_binder_event(&mut self, event: BinderEvent) {
@@ -333,8 +362,8 @@ impl eframe::App for TachyliteApp {
         egui::CentralPanel::default().show(ui, |ui| {
             if self.preview_mode {
                 if self.editor.open_path.is_some() {
-                    if let Some(target) = ui::markdown_preview::show(ui, &self.editor.buffer) {
-                        self.open_wikilink(&target);
+                    if let Some(activation) = ui::markdown_preview::show(ui, &self.editor.buffer) {
+                        self.activate_wikilink(activation);
                     }
                 } else {
                     ui.label("Select a file from the binder to preview.");
@@ -345,8 +374,10 @@ impl eframe::App for TachyliteApp {
                     .as_ref()
                     .map(|project| project.tree.document_names())
                     .unwrap_or_default();
-                if let Some(err) = ui::editor_panel::show(ui, &mut self.editor, &note_titles) {
-                    self.status_message = Some(err);
+                match ui::editor_panel::show(ui, &mut self.editor, &note_titles) {
+                    Some(EditorEvent::SaveError(err)) => self.status_message = Some(err),
+                    Some(EditorEvent::Wikilink(activation)) => self.activate_wikilink(activation),
+                    None => {}
                 }
             }
         });
