@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::shortcuts::ShortcutMap;
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -21,6 +23,8 @@ pub struct Settings {
     /// Scrivener's Fiction-template starter experience. Off by default: a fresh
     /// project starts completely empty unless the user opts in.
     pub create_starter_folders: bool,
+    /// Keyboard shortcut bindings, remappable from the Settings window.
+    pub shortcuts: ShortcutMap,
 }
 
 /// The full path to the settings file, e.g. `~/.config/tachylite/tachylite.toml` on
@@ -66,16 +70,36 @@ mod tests {
     fn settings_round_trip_through_disk() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("tachylite.toml");
+        let mut shortcuts = ShortcutMap::default();
+        shortcuts.set(
+            crate::shortcuts::ShortcutAction::Save,
+            Some(egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::S,
+            )),
+        );
         let settings = Settings {
             reopen_last_project: true,
             last_project_path: Some(PathBuf::from("/home/author/my-novel")),
             create_starter_folders: true,
+            shortcuts,
         };
 
         settings.save_to_path(&path).unwrap();
         let loaded = Settings::load_from_path(&path);
 
         assert_eq!(loaded, settings);
+    }
+
+    #[test]
+    fn settings_file_without_a_shortcuts_table_loads_default_shortcuts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tachylite.toml");
+        std::fs::write(&path, "reopen_last_project = true\n").unwrap();
+
+        let loaded = Settings::load_from_path(&path);
+
+        assert_eq!(loaded.shortcuts, ShortcutMap::default());
     }
 
     #[test]

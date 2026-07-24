@@ -3,11 +3,26 @@ use std::path::{Path, PathBuf};
 use crate::editor::EditorState;
 use crate::project::{LoadError, Project, RestoreError};
 use crate::settings::Settings;
+use crate::shortcuts::{ShortcutAction, sorted_by_specificity};
 use crate::ui;
 use crate::ui::WikilinkActivation;
 use crate::ui::binder_panel::BinderEvent;
 use crate::ui::editor_panel::EditorEvent;
 use crate::ui::name_prompt::{NamePromptOutcome, NamePromptState};
+
+/// Shows `label` as a menu-bar button, with `shortcut`'s formatted text (if any)
+/// dimmed on the right, matching `egui::Button::shortcut_text`'s intended use.
+fn menu_button_with_shortcut(
+    ui: &mut egui::Ui,
+    label: &str,
+    shortcut: Option<egui::KeyboardShortcut>,
+) -> egui::Response {
+    let mut button = egui::Button::new(label);
+    if let Some(shortcut) = shortcut {
+        button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
+    }
+    ui.add(button)
+}
 
 /// What a `NamePromptState` modal should do with the name once confirmed.
 enum PromptAction {
@@ -31,6 +46,7 @@ pub struct TachyliteApp {
     settings: Settings,
     show_settings: bool,
     prompt: Option<PendingPrompt>,
+    recording_shortcut: Option<ShortcutAction>,
 }
 
 impl TachyliteApp {
@@ -50,6 +66,7 @@ impl TachyliteApp {
             settings,
             show_settings: false,
             prompt: None,
+            recording_shortcut: None,
         };
 
         if app.settings.reopen_last_project
@@ -245,45 +262,132 @@ impl TachyliteApp {
     fn handle_binder_event(&mut self, event: BinderEvent) {
         match event {
             BinderEvent::Selected(path) => self.open_document(&path),
-            BinderEvent::NewFile { parent } => {
-                self.prompt = Some(PendingPrompt {
-                    action: PromptAction::NewFile { parent },
-                    state: NamePromptState {
-                        title: "New File".to_string(),
-                        confirm_label: "Create".to_string(),
-                        name: String::new(),
-                    },
-                });
-            }
-            BinderEvent::NewFolder { parent } => {
-                self.prompt = Some(PendingPrompt {
-                    action: PromptAction::NewFolder { parent },
-                    state: NamePromptState {
-                        title: "New Folder".to_string(),
-                        confirm_label: "Create".to_string(),
-                        name: String::new(),
-                    },
-                });
-            }
-            BinderEvent::Rename { path } => {
-                let name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_default()
-                    .to_string();
-                self.prompt = Some(PendingPrompt {
-                    action: PromptAction::Rename { path },
-                    state: NamePromptState {
-                        title: "Rename".to_string(),
-                        confirm_label: "Rename".to_string(),
-                        name,
-                    },
-                });
-            }
+            BinderEvent::NewFile { parent } => self.prompt_new_file(parent),
+            BinderEvent::NewFolder { parent } => self.prompt_new_folder(parent),
+            BinderEvent::Rename { path } => self.prompt_rename(path),
             BinderEvent::Delete { path } => self.delete_node(&path),
             BinderEvent::Restore { path } => self.restore_node(&path),
             BinderEvent::SetFolderRole { path, role } => self.set_folder_role(&path, role),
             BinderEvent::EmptyTrash { path } => self.empty_trash_folder(&path),
+        }
+    }
+
+    /// Open the "New File" name-prompt modal for a file to be created inside
+    /// `parent`. Shared by the binder's right-click menu and the New File keyboard
+    /// shortcut.
+    fn prompt_new_file(&mut self, parent: PathBuf) {
+        self.prompt = Some(PendingPrompt {
+            action: PromptAction::NewFile { parent },
+            state: NamePromptState {
+                title: "New File".to_string(),
+                confirm_label: "Create".to_string(),
+                name: String::new(),
+            },
+        });
+    }
+
+    /// Open the "New Folder" name-prompt modal for a folder to be created inside
+    /// `parent`. Shared by the binder's right-click menu and the New Folder keyboard
+    /// shortcut.
+    fn prompt_new_folder(&mut self, parent: PathBuf) {
+        self.prompt = Some(PendingPrompt {
+            action: PromptAction::NewFolder { parent },
+            state: NamePromptState {
+                title: "New Folder".to_string(),
+                confirm_label: "Create".to_string(),
+                name: String::new(),
+            },
+        });
+    }
+
+    /// Open the "Rename" name-prompt modal, pre-filled with `path`'s current stem.
+    /// Shared by the binder's right-click menu and the Rename keyboard shortcut.
+    fn prompt_rename(&mut self, path: PathBuf) {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        self.prompt = Some(PendingPrompt {
+            action: PromptAction::Rename { path },
+            state: NamePromptState {
+                title: "Rename".to_string(),
+                confirm_label: "Rename".to_string(),
+                name,
+            },
+        });
+    }
+
+    /// New File/Folder triggered by keyboard shortcut: targets the currently
+    /// selected document's parent folder, or the project root if nothing's
+    /// selected. No-op if no project is open (rather than popping up a modal that
+    /// would silently go nowhere on confirm).
+    fn keyboard_new_file(&mut self) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let parent = self
+            .selected_path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| project.root.clone());
+        self.prompt_new_file(parent);
+    }
+
+    /// See `keyboard_new_file`.
+    fn keyboard_new_folder(&mut self) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let parent = self
+            .selected_path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| project.root.clone());
+        self.prompt_new_folder(parent);
+    }
+
+    /// Run the action a keyboard shortcut just triggered. Contextual actions
+    /// (New File/Folder, Rename, Delete, Restore) act on `selected_path` — the
+    /// currently open document — and no-op if nothing's selected (or, for Restore,
+    /// if what's selected isn't actually trashed), matching how the equivalent
+    /// binder right-click item simply wouldn't be there.
+    fn dispatch_shortcut_action(&mut self, ctx: &egui::Context, action: ShortcutAction) {
+        match action {
+            ShortcutAction::NewProject => self.start_new_project(),
+            ShortcutAction::OpenProject => self.browse_for_project(),
+            ShortcutAction::OpenSettings => self.show_settings = true,
+            ShortcutAction::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            ShortcutAction::TogglePreview => self.preview_mode = !self.preview_mode,
+            ShortcutAction::Save => {
+                if let Err(err) = self.editor.save() {
+                    self.status_message = Some(format!("Save failed: {err}"));
+                }
+            }
+            ShortcutAction::NewFile => self.keyboard_new_file(),
+            ShortcutAction::NewFolder => self.keyboard_new_folder(),
+            ShortcutAction::Rename => {
+                if let Some(path) = self.selected_path.clone() {
+                    self.prompt_rename(path);
+                }
+            }
+            ShortcutAction::Delete => {
+                if let Some(path) = self.selected_path.clone() {
+                    self.delete_node(&path);
+                }
+            }
+            ShortcutAction::Restore => {
+                if let Some(path) = self.selected_path.clone()
+                    && self
+                        .project
+                        .as_ref()
+                        .is_some_and(|project| project.trashed_origin(&path).is_some())
+                {
+                    self.restore_node(&path);
+                }
+            }
         }
     }
 
@@ -472,28 +576,45 @@ impl TachyliteApp {
 
 impl eframe::App for TachyliteApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let save_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S);
-        if ui.ctx().input_mut(|i| i.consume_shortcut(&save_shortcut))
-            && let Err(err) = self.editor.save()
-        {
-            self.status_message = Some(format!("Save failed: {err}"));
+        if self.recording_shortcut.is_none() {
+            let ctx = ui.ctx().clone();
+            let bindings = sorted_by_specificity(self.settings.shortcuts.bindings());
+            let triggered: Vec<ShortcutAction> = bindings
+                .into_iter()
+                .filter(|(_, shortcut)| ctx.input_mut(|i| i.consume_shortcut(shortcut)))
+                .map(|(action, _)| action)
+                .collect();
+            for action in triggered {
+                self.dispatch_shortcut_action(&ctx, action);
+            }
         }
 
         egui::Panel::top("menu_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 egui::containers::menu::MenuButton::new("File").ui(ui, |ui| {
-                    if ui.button("New Project").clicked() {
+                    let new_project_shortcut =
+                        self.settings.shortcuts.get(ShortcutAction::NewProject);
+                    let open_project_shortcut =
+                        self.settings.shortcuts.get(ShortcutAction::OpenProject);
+                    let open_settings_shortcut =
+                        self.settings.shortcuts.get(ShortcutAction::OpenSettings);
+                    let exit_shortcut = self.settings.shortcuts.get(ShortcutAction::Exit);
+
+                    if menu_button_with_shortcut(ui, "New Project", new_project_shortcut).clicked()
+                    {
                         self.start_new_project();
                     }
-                    if ui.button("Open Project").clicked() {
+                    if menu_button_with_shortcut(ui, "Open Project", open_project_shortcut)
+                        .clicked()
+                    {
                         self.browse_for_project();
                     }
                     ui.add_enabled(false, egui::Button::new("Close Project"));
-                    if ui.button("Settings").clicked() {
+                    if menu_button_with_shortcut(ui, "Settings", open_settings_shortcut).clicked() {
                         self.show_settings = true;
                     }
                     ui.separator();
-                    if ui.button("Exit").clicked() {
+                    if menu_button_with_shortcut(ui, "Exit", exit_shortcut).clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
@@ -512,7 +633,12 @@ impl eframe::App for TachyliteApp {
             });
         });
 
-        if ui::settings_panel::show(ui.ctx(), &mut self.show_settings, &mut self.settings) {
+        if ui::settings_panel::show(
+            ui.ctx(),
+            &mut self.show_settings,
+            &mut self.settings,
+            &mut self.recording_shortcut,
+        ) {
             self.persist_settings();
         }
 

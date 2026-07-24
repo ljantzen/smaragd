@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 directories = "6.0"
 eframe = "0.35"
-egui = "0.35"
+egui = { version = "0.35", features = ["serde"] }
 egui_extras = { version = "0.35.0", features = ["image", "file"] }
 ignore = "0.4"
 pulldown-cmark = "0.13"
