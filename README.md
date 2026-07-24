@@ -6,7 +6,7 @@ A project is a folder of `.md` files and subfolders marked with a `.tachylite/pr
 
 ## Features
 
-- Binder tree view of a project folder (gitignore-aware, via the `ignore` crate)
+- Binder tree view of a project folder (gitignore-aware, via the `ignore` crate); documents are shown without their `.md` extension
 - Markdown text editor with save-on-`Ctrl+S` and save-on-focus-loss
 - Right-click context menu in the binder: New File/New Folder (folders), Rename, Delete (native confirmation dialog, worded as a Trash move when one's configured — see below), Restore (for a trashed item), Folder Role/Empty Trash (folders) — New File/Folder and Rename each prompt for a name (Enter to confirm), and renaming a document updates any `[[wikilinks]]` to it elsewhere in the project
 - `File > New Project` (native folder picker + name prompt) and `File > Open Project` (native folder picker, offering to adopt a folder tachylite hasn't opened before)

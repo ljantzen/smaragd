@@ -15,6 +15,10 @@ pub struct BinderNode {
     /// (e.g. `CollapsingHeader` open/close state). Regenerated on every rescan — M1
     /// has no need for identity to survive across scans.
     pub id: Uuid,
+    /// The on-disk filename, extension included for documents (`scene.md`) — matched
+    /// against `ProjectMeta::node_order` entries and real filenames elsewhere, so it's
+    /// not the place to hide the `.md` extension; `ui::binder_panel::document_label`
+    /// does that at render time instead.
     pub name: String,
     pub path: PathBuf,
     pub kind: BinderNodeKind,

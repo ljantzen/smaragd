@@ -45,6 +45,14 @@ fn role_suffix(role: Option<FolderRole>) -> &'static str {
     }
 }
 
+/// Display label for a document node: `node.name` itself stays the full filename
+/// (with `.md`) since it's matched against on-disk names and `ProjectMeta::node_order`
+/// entries elsewhere (see `apply_order`) — only the binder's rendering trims the
+/// extension, Scrivener/Ulysses-style.
+fn document_label(name: &str) -> &str {
+    name.strip_suffix(".md").unwrap_or(name)
+}
+
 fn show_node(
     ui: &mut egui::Ui,
     project: &Project,
@@ -136,7 +144,7 @@ fn show_node(
         }
         BinderNodeKind::Document => {
             let is_selected = selected == Some(node.path.as_path());
-            let response = ui.selectable_label(is_selected, &node.name);
+            let response = ui.selectable_label(is_selected, document_label(&node.name));
             if response.clicked() {
                 *event = Some(BinderEvent::Selected(node.path.clone()));
             }
@@ -158,5 +166,25 @@ fn show_node(
                 }
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn document_label_strips_the_md_extension() {
+        assert_eq!(document_label("01-opening.md"), "01-opening");
+    }
+
+    #[test]
+    fn document_label_leaves_names_without_the_md_extension_unchanged() {
+        assert_eq!(document_label("README"), "README");
+    }
+
+    #[test]
+    fn document_label_only_strips_a_trailing_md_extension() {
+        assert_eq!(document_label("notes.md.bak"), "notes.md.bak");
     }
 }

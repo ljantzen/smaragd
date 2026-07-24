@@ -25,6 +25,7 @@ pub enum ShortcutAction {
     Rename,
     Delete,
     Restore,
+    ToggleDarkMode,
 }
 
 impl ShortcutAction {
@@ -40,6 +41,7 @@ impl ShortcutAction {
         Self::Rename,
         Self::Delete,
         Self::Restore,
+        Self::ToggleDarkMode,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -56,6 +58,7 @@ impl ShortcutAction {
             Self::Rename => "Rename",
             Self::Delete => "Delete",
             Self::Restore => "Restore",
+            Self::ToggleDarkMode => "Toggle Dark/Light Mode",
         }
     }
 
@@ -74,6 +77,7 @@ impl ShortcutAction {
             Self::Rename => "rename",
             Self::Delete => "delete",
             Self::Restore => "restore",
+            Self::ToggleDarkMode => "toggle_dark_mode",
         }
     }
 
@@ -106,6 +110,9 @@ impl ShortcutAction {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Backspace)
             }
             Self::Restore => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::R),
+            Self::ToggleDarkMode => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::D)
+            }
         }
     }
 }

@@ -387,6 +387,20 @@ impl TachyliteApp {
                     self.restore_node(&path);
                 }
             }
+            ShortcutAction::ToggleDarkMode => {
+                let is_dark = match self.settings.theme_preference {
+                    egui::ThemePreference::Dark => true,
+                    egui::ThemePreference::Light => false,
+                    egui::ThemePreference::System => ctx.theme() == egui::Theme::Dark,
+                };
+                self.settings.theme_preference = if is_dark {
+                    egui::ThemePreference::Light
+                } else {
+                    egui::ThemePreference::Dark
+                };
+                ctx.set_theme(self.settings.theme_preference);
+                self.persist_settings();
+            }
         }
     }
 
