@@ -19,6 +19,9 @@ pub enum BinderEvent {
     Delete {
         path: PathBuf,
     },
+    Restore {
+        path: PathBuf,
+    },
     SetFolderRole {
         path: PathBuf,
         role: Option<FolderRole>,
@@ -89,6 +92,13 @@ fn show_node(
                             path: node.path.clone(),
                         });
                     }
+                    if project.trashed_origin(&node.path).is_some()
+                        && ui.button("Restore").clicked()
+                    {
+                        *event = Some(BinderEvent::Restore {
+                            path: node.path.clone(),
+                        });
+                    }
                     ui.separator();
                     ui.menu_button("Folder Role", |ui| {
                         if ui
@@ -138,6 +148,11 @@ fn show_node(
                 }
                 if ui.button("Delete").clicked() {
                     *event = Some(BinderEvent::Delete {
+                        path: node.path.clone(),
+                    });
+                }
+                if project.trashed_origin(&node.path).is_some() && ui.button("Restore").clicked() {
+                    *event = Some(BinderEvent::Restore {
                         path: node.path.clone(),
                     });
                 }

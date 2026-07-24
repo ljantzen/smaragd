@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::editor::EditorState;
-use crate::project::{LoadError, Project};
+use crate::project::{LoadError, Project, RestoreError};
 use crate::settings::Settings;
 use crate::ui;
 use crate::ui::WikilinkActivation;
@@ -281,8 +281,40 @@ impl TachyliteApp {
                 });
             }
             BinderEvent::Delete { path } => self.delete_node(&path),
+            BinderEvent::Restore { path } => self.restore_node(&path),
             BinderEvent::SetFolderRole { path, role } => self.set_folder_role(&path, role),
             BinderEvent::EmptyTrash { path } => self.empty_trash_folder(&path),
+        }
+    }
+
+    /// Move a trashed item back to the folder it was deleted from. If that folder no
+    /// longer exists, offers via a native Yes/No dialog to recreate it — matching
+    /// `open_project_or_offer_to_adopt`'s "try, then offer, then retry" shape —
+    /// leaving the item in Trash if declined.
+    fn restore_node(&mut self, path: &Path) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        match project.restore_from_trash(path, false) {
+            Ok(_) => {}
+            Err(RestoreError::OriginalFolderMissing(folder)) => {
+                let recreate = rfd::MessageDialog::new()
+                    .set_title("Restore")
+                    .set_description(format!(
+                        "\"{}\" no longer exists. Recreate it and restore here?",
+                        folder.display()
+                    ))
+                    .set_level(rfd::MessageLevel::Info)
+                    .set_buttons(rfd::MessageButtons::YesNo)
+                    .show();
+                if recreate == rfd::MessageDialogResult::Yes
+                    && let Some(project) = &mut self.project
+                    && let Err(err) = project.restore_from_trash(path, true)
+                {
+                    self.status_message = Some(format!("Couldn't restore: {err}"));
+                }
+            }
+            Err(err) => self.status_message = Some(format!("Couldn't restore: {err}")),
         }
     }
 

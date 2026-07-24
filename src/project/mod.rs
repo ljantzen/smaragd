@@ -53,6 +53,40 @@ impl From<io::Error> for LoadError {
     }
 }
 
+/// Failure to restore an item from Trash.
+#[derive(Debug)]
+pub enum RestoreError {
+    /// `path` has no recorded origin — it isn't a top-level trashed item.
+    NotTrashed,
+    /// The folder this item originally lived in no longer exists.
+    OriginalFolderMissing(PathBuf),
+    Io(io::Error),
+}
+
+impl fmt::Display for RestoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RestoreError::NotTrashed => write!(f, "not a trashed item"),
+            RestoreError::OriginalFolderMissing(path) => {
+                write!(
+                    f,
+                    "original location \"{}\" no longer exists",
+                    path.display()
+                )
+            }
+            RestoreError::Io(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for RestoreError {}
+
+impl From<io::Error> for RestoreError {
+    fn from(err: io::Error) -> Self {
+        RestoreError::Io(err)
+    }
+}
+
 /// A Scrivener-Research/Trash-style role assigned to a folder, decoupled from its
 /// position in the tree. At most one folder project-wide holds a given role at a
 /// time. `Research` is currently just a marker — a forward-looking extension point
@@ -315,19 +349,20 @@ impl Project {
         self.permanently_delete(path)
     }
 
-    /// Move `path` into the designated `trash` folder, renaming on a name collision
-    /// (" (2)", " (3)", ...) since two different folders can easily contain
-    /// same-named files. Records the item's original relative path in
-    /// `meta.trashed_origins`, keyed by its new (post-move) relative path — this is
-    /// what disambiguates same-named trashed items and is what a future "restore"
-    /// action would need, since the on-disk name alone doesn't carry it.
-    fn move_to_trash(&mut self, path: &Path, trash: &Path) -> io::Result<()> {
+    /// Move `path` (already inside this project) to be a child of `new_parent`,
+    /// keeping its own name unless that collides (resolved via `unique_child_name`
+    /// since two different folders can easily contain same-named files), and fixing
+    /// up `node_order` — and, for a folder, nested order keys via
+    /// `rewrite_order_key_prefix` — to follow. Does not touch `folder_roles` /
+    /// `trashed_origins` or persist/rescan; callers own that, since what else needs
+    /// updating differs between trashing and restoring.
+    fn move_node(&mut self, path: &Path, new_parent: &Path) -> io::Result<PathBuf> {
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
-        let dest_name = unique_child_name(trash, name);
-        let dest = trash.join(&dest_name);
+        let dest_name = unique_child_name(new_parent, name);
+        let dest = new_parent.join(&dest_name);
         let is_dir = path.is_dir();
 
         fs::rename(path, &dest)?;
@@ -344,20 +379,77 @@ impl Project {
                 &relative_key(&self.root, &dest),
             );
         }
-        let trash_key = relative_key(&self.root, trash);
+        let new_parent_key = relative_key(&self.root, new_parent);
         self.meta
             .node_order
-            .entry(trash_key)
+            .entry(new_parent_key)
             .or_default()
             .push(dest_name);
-        self.meta.trashed_origins.insert(
-            relative_key(&self.root, &dest),
-            relative_key(&self.root, path),
-        );
+        Ok(dest)
+    }
+
+    /// Move `path` into the designated `trash` folder. Records the item's original
+    /// relative path in `meta.trashed_origins`, keyed by its new (post-move) relative
+    /// path — this is what disambiguates same-named trashed items and is what
+    /// `restore_from_trash` needs, since the on-disk name alone doesn't carry it.
+    fn move_to_trash(&mut self, path: &Path, trash: &Path) -> io::Result<()> {
+        let original_key = relative_key(&self.root, path);
+        let dest = self.move_node(path, trash)?;
+        self.meta
+            .trashed_origins
+            .insert(relative_key(&self.root, &dest), original_key);
 
         self.save_metadata()?;
         self.rescan();
         Ok(())
+    }
+
+    /// The absolute path this trashed item originally lived at, if `path` is
+    /// currently a top-level item inside the designated Trash folder that was moved
+    /// there via `delete` (as opposed to something nested inside a trashed folder, or
+    /// created directly inside Trash — those were never individually recorded and
+    /// aren't restorable on their own). Doubles as the "can this be restored?" check.
+    pub fn trashed_origin(&self, path: &Path) -> Option<PathBuf> {
+        self.meta
+            .trashed_origins
+            .get(&relative_key(&self.root, path))
+            .map(|key| self.root.join(key))
+    }
+
+    /// Move a trashed item (see [`Project::trashed_origin`]) back to the folder it
+    /// was deleted from, resolving a name collision the same way `move_to_trash`
+    /// does. If that folder no longer exists: errors with
+    /// `RestoreError::OriginalFolderMissing` when `recreate_missing_folder` is
+    /// `false`, or recreates it and proceeds when `true` — callers offer that choice
+    /// interactively rather than picking one silently.
+    pub fn restore_from_trash(
+        &mut self,
+        path: &Path,
+        recreate_missing_folder: bool,
+    ) -> Result<PathBuf, RestoreError> {
+        let key = relative_key(&self.root, path);
+        let Some(original) = self
+            .meta
+            .trashed_origins
+            .get(&key)
+            .cloned()
+            .map(|k| self.root.join(k))
+        else {
+            return Err(RestoreError::NotTrashed);
+        };
+        let original_parent = original.parent().unwrap_or(&self.root).to_path_buf();
+        if !original_parent.is_dir() {
+            if recreate_missing_folder {
+                fs::create_dir_all(&original_parent)?;
+            } else {
+                return Err(RestoreError::OriginalFolderMissing(original_parent));
+            }
+        }
+        let dest = self.move_node(path, &original_parent)?;
+        self.meta.trashed_origins.remove(&key);
+        self.save_metadata()?;
+        self.rescan();
+        Ok(dest)
     }
 
     /// Permanently remove everything currently inside the designated Trash folder. A
@@ -910,6 +1002,131 @@ mod tests {
         let mut project = Project::initialize(dir.path()).unwrap();
 
         assert!(project.empty_trash().is_ok());
+    }
+
+    fn project_with_trashed_doc(dir: &Path) -> (Project, PathBuf, PathBuf, PathBuf) {
+        let mut project = Project::initialize(dir).unwrap();
+        let trash = project.create_folder(dir, "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let chapter = project.create_folder(dir, "Chapter 1").unwrap();
+        let doc = project.create_document(&chapter, "Notes").unwrap();
+        project.delete(&doc).unwrap();
+        let trashed = trash.join("Notes.md");
+        (project, trash, chapter, trashed)
+    }
+
+    #[test]
+    fn trashed_origin_returns_the_original_absolute_path_for_a_trashed_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let (project, _trash, chapter, trashed) = project_with_trashed_doc(dir.path());
+
+        assert_eq!(
+            project.trashed_origin(&trashed),
+            Some(chapter.join("Notes.md"))
+        );
+    }
+
+    #[test]
+    fn trashed_origin_returns_none_for_a_non_trashed_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+
+        assert_eq!(project.trashed_origin(dir.path()), None);
+    }
+
+    #[test]
+    fn restore_from_trash_moves_item_back_to_its_original_folder_and_clears_the_origin_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut project, _trash, chapter, trashed) = project_with_trashed_doc(dir.path());
+
+        let restored = project.restore_from_trash(&trashed, false).unwrap();
+
+        assert_eq!(restored, chapter.join("Notes.md"));
+        assert!(restored.exists());
+        assert!(!trashed.exists());
+        assert!(project.trashed_origin(&restored).is_none());
+        assert!(project.tree.find_by_path(&restored).is_some());
+    }
+
+    #[test]
+    fn restore_from_trash_errors_when_path_is_not_a_recorded_trashed_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc").unwrap();
+
+        let result = project.restore_from_trash(&doc, false);
+
+        assert!(matches!(result, Err(RestoreError::NotTrashed)));
+    }
+
+    #[test]
+    fn restore_from_trash_errors_when_original_folder_is_missing_and_recreate_is_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut project, _trash, chapter, trashed) = project_with_trashed_doc(dir.path());
+        project.delete(&chapter).unwrap(); // moves "Chapter 1" itself into Trash
+
+        let result = project.restore_from_trash(&trashed, false);
+
+        assert!(matches!(
+            result,
+            Err(RestoreError::OriginalFolderMissing(_))
+        ));
+        assert!(trashed.exists()); // left in place, not moved
+    }
+
+    #[test]
+    fn restore_from_trash_recreates_the_original_folder_when_recreate_is_true() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut project, _trash, chapter, trashed) = project_with_trashed_doc(dir.path());
+        fs::remove_dir_all(&chapter).unwrap(); // "Chapter 1" is gone, but not via project.delete
+
+        let restored = project.restore_from_trash(&trashed, true).unwrap();
+
+        assert!(chapter.is_dir());
+        assert_eq!(restored, chapter.join("Notes.md"));
+        assert!(restored.exists());
+    }
+
+    #[test]
+    fn restore_from_trash_uniquifies_when_something_now_occupies_the_original_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut project, _trash, chapter, trashed) = project_with_trashed_doc(dir.path());
+        fs::write(chapter.join("Notes.md"), "new content").unwrap();
+
+        let restored = project.restore_from_trash(&trashed, false).unwrap();
+
+        assert_eq!(restored, chapter.join("Notes (2).md"));
+        assert_eq!(
+            fs::read_to_string(chapter.join("Notes.md")).unwrap(),
+            "new content"
+        );
+    }
+
+    #[test]
+    fn restore_from_trash_of_a_folder_preserves_nested_order_keys_and_removes_trashs_order_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let old_chapter = project.create_folder(dir.path(), "Old Chapter").unwrap();
+        project.create_document(&old_chapter, "Scene 1").unwrap();
+        project.delete(&old_chapter).unwrap();
+        let trashed = trash.join("Old Chapter");
+
+        let restored = project.restore_from_trash(&trashed, false).unwrap();
+
+        assert_eq!(restored, dir.path().join("Old Chapter"));
+        assert!(restored.join("Scene 1.md").exists());
+        assert_eq!(
+            project.meta.node_order.get("Old Chapter"),
+            Some(&vec!["Scene 1.md".to_string()])
+        );
+        assert!(!project.meta.node_order.contains_key("Trash/Old Chapter"));
+        assert_eq!(project.meta.node_order.get("Trash"), Some(&vec![]));
     }
 
     #[test]
