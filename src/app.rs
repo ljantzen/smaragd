@@ -401,6 +401,10 @@ impl TachyliteApp {
                 ctx.set_theme(self.settings.theme_preference);
                 self.persist_settings();
             }
+            ShortcutAction::ToggleFullscreen => {
+                let is_fullscreen = ctx.input(|i| i.viewport().fullscreen).unwrap_or(false);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
+            }
         }
     }
 

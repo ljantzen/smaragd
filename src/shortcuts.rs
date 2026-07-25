@@ -26,6 +26,7 @@ pub enum ShortcutAction {
     Delete,
     Restore,
     ToggleDarkMode,
+    ToggleFullscreen,
 }
 
 impl ShortcutAction {
@@ -42,6 +43,7 @@ impl ShortcutAction {
         Self::Delete,
         Self::Restore,
         Self::ToggleDarkMode,
+        Self::ToggleFullscreen,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -59,6 +61,7 @@ impl ShortcutAction {
             Self::Delete => "Delete",
             Self::Restore => "Restore",
             Self::ToggleDarkMode => "Toggle Dark/Light Mode",
+            Self::ToggleFullscreen => "Toggle Full Screen",
         }
     }
 
@@ -78,6 +81,7 @@ impl ShortcutAction {
             Self::Delete => "delete",
             Self::Restore => "restore",
             Self::ToggleDarkMode => "toggle_dark_mode",
+            Self::ToggleFullscreen => "toggle_fullscreen",
         }
     }
 
@@ -113,6 +117,7 @@ impl ShortcutAction {
             Self::ToggleDarkMode => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::D)
             }
+            Self::ToggleFullscreen => KeyboardShortcut::new(Modifiers::NONE, Key::F11),
         }
     }
 }
