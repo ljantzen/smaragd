@@ -89,8 +89,19 @@ pub fn char_offset_to_byte(text: &str, char_offset: usize) -> usize {
 
 /// Convert a byte offset back to a character offset — the inverse of
 /// [`char_offset_to_byte`], for repositioning egui's cursor after an edit.
+///
+/// `byte_offset` is clamped to the nearest valid char boundary at or before it,
+/// rather than trusted outright: a caller may be working from an offset computed
+/// against a since-changed version of `text` (e.g. a `find_replace` result clicked
+/// after the buffer was edited further) — walking it back to something safe to slice
+/// on is a far better outcome than panicking on an out-of-bounds or mid-character
+/// index.
 pub fn byte_offset_to_char(text: &str, byte_offset: usize) -> usize {
-    text[..byte_offset].chars().count()
+    let mut boundary = byte_offset.min(text.len());
+    while boundary > 0 && !text.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    text[..boundary].chars().count()
 }
 
 #[cfg(test)]
@@ -206,5 +217,23 @@ mod tests {
         let mid_byte_offset = char_offset_to_byte(text, mid_char_offset);
         assert_eq!(&text[..mid_byte_offset], "caf\u{e9}");
         assert_eq!(byte_offset_to_char(text, mid_byte_offset), mid_char_offset);
+    }
+
+    #[test]
+    fn byte_offset_to_char_clamps_an_out_of_bounds_offset_instead_of_panicking() {
+        let text = "short";
+        assert_eq!(byte_offset_to_char(text, 1000), text.chars().count());
+    }
+
+    #[test]
+    fn byte_offset_to_char_walks_back_a_mid_character_offset_instead_of_panicking() {
+        // "é" is a 2-byte character starting at byte 0; byte 1 falls inside it.
+        let text = "\u{e9}bc";
+        assert_eq!(byte_offset_to_char(text, 1), 0);
+    }
+
+    #[test]
+    fn byte_offset_to_char_handles_an_empty_string() {
+        assert_eq!(byte_offset_to_char("", 5), 0);
     }
 }

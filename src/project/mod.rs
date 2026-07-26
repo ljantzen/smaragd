@@ -458,7 +458,7 @@ impl Project {
             }
         }
         if is_dir {
-            self.rewrite_order_key_prefix(
+            self.rewrite_relative_key_prefix(
                 &relative_key(&self.root, path),
                 &relative_key(&self.root, &new_path),
             );
@@ -553,10 +553,12 @@ impl Project {
     /// Move `path` (already inside this project) to be a child of `new_parent`,
     /// keeping its own name unless that collides — resolved via `unique_child_name`,
     /// since two different folders can easily contain same-named files — and fixing
-    /// up `node_order` — and, for a folder, nested order keys via
-    /// `rewrite_order_key_prefix` — to follow. Does not touch `folder_roles` /
-    /// `trashed_origins` or persist/rescan; callers own that, since what else needs
-    /// updating differs between trashing and restoring.
+    /// up `node_order` — and, for a folder, nested `node_order`/`folder_roles`/
+    /// `trashed_origins` keys via `rewrite_relative_key_prefix` — to follow. Does not
+    /// persist/rescan; callers own that, since what else needs updating differs
+    /// between trashing and restoring. `restore_from_trash` removes its own
+    /// `trashed_origins` entry *before* calling this, precisely because this now
+    /// touches that map too — see its comment for why the order matters.
     fn move_node(&mut self, path: &Path, new_parent: &Path) -> io::Result<PathBuf> {
         self.move_node_with(path, new_parent, NameCollision::Uniquify)
     }
@@ -595,7 +597,7 @@ impl Project {
             }
         }
         if is_dir {
-            self.rewrite_order_key_prefix(
+            self.rewrite_relative_key_prefix(
                 &relative_key(&self.root, path),
                 &relative_key(&self.root, &dest),
             );
@@ -666,8 +668,15 @@ impl Project {
                 return Err(RestoreError::OriginalFolderMissing(original_parent));
             }
         }
-        let dest = self.move_node(path, &original_parent)?;
+        // Remove this item's own trashed_origins entry *before* move_node runs, not
+        // after: move_node (via rewrite_relative_key_prefix, for a folder) now also
+        // follows folder_roles/trashed_origins keys under the moved prefix, which for
+        // a restored folder would otherwise race with this very removal — the rewrite
+        // would relocate the entry to the new key first, leaving nothing for this
+        // line to find, and stranding a stale, self-referential entry behind instead
+        // of clearing it.
         self.meta.trashed_origins.remove(&key);
+        let dest = self.move_node(path, &original_parent)?;
         self.save_metadata()?;
         self.rescan();
         Ok(dest)
@@ -727,21 +736,34 @@ impl Project {
         Ok(())
     }
 
-    /// Rewrite every `node_order` key under `old_prefix` (the folder itself and all
-    /// its descendants) to sit under `new_prefix` instead, following a folder rename.
-    fn rewrite_order_key_prefix(&mut self, old_prefix: &str, new_prefix: &str) {
-        let affected: Vec<String> = self
-            .meta
-            .node_order
-            .keys()
-            .filter(|key| *key == old_prefix || key.starts_with(&format!("{old_prefix}/")))
-            .cloned()
-            .collect();
-        for key in affected {
-            if let Some(order) = self.meta.node_order.remove(&key) {
-                let new_key = format!("{new_prefix}{}", &key[old_prefix.len()..]);
-                self.meta.node_order.insert(new_key, order);
-            }
+    /// Rewrite every `node_order`/`folder_roles`/`trashed_origins` key under
+    /// `old_prefix` (the folder itself and all its descendants) to sit under
+    /// `new_prefix` instead, following a folder rename or move — so a role (Research/
+    /// Trash) assigned to the moved folder or something inside it, or a trashed
+    /// item's current-location bookkeeping, keeps pointing at where the thing
+    /// actually is instead of a now-nonexistent path. `trashed_origins`' *values*
+    /// (each item's pre-trash location) are deliberately left untouched: they're
+    /// history, not a reference to something that just moved.
+    fn rewrite_relative_key_prefix(&mut self, old_prefix: &str, new_prefix: &str) {
+        rewrite_prefix_in(&mut self.meta.node_order, old_prefix, new_prefix);
+        rewrite_prefix_in(&mut self.meta.folder_roles, old_prefix, new_prefix);
+        rewrite_prefix_in(&mut self.meta.trashed_origins, old_prefix, new_prefix);
+    }
+}
+
+/// Rewrite every key under `old_prefix` (matching it exactly, or starting with
+/// `"{old_prefix}/"`) in `map` to sit under `new_prefix` instead, preserving each
+/// key's value and its position relative to the prefix.
+fn rewrite_prefix_in<V>(map: &mut HashMap<String, V>, old_prefix: &str, new_prefix: &str) {
+    let affected: Vec<String> = map
+        .keys()
+        .filter(|key| *key == old_prefix || key.starts_with(&format!("{old_prefix}/")))
+        .cloned()
+        .collect();
+    for key in affected {
+        if let Some(value) = map.remove(&key) {
+            let new_key = format!("{new_prefix}{}", &key[old_prefix.len()..]);
+            map.insert(new_key, value);
         }
     }
 }
@@ -1949,5 +1971,82 @@ mod tests {
         project.move_item(&doc, &folder).unwrap();
 
         assert!(project.tree.find_document_by_stem("Scene 1").is_some());
+    }
+
+    #[test]
+    fn move_item_of_a_role_holding_folder_keeps_the_role_pointing_at_the_new_location() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_folder(dir.path(), "Target").unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+
+        let new_path = project.move_item(&trash, &target).unwrap();
+
+        assert_eq!(project.folder_role(&new_path), Some(FolderRole::Trash));
+        assert_eq!(project.folder_role(&trash), None);
+    }
+
+    #[test]
+    fn rename_of_a_role_holding_folder_keeps_the_role_pointing_at_the_new_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+
+        let new_path = project.rename(&trash, "Recycle Bin").unwrap();
+
+        assert_eq!(project.folder_role(&new_path), Some(FolderRole::Trash));
+        assert_eq!(project.folder_role(&trash), None);
+    }
+
+    #[test]
+    fn a_role_survives_being_moved_and_then_actually_used() {
+        // The regression this guards against: a stale folder_roles key after a move
+        // meant trash_path() kept returning the OLD (now-nonexistent) location, so a
+        // subsequent delete() that should route to Trash would instead try to
+        // fs::rename into a directory that no longer exists.
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_folder(dir.path(), "Target").unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let new_trash = project.move_item(&trash, &target).unwrap();
+        let doc = project.create_document(dir.path(), "Doomed").unwrap();
+
+        project.delete(&doc).unwrap();
+
+        assert!(new_trash.join("Doomed.md").exists());
+    }
+
+    #[test]
+    fn move_item_of_a_folder_containing_a_previously_trashed_items_bookkeeping_follows_it() {
+        // trashed_origins is keyed by an item's *current* location; moving the Trash
+        // folder itself (which holds that item) must carry the key along so
+        // restore_from_trash can still find it afterward.
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_folder(dir.path(), "Target").unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let doc = project.create_document(&chapter, "Notes").unwrap();
+        project.delete(&doc).unwrap();
+
+        let new_trash = project.move_item(&trash, &target).unwrap();
+
+        let restored = project
+            .restore_from_trash(&new_trash.join("Notes.md"), false)
+            .unwrap();
+        assert_eq!(restored, chapter.join("Notes.md"));
+        assert!(restored.exists());
     }
 }

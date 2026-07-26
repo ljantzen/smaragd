@@ -1055,6 +1055,22 @@ impl TachyliteApp {
     }
 
     fn rename_node(&mut self, path: &Path, new_name: &str) {
+        // If `path` is the open document and it's dirty, save it *before* the
+        // physical rename below — `project.rename` does an immediate `fs::rename`,
+        // and letting `EditorState::open`'s own save-if-dirty run afterward (from
+        // `open_document`, once the item's reopened under its new name) would try to
+        // save to `editor.open_path`, which is still the pre-rename path and no
+        // longer exists — silently resurrecting a stray file there with the unsaved
+        // content while the visible buffer quietly reverts to the pre-edit version.
+        // Saving first means the rename carries the up-to-date content along.
+        if self.editor.open_path.as_deref() == Some(path)
+            && self.editor.dirty
+            && let Err(err) = self.editor.save()
+        {
+            self.status_message = Some(format!("Couldn't save before renaming: {err}"));
+            return;
+        }
+
         let Some(project) = &mut self.project else {
             return;
         };

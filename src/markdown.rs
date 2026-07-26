@@ -433,6 +433,20 @@ fn has_image_extension(name: &str) -> bool {
 /// rewritten markdown plus a side table indexed by the number embedded in each
 /// placeholder.
 fn extract_wikilinks(markdown: &str) -> (String, Vec<WikilinkPlaceholder>) {
+    // WIKILINK_MARK is meant to appear only in placeholders *we* insert below, each
+    // immediately followed by a decimal table index and a closing WIKILINK_MARK.
+    // expand_placeholders trusts that unconditionally when parsing them back out —
+    // a literal WIKILINK_MARK already present in the input (a real, if rare,
+    // possibility: it's a valid Unicode scalar value some icon-font/emoji-picker
+    // workflows assign glyphs to) would leave it hunting for a partner that was
+    // never there and panicking. Strip any pre-existing occurrence up front so the
+    // only WIKILINK_MARKs `output` ever contains are well-formed ones we made.
+    let markdown = if markdown.contains(WIKILINK_MARK) {
+        std::borrow::Cow::Owned(markdown.replace(WIKILINK_MARK, "\u{FFFD}"))
+    } else {
+        std::borrow::Cow::Borrowed(markdown)
+    };
+
     let mut output = String::with_capacity(markdown.len());
     let mut table = Vec::new();
     let mut in_fence = false;
@@ -861,6 +875,29 @@ mod tests {
         let blocks = parse("```\n[[Topic]]\n```\n");
         assert_eq!(blocks[0].spans[0].text, "[[Topic]]\n");
         assert!(blocks[0].spans[0].wikilink.is_none());
+    }
+
+    #[test]
+    fn a_literal_private_use_area_character_does_not_panic() {
+        // Regression test: WIKILINK_MARK ('\u{E000}') is used internally as a
+        // placeholder delimiter; a document that already contains one (e.g. from an
+        // icon-font paste) must not be able to desync that bookkeeping and panic.
+        let blocks = parse("hello \u{E000} world");
+        let joined: String = blocks[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert!(joined.contains("hello"));
+        assert!(joined.contains("world"));
+        assert!(!joined.contains('\u{E000}'));
+    }
+
+    #[test]
+    fn a_private_use_area_character_alongside_a_real_wikilink_still_resolves_the_link() {
+        let blocks = parse("\u{E000} and [[Topic]]");
+        let wikilink = blocks[0]
+            .spans
+            .iter()
+            .find(|s| s.wikilink.is_some())
+            .unwrap();
+        assert_eq!(wikilink.wikilink.as_deref(), Some("Topic"));
     }
 
     #[test]
