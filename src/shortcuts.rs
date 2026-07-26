@@ -29,6 +29,7 @@ pub enum ShortcutAction {
     ToggleFullscreen,
     FindReplace,
     ToggleCorkboard,
+    CommandPrompt,
 }
 
 impl ShortcutAction {
@@ -48,6 +49,7 @@ impl ShortcutAction {
         Self::ToggleFullscreen,
         Self::FindReplace,
         Self::ToggleCorkboard,
+        Self::CommandPrompt,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -68,6 +70,7 @@ impl ShortcutAction {
             Self::ToggleFullscreen => "Toggle Full Screen",
             Self::FindReplace => "Find and Replace",
             Self::ToggleCorkboard => "Toggle Corkboard",
+            Self::CommandPrompt => "Command Prompt",
         }
     }
 
@@ -90,6 +93,7 @@ impl ShortcutAction {
             Self::ToggleFullscreen => "toggle_fullscreen",
             Self::FindReplace => "find_replace",
             Self::ToggleCorkboard => "toggle_corkboard",
+            Self::CommandPrompt => "command_prompt",
         }
     }
 
@@ -130,6 +134,7 @@ impl ShortcutAction {
             Self::ToggleCorkboard => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::K)
             }
+            Self::CommandPrompt => KeyboardShortcut::new(Modifiers::COMMAND, Key::Colon),
         }
     }
 }

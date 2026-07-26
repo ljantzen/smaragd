@@ -9,6 +9,7 @@ use crate::shortcuts::{ShortcutAction, sorted_by_specificity};
 use crate::ui;
 use crate::ui::WikilinkActivation;
 use crate::ui::binder_panel::BinderEvent;
+use crate::ui::command_prompt::{Command, CommandPromptEvent, CommandPromptState, ThemeChoice};
 use crate::ui::corkboard_panel::{CardDraft, CardEditorOutcome, CorkboardEvent};
 use crate::ui::editor_panel::EditorEvent;
 use crate::ui::find_replace_panel::{FindReplaceEvent, FindReplaceState};
@@ -62,6 +63,7 @@ pub struct TachyliteApp {
     recording_shortcut: Option<ShortcutAction>,
     find_replace: FindReplaceState,
     card_draft: Option<CardDraft>,
+    command_prompt: CommandPromptState,
 }
 
 impl TachyliteApp {
@@ -93,6 +95,7 @@ impl TachyliteApp {
             recording_shortcut: None,
             find_replace: FindReplaceState::default(),
             card_draft: None,
+            command_prompt: CommandPromptState::default(),
         };
 
         if app.settings.reopen_last_project
@@ -498,6 +501,67 @@ impl TachyliteApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
             }
             ShortcutAction::FindReplace => self.find_replace.request_open(),
+            ShortcutAction::CommandPrompt => self.command_prompt.request_open(),
+        }
+    }
+
+    /// Run a command parsed from the `:` command prompt.
+    fn execute_command(&mut self, ctx: &egui::Context, command: Command) {
+        match command {
+            Command::Save => {
+                if let Err(err) = self.editor.save() {
+                    self.status_message = Some(format!("Save failed: {err}"));
+                }
+            }
+            Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Command::SaveAndQuit => {
+                if let Err(err) = self.editor.save() {
+                    self.status_message = Some(format!("Save failed: {err}"));
+                    return;
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Command::Open(title) => {
+                let Some(project) = &self.project else {
+                    self.status_message = Some("No project open".to_string());
+                    return;
+                };
+                match project.tree.find_document_by_stem(&title) {
+                    Some(node) => {
+                        let path = node.path.clone();
+                        self.open_document(&path);
+                    }
+                    None => self.status_message = Some(format!("No note found for \"{title}\"")),
+                }
+            }
+            Command::New(title) => {
+                let Some(project) = &self.project else {
+                    self.status_message = Some("No project open".to_string());
+                    return;
+                };
+                let parent = self
+                    .selected_path
+                    .as_deref()
+                    .and_then(Path::parent)
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| project.root.clone());
+                self.create_document(&parent, &title);
+            }
+            Command::Theme(choice) => {
+                self.settings.theme_preference = match choice {
+                    ThemeChoice::Dark => egui::ThemePreference::Dark,
+                    ThemeChoice::Light => egui::ThemePreference::Light,
+                    ThemeChoice::System => egui::ThemePreference::System,
+                };
+                ctx.set_theme(self.settings.theme_preference);
+                self.persist_settings();
+            }
+            Command::Find(query) => {
+                if !query.is_empty() {
+                    self.find_replace.query = query;
+                }
+                self.find_replace.request_open();
+            }
         }
     }
 
@@ -888,7 +952,15 @@ impl eframe::App for TachyliteApp {
                     ui.radio_value(&mut self.view_mode, ViewMode::Preview, "Preview");
                     ui.radio_value(&mut self.view_mode, ViewMode::Corkboard, "Corkboard");
                 });
-                ui.add_enabled(false, egui::Button::new("Tools"));
+                egui::containers::menu::MenuButton::new("Tools").ui(ui, |ui| {
+                    let command_prompt_shortcut =
+                        self.settings.shortcuts.get(ShortcutAction::CommandPrompt);
+                    if menu_button_with_shortcut(ui, "Command Prompt", command_prompt_shortcut)
+                        .clicked()
+                    {
+                        self.command_prompt.request_open();
+                    }
+                });
                 egui::containers::menu::MenuButton::new("Help").ui(ui, |ui| {
                     ui.add_enabled(false, egui::Button::new("About"));
                 });
@@ -917,6 +989,14 @@ impl eframe::App for TachyliteApp {
         if let Some(event) = ui::find_replace_panel::show(ui.ctx(), &mut self.find_replace) {
             let ctx = ui.ctx().clone();
             self.handle_find_replace_event(&ctx, event);
+        }
+
+        if let Some(event) = ui::command_prompt::show(ui.ctx(), &mut self.command_prompt) {
+            let ctx = ui.ctx().clone();
+            match event {
+                CommandPromptEvent::Run(command) => self.execute_command(&ctx, command),
+                CommandPromptEvent::Error(err) => self.status_message = Some(err),
+            }
         }
 
         egui::Panel::bottom("status_bar").show(ui, |ui| {
