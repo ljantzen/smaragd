@@ -10,7 +10,10 @@ pub enum CorkboardEvent {
     CreateCard,
     EditCard(Uuid),
     DeleteCard(Uuid),
-    MoveCard { id: Uuid, new_index: usize },
+    MoveCard {
+        id: Uuid,
+        new_index: usize,
+    },
     OpenLinkedDocument(std::path::PathBuf),
 }
 

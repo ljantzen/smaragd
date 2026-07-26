@@ -910,7 +910,8 @@ impl eframe::App for TachyliteApp {
                     )
                     .clicked()
                     {
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestCut);
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::RequestCut);
                     }
                     if menu_button_with_shortcut(
                         ui,

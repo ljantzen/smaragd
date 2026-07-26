@@ -96,7 +96,12 @@ fn chars_eq(a: char, b: char, case_sensitive: bool) -> bool {
 
 /// Replace every occurrence of `query` in `text` with `replacement`, returning the
 /// new text and how many replacements were made.
-pub fn replace_all(text: &str, query: &str, replacement: &str, case_sensitive: bool) -> (String, usize) {
+pub fn replace_all(
+    text: &str,
+    query: &str,
+    replacement: &str,
+    case_sensitive: bool,
+) -> (String, usize) {
     let matches = find_matches(text, query, case_sensitive);
     if matches.is_empty() {
         return (text.to_string(), 0);

@@ -474,7 +474,11 @@ impl Project {
                 changed = true;
             }
         }
-        if changed { self.save_metadata() } else { Ok(()) }
+        if changed {
+            self.save_metadata()
+        } else {
+            Ok(())
+        }
     }
 
     /// Delete `path`. If a Trash folder is designated and `path` isn't already inside
@@ -1473,7 +1477,11 @@ mod tests {
         project.rename(&target, "New Name").unwrap();
 
         assert_eq!(
-            project.story_card(id).unwrap().linked_document_stem.as_deref(),
+            project
+                .story_card(id)
+                .unwrap()
+                .linked_document_stem
+                .as_deref(),
             Some("New Name")
         );
     }
@@ -1492,7 +1500,11 @@ mod tests {
         project.rename(&target, "New Name").unwrap();
 
         assert_eq!(
-            project.story_card(id).unwrap().linked_document_stem.as_deref(),
+            project
+                .story_card(id)
+                .unwrap()
+                .linked_document_stem
+                .as_deref(),
             Some("Something Else")
         );
     }
