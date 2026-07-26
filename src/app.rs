@@ -644,9 +644,44 @@ impl eframe::App for TachyliteApp {
                     }
                 });
                 egui::containers::menu::MenuButton::new("Edit").ui(ui, |ui| {
-                    ui.add_enabled(false, egui::Button::new("Cut"));
-                    ui.add_enabled(false, egui::Button::new("Copy"));
-                    ui.add_enabled(false, egui::Button::new("Paste"));
+                    if menu_button_with_shortcut(
+                        ui,
+                        "Cut",
+                        Some(egui::KeyboardShortcut::new(
+                            egui::Modifiers::COMMAND,
+                            egui::Key::X,
+                        )),
+                    )
+                    .clicked()
+                    {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestCut);
+                    }
+                    if menu_button_with_shortcut(
+                        ui,
+                        "Copy",
+                        Some(egui::KeyboardShortcut::new(
+                            egui::Modifiers::COMMAND,
+                            egui::Key::C,
+                        )),
+                    )
+                    .clicked()
+                    {
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::RequestCopy);
+                    }
+                    if menu_button_with_shortcut(
+                        ui,
+                        "Paste",
+                        Some(egui::KeyboardShortcut::new(
+                            egui::Modifiers::COMMAND,
+                            egui::Key::V,
+                        )),
+                    )
+                    .clicked()
+                    {
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                    }
                 });
                 egui::containers::menu::MenuButton::new("View").ui(ui, |ui| {
                     ui.checkbox(&mut self.preview_mode, "Toggle preview");
