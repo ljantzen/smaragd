@@ -81,6 +81,31 @@ pub struct TachyliteApp {
     card_draft: Option<CardDraft>,
     command_prompt: CommandPromptState,
     metadata_draft: Option<MetadataDraft>,
+    /// A push or pull currently running on a background thread, if any — `git push`/
+    /// `git pull` hit the network and can hang or run long, so they're never run
+    /// synchronously on the UI thread. `None` once `poll_git_operation` has picked up
+    /// its result.
+    pending_git: Option<(
+        GitOperation,
+        std::sync::mpsc::Receiver<Result<(), crate::git::GitError>>,
+    )>,
+}
+
+/// Which of the two network-bound git actions a `pending_git` background thread is
+/// running — needed to know how to react (e.g. rescan on pull) once it finishes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GitOperation {
+    Push,
+    Pull,
+}
+
+impl GitOperation {
+    fn label(self) -> &'static str {
+        match self {
+            GitOperation::Push => "Push",
+            GitOperation::Pull => "Pull",
+        }
+    }
 }
 
 impl TachyliteApp {
@@ -114,6 +139,7 @@ impl TachyliteApp {
             card_draft: None,
             command_prompt: CommandPromptState::default(),
             metadata_draft: None,
+            pending_git: None,
         };
 
         if let Some(id) = &app.settings.color_theme
@@ -282,7 +308,7 @@ impl TachyliteApp {
         });
     }
 
-    fn run_git_commit(&mut self, message: &str, push_after: bool) {
+    fn run_git_commit(&mut self, ctx: &egui::Context, message: &str, push_after: bool) {
         let Some(project) = &self.project else {
             self.status_message = Some("No project open".to_string());
             return;
@@ -299,7 +325,7 @@ impl TachyliteApp {
             Ok(()) => {
                 self.status_message = Some("Committed".to_string());
                 if push_after {
-                    self.run_git_push();
+                    self.run_git_push(ctx);
                 }
             }
             Err(crate::git::GitError::NothingToCommit) => {
@@ -309,7 +335,7 @@ impl TachyliteApp {
         }
     }
 
-    fn run_git_push(&mut self) {
+    fn run_git_push(&mut self, ctx: &egui::Context) {
         let Some(project) = &self.project else {
             self.status_message = Some("No project open".to_string());
             return;
@@ -318,18 +344,16 @@ impl TachyliteApp {
             self.status_message = Some("Git support isn't enabled for this project".to_string());
             return;
         }
-        match crate::git::push(&project.root) {
-            Ok(()) => self.status_message = Some("Pushed".to_string()),
-            Err(err) => self.status_message = Some(format!("Push failed: {err}")),
-        }
+        self.spawn_git_operation(ctx, GitOperation::Push, project.root.clone());
     }
 
-    /// Pulls, then rescans the binder tree so any files the pull added/removed show
-    /// up. Deliberately doesn't reload the currently open document even if its
-    /// on-disk content changed — that could silently clobber unsaved local edits;
-    /// the user can reopen it themselves if they want the pulled version.
-    fn run_git_pull(&mut self) {
-        let Some(project) = &mut self.project else {
+    /// Pulls, then (once `poll_git_operation` picks up the result) rescans the binder
+    /// tree so any files the pull added/removed show up. Deliberately doesn't reload
+    /// the currently open document even if its on-disk content changed — that could
+    /// silently clobber unsaved local edits; the user can reopen it themselves if they
+    /// want the pulled version.
+    fn run_git_pull(&mut self, ctx: &egui::Context) {
+        let Some(project) = &self.project else {
             self.status_message = Some("No project open".to_string());
             return;
         };
@@ -337,12 +361,67 @@ impl TachyliteApp {
             self.status_message = Some("Git support isn't enabled for this project".to_string());
             return;
         }
-        match crate::git::pull(&project.root) {
-            Ok(()) => {
-                project.rescan();
-                self.status_message = Some("Pulled".to_string());
+        self.spawn_git_operation(ctx, GitOperation::Pull, project.root.clone());
+    }
+
+    /// Kick off `operation` against `root` on a background thread — `git push`/`pull`
+    /// hit the network and can hang or take a long time, so neither ever runs
+    /// synchronously on the UI thread. Refuses to start a second operation while one
+    /// is already in flight rather than queuing or racing it. The spawned thread
+    /// requests a repaint once it has a result, so `poll_git_operation` (called every
+    /// frame) picks it up promptly instead of waiting for unrelated UI activity.
+    fn spawn_git_operation(&mut self, ctx: &egui::Context, operation: GitOperation, root: PathBuf) {
+        if self.pending_git.is_some() {
+            self.status_message = Some("A git operation is already in progress".to_string());
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let repaint_ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = match operation {
+                GitOperation::Push => crate::git::push(&root),
+                GitOperation::Pull => crate::git::pull(&root),
+            };
+            let _ = sender.send(result);
+            repaint_ctx.request_repaint();
+        });
+        self.status_message = Some(format!("{}ing…", operation.label()));
+        self.pending_git = Some((operation, receiver));
+    }
+
+    /// Check whether the in-flight `pending_git` operation (if any) has finished, and
+    /// apply its result — a status message, plus a binder rescan on a successful pull.
+    /// Called every frame; a no-op whenever nothing is pending or the background
+    /// thread hasn't sent its result yet.
+    fn poll_git_operation(&mut self) {
+        let Some((_, receiver)) = &self.pending_git else {
+            return;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                let (operation, _) = self.pending_git.take().expect("checked above");
+                self.status_message = Some(format!(
+                    "{} failed: background thread panicked",
+                    operation.label()
+                ));
+                return;
             }
-            Err(err) => self.status_message = Some(format!("Pull failed: {err}")),
+        };
+        let (operation, _) = self.pending_git.take().expect("checked above");
+        match result {
+            Ok(()) => {
+                if operation == GitOperation::Pull
+                    && let Some(project) = &mut self.project
+                {
+                    project.rescan();
+                }
+                self.status_message = Some(format!("{}ed", operation.label()));
+            }
+            Err(err) => {
+                self.status_message = Some(format!("{} failed: {err}", operation.label()));
+            }
         }
     }
 
@@ -782,7 +861,7 @@ impl TachyliteApp {
             ShortcutAction::FindReplace => self.find_replace.request_open(),
             ShortcutAction::CommandPrompt => self.command_prompt.request_open(),
             ShortcutAction::GitCommit => self.prompt_git_commit(false),
-            ShortcutAction::GitPush => self.run_git_push(),
+            ShortcutAction::GitPush => self.run_git_push(ctx),
             ShortcutAction::EditMetadata => self.open_metadata_editor(),
         }
     }
@@ -841,11 +920,11 @@ impl TachyliteApp {
             Command::ColorTheme(choice) => self.set_color_theme(ctx, choice.as_deref()),
             Command::Git(git_command) => match git_command {
                 GitCommand::Enable => self.enable_git_support_manually(),
-                GitCommand::Commit(Some(message)) => self.run_git_commit(&message, false),
+                GitCommand::Commit(Some(message)) => self.run_git_commit(ctx, &message, false),
                 GitCommand::Commit(None) => self.prompt_git_commit(false),
-                GitCommand::Push => self.run_git_push(),
-                GitCommand::Pull => self.run_git_pull(),
-                GitCommand::Backup(Some(message)) => self.run_git_commit(&message, true),
+                GitCommand::Push => self.run_git_push(ctx),
+                GitCommand::Pull => self.run_git_pull(ctx),
+                GitCommand::Backup(Some(message)) => self.run_git_commit(ctx, &message, true),
                 GitCommand::Backup(None) => self.prompt_git_commit(true),
             },
             Command::Find(query) => {
@@ -1062,7 +1141,7 @@ impl TachyliteApp {
         }
     }
 
-    fn finish_prompt(&mut self, outcome: NamePromptOutcome) {
+    fn finish_prompt(&mut self, ctx: &egui::Context, outcome: NamePromptOutcome) {
         let Some(pending) = self.prompt.take() else {
             return;
         };
@@ -1078,7 +1157,7 @@ impl TachyliteApp {
             PromptAction::NewFolder { parent } => self.create_folder(&parent, name),
             PromptAction::Rename { path } => self.rename_node(&path, name),
             PromptAction::NewProject { location } => self.create_project(&location, name),
-            PromptAction::GitCommit { push_after } => self.run_git_commit(name, push_after),
+            PromptAction::GitCommit { push_after } => self.run_git_commit(ctx, name, push_after),
         }
     }
 
@@ -1194,6 +1273,8 @@ impl TachyliteApp {
 
 impl eframe::App for TachyliteApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_git_operation();
+
         if self.recording_shortcut.is_none() {
             let ctx = ui.ctx().clone();
             let bindings = sorted_by_specificity(self.settings.shortcuts.bindings());
@@ -1347,16 +1428,23 @@ impl eframe::App for TachyliteApp {
                         if menu_button_with_shortcut(ui, "Commit", commit_shortcut).clicked() {
                             self.prompt_git_commit(false);
                         }
-                        if ui.button("Commit and Push").clicked() {
-                            self.prompt_git_commit(true);
-                        }
-                        let push_shortcut = self.settings.shortcuts.get(ShortcutAction::GitPush);
-                        if menu_button_with_shortcut(ui, "Push", push_shortcut).clicked() {
-                            self.run_git_push();
-                        }
-                        if ui.button("Pull").clicked() {
-                            self.run_git_pull();
-                        }
+                        // Push/pull run on a background thread (see `spawn_git_operation`);
+                        // disabled while one is already in flight rather than letting a
+                        // second click queue up or race it.
+                        let git_busy = self.pending_git.is_some();
+                        ui.add_enabled_ui(!git_busy, |ui| {
+                            if ui.button("Commit and Push").clicked() {
+                                self.prompt_git_commit(true);
+                            }
+                            let push_shortcut =
+                                self.settings.shortcuts.get(ShortcutAction::GitPush);
+                            if menu_button_with_shortcut(ui, "Push", push_shortcut).clicked() {
+                                self.run_git_push(ui.ctx());
+                            }
+                            if ui.button("Pull").clicked() {
+                                self.run_git_pull(ui.ctx());
+                            }
+                        });
                     }
                 });
                 egui::containers::menu::MenuButton::new("Help").ui(ui, |ui| {
@@ -1380,7 +1468,7 @@ impl eframe::App for TachyliteApp {
                 ui::name_prompt::show(ui.ctx(), &mut pending.state)
             };
             if let Some(outcome) = outcome {
-                self.finish_prompt(outcome);
+                self.finish_prompt(ui.ctx(), outcome);
             }
         }
 
