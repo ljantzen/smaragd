@@ -4,7 +4,7 @@ use egui::{Id, Key, Modifiers};
 
 use crate::autocomplete::{
     active_wikilink_query, apply_wikilink_completion, byte_offset_to_char, char_offset_to_byte,
-    filter_wikilink_candidates,
+    filter_candidates,
 };
 use crate::editor::EditorState;
 use crate::markdown::wikilink_target_at;
@@ -117,7 +117,7 @@ pub fn show(
             ..AutocompleteState::default()
         },
         Some((cursor_char, cursor_byte, query)) => {
-            let all_candidates = filter_wikilink_candidates(note_titles, &query.query);
+            let all_candidates = filter_candidates(note_titles, &query.query);
             let candidates = &all_candidates[..all_candidates.len().min(MAX_SUGGESTIONS)];
 
             if candidates.is_empty() {

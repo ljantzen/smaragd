@@ -9,7 +9,7 @@ use crate::shortcuts::{ShortcutAction, sorted_by_specificity};
 use crate::ui;
 use crate::ui::WikilinkActivation;
 use crate::ui::binder_panel::BinderEvent;
-use crate::ui::command_prompt::{Command, CommandPromptEvent, CommandPromptState, ThemeChoice};
+use crate::ui::command_prompt::{Command, CommandPromptEvent, CommandPromptState, DarkModeChoice};
 use crate::ui::corkboard_panel::{CardDraft, CardEditorOutcome, CorkboardEvent};
 use crate::ui::editor_panel::EditorEvent;
 use crate::ui::find_replace_panel::{FindReplaceEvent, FindReplaceState};
@@ -547,11 +547,11 @@ impl TachyliteApp {
                     .unwrap_or_else(|| project.root.clone());
                 self.create_document(&parent, &title);
             }
-            Command::Theme(choice) => {
+            Command::DarkMode(choice) => {
                 self.settings.theme_preference = match choice {
-                    ThemeChoice::Dark => egui::ThemePreference::Dark,
-                    ThemeChoice::Light => egui::ThemePreference::Light,
-                    ThemeChoice::System => egui::ThemePreference::System,
+                    DarkModeChoice::Dark => egui::ThemePreference::Dark,
+                    DarkModeChoice::Light => egui::ThemePreference::Light,
+                    DarkModeChoice::System => egui::ThemePreference::System,
                 };
                 ctx.set_theme(self.settings.theme_preference);
                 self.persist_settings();
@@ -992,11 +992,22 @@ impl eframe::App for TachyliteApp {
             self.handle_find_replace_event(&ctx, event);
         }
 
-        if let Some(event) = ui::command_prompt::show(ui.ctx(), &mut self.command_prompt) {
-            let ctx = ui.ctx().clone();
-            match event {
-                CommandPromptEvent::Run(command) => self.execute_command(&ctx, command),
-                CommandPromptEvent::Error(err) => self.status_message = Some(err),
+        if self.command_prompt.open {
+            // Only walk the document tree for titles while the prompt (and its
+            // `:open`/`:o` completion) is actually visible, rather than every frame.
+            let note_titles = self
+                .project
+                .as_ref()
+                .map(|project| project.tree.document_names())
+                .unwrap_or_default();
+            if let Some(event) =
+                ui::command_prompt::show(ui.ctx(), &mut self.command_prompt, &note_titles)
+            {
+                let ctx = ui.ctx().clone();
+                match event {
+                    CommandPromptEvent::Run(command) => self.execute_command(&ctx, command),
+                    CommandPromptEvent::Error(err) => self.status_message = Some(err),
+                }
             }
         }
 

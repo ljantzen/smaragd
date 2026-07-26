@@ -1,8 +1,9 @@
 //! Pure logic behind Obsidian-style `[[wikilink]]` autocomplete: detecting an
-//! in-progress query at the cursor, filtering candidate note names against it, and
-//! splicing in the chosen name. Kept free of any egui dependency so it's unit-testable
-//! without a GUI context — the `ui` layer only drives these functions and renders the
-//! popup.
+//! in-progress query at the cursor, filtering candidates against it, and splicing in
+//! the chosen name. Kept free of any egui dependency so it's unit-testable without a
+//! GUI context — the `ui` layer only drives these functions and renders the popup.
+//! `filter_candidates` is generic enough to also back the `:` command prompt's
+//! autocomplete (`ui/command_prompt.rs`), not just wikilinks.
 
 /// The in-progress `[[query` at the cursor, if any.
 #[derive(Debug, Clone, PartialEq)]
@@ -31,19 +32,22 @@ pub fn active_wikilink_query(text: &str, cursor: usize) -> Option<WikilinkQuery>
     })
 }
 
-/// Filter `candidates` (note names) against `query`, case-insensitively: names
-/// starting with `query` are ranked first, then names merely containing it
-/// elsewhere, each group sorted alphabetically. An empty query matches everything.
-pub fn filter_wikilink_candidates<'a>(candidates: &'a [String], query: &str) -> Vec<&'a str> {
+/// Filter `candidates` against `query`, case-insensitively: candidates starting with
+/// `query` are ranked first, then candidates merely containing it elsewhere, each
+/// group sorted alphabetically. An empty query matches everything. Generic over
+/// `AsRef<str>` so it works equally for `&[String]` (note titles) and `&[&str]`
+/// (e.g. a fixed list of command names).
+pub fn filter_candidates<'a, S: AsRef<str>>(candidates: &'a [S], query: &str) -> Vec<&'a str> {
     let query = query.to_lowercase();
     let mut starts_with = Vec::new();
     let mut contains = Vec::new();
     for candidate in candidates {
+        let candidate = candidate.as_ref();
         let lower = candidate.to_lowercase();
         if lower.starts_with(&query) {
-            starts_with.push(candidate.as_str());
+            starts_with.push(candidate);
         } else if lower.contains(&query) {
-            contains.push(candidate.as_str());
+            contains.push(candidate);
         }
     }
     starts_with.sort_unstable();
@@ -135,34 +139,31 @@ mod tests {
     }
 
     #[test]
-    fn filter_wikilink_candidates_ranks_prefix_matches_before_substring_matches() {
+    fn filter_candidates_ranks_prefix_matches_before_substring_matches() {
         let candidates = vec![
             "Backstory".to_string(),
             "Opening".to_string(),
             "The Opening Scene".to_string(),
         ];
         assert_eq!(
-            filter_wikilink_candidates(&candidates, "open"),
+            filter_candidates(&candidates, "open"),
             vec!["Opening", "The Opening Scene"]
         );
     }
 
     #[test]
-    fn filter_wikilink_candidates_is_case_insensitive() {
+    fn filter_candidates_is_case_insensitive() {
         let candidates = vec!["Opening Scene".to_string()];
         assert_eq!(
-            filter_wikilink_candidates(&candidates, "OPENING"),
+            filter_candidates(&candidates, "OPENING"),
             vec!["Opening Scene"]
         );
     }
 
     #[test]
-    fn filter_wikilink_candidates_empty_query_returns_everything_sorted() {
+    fn filter_candidates_empty_query_returns_everything_sorted() {
         let candidates = vec!["Zeta".to_string(), "Alpha".to_string()];
-        assert_eq!(
-            filter_wikilink_candidates(&candidates, ""),
-            vec!["Alpha", "Zeta"]
-        );
+        assert_eq!(filter_candidates(&candidates, ""), vec!["Alpha", "Zeta"]);
     }
 
     #[test]
