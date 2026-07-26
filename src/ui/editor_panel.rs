@@ -52,18 +52,10 @@ pub fn show(
     editor: &mut EditorState,
     note_titles: &[String],
 ) -> Option<EditorEvent> {
-    let Some(path) = editor.open_path.clone() else {
+    if editor.open_path.is_none() {
         ui.label("Select a file from the binder to start editing.");
         return None;
-    };
-
-    ui.horizontal(|ui| {
-        ui.label(path.display().to_string());
-        if editor.dirty {
-            ui.label("*");
-        }
-    });
-    ui.separator();
+    }
 
     let text_edit_id = ui.id().with("editor_text_edit");
     let state_id = text_edit_id.with("wikilink_autocomplete");

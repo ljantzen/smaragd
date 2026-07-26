@@ -677,11 +677,20 @@ impl eframe::App for TachyliteApp {
             }
         }
 
-        if let Some(msg) = self.status_message.clone() {
-            egui::Panel::bottom("status_bar").show(ui, |ui| {
-                ui.colored_label(egui::Color32::from_rgb(200, 60, 60), msg);
+        egui::Panel::bottom("status_bar").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if let Some(path) = &self.editor.open_path {
+                    ui.label(path.display().to_string());
+                    if self.editor.dirty {
+                        ui.label("*");
+                    }
+                }
+                if let Some(msg) = &self.status_message {
+                    ui.separator();
+                    ui.colored_label(egui::Color32::from_rgb(200, 60, 60), msg);
+                }
             });
-        }
+        });
 
         egui::Panel::left("binder_panel")
             .resizable(true)
