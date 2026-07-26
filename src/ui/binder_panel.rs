@@ -22,8 +22,8 @@ pub enum BinderEvent {
     Restore {
         path: PathBuf,
     },
-    /// A document was dragged onto a different folder and dropped there.
-    MoveDocument {
+    /// A file or folder was dragged onto a different folder and dropped there.
+    MoveItem {
         path: PathBuf,
         new_parent: PathBuf,
     },
@@ -80,12 +80,34 @@ fn show_node(
                 });
             let header_response = response.header_response;
 
-            // Drop target: a document being dragged, released over this folder's
-            // header. `is_root` doesn't need special-casing here — the project root
-            // is itself rendered as a (non-collapsible-in-spirit) folder header, so
-            // "drop onto root" already falls out of the same handling.
+            // Drag source: a folder (with everything under it) can be dragged onto a
+            // different folder, same as a document — except the project root, which
+            // isn't a real, movable node in the tree. `Project::move_item` catches
+            // (with a clear error) dropping a folder into itself or one of its own
+            // subfolders, so no need to filter that out here.
+            //
+            // `CollapsingHeader` hardcodes its header to `Sense::click()` with no way
+            // to opt into drag sensing (unlike a plain `Button`, see the document-row
+            // fix below), so a second, invisible interaction is layered over the same
+            // rect purely to sense drags — a distinct id (`.with("drag_handle")`)
+            // keeps it from clashing with the header's own click-sensing interact call
+            // over that same rect.
+            if !is_root {
+                let drag_response = ui.interact(
+                    header_response.rect,
+                    header_response.id.with("drag_handle"),
+                    egui::Sense::drag(),
+                );
+                drag_response.dnd_set_drag_payload(node.path.clone());
+            }
+
+            // Drop target: a file or folder being dragged, released over this
+            // folder's header. `is_root` doesn't need special-casing here — the
+            // project root is itself rendered as a (non-collapsible-in-spirit)
+            // folder header, so "drop onto root" already falls out of the same
+            // handling.
             if let Some(dragged_path) = header_response.dnd_release_payload::<PathBuf>() {
-                *event = Some(BinderEvent::MoveDocument {
+                *event = Some(BinderEvent::MoveItem {
                     path: (*dragged_path).clone(),
                     new_parent: node.path.clone(),
                 });
@@ -182,10 +204,8 @@ fn show_node(
             if response.clicked() {
                 *event = Some(BinderEvent::Selected(node.path.clone()));
             }
-            // Drag source: only markdown documents can be dragged, never folders —
-            // moving a folder would also need to rewrite its nested order keys,
-            // which `Project::move_document` (the drop side of this) deliberately
-            // doesn't handle.
+            // Drag source: see the matching folder-header handling above for the
+            // other draggable case.
             response.dnd_set_drag_payload(node.path.clone());
             response.context_menu(|ui| {
                 if ui.button("Rename").clicked() {

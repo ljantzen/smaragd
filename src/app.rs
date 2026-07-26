@@ -489,27 +489,30 @@ impl TachyliteApp {
             BinderEvent::Restore { path } => self.restore_node(&path),
             BinderEvent::SetFolderRole { path, role } => self.set_folder_role(&path, role),
             BinderEvent::EmptyTrash { path } => self.empty_trash_folder(&path),
-            BinderEvent::MoveDocument { path, new_parent } => {
-                self.move_document(&path, &new_parent)
-            }
+            BinderEvent::MoveItem { path, new_parent } => self.move_item(&path, &new_parent),
         }
     }
 
-    /// Move a document into `new_parent` (a drag-and-drop in the binder). Keeps
-    /// `selected_path`/the open editor's `open_path` following the document if it was
-    /// selected/open — the buffer's content is untouched by a plain filesystem move,
-    /// so there's nothing to save or reload, just retarget where Save will write.
-    fn move_document(&mut self, path: &Path, new_parent: &Path) {
+    /// Move a file or folder into `new_parent` (a drag-and-drop in the binder). Keeps
+    /// `selected_path`/the open editor's `open_path` following along if either was
+    /// pointing at the moved item *or* something inside it (moving a folder relocates
+    /// its whole subtree) — the buffer's content is untouched by a plain filesystem
+    /// move, so there's nothing to save or reload, just retarget where Save will
+    /// write.
+    fn move_item(&mut self, path: &Path, new_parent: &Path) {
         let Some(project) = &mut self.project else {
             return;
         };
-        match project.move_document(path, new_parent) {
+        match project.move_item(path, new_parent) {
             Ok(new_path) => {
-                if self.selected_path.as_deref() == Some(path) {
-                    self.selected_path = Some(new_path.clone());
+                let rebase = |p: &Path| -> Option<PathBuf> {
+                    p.strip_prefix(path).ok().map(|rest| new_path.join(rest))
+                };
+                if let Some(rebased) = self.selected_path.as_deref().and_then(rebase) {
+                    self.selected_path = Some(rebased);
                 }
-                if self.editor.open_path.as_deref() == Some(path) {
-                    self.editor.open_path = Some(new_path);
+                if let Some(rebased) = self.editor.open_path.as_deref().and_then(rebase) {
+                    self.editor.open_path = Some(rebased);
                 }
             }
             Err(err) => {

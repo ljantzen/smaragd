@@ -99,6 +99,13 @@ pub enum FolderRole {
     Trash,
 }
 
+/// How `move_node_with` should resolve a name collision in the destination folder —
+/// see `Project::move_node`/`move_item`, its two callers, for when each applies.
+enum NameCollision {
+    Uniquify,
+    Refuse,
+}
+
 /// Manual ordering and per-node metadata that the filesystem itself can't express.
 /// Keyed by a `/`-separated path relative to the project root ("" for the root folder
 /// itself) rather than `PathBuf`, so the file stays portable across platforms and
@@ -522,61 +529,60 @@ impl Project {
         self.permanently_delete(path)
     }
 
-    /// Move the document at `path` into `new_parent` — e.g. dragging and dropping it
-    /// onto a different folder in the binder. Unlike `move_node` (used for
-    /// trashing/restoring, where silently disambiguating a same-named collision is
-    /// the right call), this *refuses* the move if `new_parent` already has an entry
-    /// with that name: a drag-and-drop is a deliberate placement, so quietly renaming
-    /// around a collision would be surprising. Only documents, not folders — a
-    /// folder move would also need to rewrite nested order keys the way `move_node`
-    /// does, which this deliberately doesn't handle.
-    pub fn move_document(&mut self, path: &Path, new_parent: &Path) -> io::Result<PathBuf> {
-        if path.is_dir() {
+    /// Move the file or folder at `path` into `new_parent` — e.g. dragging and
+    /// dropping it onto a different folder in the binder. Unlike `move_node` (used
+    /// for trashing/restoring, where silently disambiguating a same-named collision
+    /// is the right call), this *refuses* the move if `new_parent` already has an
+    /// entry with that name: a drag-and-drop is a deliberate placement, so quietly
+    /// renaming around a collision would be surprising. Also refuses moving a folder
+    /// into itself or one of its own subfolders, which `fs::rename` would otherwise
+    /// reject with a much less legible OS error.
+    pub fn move_item(&mut self, path: &Path, new_parent: &Path) -> io::Result<PathBuf> {
+        if new_parent.starts_with(path) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "only documents can be moved this way",
+                "can't move a folder into itself or one of its own subfolders",
             ));
         }
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
-        let dest = new_parent.join(name);
-        ensure_does_not_exist(&dest)?;
-
-        fs::rename(path, &dest)?;
-
-        if let Some(parent) = path.parent() {
-            let parent_key = relative_key(&self.root, parent);
-            if let Some(order) = self.meta.node_order.get_mut(&parent_key) {
-                order.retain(|entry| entry != name);
-            }
-        }
-        let new_parent_key = relative_key(&self.root, new_parent);
-        self.meta
-            .node_order
-            .entry(new_parent_key)
-            .or_default()
-            .push(name.to_string());
-
+        let dest = self.move_node_with(path, new_parent, NameCollision::Refuse)?;
         self.save_metadata()?;
         self.rescan();
         Ok(dest)
     }
 
     /// Move `path` (already inside this project) to be a child of `new_parent`,
-    /// keeping its own name unless that collides (resolved via `unique_child_name`
-    /// since two different folders can easily contain same-named files), and fixing
+    /// keeping its own name unless that collides — resolved via `unique_child_name`,
+    /// since two different folders can easily contain same-named files — and fixing
     /// up `node_order` — and, for a folder, nested order keys via
     /// `rewrite_order_key_prefix` — to follow. Does not touch `folder_roles` /
     /// `trashed_origins` or persist/rescan; callers own that, since what else needs
     /// updating differs between trashing and restoring.
     fn move_node(&mut self, path: &Path, new_parent: &Path) -> io::Result<PathBuf> {
+        self.move_node_with(path, new_parent, NameCollision::Uniquify)
+    }
+
+    /// Shared core of `move_node`/`move_item`: rename `path` into `new_parent` and
+    /// fix up `node_order` (and, for a folder, nested order keys) to follow — the
+    /// only thing that differs between the two public entry points is what happens
+    /// when `new_parent` already has an entry with `path`'s name, which
+    /// `on_collision` controls.
+    fn move_node_with(
+        &mut self,
+        path: &Path,
+        new_parent: &Path,
+        on_collision: NameCollision,
+    ) -> io::Result<PathBuf> {
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
-        let dest_name = unique_child_name(new_parent, name);
+        let dest_name = match on_collision {
+            NameCollision::Uniquify => unique_child_name(new_parent, name),
+            NameCollision::Refuse => {
+                ensure_does_not_exist(&new_parent.join(name))?;
+                name.to_string()
+            }
+        };
         let dest = new_parent.join(&dest_name);
         let is_dir = path.is_dir();
 
@@ -1814,13 +1820,13 @@ mod tests {
     }
 
     #[test]
-    fn move_document_moves_the_file_and_updates_order() {
+    fn move_item_moves_a_document_and_updates_order() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
         let folder = project.create_folder(dir.path(), "Chapter 1").unwrap();
         let doc = project.create_document(dir.path(), "Scene 1").unwrap();
 
-        let new_path = project.move_document(&doc, &folder).unwrap();
+        let new_path = project.move_item(&doc, &folder).unwrap();
 
         assert_eq!(new_path, folder.join("Scene 1.md"));
         assert!(!doc.exists());
@@ -1838,14 +1844,14 @@ mod tests {
     }
 
     #[test]
-    fn move_document_refuses_to_overwrite_a_same_named_file_in_the_target_folder() {
+    fn move_item_refuses_to_overwrite_a_same_named_file_in_the_target_folder() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
         let folder = project.create_folder(dir.path(), "Chapter 1").unwrap();
         project.create_document(&folder, "Scene 1").unwrap();
         let doc = project.create_document(dir.path(), "Scene 1").unwrap();
 
-        let result = project.move_document(&doc, &folder);
+        let result = project.move_item(&doc, &folder);
 
         assert!(result.is_err());
         // Nothing moved: both copies are exactly where they started.
@@ -1854,20 +1860,85 @@ mod tests {
     }
 
     #[test]
-    fn move_document_refuses_to_move_a_folder() {
+    fn move_item_refuses_to_overwrite_a_same_named_folder_in_the_target_folder() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
-        let a = project.create_folder(dir.path(), "A").unwrap();
-        let b = project.create_folder(dir.path(), "B").unwrap();
+        let target = project.create_folder(dir.path(), "Target").unwrap();
+        project.create_folder(&target, "Chapter 1").unwrap();
+        let source = project.create_folder(dir.path(), "Chapter 1").unwrap();
 
-        let result = project.move_document(&a, &b);
+        let result = project.move_item(&source, &target);
 
         assert!(result.is_err());
-        assert!(a.exists());
+        assert!(source.exists());
+        assert!(target.join("Chapter 1").exists());
     }
 
     #[test]
-    fn move_document_does_not_change_the_documents_stem() {
+    fn move_item_moves_a_folder_and_all_its_descendants() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_folder(dir.path(), "Target").unwrap();
+        let source = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let nested_folder = project.create_folder(&source, "Nested").unwrap();
+        project.create_document(&source, "Scene 1").unwrap();
+        project
+            .create_document(&nested_folder, "Sub Scene")
+            .unwrap();
+
+        let new_path = project.move_item(&source, &target).unwrap();
+
+        assert_eq!(new_path, target.join("Chapter 1"));
+        assert!(!source.exists());
+        assert!(new_path.join("Scene 1.md").exists());
+        assert!(new_path.join("Nested").join("Sub Scene.md").exists());
+        assert!(project.tree.find_by_path(&new_path).is_some());
+        assert!(
+            project
+                .tree
+                .find_by_path(&new_path.join("Nested").join("Sub Scene.md"))
+                .is_some()
+        );
+        // Nested order keys ("Chapter 1", "Chapter 1/Nested") followed the folder to
+        // its new relative location under "Target".
+        assert_eq!(
+            project.meta.node_order.get("Target/Chapter 1"),
+            Some(&vec!["Nested".to_string(), "Scene 1.md".to_string()])
+        );
+        assert_eq!(
+            project.meta.node_order.get("Target/Chapter 1/Nested"),
+            Some(&vec!["Sub Scene.md".to_string()])
+        );
+    }
+
+    #[test]
+    fn move_item_refuses_to_move_a_folder_into_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let folder = project.create_folder(dir.path(), "Chapter 1").unwrap();
+
+        let result = project.move_item(&folder, &folder);
+
+        assert!(result.is_err());
+        assert!(folder.exists());
+    }
+
+    #[test]
+    fn move_item_refuses_to_move_a_folder_into_its_own_subfolder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let folder = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let nested = project.create_folder(&folder, "Nested").unwrap();
+
+        let result = project.move_item(&folder, &nested);
+
+        assert!(result.is_err());
+        assert!(folder.exists());
+        assert!(nested.exists());
+    }
+
+    #[test]
+    fn move_item_does_not_change_a_documents_stem() {
         // A move (unlike a rename) never touches the filename, so wikilinks that
         // resolve by stem keep working with no relinking needed.
         let dir = tempfile::tempdir().unwrap();
@@ -1875,7 +1946,7 @@ mod tests {
         let folder = project.create_folder(dir.path(), "Chapter 1").unwrap();
         let doc = project.create_document(dir.path(), "Scene 1").unwrap();
 
-        project.move_document(&doc, &folder).unwrap();
+        project.move_item(&doc, &folder).unwrap();
 
         assert!(project.tree.find_document_by_stem("Scene 1").is_some());
     }
