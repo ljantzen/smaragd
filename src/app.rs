@@ -1187,7 +1187,15 @@ impl eframe::App for TachyliteApp {
                     ui.radio_value(&mut self.view_mode, ViewMode::Preview, "Preview");
                     ui.radio_value(&mut self.view_mode, ViewMode::Corkboard, "Corkboard");
                     ui.separator();
-                    egui::containers::menu::MenuButton::new("Theme").ui(ui, |ui| {
+                    // `SubMenuButton`, not `MenuButton`: this is nested *inside* the
+                    // View menu, and `MenuButton` is for top-level, click-to-open menu
+                    // bar buttons. Using it here meant clicking "Theme" behaved like
+                    // opening a second, independent top-level menu rather than a
+                    // proper submenu — items inside never got a chance to run, since
+                    // the parent popup's own close-on-click handling collapsed it out
+                    // from under `SubMenuButton`'s (hover-to-open, keeps parents open)
+                    // dedicated handling for exactly this case.
+                    egui::containers::menu::SubMenuButton::new("Theme").ui(ui, |ui| {
                         // Cloned rather than borrowed: `set_color_theme` below needs
                         // `&mut self`, which a live borrow of `self.settings` here
                         // would conflict with across loop iterations.
