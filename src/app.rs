@@ -15,6 +15,7 @@ use crate::ui::command_prompt::{
 use crate::ui::corkboard_panel::{CardDraft, CardEditorOutcome, CorkboardEvent};
 use crate::ui::editor_panel::EditorEvent;
 use crate::ui::find_replace_panel::{FindReplaceEvent, FindReplaceState};
+use crate::ui::metadata_panel::{MetadataDraft, MetadataOutcome};
 use crate::ui::name_prompt::{NamePromptOutcome, NamePromptState};
 
 /// Shows `label` as a menu-bar button, with `shortcut`'s formatted text (if any)
@@ -79,6 +80,7 @@ pub struct TachyliteApp {
     find_replace: FindReplaceState,
     card_draft: Option<CardDraft>,
     command_prompt: CommandPromptState,
+    metadata_draft: Option<MetadataDraft>,
 }
 
 impl TachyliteApp {
@@ -111,6 +113,7 @@ impl TachyliteApp {
             find_replace: FindReplaceState::default(),
             card_draft: None,
             command_prompt: CommandPromptState::default(),
+            metadata_draft: None,
         };
 
         if let Some(id) = &app.settings.color_theme
@@ -434,6 +437,32 @@ impl TachyliteApp {
         }
     }
 
+    /// Open the document metadata modal, pre-filled from the open document's current
+    /// frontmatter (parsed from the live buffer, not necessarily what's on disk yet,
+    /// so it reflects any unsaved edits to the block itself).
+    fn open_metadata_editor(&mut self) {
+        if self.editor.open_path.is_none() {
+            self.status_message = Some("No document open".to_string());
+            return;
+        }
+        let meta = crate::frontmatter::parse(&self.editor.buffer);
+        self.metadata_draft = Some(MetadataDraft::from_meta(&meta));
+    }
+
+    /// Handle the metadata modal closing this frame. On save, rewrites the editor
+    /// buffer's frontmatter block in place (preserving any keys the form doesn't
+    /// expose — see `frontmatter::write_back`) and marks it dirty, same as any other
+    /// in-buffer edit; the existing save path (explicit Save, autosave on focus loss,
+    /// etc.) takes it from there.
+    fn finish_metadata_editor(&mut self, outcome: MetadataOutcome) {
+        self.metadata_draft = None;
+        let MetadataOutcome::Save(meta) = outcome else {
+            return;
+        };
+        self.editor.buffer = crate::frontmatter::write_back(&self.editor.buffer, &meta);
+        self.editor.mark_dirty();
+    }
+
     /// Resolve a `[[wikilink]]` activated (clicked in the preview, or Ctrl+Enter in
     /// the editor) to a document in the current project (matched by filename,
     /// case-insensitively) and open it. If it doesn't exist and `force_create` was
@@ -726,6 +755,7 @@ impl TachyliteApp {
             ShortcutAction::CommandPrompt => self.command_prompt.request_open(),
             ShortcutAction::GitCommit => self.prompt_git_commit(false),
             ShortcutAction::GitPush => self.run_git_push(),
+            ShortcutAction::EditMetadata => self.open_metadata_editor(),
         }
     }
 
@@ -1210,6 +1240,13 @@ impl eframe::App for TachyliteApp {
                     {
                         self.find_replace.request_open();
                     }
+                    let metadata_shortcut =
+                        self.settings.shortcuts.get(ShortcutAction::EditMetadata);
+                    if menu_button_with_shortcut(ui, "Document Metadata", metadata_shortcut)
+                        .clicked()
+                    {
+                        self.open_metadata_editor();
+                    }
                 });
                 egui::containers::menu::MenuButton::new("View").ui(ui, |ui| {
                     ui.radio_value(&mut self.view_mode, ViewMode::Editor, "Editor");
@@ -1408,6 +1445,12 @@ impl eframe::App for TachyliteApp {
             {
                 self.finish_card_editor(outcome);
             }
+        }
+
+        if let Some(draft) = &mut self.metadata_draft
+            && let Some(outcome) = ui::metadata_panel::show(ui.ctx(), draft)
+        {
+            self.finish_metadata_editor(outcome);
         }
     }
 }

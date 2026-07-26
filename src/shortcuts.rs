@@ -32,6 +32,7 @@ pub enum ShortcutAction {
     CommandPrompt,
     GitCommit,
     GitPush,
+    EditMetadata,
 }
 
 impl ShortcutAction {
@@ -54,6 +55,7 @@ impl ShortcutAction {
         Self::CommandPrompt,
         Self::GitCommit,
         Self::GitPush,
+        Self::EditMetadata,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -77,6 +79,7 @@ impl ShortcutAction {
             Self::CommandPrompt => "Command Prompt",
             Self::GitCommit => "Commit (Git)",
             Self::GitPush => "Push (Git)",
+            Self::EditMetadata => "Document Metadata",
         }
     }
 
@@ -102,6 +105,7 @@ impl ShortcutAction {
             Self::CommandPrompt => "command_prompt",
             Self::GitCommit => "git_commit",
             Self::GitPush => "git_push",
+            Self::EditMetadata => "edit_metadata",
         }
     }
 
@@ -145,6 +149,9 @@ impl ShortcutAction {
             Self::CommandPrompt => KeyboardShortcut::new(Modifiers::COMMAND, Key::Colon),
             Self::GitCommit => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::C),
             Self::GitPush => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::P),
+            Self::EditMetadata => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::M)
+            }
         }
     }
 }

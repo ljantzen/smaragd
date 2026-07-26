@@ -5,10 +5,12 @@ use serde::{Deserialize, Serialize};
 /// in the YAML — a document with no frontmatter block, or an empty one, parses to
 /// exactly `DocumentMeta::default()`.
 ///
-/// Serialization back to disk (writing frontmatter) is deliberately not implemented
-/// yet — nothing in the app calls it. `Serialize` is derived now only for parity with
-/// `ProjectMeta`/`Settings` and to keep round-trip unit tests convenient; preserving
-/// unknown/custom YAML keys on a future write-back is explicit future work.
+/// Writing this back to disk (see `write_back`) preserves any YAML keys this struct
+/// doesn't know about — it never round-trips *through* `DocumentMeta` itself, which
+/// would silently drop them; `write_back` only ever touches the five keys below in
+/// the raw YAML mapping. `Serialize` is derived for parity with `ProjectMeta`/
+/// `Settings` and round-trip unit test convenience, not because `DocumentMeta` itself
+/// is ever serialized directly to produce a frontmatter block.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DocumentMeta {
@@ -93,6 +95,66 @@ pub fn strip(contents: &str) -> &str {
     match extract_block(contents) {
         Some(fm) => &contents[fm.body_start..],
         None => contents,
+    }
+}
+
+/// Rewrite `contents`' leading frontmatter block — or add one, if it didn't have one
+/// and `meta` isn't entirely empty — to reflect `meta`, leaving the body untouched.
+///
+/// `parse`/`DocumentMeta` silently discard any YAML keys they don't recognize (see
+/// the struct's doc comment) — fine for reading, but a write-back can't afford to do
+/// the same: editing just the "status" field through a metadata UI shouldn't destroy
+/// a custom key a user (or another tool) added to the block by hand. So this parses
+/// the existing block into a raw `Mapping` and only ever touches the five keys
+/// `DocumentMeta` owns, leaving everything else in it exactly as found. A field set
+/// to `None`/empty removes that key entirely rather than writing e.g. `status: null`.
+pub fn write_back(contents: &str, meta: &DocumentMeta) -> String {
+    let (existing_yaml, body) = match extract_block(contents) {
+        Some(fm) => (fm.yaml, &contents[fm.body_start..]),
+        None => ("", contents),
+    };
+
+    let mut mapping: serde_norway::Mapping = if existing_yaml.trim().is_empty() {
+        serde_norway::Mapping::new()
+    } else {
+        serde_norway::from_str(existing_yaml).unwrap_or_default()
+    };
+
+    set_or_remove(&mut mapping, "type", meta.section_type.as_deref());
+    set_or_remove(&mut mapping, "status", meta.status.as_deref());
+    set_or_remove(&mut mapping, "pov", meta.pov.as_deref());
+    match meta.word_count_target {
+        Some(target) => {
+            mapping.insert("word_count_target".into(), target.into());
+        }
+        None => {
+            mapping.remove("word_count_target");
+        }
+    }
+    if meta.tags.is_empty() {
+        mapping.remove("tags");
+    } else {
+        mapping.insert("tags".into(), meta.tags.clone().into());
+    }
+
+    if mapping.is_empty() {
+        return body.to_string();
+    }
+    let yaml = serde_norway::to_string(&mapping).unwrap_or_default();
+    format!("---\n{yaml}---\n{body}")
+}
+
+/// Set `key` to `value` in `mapping`, or remove `key` entirely if `value` is `None`
+/// or empty — an empty string in the UI means "unset this field", not "set it to the
+/// empty string".
+fn set_or_remove(mapping: &mut serde_norway::Mapping, key: &str, value: Option<&str>) {
+    match value {
+        Some(value) if !value.is_empty() => {
+            mapping.insert(key.into(), value.into());
+        }
+        _ => {
+            mapping.remove(key);
+        }
     }
 }
 
@@ -211,5 +273,98 @@ mod tests {
     #[test]
     fn strip_handles_frontmatter_with_no_body_after_it() {
         assert_eq!(strip("---\ntype: Scene\n---\n"), "");
+    }
+
+    #[test]
+    fn write_back_adds_a_frontmatter_block_where_there_was_none() {
+        let meta = DocumentMeta {
+            status: Some("draft".to_string()),
+            ..Default::default()
+        };
+        let result = write_back("# Heading\n\nBody.\n", &meta);
+        assert_eq!(parse(&result), meta);
+        assert_eq!(strip(&result), "# Heading\n\nBody.\n");
+    }
+
+    #[test]
+    fn write_back_updates_an_existing_block_and_leaves_the_body_untouched() {
+        let contents = "---\ntype: Scene\nstatus: draft\n---\n# Heading\n\nBody.\n";
+        let meta = DocumentMeta {
+            section_type: Some("Scene".to_string()),
+            status: Some("final".to_string()),
+            ..Default::default()
+        };
+        let result = write_back(contents, &meta);
+        assert_eq!(parse(&result), meta);
+        assert_eq!(strip(&result), "# Heading\n\nBody.\n");
+    }
+
+    #[test]
+    fn write_back_preserves_unknown_keys_it_does_not_understand() {
+        let contents = "---\ncustom_field: keep me\nstatus: draft\n---\nBody.\n";
+        let meta = DocumentMeta {
+            status: Some("final".to_string()),
+            ..Default::default()
+        };
+        let result = write_back(contents, &meta);
+        assert!(result.contains("custom_field: keep me"));
+        assert_eq!(parse(&result).status, Some("final".to_string()));
+    }
+
+    #[test]
+    fn write_back_removes_a_field_cleared_to_none_rather_than_writing_null() {
+        let contents = "---\ntype: Scene\nstatus: draft\n---\nBody.\n";
+        let meta = DocumentMeta {
+            section_type: Some("Scene".to_string()),
+            status: None,
+            ..Default::default()
+        };
+        let result = write_back(contents, &meta);
+        assert!(!result.contains("status"));
+        assert_eq!(parse(&result).status, None);
+    }
+
+    #[test]
+    fn write_back_removes_a_field_cleared_to_an_empty_string() {
+        let contents = "---\npov: Alice\n---\nBody.\n";
+        let meta = DocumentMeta {
+            pov: Some(String::new()),
+            ..Default::default()
+        };
+        let result = write_back(contents, &meta);
+        assert!(!result.contains("pov"));
+    }
+
+    #[test]
+    fn write_back_round_trips_tags() {
+        let meta = DocumentMeta {
+            tags: vec!["foo".to_string(), "bar".to_string()],
+            ..Default::default()
+        };
+        let result = write_back("Body.\n", &meta);
+        assert_eq!(parse(&result).tags, vec!["foo", "bar"]);
+    }
+
+    #[test]
+    fn write_back_removes_the_whole_block_when_every_field_ends_up_empty() {
+        let contents = "---\nstatus: draft\n---\nBody.\n";
+        let result = write_back(contents, &DocumentMeta::default());
+        assert_eq!(result, "Body.\n");
+    }
+
+    #[test]
+    fn write_back_of_an_all_default_meta_with_no_existing_block_adds_nothing() {
+        let result = write_back("Body.\n", &DocumentMeta::default());
+        assert_eq!(result, "Body.\n");
+    }
+
+    #[test]
+    fn write_back_round_trips_word_count_target() {
+        let meta = DocumentMeta {
+            word_count_target: Some(2500),
+            ..Default::default()
+        };
+        let result = write_back("Body.\n", &meta);
+        assert_eq!(parse(&result).word_count_target, Some(2500));
     }
 }
