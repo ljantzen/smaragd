@@ -8,6 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use model::{BinderNode, BinderNodeKind, BinderTree};
 use scan::scan_project;
@@ -120,6 +121,62 @@ pub struct ProjectMeta {
     /// doesn't carry that.
     #[serde(default)]
     pub trashed_origins: HashMap<String, String>,
+    /// Lisa Cron-style story/plotting cards, deliberately *not* tied to the binder
+    /// tree or `node_order`: a card may exist with no linked document at all (a pure
+    /// plotting artifact, drafted before any scene exists) and its position in this
+    /// list — the corkboard order — is independent of manuscript order. Storing them
+    /// here rather than as document frontmatter sidesteps frontmatter write-back
+    /// entirely (see `frontmatter.rs`'s doc comment on why that isn't implemented).
+    #[serde(default)]
+    pub story_cards: Vec<StoryCard>,
+}
+
+/// A single Lisa Cron "Story Genius" scene card: a structured, four-quadrant
+/// cause-and-effect schema, not a freeform synopsis. Optionally soft-linked to a
+/// document by title (see `linked_document_stem`), the same way `[[wikilinks]]`
+/// resolve — never by path or by the document's `BinderNode::id` (which is
+/// regenerated on every rescan and so isn't a durable reference).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoryCard {
+    pub id: Uuid,
+    pub scene_number: String,
+    pub alpha_point: String,
+    pub subplot_tags: Vec<String>,
+    /// External event + why it matters given the protagonist's current goal.
+    pub cause: String,
+    /// External and internal consequence of the cause.
+    pub effect: String,
+    pub realization: String,
+    /// What the protagonist does next, as a result of `realization`.
+    pub and_so: String,
+    /// The linked document's filename stem (no path, no `.md`), resolved on demand via
+    /// `BinderTree::find_document_by_stem`. `None` means no scene has been drafted for
+    /// this card yet. A stem that no longer resolves (its document was deleted) is a
+    /// normal, passive state — the UI just shows "not found" — mirroring how a
+    /// dangling `[[wikilink]]` already behaves elsewhere in the app.
+    pub linked_document_stem: Option<String>,
+}
+
+impl StoryCard {
+    pub fn new() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            scene_number: String::new(),
+            alpha_point: String::new(),
+            subplot_tags: Vec::new(),
+            cause: String::new(),
+            effect: String::new(),
+            realization: String::new(),
+            and_so: String::new(),
+            linked_document_stem: None,
+        }
+    }
+}
+
+impl Default for StoryCard {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub struct Project {
@@ -270,6 +327,39 @@ impl Project {
         save_metadata(&self.root, &self.meta)
     }
 
+    /// The story card with `id`, if it still exists.
+    pub fn story_card(&self, id: Uuid) -> Option<&StoryCard> {
+        self.meta.story_cards.iter().find(|card| card.id == id)
+    }
+
+    /// Insert `card` if its id isn't already on the board, or replace the existing
+    /// card with the same id otherwise — persisted either way. Used for both creating
+    /// and editing a card from the same "Save" action in the card editor.
+    pub fn upsert_story_card(&mut self, card: StoryCard) -> io::Result<()> {
+        match self.meta.story_cards.iter_mut().find(|c| c.id == card.id) {
+            Some(existing) => *existing = card,
+            None => self.meta.story_cards.push(card),
+        }
+        self.save_metadata()
+    }
+
+    pub fn delete_story_card(&mut self, id: Uuid) -> io::Result<()> {
+        self.meta.story_cards.retain(|card| card.id != id);
+        self.save_metadata()
+    }
+
+    /// Move the card `id` to `new_index` in board order (clamped to the number of
+    /// cards remaining after it's removed), and persist. A no-op if `id` isn't found.
+    pub fn move_story_card(&mut self, id: Uuid, new_index: usize) -> io::Result<()> {
+        let Some(current_index) = self.meta.story_cards.iter().position(|c| c.id == id) else {
+            return Ok(());
+        };
+        let card = self.meta.story_cards.remove(current_index);
+        let new_index = new_index.min(self.meta.story_cards.len());
+        self.meta.story_cards.insert(new_index, card);
+        self.save_metadata()
+    }
+
     /// Create a new empty markdown document under `parent` (a folder within this
     /// project), record it at the end of that folder's manual order, and rescan.
     pub fn create_document(&mut self, parent: &Path, filename: &str) -> io::Result<PathBuf> {
@@ -351,6 +441,7 @@ impl Project {
             )
         {
             self.rename_wikilinks_everywhere(old_stem, new_stem)?;
+            self.relink_story_cards(old_stem, new_stem)?;
         }
 
         Ok(new_path)
@@ -369,6 +460,21 @@ impl Project {
             }
         }
         Ok(())
+    }
+
+    /// Follow a document rename in any story card linked to it by its old stem — the
+    /// same "keep soft references working" job `rename_wikilinks_everywhere` does for
+    /// `[[wikilinks]]`, just for `StoryCard::linked_document_stem`. A no-op (and no
+    /// extra write) if no card was linked to `old_stem`.
+    fn relink_story_cards(&mut self, old_stem: &str, new_stem: &str) -> io::Result<()> {
+        let mut changed = false;
+        for card in self.meta.story_cards.iter_mut() {
+            if card.linked_document_stem.as_deref() == Some(old_stem) {
+                card.linked_document_stem = Some(new_stem.to_string());
+                changed = true;
+            }
+        }
+        if changed { self.save_metadata() } else { Ok(()) }
     }
 
     /// Delete `path`. If a Trash folder is designated and `path` isn't already inside
@@ -806,6 +912,7 @@ mod tests {
         assert_eq!(meta.node_order.get(""), Some(&vec!["a.md".to_string()]));
         assert!(meta.folder_roles.is_empty());
         assert!(meta.trashed_origins.is_empty());
+        assert!(meta.story_cards.is_empty());
     }
 
     #[test]
@@ -1353,6 +1460,44 @@ mod tests {
     }
 
     #[test]
+    fn rename_document_updates_a_linked_story_card() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Old Name").unwrap();
+
+        let mut card = StoryCard::new();
+        card.linked_document_stem = Some("Old Name".to_string());
+        let id = card.id;
+        project.upsert_story_card(card).unwrap();
+
+        project.rename(&target, "New Name").unwrap();
+
+        assert_eq!(
+            project.story_card(id).unwrap().linked_document_stem.as_deref(),
+            Some("New Name")
+        );
+    }
+
+    #[test]
+    fn rename_document_leaves_unrelated_story_cards_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Old Name").unwrap();
+
+        let mut card = StoryCard::new();
+        card.linked_document_stem = Some("Something Else".to_string());
+        let id = card.id;
+        project.upsert_story_card(card).unwrap();
+
+        project.rename(&target, "New Name").unwrap();
+
+        assert_eq!(
+            project.story_card(id).unwrap().linked_document_stem.as_deref(),
+            Some("Something Else")
+        );
+    }
+
+    #[test]
     fn rename_document_leaves_unrelated_wikilinks_untouched() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
@@ -1448,5 +1593,113 @@ mod tests {
         assert!(!folder.exists());
         assert!(project.tree.find_by_path(&folder).is_none());
         assert!(!project.meta.node_order.contains_key("Chapter 1"));
+    }
+
+    #[test]
+    fn upsert_story_card_inserts_a_new_card() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let card = StoryCard::new();
+        let id = card.id;
+
+        project.upsert_story_card(card).unwrap();
+
+        assert!(project.story_card(id).is_some());
+        assert_eq!(project.meta.story_cards.len(), 1);
+    }
+
+    #[test]
+    fn upsert_story_card_replaces_an_existing_card_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let mut card = StoryCard::new();
+        let id = card.id;
+        project.upsert_story_card(card.clone()).unwrap();
+
+        card.scene_number = "3".to_string();
+        project.upsert_story_card(card).unwrap();
+
+        assert_eq!(project.meta.story_cards.len(), 1);
+        assert_eq!(project.story_card(id).unwrap().scene_number, "3");
+    }
+
+    #[test]
+    fn upsert_story_card_persists_across_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let mut card = StoryCard::new();
+        card.alpha_point = "Inciting incident".to_string();
+        let id = card.id;
+        project.upsert_story_card(card).unwrap();
+
+        let reloaded = Project::load_from_folder(dir.path()).unwrap();
+
+        assert_eq!(
+            reloaded.story_card(id).unwrap().alpha_point,
+            "Inciting incident"
+        );
+    }
+
+    #[test]
+    fn delete_story_card_removes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let card = StoryCard::new();
+        let id = card.id;
+        project.upsert_story_card(card).unwrap();
+
+        project.delete_story_card(id).unwrap();
+
+        assert!(project.story_card(id).is_none());
+    }
+
+    #[test]
+    fn move_story_card_reorders_the_board() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let a = StoryCard::new();
+        let b = StoryCard::new();
+        let c = StoryCard::new();
+        let (a_id, b_id, c_id) = (a.id, b.id, c.id);
+        project.upsert_story_card(a).unwrap();
+        project.upsert_story_card(b).unwrap();
+        project.upsert_story_card(c).unwrap();
+
+        // Move the last card (c) to the front.
+        project.move_story_card(c_id, 0).unwrap();
+
+        let order: Vec<Uuid> = project.meta.story_cards.iter().map(|c| c.id).collect();
+        assert_eq!(order, vec![c_id, a_id, b_id]);
+    }
+
+    #[test]
+    fn move_story_card_is_a_no_op_for_an_unknown_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        project.upsert_story_card(StoryCard::new()).unwrap();
+
+        let result = project.move_story_card(Uuid::new_v4(), 0);
+
+        assert!(result.is_ok());
+        assert_eq!(project.meta.story_cards.len(), 1);
+    }
+
+    #[test]
+    fn deleting_the_linked_document_leaves_a_dangling_but_harmless_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Scene 1").unwrap();
+        let mut card = StoryCard::new();
+        card.linked_document_stem = Some("Scene 1".to_string());
+        let id = card.id;
+        project.upsert_story_card(card).unwrap();
+
+        project.delete(&doc).unwrap();
+
+        // The card survives untouched; only resolution against the (now-gone) tree
+        // fails, mirroring how a dangling [[wikilink]] behaves elsewhere.
+        let stem = project.story_card(id).unwrap().linked_document_stem.clone();
+        assert_eq!(stem.as_deref(), Some("Scene 1"));
+        assert!(project.tree.find_document_by_stem("Scene 1").is_none());
     }
 }

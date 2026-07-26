@@ -28,6 +28,7 @@ pub enum ShortcutAction {
     ToggleDarkMode,
     ToggleFullscreen,
     FindReplace,
+    ToggleCorkboard,
 }
 
 impl ShortcutAction {
@@ -46,6 +47,7 @@ impl ShortcutAction {
         Self::ToggleDarkMode,
         Self::ToggleFullscreen,
         Self::FindReplace,
+        Self::ToggleCorkboard,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -65,6 +67,7 @@ impl ShortcutAction {
             Self::ToggleDarkMode => "Toggle Dark/Light Mode",
             Self::ToggleFullscreen => "Toggle Full Screen",
             Self::FindReplace => "Find and Replace",
+            Self::ToggleCorkboard => "Toggle Corkboard",
         }
     }
 
@@ -86,6 +89,7 @@ impl ShortcutAction {
             Self::ToggleDarkMode => "toggle_dark_mode",
             Self::ToggleFullscreen => "toggle_fullscreen",
             Self::FindReplace => "find_replace",
+            Self::ToggleCorkboard => "toggle_corkboard",
         }
     }
 
@@ -123,6 +127,9 @@ impl ShortcutAction {
             }
             Self::ToggleFullscreen => KeyboardShortcut::new(Modifiers::NONE, Key::F11),
             Self::FindReplace => KeyboardShortcut::new(Modifiers::COMMAND, Key::F),
+            Self::ToggleCorkboard => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::K)
+            }
         }
     }
 }

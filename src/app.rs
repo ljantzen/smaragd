@@ -9,6 +9,7 @@ use crate::shortcuts::{ShortcutAction, sorted_by_specificity};
 use crate::ui;
 use crate::ui::WikilinkActivation;
 use crate::ui::binder_panel::BinderEvent;
+use crate::ui::corkboard_panel::{CardDraft, CardEditorOutcome, CorkboardEvent};
 use crate::ui::editor_panel::EditorEvent;
 use crate::ui::find_replace_panel::{FindReplaceEvent, FindReplaceState};
 use crate::ui::name_prompt::{NamePromptOutcome, NamePromptState};
@@ -40,17 +41,27 @@ struct PendingPrompt {
     state: NamePromptState,
 }
 
+/// Which of the three mutually exclusive ways of looking at the project is currently
+/// shown in the `CentralPanel`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewMode {
+    Editor,
+    Preview,
+    Corkboard,
+}
+
 pub struct TachyliteApp {
     project: Option<Project>,
     editor: EditorState,
     selected_path: Option<PathBuf>,
     status_message: Option<String>,
-    preview_mode: bool,
+    view_mode: ViewMode,
     settings: Settings,
     show_settings: bool,
     prompt: Option<PendingPrompt>,
     recording_shortcut: Option<ShortcutAction>,
     find_replace: FindReplaceState,
+    card_draft: Option<CardDraft>,
 }
 
 impl TachyliteApp {
@@ -75,12 +86,13 @@ impl TachyliteApp {
             editor: EditorState::default(),
             selected_path: None,
             status_message: None,
-            preview_mode: false,
+            view_mode: ViewMode::Editor,
             settings,
             show_settings: false,
             prompt: None,
             recording_shortcut: None,
             find_replace: FindReplaceState::default(),
+            card_draft: None,
         };
 
         if app.settings.reopen_last_project
@@ -284,6 +296,62 @@ impl TachyliteApp {
         }
     }
 
+    fn handle_corkboard_event(&mut self, event: CorkboardEvent) {
+        match event {
+            CorkboardEvent::CreateCard => self.card_draft = Some(CardDraft::new()),
+            CorkboardEvent::EditCard(id) => {
+                if let Some(project) = &self.project
+                    && let Some(card) = project.story_card(id)
+                {
+                    self.card_draft = Some(CardDraft::from_card(card));
+                }
+            }
+            CorkboardEvent::DeleteCard(id) => {
+                if let Some(project) = &mut self.project
+                    && let Err(err) = project.delete_story_card(id)
+                {
+                    self.status_message = Some(format!("Couldn't delete card: {err}"));
+                }
+            }
+            CorkboardEvent::MoveCard { id, new_index } => {
+                if let Some(project) = &mut self.project
+                    && let Err(err) = project.move_story_card(id, new_index)
+                {
+                    self.status_message = Some(format!("Couldn't reorder card: {err}"));
+                }
+            }
+            CorkboardEvent::OpenLinkedDocument(path) => {
+                self.open_document(&path);
+                self.view_mode = ViewMode::Editor;
+            }
+        }
+    }
+
+    /// Handle the card-editor modal closing this frame, whether by Save, Delete, or
+    /// Cancel — always clears `card_draft` either way, since the modal is done either
+    /// way once an outcome is produced.
+    fn finish_card_editor(&mut self, outcome: CardEditorOutcome) {
+        let Some(draft) = self.card_draft.take() else {
+            return;
+        };
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        match outcome {
+            CardEditorOutcome::Save => {
+                if let Err(err) = project.upsert_story_card(draft.finalize()) {
+                    self.status_message = Some(format!("Couldn't save card: {err}"));
+                }
+            }
+            CardEditorOutcome::Delete(id) => {
+                if let Err(err) = project.delete_story_card(id) {
+                    self.status_message = Some(format!("Couldn't delete card: {err}"));
+                }
+            }
+            CardEditorOutcome::Cancel => {}
+        }
+    }
+
     /// Open the "New File" name-prompt modal for a file to be created inside
     /// `parent`. Shared by the binder's right-click menu and the New File keyboard
     /// shortcut.
@@ -372,7 +440,18 @@ impl TachyliteApp {
             ShortcutAction::OpenProject => self.browse_for_project(),
             ShortcutAction::OpenSettings => self.show_settings = true,
             ShortcutAction::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            ShortcutAction::TogglePreview => self.preview_mode = !self.preview_mode,
+            ShortcutAction::TogglePreview => {
+                self.view_mode = match self.view_mode {
+                    ViewMode::Preview => ViewMode::Editor,
+                    _ => ViewMode::Preview,
+                };
+            }
+            ShortcutAction::ToggleCorkboard => {
+                self.view_mode = match self.view_mode {
+                    ViewMode::Corkboard => ViewMode::Editor,
+                    _ => ViewMode::Corkboard,
+                };
+            }
             ShortcutAction::Save => {
                 if let Err(err) = self.editor.save() {
                     self.status_message = Some(format!("Save failed: {err}"));
@@ -805,7 +884,9 @@ impl eframe::App for TachyliteApp {
                     }
                 });
                 egui::containers::menu::MenuButton::new("View").ui(ui, |ui| {
-                    ui.checkbox(&mut self.preview_mode, "Toggle preview");
+                    ui.radio_value(&mut self.view_mode, ViewMode::Editor, "Editor");
+                    ui.radio_value(&mut self.view_mode, ViewMode::Preview, "Preview");
+                    ui.radio_value(&mut self.view_mode, ViewMode::Corkboard, "Corkboard");
                 });
                 ui.add_enabled(false, egui::Button::new("Tools"));
                 egui::containers::menu::MenuButton::new("Help").ui(ui, |ui| {
@@ -869,8 +950,8 @@ impl eframe::App for TachyliteApp {
                 }
             });
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            if self.preview_mode {
+        egui::CentralPanel::default().show(ui, |ui| match self.view_mode {
+            ViewMode::Preview => {
                 if self.editor.open_path.is_some() {
                     let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
                     if let Some(activation) =
@@ -881,7 +962,8 @@ impl eframe::App for TachyliteApp {
                 } else {
                     ui.label("Select a file from the binder to preview.");
                 }
-            } else {
+            }
+            ViewMode::Editor => {
                 let note_titles = self
                     .project
                     .as_ref()
@@ -893,6 +975,22 @@ impl eframe::App for TachyliteApp {
                     None => {}
                 }
             }
+            ViewMode::Corkboard => match &self.project {
+                Some(project) => {
+                    if let Some(event) = ui::corkboard_panel::show(ui, project) {
+                        self.handle_corkboard_event(event);
+                    }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
         });
+
+        if let Some(draft) = &mut self.card_draft
+            && let Some(outcome) = ui::corkboard_panel::show_card_editor(ui.ctx(), draft)
+        {
+            self.finish_card_editor(outcome);
+        }
     }
 }
