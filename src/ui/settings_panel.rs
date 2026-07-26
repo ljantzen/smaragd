@@ -16,7 +16,8 @@ pub fn show(
     let mut changed = false;
     egui::Window::new("Settings")
         .open(open)
-        .resizable(false)
+        .resizable(true)
+        .default_height(480.0)
         .collapsible(false)
         .show(ctx, |ui| {
             changed |= ui
@@ -43,29 +44,37 @@ pub fn show(
 
             ui.separator();
             ui.heading("Keyboard Shortcuts");
-            egui::Grid::new("shortcuts_grid")
-                .num_columns(3)
-                .striped(true)
+            // A scroll area of its own, not the whole window: with `ShortcutAction::ALL`
+            // now well past a dozen entries, letting it grow the window unbounded made
+            // Settings unmanageable, and scrolling the whole window would also push the
+            // checkboxes/Theme section above out of view along with it.
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
                 .show(ui, |ui| {
-                    for action in ShortcutAction::ALL {
-                        ui.label(action.label());
-                        let text = settings
-                            .shortcuts
-                            .get(*action)
-                            .map(|s| ctx.format_shortcut(&s))
-                            .unwrap_or_else(|| "Unbound".to_string());
-                        ui.label(text);
-                        ui.horizontal(|ui| {
-                            if ui.button("Change").clicked() {
-                                *recording_shortcut = Some(*action);
-                            }
-                            if ui.button("Clear").clicked() {
-                                settings.shortcuts.set(*action, None);
-                                changed = true;
+                    egui::Grid::new("shortcuts_grid")
+                        .num_columns(3)
+                        .striped(true)
+                        .show(ui, |ui| {
+                            for action in ShortcutAction::ALL {
+                                ui.label(action.label());
+                                let text = settings
+                                    .shortcuts
+                                    .get(*action)
+                                    .map(|s| ctx.format_shortcut(&s))
+                                    .unwrap_or_else(|| "Unbound".to_string());
+                                ui.label(text);
+                                ui.horizontal(|ui| {
+                                    if ui.button("Change").clicked() {
+                                        *recording_shortcut = Some(*action);
+                                    }
+                                    if ui.button("Clear").clicked() {
+                                        settings.shortcuts.set(*action, None);
+                                        changed = true;
+                                    }
+                                });
+                                ui.end_row();
                             }
                         });
-                        ui.end_row();
-                    }
                 });
         });
 
