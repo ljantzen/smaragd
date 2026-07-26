@@ -26,10 +26,15 @@ pub struct Settings {
     pub create_starter_folders: bool,
     /// Keyboard shortcut bindings, remappable from the Settings window.
     pub shortcuts: ShortcutMap,
-    /// Dark/light/system theme preference, changeable from the Settings window.
-    /// Defaults to `System` (egui's own default), matching this struct's
-    /// otherwise-untouched-until-configured philosophy.
+    /// Dark/light/system *appearance* preference, changeable from the Settings
+    /// window or `:dmode`. Defaults to `System` (egui's own default), matching this
+    /// struct's otherwise-untouched-until-configured philosophy. Independent of
+    /// `color_theme` below — see that field's doc comment.
     pub theme_preference: egui::ThemePreference,
+    /// The selected Helix-style color *theme*'s id (`color_theme::ColorTheme::id`),
+    /// if any — `None` means no theme is applied, just plain dark/light styling per
+    /// `theme_preference`. Set via `:theme <id>` or the View > Theme menu.
+    pub color_theme: Option<String>,
 }
 
 /// The full path to the settings file, e.g. `~/.config/tachylite/tachylite.toml` on
@@ -91,6 +96,17 @@ mod tests {
     }
 
     #[test]
+    fn settings_file_without_a_color_theme_loads_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tachylite.toml");
+        std::fs::write(&path, "reopen_last_project = true\n").unwrap();
+
+        let loaded = Settings::load_from_path(&path);
+
+        assert_eq!(loaded.color_theme, None);
+    }
+
+    #[test]
     fn settings_round_trip_through_disk() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("tachylite.toml");
@@ -108,6 +124,7 @@ mod tests {
             create_starter_folders: true,
             shortcuts,
             theme_preference: egui::ThemePreference::Dark,
+            color_theme: Some("dracula".to_string()),
         };
 
         settings.save_to_path(&path).unwrap();

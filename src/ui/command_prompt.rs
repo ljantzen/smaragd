@@ -45,6 +45,10 @@ pub enum Command {
     Open(String),
     New(String),
     DarkMode(DarkModeChoice),
+    /// A Helix-style color theme by id, or `None` for "default" (no theme, plain
+    /// `:dmode` styling) — `app.rs` resolves the id against `color_theme::find`,
+    /// since validating it needs no data this pure-parsing module has access to.
+    ColorTheme(Option<String>),
     Find(String),
 }
 
@@ -59,7 +63,9 @@ pub enum CommandPromptEvent {
 /// toward the descriptive long form where one exists (`write`, not `w`) since the
 /// point of completion is discoverability; short aliases like `w`/`q`/`x` still work
 /// when typed in full, they just aren't themselves completion targets.
-const COMMAND_NAMES: &[&str] = &["write", "quit", "wq", "open", "new", "dmode", "find"];
+const COMMAND_NAMES: &[&str] = &[
+    "write", "quit", "wq", "open", "new", "dmode", "theme", "find",
+];
 const DARK_MODE_CHOICES: &[&str] = &["dark", "light", "system"];
 
 /// Parse a line of command-prompt input (a leading `:`, if the user typed one, is
@@ -89,6 +95,9 @@ fn parse_command(input: &str) -> Result<Command, String> {
             "system" => Ok(Command::DarkMode(DarkModeChoice::System)),
             _ => Err("Usage: :dmode dark|light|system".to_string()),
         },
+        "theme" if rest.eq_ignore_ascii_case("default") => Ok(Command::ColorTheme(None)),
+        "theme" if !rest.is_empty() => Ok(Command::ColorTheme(Some(rest.to_lowercase()))),
+        "theme" => Err("Usage: :theme <name> (or :theme default)".to_string()),
         "find" => Ok(Command::Find(rest.to_string())),
         other => Err(format!("Unknown command: {other}")),
     }
@@ -125,6 +134,16 @@ fn completions<'a>(input: &str, note_titles: &'a [String]) -> Vec<&'a str> {
             command: "dmode",
             query,
         } => filter_candidates(DARK_MODE_CHOICES, query),
+        CompletionTarget::Argument {
+            command: "theme",
+            query,
+        } => {
+            let mut matches = filter_candidates(crate::color_theme::THEME_IDS, query);
+            if "default".starts_with(&query.to_lowercase()) {
+                matches.push("default");
+            }
+            matches
+        }
         CompletionTarget::Argument { .. } => Vec::new(),
     }
 }
@@ -203,7 +222,7 @@ pub fn show(
                 egui::TextEdit::singleline(&mut state.input)
                     .desired_width(f32::INFINITY)
                     .hint_text(
-                        "w | q | wq | open <title> | new <title> | dmode dark|light|system | find <text>",
+                        "w | q | wq | open <title> | new <title> | dmode dark|light|system | theme <name> | find <text>",
                     ),
             );
             if state.focus_requested {
@@ -315,6 +334,39 @@ mod tests {
     }
 
     #[test]
+    fn parses_theme_by_id() {
+        match parse_command("theme dracula") {
+            Ok(Command::ColorTheme(Some(id))) => assert_eq!(id, "dracula"),
+            other => panic!("expected Command::ColorTheme, got {}", describe(&other)),
+        }
+    }
+
+    #[test]
+    fn theme_id_is_lowercased() {
+        match parse_command("theme Dracula") {
+            Ok(Command::ColorTheme(Some(id))) => assert_eq!(id, "dracula"),
+            other => panic!("expected Command::ColorTheme, got {}", describe(&other)),
+        }
+    }
+
+    #[test]
+    fn parses_theme_default_as_none() {
+        assert!(matches!(
+            parse_command("theme default"),
+            Ok(Command::ColorTheme(None))
+        ));
+        assert!(matches!(
+            parse_command("theme Default"),
+            Ok(Command::ColorTheme(None))
+        ));
+    }
+
+    #[test]
+    fn theme_without_a_name_is_an_error() {
+        assert!(parse_command("theme").is_err());
+    }
+
+    #[test]
     fn parses_find_with_and_without_a_query() {
         match parse_command("find needle") {
             Ok(Command::Find(query)) => assert_eq!(query, "needle"),
@@ -379,6 +431,24 @@ mod tests {
     #[test]
     fn dmode_argument_completes_against_the_fixed_choices() {
         assert_eq!(completions("dmode d", &[]), vec!["dark"]);
+    }
+
+    #[test]
+    fn theme_argument_completes_against_known_theme_ids() {
+        assert_eq!(completions("theme drac", &[]), vec!["dracula"]);
+    }
+
+    #[test]
+    fn theme_argument_completion_includes_default() {
+        assert_eq!(completions("theme def", &[]), vec!["default"]);
+    }
+
+    #[test]
+    fn theme_argument_completion_with_an_empty_query_includes_every_theme_and_default() {
+        let candidates = completions("theme ", &[]);
+        assert_eq!(candidates.len(), crate::color_theme::THEME_IDS.len() + 1);
+        assert!(candidates.contains(&"default"));
+        assert!(candidates.contains(&"dracula"));
     }
 
     #[test]

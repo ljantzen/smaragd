@@ -98,6 +98,12 @@ impl TachyliteApp {
             command_prompt: CommandPromptState::default(),
         };
 
+        if let Some(id) = &app.settings.color_theme
+            && let Some(theme) = crate::color_theme::find(id)
+        {
+            crate::color_theme::apply(&cc.egui_ctx, theme);
+        }
+
         if app.settings.reopen_last_project
             && let Some(path) = app.settings.last_project_path.clone()
         {
@@ -556,6 +562,7 @@ impl TachyliteApp {
                 ctx.set_theme(self.settings.theme_preference);
                 self.persist_settings();
             }
+            Command::ColorTheme(choice) => self.set_color_theme(ctx, choice.as_deref()),
             Command::Find(query) => {
                 if !query.is_empty() {
                     self.find_replace.query = query;
@@ -563,6 +570,34 @@ impl TachyliteApp {
                 self.find_replace.request_open();
             }
         }
+    }
+
+    /// Apply a Helix-style color theme by id (`Some`), or clear back to plain
+    /// `:dmode` dark/light styling (`None`) — shared by `:theme`, the View > Theme
+    /// menu, and reapplying the persisted choice on startup. Also updates
+    /// `theme_preference` to match the theme's own dark/light base, since a theme
+    /// picks its appearance along with its palette.
+    fn set_color_theme(&mut self, ctx: &egui::Context, id: Option<&str>) {
+        match id {
+            Some(id) => {
+                let Some(theme) = crate::color_theme::find(id) else {
+                    self.status_message = Some(format!("Unknown theme: {id}"));
+                    return;
+                };
+                crate::color_theme::apply(ctx, theme);
+                self.settings.theme_preference = if theme.dark {
+                    egui::ThemePreference::Dark
+                } else {
+                    egui::ThemePreference::Light
+                };
+                self.settings.color_theme = Some(theme.id.to_string());
+            }
+            None => {
+                crate::color_theme::reset(ctx);
+                self.settings.color_theme = None;
+            }
+        }
+        self.persist_settings();
     }
 
     /// The documents a find/replace `scope` covers right now. Empty if no project is
@@ -952,6 +987,24 @@ impl eframe::App for TachyliteApp {
                     ui.radio_value(&mut self.view_mode, ViewMode::Editor, "Editor");
                     ui.radio_value(&mut self.view_mode, ViewMode::Preview, "Preview");
                     ui.radio_value(&mut self.view_mode, ViewMode::Corkboard, "Corkboard");
+                    ui.separator();
+                    egui::containers::menu::MenuButton::new("Theme").ui(ui, |ui| {
+                        // Cloned rather than borrowed: `set_color_theme` below needs
+                        // `&mut self`, which a live borrow of `self.settings` here
+                        // would conflict with across loop iterations.
+                        let current = self.settings.color_theme.clone();
+                        if ui.radio(current.is_none(), "Default").clicked() {
+                            self.set_color_theme(ui.ctx(), None);
+                        }
+                        for theme in crate::color_theme::THEMES {
+                            if ui
+                                .radio(current.as_deref() == Some(theme.id), theme.label)
+                                .clicked()
+                            {
+                                self.set_color_theme(ui.ctx(), Some(theme.id));
+                            }
+                        }
+                    });
                 });
                 egui::containers::menu::MenuButton::new("Tools").ui(ui, |ui| {
                     let command_prompt_shortcut =
