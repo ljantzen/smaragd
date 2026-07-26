@@ -57,6 +57,14 @@ impl TachyliteApp {
             .map(|path| Settings::load_from_path(&path))
             .unwrap_or_default();
         cc.egui_ctx.set_theme(settings.theme_preference);
+        // Match the editor's background to the surrounding chrome instead of egui's
+        // default `extreme_bg_color`, which renders TextEdit widgets noticeably darker
+        // (dark mode) than the panels around them.
+        for theme in [egui::Theme::Dark, egui::Theme::Light] {
+            cc.egui_ctx.style_mut_of(theme, |style| {
+                style.visuals.text_edit_bg_color = Some(style.visuals.panel_fill);
+            });
+        }
 
         let mut app = Self {
             project: None,
