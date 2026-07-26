@@ -30,6 +30,8 @@ pub enum ShortcutAction {
     FindReplace,
     ToggleCorkboard,
     CommandPrompt,
+    GitCommit,
+    GitPush,
 }
 
 impl ShortcutAction {
@@ -50,6 +52,8 @@ impl ShortcutAction {
         Self::FindReplace,
         Self::ToggleCorkboard,
         Self::CommandPrompt,
+        Self::GitCommit,
+        Self::GitPush,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -71,6 +75,8 @@ impl ShortcutAction {
             Self::FindReplace => "Find and Replace",
             Self::ToggleCorkboard => "Toggle Corkboard",
             Self::CommandPrompt => "Command Prompt",
+            Self::GitCommit => "Commit (Git)",
+            Self::GitPush => "Push (Git)",
         }
     }
 
@@ -94,6 +100,8 @@ impl ShortcutAction {
             Self::FindReplace => "find_replace",
             Self::ToggleCorkboard => "toggle_corkboard",
             Self::CommandPrompt => "command_prompt",
+            Self::GitCommit => "git_commit",
+            Self::GitPush => "git_push",
         }
     }
 
@@ -135,6 +143,8 @@ impl ShortcutAction {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::K)
             }
             Self::CommandPrompt => KeyboardShortcut::new(Modifiers::COMMAND, Key::Colon),
+            Self::GitCommit => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::C),
+            Self::GitPush => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::P),
         }
     }
 }

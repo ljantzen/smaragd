@@ -3,6 +3,7 @@ pub mod autocomplete;
 pub mod color_theme;
 pub mod editor;
 pub mod frontmatter;
+pub mod git;
 pub mod markdown;
 pub mod project;
 pub mod search;

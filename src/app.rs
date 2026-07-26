@@ -9,7 +9,9 @@ use crate::shortcuts::{ShortcutAction, sorted_by_specificity};
 use crate::ui;
 use crate::ui::WikilinkActivation;
 use crate::ui::binder_panel::BinderEvent;
-use crate::ui::command_prompt::{Command, CommandPromptEvent, CommandPromptState, DarkModeChoice};
+use crate::ui::command_prompt::{
+    Command, CommandPromptEvent, CommandPromptState, DarkModeChoice, GitCommand,
+};
 use crate::ui::corkboard_panel::{CardDraft, CardEditorOutcome, CorkboardEvent};
 use crate::ui::editor_panel::EditorEvent;
 use crate::ui::find_replace_panel::{FindReplaceEvent, FindReplaceState};
@@ -31,10 +33,23 @@ fn menu_button_with_shortcut(
 
 /// What a `NamePromptState` modal should do with the name once confirmed.
 enum PromptAction {
-    NewFile { parent: PathBuf },
-    NewFolder { parent: PathBuf },
-    Rename { path: PathBuf },
-    NewProject { location: PathBuf },
+    NewFile {
+        parent: PathBuf,
+    },
+    NewFolder {
+        parent: PathBuf,
+    },
+    Rename {
+        path: PathBuf,
+    },
+    NewProject {
+        location: PathBuf,
+    },
+    /// Commit with the (editable) message the prompt was confirmed with; `push_after`
+    /// carries through whether this was "Commit" or "Commit and Push".
+    GitCommit {
+        push_after: bool,
+    },
 }
 
 struct PendingPrompt {
@@ -136,6 +151,178 @@ impl TachyliteApp {
         self.status_message = None;
         self.settings.last_project_path = Some(path.to_path_buf());
         self.persist_settings();
+        self.maybe_offer_git_support();
+        if let Some(project) = &self.project
+            && let Err(err) = Self::ensure_git_repo(project)
+        {
+            self.status_message = Some(format!("Couldn't initialize git: {err}"));
+        }
+    }
+
+    /// If git support is enabled for `project` but its `.git` directory is missing —
+    /// deleted outside the app, or `project.json` synced somewhere that never had one
+    /// — recreate it. A no-op both when git isn't enabled and when the repo already
+    /// exists, so it's safe to call on every project open (not just once at enable
+    /// time) — the same "checked and healed independently of when it was set up"
+    /// philosophy `Project::ensure_role_folder` uses for the Research/Trash folders.
+    fn ensure_git_repo(project: &Project) -> Result<(), crate::git::GitError> {
+        if project.meta.git_enabled
+            && crate::git::is_available()
+            && !crate::git::is_repo(&project.root)
+        {
+            crate::git::init(&project.root)?;
+        }
+        Ok(())
+    }
+
+    /// The one-time "enable git support?" dialog (modeled after the Obsidian Git
+    /// plugin), shown at most once per project — see `ProjectMeta::git_prompted`.
+    /// A no-op if `git` isn't on `PATH`, or the project's already been asked.
+    fn maybe_offer_git_support(&mut self) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        if project.meta.git_prompted || project.meta.git_enabled || !crate::git::is_available() {
+            return;
+        }
+
+        let already_repo = crate::git::is_repo(&project.root);
+        let description = if already_repo {
+            "This project is already a git repository. Enable Tachylite's git integration (commit/push/pull from the Versions menu)?"
+        } else {
+            "Git was detected on your system. Initialize a git repository for this project and enable version control from the Versions menu?"
+        };
+        let enable = rfd::MessageDialog::new()
+            .set_title("Enable Git Support")
+            .set_description(description)
+            .set_level(rfd::MessageLevel::Info)
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show();
+
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        if enable == rfd::MessageDialogResult::Yes {
+            if !already_repo && let Err(err) = crate::git::init(&project.root) {
+                self.status_message = Some(format!("Couldn't initialize git: {err}"));
+                return;
+            }
+            if let Err(err) = project.enable_git_support() {
+                self.status_message = Some(format!("Couldn't save settings: {err}"));
+            }
+        } else if let Err(err) = project.decline_git_support() {
+            self.status_message = Some(format!("Couldn't save settings: {err}"));
+        }
+    }
+
+    /// "Enable Git Support" from the Versions menu or `:git enable` — unlike
+    /// `maybe_offer_git_support`, always runs when asked, regardless of whether the
+    /// project's already been prompted (this is how a user who declined the one-time
+    /// dialog turns it on later).
+    fn enable_git_support_manually(&mut self) {
+        let Some(project) = &self.project else {
+            self.status_message = Some("No project open".to_string());
+            return;
+        };
+        if !crate::git::is_available() {
+            self.status_message = Some("git was not found on this system".to_string());
+            return;
+        }
+        let already_repo = crate::git::is_repo(&project.root);
+        if !already_repo && let Err(err) = crate::git::init(&project.root) {
+            self.status_message = Some(format!("Couldn't initialize git: {err}"));
+            return;
+        }
+
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        match project.enable_git_support() {
+            Ok(()) => self.status_message = Some("Git support enabled".to_string()),
+            Err(err) => self.status_message = Some(format!("Couldn't save settings: {err}")),
+        }
+    }
+
+    /// Open the commit-message prompt (the existing name-prompt modal, reused),
+    /// pre-filled with a default message. Shared by the Versions menu, the
+    /// `GitCommit` shortcut, and `:git commit`/`:git backup` with no inline message.
+    fn prompt_git_commit(&mut self, push_after: bool) {
+        let Some(project) = &self.project else {
+            self.status_message = Some("No project open".to_string());
+            return;
+        };
+        if !project.meta.git_enabled {
+            self.status_message = Some("Git support isn't enabled for this project".to_string());
+            return;
+        }
+        self.prompt = Some(PendingPrompt {
+            action: PromptAction::GitCommit { push_after },
+            state: NamePromptState {
+                title: "Commit".to_string(),
+                confirm_label: if push_after {
+                    "Commit and Push".to_string()
+                } else {
+                    "Commit".to_string()
+                },
+                name: "Tachylite backup".to_string(),
+            },
+        });
+    }
+
+    fn run_git_commit(&mut self, message: &str, push_after: bool) {
+        let Some(project) = &self.project else {
+            self.status_message = Some("No project open".to_string());
+            return;
+        };
+        if !project.meta.git_enabled {
+            self.status_message = Some("Git support isn't enabled for this project".to_string());
+            return;
+        }
+        if let Err(err) = Self::ensure_git_repo(project) {
+            self.status_message = Some(format!("Couldn't initialize git: {err}"));
+            return;
+        }
+        match crate::git::commit_all(&project.root, message) {
+            Ok(()) => {
+                self.status_message = Some("Committed".to_string());
+                if push_after {
+                    self.run_git_push();
+                }
+            }
+            Err(crate::git::GitError::NothingToCommit) => {
+                self.status_message = Some("Nothing to commit".to_string());
+            }
+            Err(err) => self.status_message = Some(format!("Commit failed: {err}")),
+        }
+    }
+
+    fn run_git_push(&mut self) {
+        let Some(project) = &self.project else {
+            self.status_message = Some("No project open".to_string());
+            return;
+        };
+        match crate::git::push(&project.root) {
+            Ok(()) => self.status_message = Some("Pushed".to_string()),
+            Err(err) => self.status_message = Some(format!("Push failed: {err}")),
+        }
+    }
+
+    /// Pulls, then rescans the binder tree so any files the pull added/removed show
+    /// up. Deliberately doesn't reload the currently open document even if its
+    /// on-disk content changed — that could silently clobber unsaved local edits;
+    /// the user can reopen it themselves if they want the pulled version.
+    fn run_git_pull(&mut self) {
+        let Some(project) = &mut self.project else {
+            self.status_message = Some("No project open".to_string());
+            return;
+        };
+        match crate::git::pull(&project.root) {
+            Ok(()) => {
+                project.rescan();
+                self.status_message = Some("Pulled".to_string());
+            }
+            Err(err) => self.status_message = Some(format!("Pull failed: {err}")),
+        }
     }
 
     fn persist_settings(&mut self) {
@@ -508,6 +695,8 @@ impl TachyliteApp {
             }
             ShortcutAction::FindReplace => self.find_replace.request_open(),
             ShortcutAction::CommandPrompt => self.command_prompt.request_open(),
+            ShortcutAction::GitCommit => self.prompt_git_commit(false),
+            ShortcutAction::GitPush => self.run_git_push(),
         }
     }
 
@@ -563,6 +752,15 @@ impl TachyliteApp {
                 self.persist_settings();
             }
             Command::ColorTheme(choice) => self.set_color_theme(ctx, choice.as_deref()),
+            Command::Git(git_command) => match git_command {
+                GitCommand::Enable => self.enable_git_support_manually(),
+                GitCommand::Commit(Some(message)) => self.run_git_commit(&message, false),
+                GitCommand::Commit(None) => self.prompt_git_commit(false),
+                GitCommand::Push => self.run_git_push(),
+                GitCommand::Pull => self.run_git_pull(),
+                GitCommand::Backup(Some(message)) => self.run_git_commit(&message, true),
+                GitCommand::Backup(None) => self.prompt_git_commit(true),
+            },
             Command::Find(query) => {
                 if !query.is_empty() {
                     self.find_replace.query = query;
@@ -793,6 +991,7 @@ impl TachyliteApp {
             PromptAction::NewFolder { parent } => self.create_folder(&parent, name),
             PromptAction::Rename { path } => self.rename_node(&path, name),
             PromptAction::NewProject { location } => self.create_project(&location, name),
+            PromptAction::GitCommit { push_after } => self.run_git_commit(name, push_after),
         }
     }
 
@@ -1013,6 +1212,33 @@ impl eframe::App for TachyliteApp {
                         .clicked()
                     {
                         self.command_prompt.request_open();
+                    }
+                });
+                egui::containers::menu::MenuButton::new("Versions").ui(ui, |ui| {
+                    let git_enabled = self
+                        .project
+                        .as_ref()
+                        .is_some_and(|project| project.meta.git_enabled);
+                    if !git_enabled {
+                        if ui.button("Enable Git Support").clicked() {
+                            self.enable_git_support_manually();
+                        }
+                    } else {
+                        let commit_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::GitCommit);
+                        if menu_button_with_shortcut(ui, "Commit", commit_shortcut).clicked() {
+                            self.prompt_git_commit(false);
+                        }
+                        if ui.button("Commit and Push").clicked() {
+                            self.prompt_git_commit(true);
+                        }
+                        let push_shortcut = self.settings.shortcuts.get(ShortcutAction::GitPush);
+                        if menu_button_with_shortcut(ui, "Push", push_shortcut).clicked() {
+                            self.run_git_push();
+                        }
+                        if ui.button("Pull").clicked() {
+                            self.run_git_pull();
+                        }
                     }
                 });
                 egui::containers::menu::MenuButton::new("Help").ui(ui, |ui| {

@@ -129,6 +129,19 @@ pub struct ProjectMeta {
     /// entirely (see `frontmatter.rs`'s doc comment on why that isn't implemented).
     #[serde(default)]
     pub story_cards: Vec<StoryCard>,
+    /// Whether git version control (commit/push/pull from the Versions menu, modeled
+    /// after the Obsidian Git plugin) is turned on for this project. Deliberately a
+    /// per-project setting, not a global one in `Settings`/`settings.rs`: one project
+    /// folder might be a git repo (or want to be) while another isn't, and there's no
+    /// single "on for every project" answer that would make sense.
+    #[serde(default)]
+    pub git_enabled: bool,
+    /// Whether the user has already been asked (via the one-time "enable git
+    /// support?" dialog) whether to turn `git_enabled` on — regardless of their
+    /// answer, prevents nagging them again every time the project is opened. Doesn't
+    /// block a later manual "Enable Git Support" from the Versions menu.
+    #[serde(default)]
+    pub git_prompted: bool,
 }
 
 /// A single Lisa Cron "Story Genius" scene card: a structured, four-quadrant
@@ -325,6 +338,22 @@ impl Project {
 
     pub fn save_metadata(&self) -> io::Result<()> {
         save_metadata(&self.root, &self.meta)
+    }
+
+    /// Turn git support on for this project and record that the user's been asked
+    /// (so the one-time "enable git support?" dialog never asks again).
+    pub fn enable_git_support(&mut self) -> io::Result<()> {
+        self.meta.git_enabled = true;
+        self.meta.git_prompted = true;
+        self.save_metadata()
+    }
+
+    /// Record that the user declined the one-time "enable git support?" dialog,
+    /// without turning `git_enabled` on — they can still do so later via the
+    /// Versions menu's "Enable Git Support" item.
+    pub fn decline_git_support(&mut self) -> io::Result<()> {
+        self.meta.git_prompted = true;
+        self.save_metadata()
     }
 
     /// The story card with `id`, if it still exists.
@@ -917,6 +946,33 @@ mod tests {
         assert!(meta.folder_roles.is_empty());
         assert!(meta.trashed_origins.is_empty());
         assert!(meta.story_cards.is_empty());
+        assert!(!meta.git_enabled);
+        assert!(!meta.git_prompted);
+    }
+
+    #[test]
+    fn enable_git_support_sets_both_flags_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        project.enable_git_support().unwrap();
+
+        assert!(project.meta.git_enabled);
+        assert!(project.meta.git_prompted);
+        let reloaded = Project::load_from_folder(dir.path()).unwrap();
+        assert!(reloaded.meta.git_enabled);
+        assert!(reloaded.meta.git_prompted);
+    }
+
+    #[test]
+    fn decline_git_support_sets_prompted_but_not_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        project.decline_git_support().unwrap();
+
+        assert!(!project.meta.git_enabled);
+        assert!(project.meta.git_prompted);
     }
 
     #[test]

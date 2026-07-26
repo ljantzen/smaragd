@@ -49,7 +49,23 @@ pub enum Command {
     /// `:dmode` styling) — `app.rs` resolves the id against `color_theme::find`,
     /// since validating it needs no data this pure-parsing module has access to.
     ColorTheme(Option<String>),
+    Git(GitCommand),
     Find(String),
+}
+
+/// A `:git <subcommand>` action, modeled after the Obsidian Git plugin's core
+/// commands. `Commit`/`Backup`'s `Option<String>` is the commit message: `Some` when
+/// given inline (`:git commit fixed typo`), `None` to prompt for one instead (with a
+/// default pre-filled) — `app.rs` decides which since it owns the message-prompt
+/// modal.
+pub enum GitCommand {
+    Enable,
+    Commit(Option<String>),
+    Push,
+    Pull,
+    /// Commit and push in one action — the closest equivalent to Obsidian Git's
+    /// "create backup" command.
+    Backup(Option<String>),
 }
 
 pub enum CommandPromptEvent {
@@ -64,9 +80,10 @@ pub enum CommandPromptEvent {
 /// point of completion is discoverability; short aliases like `w`/`q`/`x` still work
 /// when typed in full, they just aren't themselves completion targets.
 const COMMAND_NAMES: &[&str] = &[
-    "write", "quit", "wq", "open", "new", "dmode", "theme", "find",
+    "write", "quit", "wq", "open", "new", "dmode", "theme", "git", "find",
 ];
 const DARK_MODE_CHOICES: &[&str] = &["dark", "light", "system"];
+const GIT_SUBCOMMANDS: &[&str] = &["enable", "commit", "push", "pull", "backup"];
 
 /// Parse a line of command-prompt input (a leading `:`, if the user typed one, is
 /// tolerated and ignored) into a `Command`, following Helix's short-name-first
@@ -98,8 +115,26 @@ fn parse_command(input: &str) -> Result<Command, String> {
         "theme" if rest.eq_ignore_ascii_case("default") => Ok(Command::ColorTheme(None)),
         "theme" if !rest.is_empty() => Ok(Command::ColorTheme(Some(rest.to_lowercase()))),
         "theme" => Err("Usage: :theme <name> (or :theme default)".to_string()),
+        "git" if !rest.is_empty() => parse_git_subcommand(rest),
+        "git" => Err("Usage: :git enable|commit|push|pull|backup [message]".to_string()),
         "find" => Ok(Command::Find(rest.to_string())),
         other => Err(format!("Unknown command: {other}")),
+    }
+}
+
+fn parse_git_subcommand(rest: &str) -> Result<Command, String> {
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let sub = parts.next().unwrap_or("");
+    let message = parts.next().unwrap_or("").trim();
+    let message = (!message.is_empty()).then(|| message.to_string());
+
+    match sub {
+        "enable" => Ok(Command::Git(GitCommand::Enable)),
+        "commit" => Ok(Command::Git(GitCommand::Commit(message))),
+        "push" => Ok(Command::Git(GitCommand::Push)),
+        "pull" => Ok(Command::Git(GitCommand::Pull)),
+        "backup" => Ok(Command::Git(GitCommand::Backup(message))),
+        other => Err(format!("Unknown git subcommand: {other}")),
     }
 }
 
@@ -143,6 +178,17 @@ fn completions<'a>(input: &str, note_titles: &'a [String]) -> Vec<&'a str> {
                 matches.push("default");
             }
             matches
+        }
+        CompletionTarget::Argument {
+            command: "git",
+            query,
+        } => {
+            if query.contains(char::is_whitespace) {
+                // Already past the subcommand, into freeform commit-message text.
+                Vec::new()
+            } else {
+                filter_candidates(GIT_SUBCOMMANDS, query)
+            }
         }
         CompletionTarget::Argument { .. } => Vec::new(),
     }
@@ -222,7 +268,7 @@ pub fn show(
                 egui::TextEdit::singleline(&mut state.input)
                     .desired_width(f32::INFINITY)
                     .hint_text(
-                        "w | q | wq | open <title> | new <title> | dmode dark|light|system | theme <name> | find <text>",
+                        "w | q | wq | open <title> | new <title> | dmode dark|light|system | theme <name> | git enable|commit|push|pull|backup | find <text>",
                     ),
             );
             if state.focus_requested {
@@ -364,6 +410,86 @@ mod tests {
     #[test]
     fn theme_without_a_name_is_an_error() {
         assert!(parse_command("theme").is_err());
+    }
+
+    #[test]
+    fn parses_git_enable_push_pull() {
+        assert!(matches!(
+            parse_command("git enable"),
+            Ok(Command::Git(GitCommand::Enable))
+        ));
+        assert!(matches!(
+            parse_command("git push"),
+            Ok(Command::Git(GitCommand::Push))
+        ));
+        assert!(matches!(
+            parse_command("git pull"),
+            Ok(Command::Git(GitCommand::Pull))
+        ));
+    }
+
+    #[test]
+    fn parses_git_commit_without_a_message_as_none() {
+        assert!(matches!(
+            parse_command("git commit"),
+            Ok(Command::Git(GitCommand::Commit(None)))
+        ));
+    }
+
+    #[test]
+    fn parses_git_commit_with_an_inline_message() {
+        match parse_command("git commit fixed typo") {
+            Ok(Command::Git(GitCommand::Commit(Some(message)))) => {
+                assert_eq!(message, "fixed typo");
+            }
+            other => panic!(
+                "expected Command::Git(Commit(Some(..))), got {}",
+                describe(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn parses_git_backup_with_and_without_a_message() {
+        assert!(matches!(
+            parse_command("git backup"),
+            Ok(Command::Git(GitCommand::Backup(None)))
+        ));
+        match parse_command("git backup end of day") {
+            Ok(Command::Git(GitCommand::Backup(Some(message)))) => {
+                assert_eq!(message, "end of day");
+            }
+            other => panic!(
+                "expected Command::Git(Backup(Some(..))), got {}",
+                describe(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn git_without_a_subcommand_is_an_error() {
+        assert!(parse_command("git").is_err());
+    }
+
+    #[test]
+    fn git_with_an_unknown_subcommand_is_an_error_naming_it() {
+        match parse_command("git frobnicate") {
+            Err(msg) => assert!(msg.contains("frobnicate")),
+            Ok(_) => panic!("expected an error"),
+        }
+    }
+
+    #[test]
+    fn git_subcommand_completes_against_known_subcommands() {
+        // Prefix match ("commit") ranks ahead of a mere substring match ("backup"
+        // contains "c"), each group sorted alphabetically.
+        assert_eq!(completions("git c", &[]), vec!["commit", "backup"]);
+        assert_eq!(completions("git pu", &[]), vec!["pull", "push"]);
+    }
+
+    #[test]
+    fn git_message_argument_has_no_completions() {
+        assert!(completions("git commit fix", &[]).is_empty());
     }
 
     #[test]
