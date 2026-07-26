@@ -43,6 +43,13 @@ enum PopupAction {
     Dismiss,
 }
 
+/// Stable id for the document `TextEdit`, independent of whatever panel happens to
+/// host it this frame — lets `app.rs` move its cursor (e.g. jumping to a
+/// find-and-replace result) without needing a `Ui` of its own to derive an id from.
+pub fn editor_text_edit_id() -> Id {
+    Id::new("tachylite_editor_text_edit")
+}
+
 /// Renders the document editor, including an Obsidian-style `[[wikilink]]`
 /// autocomplete popup driven by `note_titles`. Returns `Some` if an autosave
 /// triggered by focus loss failed, or the user pressed Ctrl+Enter (Cmd+Enter on
@@ -57,7 +64,7 @@ pub fn show(
         return None;
     }
 
-    let text_edit_id = ui.id().with("editor_text_edit");
+    let text_edit_id = editor_text_edit_id();
     let state_id = text_edit_id.with("wikilink_autocomplete");
     let state: AutocompleteState = ui
         .ctx()
@@ -229,9 +236,11 @@ fn render_popup(
     clicked
 }
 
-/// Move the `TextEdit`'s cursor to `byte_offset` and give it focus back, so accepting
-/// a suggestion (by click or Enter) leaves the caret right after the inserted link.
-fn move_cursor_to(ctx: &egui::Context, id: Id, text: &str, byte_offset: usize) {
+/// Move the `TextEdit`'s cursor to `byte_offset` and give it focus back. Used both to
+/// leave the caret right after an accepted wikilink suggestion, and by `app.rs` to
+/// jump to a find-and-replace result. A no-op if the `TextEdit` has never been shown
+/// yet this session (e.g. jumping to a result before any document has been opened).
+pub fn move_cursor_to(ctx: &egui::Context, id: Id, text: &str, byte_offset: usize) {
     if let Some(mut state) = egui::TextEdit::load_state(ctx, id) {
         let char_offset = byte_offset_to_char(text, byte_offset);
         state

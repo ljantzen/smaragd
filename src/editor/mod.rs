@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -9,6 +10,11 @@ pub struct EditorState {
     pub open_path: Option<PathBuf>,
     pub buffer: String,
     pub dirty: bool,
+    /// Every document edited at least once since the app launched, kept even after
+    /// it's saved (e.g. by switching away) — backs the "Modified Files" search scope,
+    /// which otherwise has nothing to point at since only one document is ever open
+    /// (and thus `dirty`) at a time.
+    pub modified_paths: BTreeSet<PathBuf>,
 }
 
 impl EditorState {
@@ -24,6 +30,9 @@ impl EditorState {
 
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
+        if let Some(path) = &self.open_path {
+            self.modified_paths.insert(path.clone());
+        }
     }
 
     /// Write the buffer to `open_path`. A no-op (not an error) if nothing is open.
@@ -127,5 +136,38 @@ mod tests {
         assert!(result.is_err());
         // The dirty file was flushed before the failed open attempt.
         assert_eq!(fs::read_to_string(&existing).unwrap(), "edited");
+    }
+
+    #[test]
+    fn mark_dirty_records_the_open_path_as_modified() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scene.md");
+        fs::write(&path, "original").unwrap();
+
+        let mut state = EditorState::default();
+        state.open(&path).unwrap();
+        state.mark_dirty();
+
+        assert!(state.modified_paths.contains(&path));
+    }
+
+    #[test]
+    fn modified_paths_persists_across_saving_and_switching_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first.md");
+        let second = dir.path().join("second.md");
+        fs::write(&first, "first original").unwrap();
+        fs::write(&second, "second original").unwrap();
+
+        let mut state = EditorState::default();
+        state.open(&first).unwrap();
+        state.mark_dirty();
+        state.open(&second).unwrap(); // auto-saves and clears `dirty` for `first`
+
+        assert!(
+            state.modified_paths.contains(&first),
+            "switching away shouldn't forget that a file was edited this session"
+        );
+        assert!(!state.modified_paths.contains(&second));
     }
 }

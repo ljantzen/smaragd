@@ -4,6 +4,7 @@ pub mod editor;
 pub mod frontmatter;
 pub mod markdown;
 pub mod project;
+pub mod search;
 pub mod settings;
 pub mod shortcuts;
 pub mod ui;
