@@ -206,7 +206,7 @@ impl TachyliteApp {
             return;
         };
         if enable == rfd::MessageDialogResult::Yes {
-            if !already_repo && let Err(err) = crate::git::init(&project.root) {
+            if let Err(err) = Self::init_repo_if_needed(&project.root) {
                 self.status_message = Some(format!("Couldn't initialize git: {err}"));
                 return;
             }
@@ -216,6 +216,17 @@ impl TachyliteApp {
         } else if let Err(err) = project.decline_git_support() {
             self.status_message = Some(format!("Couldn't save settings: {err}"));
         }
+    }
+
+    /// `git init` `root` unless it's already a repository. Shared by
+    /// `maybe_offer_git_support` and `enable_git_support_manually`, which both need
+    /// this exact "become a repo if not already one" step as part of turning git
+    /// support on.
+    fn init_repo_if_needed(root: &Path) -> Result<(), crate::git::GitError> {
+        if !crate::git::is_repo(root) {
+            crate::git::init(root)?;
+        }
+        Ok(())
     }
 
     /// "Enable Git Support" from the Versions menu or `:git enable` — unlike
@@ -231,8 +242,7 @@ impl TachyliteApp {
             self.status_message = Some("git was not found on this system".to_string());
             return;
         }
-        let already_repo = crate::git::is_repo(&project.root);
-        if !already_repo && let Err(err) = crate::git::init(&project.root) {
+        if let Err(err) = Self::init_repo_if_needed(&project.root) {
             self.status_message = Some(format!("Couldn't initialize git: {err}"));
             return;
         }
@@ -304,6 +314,10 @@ impl TachyliteApp {
             self.status_message = Some("No project open".to_string());
             return;
         };
+        if !project.meta.git_enabled {
+            self.status_message = Some("Git support isn't enabled for this project".to_string());
+            return;
+        }
         match crate::git::push(&project.root) {
             Ok(()) => self.status_message = Some("Pushed".to_string()),
             Err(err) => self.status_message = Some(format!("Push failed: {err}")),
@@ -319,6 +333,10 @@ impl TachyliteApp {
             self.status_message = Some("No project open".to_string());
             return;
         };
+        if !project.meta.git_enabled {
+            self.status_message = Some("Git support isn't enabled for this project".to_string());
+            return;
+        }
         match crate::git::pull(&project.root) {
             Ok(()) => {
                 project.rescan();
@@ -745,6 +763,16 @@ impl TachyliteApp {
                     egui::ThemePreference::Dark
                 };
                 ctx.set_theme(self.settings.theme_preference);
+                // A color theme (`:theme`/View > Theme) only ever customizes the one
+                // base (Dark or Light) it's built for — toggling to the *other* base
+                // would otherwise silently show plain default styling there while
+                // settings.color_theme (and the View > Theme menu) still claimed the
+                // theme was active. Toggling dark/light mode is an explicit request to
+                // leave that theme's own base, so clear it rather than leave that
+                // inconsistent state behind.
+                if self.settings.color_theme.is_some() {
+                    self.set_color_theme(ctx, None);
+                }
                 self.persist_settings();
             }
             ShortcutAction::ToggleFullscreen => {

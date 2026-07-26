@@ -155,11 +155,16 @@ fn completion_target(input: &str) -> CompletionTarget<'_> {
     }
 }
 
+/// Cap on how many suggestions are shown at once, matching the wikilink popup
+/// (`editor_panel.rs`) and the story-card linked-document popup (`corkboard_panel.rs`)
+/// — `:open` in particular can otherwise dump an entire large vault's worth of titles.
+const MAX_SUGGESTIONS: usize = 8;
+
 /// Completion candidates for the current input. Empty for commands that take
 /// freeform text (`:new`, `:find`) or none at all (`:w`, `:q`, `:wq`) — there's
 /// nothing sensible to suggest there.
 fn completions<'a>(input: &str, note_titles: &'a [String]) -> Vec<&'a str> {
-    match completion_target(input) {
+    let mut matches = match completion_target(input) {
         CompletionTarget::CommandName => filter_candidates(COMMAND_NAMES, input),
         CompletionTarget::Argument {
             command: "o" | "open",
@@ -175,7 +180,10 @@ fn completions<'a>(input: &str, note_titles: &'a [String]) -> Vec<&'a str> {
         } => {
             let mut matches = filter_candidates(crate::color_theme::THEME_IDS, query);
             if "default".starts_with(&query.to_lowercase()) {
-                matches.push("default");
+                // Inserted at the front, not pushed to the back: with MAX_SUGGESTIONS
+                // now truncating this list, appending would let "default" silently
+                // fall off the end once there are 8+ real theme matches.
+                matches.insert(0, "default");
             }
             matches
         }
@@ -191,7 +199,9 @@ fn completions<'a>(input: &str, note_titles: &'a [String]) -> Vec<&'a str> {
             }
         }
         CompletionTarget::Argument { .. } => Vec::new(),
-    }
+    };
+    matches.truncate(MAX_SUGGESTIONS);
+    matches
 }
 
 /// Splice `chosen` into `input` at the position `completions` suggested it for.
@@ -555,6 +565,13 @@ mod tests {
     }
 
     #[test]
+    fn open_argument_completions_are_capped_at_max_suggestions() {
+        let titles: Vec<String> = (0..20).map(|n| format!("Note {n:02}")).collect();
+        let candidates = completions("open Note", &titles);
+        assert_eq!(candidates.len(), MAX_SUGGESTIONS);
+    }
+
+    #[test]
     fn dmode_argument_completes_against_the_fixed_choices() {
         assert_eq!(completions("dmode d", &[]), vec!["dark"]);
     }
@@ -570,11 +587,10 @@ mod tests {
     }
 
     #[test]
-    fn theme_argument_completion_with_an_empty_query_includes_every_theme_and_default() {
+    fn theme_argument_completion_with_an_empty_query_is_capped_and_leads_with_default() {
         let candidates = completions("theme ", &[]);
-        assert_eq!(candidates.len(), crate::color_theme::THEME_IDS.len() + 1);
-        assert!(candidates.contains(&"default"));
-        assert!(candidates.contains(&"dracula"));
+        assert_eq!(candidates.len(), MAX_SUGGESTIONS);
+        assert_eq!(candidates[0], "default");
     }
 
     #[test]

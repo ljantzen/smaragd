@@ -150,7 +150,15 @@ fn render_block(
             ordered,
             index,
             depth,
-        } => render_list_item(ui, palette, *ordered, *index, *depth, &block.spans, base_dir),
+        } => render_list_item(
+            ui,
+            palette,
+            *ordered,
+            *index,
+            *depth,
+            &block.spans,
+            base_dir,
+        ),
         BlockKind::Rule => {
             ui.add_space(4.0);
             ui.separator();
@@ -176,7 +184,14 @@ fn render_heading(
         5 => 16.5,
         _ => 15.5,
     };
-    let clicked = render_spans(ui, palette, spans, FontId::proportional(size), color, base_dir);
+    let clicked = render_spans(
+        ui,
+        palette,
+        spans,
+        FontId::proportional(size),
+        color,
+        base_dir,
+    );
     if level == 1 {
         ui.add_space(2.0);
         ui.separator();
@@ -331,13 +346,23 @@ fn render_spans(
         for span in spans {
             if let Some(image) = &span.image {
                 if !buffer.is_empty() {
-                    ui.label(build_layout_job(palette, &buffer, base_font.clone(), base_color));
+                    ui.label(build_layout_job(
+                        palette,
+                        &buffer,
+                        base_font.clone(),
+                        base_color,
+                    ));
                     buffer.clear();
                 }
                 render_image(ui, image, &span.text, base_dir);
             } else if let Some(target) = &span.wikilink {
                 if !buffer.is_empty() {
-                    ui.label(build_layout_job(palette, &buffer, base_font.clone(), base_color));
+                    ui.label(build_layout_job(
+                        palette,
+                        &buffer,
+                        base_font.clone(),
+                        base_color,
+                    ));
                     buffer.clear();
                 }
                 let response = ui.link(RichText::new(&span.text).color(palette.wikilink));
