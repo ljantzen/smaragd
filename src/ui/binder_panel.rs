@@ -71,7 +71,7 @@ fn show_node(
             let role = project.folder_role(&node.path);
             let label = format!("{}{}", node.name, role_suffix(role));
             let response = egui::CollapsingHeader::new(label)
-                .id_salt(node.id)
+                .id_salt(&node.path)
                 .default_open(true)
                 .show(ui, |ui| {
                     for child in children {

@@ -5,12 +5,14 @@ use serde::{Deserialize, Serialize};
 /// in the YAML — a document with no frontmatter block, or an empty one, parses to
 /// exactly `DocumentMeta::default()`.
 ///
-/// Writing this back to disk (see `write_back`) preserves any YAML keys this struct
-/// doesn't know about — it never round-trips *through* `DocumentMeta` itself, which
-/// would silently drop them; `write_back` only ever touches the five keys below in
-/// the raw YAML mapping. `Serialize` is derived for parity with `ProjectMeta`/
-/// `Settings` and round-trip unit test convenience, not because `DocumentMeta` itself
-/// is ever serialized directly to produce a frontmatter block.
+/// Writing this back to disk (see `write_back`) preserves any YAML key/value data
+/// this struct doesn't know about — it never round-trips *through* `DocumentMeta`
+/// itself, which would silently drop it; `write_back` only ever touches the five
+/// keys below in the raw YAML mapping. It does not, however, preserve comments or
+/// the original formatting/key order of the block, since `serde_norway::Mapping`
+/// has no representation for either. `Serialize` is derived for parity with
+/// `ProjectMeta`/`Settings` and round-trip unit test convenience, not because
+/// `DocumentMeta` itself is ever serialized directly to produce a frontmatter block.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DocumentMeta {

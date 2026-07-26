@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use uuid::Uuid;
-
 /// A project's binder: the nested tree of folders and markdown documents, mirroring
 /// the project's directory structure on disk.
 #[derive(Debug, Clone)]
@@ -11,10 +9,6 @@ pub struct BinderTree {
 
 #[derive(Debug, Clone)]
 pub struct BinderNode {
-    /// Stable identity for this node within a single scan, used for egui widget IDs
-    /// (e.g. `CollapsingHeader` open/close state). Regenerated on every rescan — M1
-    /// has no need for identity to survive across scans.
-    pub id: Uuid,
     /// The on-disk filename, extension included for documents (`scene.md`) — matched
     /// against `ProjectMeta::node_order` entries and real filenames elsewhere, so it's
     /// not the place to hide the `.md` extension; `ui::binder_panel::document_label`
@@ -37,7 +31,6 @@ impl BinderNode {
         children: Vec<BinderNode>,
     ) -> Self {
         Self {
-            id: Uuid::new_v4(),
             name: name.into(),
             path: path.into(),
             kind: BinderNodeKind::Folder { children },
@@ -46,7 +39,6 @@ impl BinderNode {
 
     pub fn new_document(name: impl Into<String>, path: impl Into<PathBuf>) -> Self {
         Self {
-            id: Uuid::new_v4(),
             name: name.into(),
             path: path.into(),
             kind: BinderNodeKind::Document,
@@ -71,14 +63,17 @@ impl BinderNode {
     }
 
     /// Find a document whose filename (without extension) matches `stem`,
-    /// case-insensitively — used to resolve `[[wikilink]]` targets to a file.
+    /// case-insensitively — used to resolve `[[wikilink]]` targets to a file. Compares
+    /// full Unicode case folding (`to_lowercase`), not just ASCII, so titles with
+    /// accented or non-Latin characters (e.g. "Café", "Straße") match regardless of
+    /// case.
     pub fn find_document_by_stem(&self, stem: &str) -> Option<&BinderNode> {
         if matches!(self.kind, BinderNodeKind::Document)
             && self
                 .path
                 .file_stem()
                 .and_then(|s| s.to_str())
-                .is_some_and(|s| s.eq_ignore_ascii_case(stem))
+                .is_some_and(|s| s.to_lowercase() == stem.to_lowercase())
         {
             return Some(self);
         }
@@ -259,6 +254,16 @@ mod tests {
 
         let found = tree.find_document_by_stem("opening scene");
         assert_eq!(found.map(|n| n.name.as_str()), Some("Opening Scene"));
+    }
+
+    #[test]
+    fn find_document_by_stem_matches_non_ascii_titles_case_insensitively() {
+        let tree = BinderTree {
+            root: folder("root", "/vault", vec![doc("Café", "/vault/Café.md")]),
+        };
+
+        assert!(tree.find_document_by_stem("CAFÉ").is_some());
+        assert!(tree.find_document_by_stem("café").is_some());
     }
 
     #[test]
