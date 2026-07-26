@@ -22,6 +22,11 @@ pub enum BinderEvent {
     Restore {
         path: PathBuf,
     },
+    /// A document was dragged onto a different folder and dropped there.
+    MoveDocument {
+        path: PathBuf,
+        new_parent: PathBuf,
+    },
     SetFolderRole {
         path: PathBuf,
         role: Option<FolderRole>,
@@ -73,8 +78,28 @@ fn show_node(
                         show_node(ui, project, child, selected, event, false);
                     }
                 });
+            let header_response = response.header_response;
 
-            response.header_response.context_menu(|ui| {
+            // Drop target: a document being dragged, released over this folder's
+            // header. `is_root` doesn't need special-casing here — the project root
+            // is itself rendered as a (non-collapsible-in-spirit) folder header, so
+            // "drop onto root" already falls out of the same handling.
+            if let Some(dragged_path) = header_response.dnd_release_payload::<PathBuf>() {
+                *event = Some(BinderEvent::MoveDocument {
+                    path: (*dragged_path).clone(),
+                    new_parent: node.path.clone(),
+                });
+            }
+            if header_response.dnd_hover_payload::<PathBuf>().is_some() {
+                ui.painter().rect_stroke(
+                    header_response.rect,
+                    2.0,
+                    egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
+                    egui::StrokeKind::Inside,
+                );
+            }
+
+            header_response.context_menu(|ui| {
                 if ui.button("New File").clicked() {
                     *event = Some(BinderEvent::NewFile {
                         parent: node.path.clone(),
@@ -144,10 +169,24 @@ fn show_node(
         }
         BinderNodeKind::Document => {
             let is_selected = selected == Some(node.path.as_path());
-            let response = ui.selectable_label(is_selected, document_label(&node.name));
+            // `ui.selectable_label` (a `Button` under the hood) only senses clicks by
+            // default; `dnd_set_drag_payload` needs the widget itself to sense drags
+            // too (`Response::drag_started` — and thus this — is only ever true for a
+            // widget built with drag sensing), so a plain `selectable_label` never
+            // actually starts a drag no matter how it's dragged. `click_and_drag`
+            // keeps the exact same clickable/selectable look and behavior.
+            let response = ui.add(
+                egui::Button::selectable(is_selected, document_label(&node.name))
+                    .sense(egui::Sense::click_and_drag()),
+            );
             if response.clicked() {
                 *event = Some(BinderEvent::Selected(node.path.clone()));
             }
+            // Drag source: only markdown documents can be dragged, never folders —
+            // moving a folder would also need to rewrite its nested order keys,
+            // which `Project::move_document` (the drop side of this) deliberately
+            // doesn't handle.
+            response.dnd_set_drag_payload(node.path.clone());
             response.context_menu(|ui| {
                 if ui.button("Rename").clicked() {
                     *event = Some(BinderEvent::Rename {
