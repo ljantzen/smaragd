@@ -1132,10 +1132,19 @@ impl eframe::App for TachyliteApp {
             },
         });
 
-        if let Some(draft) = &mut self.card_draft
-            && let Some(outcome) = ui::corkboard_panel::show_card_editor(ui.ctx(), draft)
-        {
-            self.finish_card_editor(outcome);
+        if let Some(draft) = &mut self.card_draft {
+            // Only walk the document tree for titles while the card editor (and its
+            // linked-document completion) is actually open, rather than every frame.
+            let note_titles = self
+                .project
+                .as_ref()
+                .map(|project| project.tree.document_names())
+                .unwrap_or_default();
+            if let Some(outcome) =
+                ui::corkboard_panel::show_card_editor(ui.ctx(), draft, &note_titles)
+            {
+                self.finish_card_editor(outcome);
+            }
         }
     }
 }

@@ -1,6 +1,13 @@
+use egui::{Key, Modifiers};
 use uuid::Uuid;
 
+use crate::autocomplete::filter_candidates;
 use crate::project::{Project, StoryCard};
+
+/// Cap on how many linked-document suggestions are shown at once, matching the
+/// wikilink popup's own cap in `editor_panel.rs` rather than dumping the whole
+/// project into a list.
+const MAX_SUGGESTIONS: usize = 8;
 
 /// Outcomes of user interaction with the corkboard, handled by the caller (`app.rs`)
 /// rather than mutated here — keeps this module a pure rendering layer over
@@ -144,6 +151,15 @@ pub struct CardDraft {
     /// Whether this draft is a brand new card that hasn't been saved yet — controls
     /// whether the editor offers a "Delete" button.
     pub is_new: bool,
+    /// Autocomplete state for `linked_document_text`, private to this module (unlike
+    /// the fields above, `app.rs` never needs to read these).
+    ///
+    /// Whether the linked-document field had focus as of the end of last frame —
+    /// scopes Tab/arrow key-stealing to that field alone, so pressing Tab while
+    /// editing a different field (e.g. Cause) isn't hijacked by a suggestion list
+    /// left over from a previously-filled-in link.
+    linked_document_focused: bool,
+    linked_document_selected: usize,
 }
 
 impl Default for CardDraft {
@@ -159,6 +175,8 @@ impl CardDraft {
             subplot_tags_text: String::new(),
             linked_document_text: String::new(),
             is_new: true,
+            linked_document_focused: false,
+            linked_document_selected: 0,
         }
     }
 
@@ -168,6 +186,8 @@ impl CardDraft {
             subplot_tags_text: card.subplot_tags.join(", "),
             linked_document_text: card.linked_document_stem.clone().unwrap_or_default(),
             is_new: false,
+            linked_document_focused: false,
+            linked_document_selected: 0,
         }
     }
 
@@ -196,10 +216,69 @@ pub enum CardEditorOutcome {
     Cancel,
 }
 
+enum PopupAction {
+    Next,
+    Prev,
+    Accept,
+}
+
+/// Consume (and act on) Tab/arrow keys meant for the linked-document suggestion
+/// list, so the `TextEdit` underneath never sees them — Tab would otherwise move
+/// focus off the field entirely.
+fn steal_popup_key(ctx: &egui::Context) -> Option<PopupAction> {
+    ctx.input_mut(|i| {
+        if i.consume_key(Modifiers::NONE, Key::ArrowDown) {
+            Some(PopupAction::Next)
+        } else if i.consume_key(Modifiers::NONE, Key::ArrowUp) {
+            Some(PopupAction::Prev)
+        } else if i.consume_key(Modifiers::NONE, Key::Tab) {
+            Some(PopupAction::Accept)
+        } else {
+            None
+        }
+    })
+}
+
 /// Renders the card-editor modal. Returns `Some` once the user confirms, deletes, or
 /// cancels this frame.
-pub fn show_card_editor(ctx: &egui::Context, draft: &mut CardDraft) -> Option<CardEditorOutcome> {
+pub fn show_card_editor(
+    ctx: &egui::Context,
+    draft: &mut CardDraft,
+    note_titles: &[String],
+) -> Option<CardEditorOutcome> {
     let mut outcome = None;
+
+    // Computed from last frame's `linked_document_text`/focus, before this frame's
+    // `TextEdit` is built — same "steal before building" ordering `editor_panel.rs`
+    // and `command_prompt.rs` use for their own popups.
+    let query = draft.linked_document_text.trim();
+    let all_candidates = if query.is_empty() {
+        Vec::new()
+    } else {
+        filter_candidates(note_titles, query)
+    };
+    let candidates = &all_candidates[..all_candidates.len().min(MAX_SUGGESTIONS)];
+    if !candidates.is_empty() {
+        draft.linked_document_selected = draft.linked_document_selected.min(candidates.len() - 1);
+    }
+    let popup_action = (!candidates.is_empty() && draft.linked_document_focused)
+        .then(|| steal_popup_key(ctx))
+        .flatten();
+    match popup_action {
+        Some(PopupAction::Next) => {
+            draft.linked_document_selected =
+                (draft.linked_document_selected + 1) % candidates.len();
+        }
+        Some(PopupAction::Prev) => {
+            draft.linked_document_selected =
+                (draft.linked_document_selected + candidates.len() - 1) % candidates.len();
+        }
+        Some(PopupAction::Accept) => {
+            draft.linked_document_text = candidates[draft.linked_document_selected].to_string();
+            draft.linked_document_selected = 0;
+        }
+        None => {}
+    }
 
     egui::Modal::new(egui::Id::new("story_card_editor_modal")).show(ctx, |ui| {
         ui.set_min_width(420.0);
@@ -210,6 +289,7 @@ pub fn show_card_editor(ctx: &egui::Context, draft: &mut CardDraft) -> Option<Ca
         });
         ui.add_space(8.0);
 
+        let mut linked_document_response = None;
         egui::Grid::new("story_card_editor_grid")
             .num_columns(2)
             .show(ui, |ui| {
@@ -226,9 +306,23 @@ pub fn show_card_editor(ctx: &egui::Context, draft: &mut CardDraft) -> Option<Ca
                 ui.end_row();
 
                 ui.label("Linked document:");
-                ui.text_edit_singleline(&mut draft.linked_document_text);
+                linked_document_response =
+                    Some(ui.text_edit_singleline(&mut draft.linked_document_text));
                 ui.end_row();
             });
+        draft.linked_document_focused = linked_document_response.is_some_and(|r| r.has_focus());
+
+        if !candidates.is_empty() {
+            for (index, candidate) in candidates.iter().enumerate() {
+                if ui
+                    .selectable_label(index == draft.linked_document_selected, *candidate)
+                    .clicked()
+                {
+                    draft.linked_document_text = candidate.to_string();
+                    draft.linked_document_selected = 0;
+                }
+            }
+        }
 
         ui.separator();
         ui.label("Cause (what happens, and why it matters to the protagonist's goal):");
