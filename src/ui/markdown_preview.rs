@@ -36,6 +36,17 @@ const BODY_SIZE: f32 = 15.0;
 const BLOCK_SPACING: f32 = 10.0;
 const INDENT_PER_DEPTH: f32 = 20.0;
 
+/// Context needed to resolve a markdown `![](src)` into a loadable path: `dir` (the
+/// open document's own folder) resolves a relative `src`, and `project_root` — when
+/// both are set — bounds where that resolution is allowed to land. `Copy` so it
+/// threads through the render functions below exactly like `base_dir` used to,
+/// without extra parameters at every call site.
+#[derive(Clone, Copy)]
+struct ImageContext<'a> {
+    dir: Option<&'a Path>,
+    project_root: Option<&'a Path>,
+}
+
 /// Colors the preview renders with, derived from the current `egui::Visuals` (which
 /// reflects dark/light mode and any active `color_theme`) once per `show()` call.
 /// Body text, quote text, code backgrounds, and link color come straight from
@@ -93,8 +104,11 @@ fn emphasize(color: Color32, dark_mode: bool) -> Color32 {
 
 /// Render `markdown` styled like the `glow` CLI's terminal preview: colored heading
 /// hierarchy, a barred blockquote, a boxed code block, and a striped table, laid out
-/// with egui widgets. `base_dir` (typically the open document's folder) is used to
-/// resolve relative image paths — pass `None` if there's no meaningful base.
+/// with egui widgets. `base_dir` (typically the open document's folder) resolves a
+/// relative image path; `project_root`, if given, additionally bounds where that
+/// resolution — and an absolute or `..`-escaping `src` — is allowed to land, so a
+/// document can't make the preview read a file outside the project (see
+/// `resolve_image_uri`). Pass `None` for either when there's no meaningful base/root.
 ///
 /// Returns `Some` if the user clicked a `[[wikilink]]` during this frame — the caller
 /// is responsible for finding (and, if `force_create` is set because Ctrl/Cmd was
@@ -103,7 +117,12 @@ pub fn show(
     ui: &mut egui::Ui,
     markdown_text: &str,
     base_dir: Option<&Path>,
+    project_root: Option<&Path>,
 ) -> Option<WikilinkActivation> {
+    let base_dir = ImageContext {
+        dir: base_dir,
+        project_root,
+    };
     let blocks = markdown::parse(crate::frontmatter::strip(markdown_text));
     let palette = Palette::from_visuals(ui.visuals());
     egui::ScrollArea::vertical()
@@ -129,7 +148,7 @@ fn render_block(
     ui: &mut egui::Ui,
     palette: &Palette,
     block: &Block,
-    base_dir: Option<&Path>,
+    base_dir: ImageContext<'_>,
 ) -> Option<WikilinkActivation> {
     match &block.kind {
         BlockKind::Heading(level) => render_heading(ui, palette, *level, &block.spans, base_dir),
@@ -173,7 +192,7 @@ fn render_heading(
     palette: &Palette,
     level: u8,
     spans: &[Span],
-    base_dir: Option<&Path>,
+    base_dir: ImageContext<'_>,
 ) -> Option<WikilinkActivation> {
     let color = palette.heading[(level.saturating_sub(1).min(5)) as usize];
     let size = match level {
@@ -221,7 +240,7 @@ fn render_blockquote(
     ui: &mut egui::Ui,
     palette: &Palette,
     spans: &[Span],
-    base_dir: Option<&Path>,
+    base_dir: ImageContext<'_>,
 ) -> Option<WikilinkActivation> {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(
@@ -252,7 +271,7 @@ fn render_list_item(
     index: Option<u64>,
     depth: u8,
     spans: &[Span],
-    base_dir: Option<&Path>,
+    base_dir: ImageContext<'_>,
 ) -> Option<WikilinkActivation> {
     ui.horizontal(|ui| {
         ui.add_space(depth as f32 * INDENT_PER_DEPTH);
@@ -283,7 +302,7 @@ fn render_table(
     palette: &Palette,
     header: &[Vec<Span>],
     rows: &[Vec<Vec<Span>>],
-    base_dir: Option<&Path>,
+    base_dir: ImageContext<'_>,
 ) -> Option<WikilinkActivation> {
     let mut clicked = None;
     egui::Frame::new()
@@ -337,7 +356,7 @@ fn render_spans(
     spans: &[Span],
     base_font: FontId,
     base_color: Color32,
-    base_dir: Option<&Path>,
+    base_dir: ImageContext<'_>,
 ) -> Option<WikilinkActivation> {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -389,7 +408,7 @@ fn render_spans(
 /// state and failures are handled by egui's own image widget (spinner while pending,
 /// `alt` text if it can't be loaded) — remote `http(s)://` images won't load, since no
 /// network image loader is installed, and will just show their alt text.
-fn render_image(ui: &mut egui::Ui, image: &ImageRef, alt: &str, base_dir: Option<&Path>) {
+fn render_image(ui: &mut egui::Ui, image: &ImageRef, alt: &str, base_dir: ImageContext<'_>) {
     let uri = resolve_image_uri(&image.src, base_dir);
     let alt_text = if alt.is_empty() {
         image.src.clone()
@@ -408,8 +427,16 @@ fn render_image(ui: &mut egui::Ui, image: &ImageRef, alt: &str, base_dir: Option
 /// Turn a markdown image `src` into a URI egui's image loaders understand: passed
 /// through unchanged if it's already a URI (`http://`, `file://`, `data:`, ...),
 /// otherwise resolved as a filesystem path (relative to `base_dir` if it's not
-/// already absolute) and turned into a `file://` URI.
-fn resolve_image_uri(src: &str, base_dir: Option<&Path>) -> String {
+/// already absolute).
+///
+/// When `project_root` is set, the resolved path is required to actually live under
+/// it — checked by canonicalizing both, which also resolves any symlinks in the
+/// path — before being turned into a `file://` URI; otherwise an unloadable sentinel
+/// URI is returned (egui shows the image's alt text, same as any other load
+/// failure). Without this, an absolute `src`, a `../`-escaping relative one, or a
+/// symlink planted inside the project (e.g. by a collaborator's `git pull`) could
+/// make previewing a document silently read an arbitrary file elsewhere on disk.
+fn resolve_image_uri(src: &str, base_dir: ImageContext<'_>) -> String {
     if src.starts_with("data:") || src.contains("://") {
         return src.to_string();
     }
@@ -417,12 +444,31 @@ fn resolve_image_uri(src: &str, base_dir: Option<&Path>) -> String {
     let resolved = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        match base_dir {
+        match base_dir.dir {
             Some(base) => base.join(path),
             None => path.to_path_buf(),
         }
     };
+    if !is_within_project(&resolved, base_dir.project_root) {
+        return "tachylite-blocked:outside-project".to_string();
+    }
     format!("file://{}", resolved.display())
+}
+
+/// Whether `resolved` is (once symlinks are resolved) actually inside `project_root`
+/// — or `project_root` wasn't given, in which case there's nothing to bound against
+/// (e.g. a caller with no project context, or these unit tests). A path that doesn't
+/// exist, or a `project_root` that doesn't, can't be canonicalized and is treated as
+/// *not* contained — fail closed rather than let an unresolvable path through.
+fn is_within_project(resolved: &Path, project_root: Option<&Path>) -> bool {
+    let Some(project_root) = project_root else {
+        return true;
+    };
+    let (Ok(resolved), Ok(project_root)) = (resolved.canonicalize(), project_root.canonicalize())
+    else {
+        return false;
+    };
+    resolved.starts_with(project_root)
 }
 
 fn build_layout_job(
@@ -467,14 +513,21 @@ fn build_layout_job(
 mod tests {
     use super::*;
 
+    fn no_project_context() -> ImageContext<'static> {
+        ImageContext {
+            dir: None,
+            project_root: None,
+        }
+    }
+
     #[test]
     fn resolve_image_uri_passes_through_existing_uris() {
         assert_eq!(
-            resolve_image_uri("https://example.com/pic.png", None),
+            resolve_image_uri("https://example.com/pic.png", no_project_context()),
             "https://example.com/pic.png"
         );
         assert_eq!(
-            resolve_image_uri("data:image/png;base64,abc", None),
+            resolve_image_uri("data:image/png;base64,abc", no_project_context()),
             "data:image/png;base64,abc"
         );
     }
@@ -482,22 +535,115 @@ mod tests {
     #[test]
     fn resolve_image_uri_resolves_relative_paths_against_base_dir() {
         assert_eq!(
-            resolve_image_uri("images/pic.png", Some(Path::new("/vault/notes"))),
+            resolve_image_uri(
+                "images/pic.png",
+                ImageContext {
+                    dir: Some(Path::new("/vault/notes")),
+                    project_root: None,
+                }
+            ),
             "file:///vault/notes/images/pic.png"
         );
     }
 
     #[test]
-    fn resolve_image_uri_leaves_absolute_paths_alone() {
+    fn resolve_image_uri_leaves_absolute_paths_alone_when_theres_no_project_root_to_check() {
         assert_eq!(
-            resolve_image_uri("/abs/pic.png", Some(Path::new("/vault/notes"))),
+            resolve_image_uri(
+                "/abs/pic.png",
+                ImageContext {
+                    dir: Some(Path::new("/vault/notes")),
+                    project_root: None,
+                }
+            ),
             "file:///abs/pic.png"
         );
     }
 
     #[test]
     fn resolve_image_uri_without_base_dir_uses_the_relative_path_as_is() {
-        assert_eq!(resolve_image_uri("pic.png", None), "file://pic.png");
+        assert_eq!(
+            resolve_image_uri("pic.png", no_project_context()),
+            "file://pic.png"
+        );
+    }
+
+    #[test]
+    fn resolve_image_uri_allows_a_relative_path_that_stays_inside_the_project_root() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("images")).unwrap();
+        std::fs::write(dir.path().join("images/pic.png"), b"").unwrap();
+
+        let uri = resolve_image_uri(
+            "images/pic.png",
+            ImageContext {
+                dir: Some(dir.path()),
+                project_root: Some(dir.path()),
+            },
+        );
+
+        assert_eq!(
+            uri,
+            format!("file://{}", dir.path().join("images/pic.png").display())
+        );
+    }
+
+    #[test]
+    fn resolve_image_uri_blocks_a_relative_path_that_escapes_the_project_root_with_dot_dot() {
+        // `doc_dir` (the project root) contains a document linking, via `..`, to an
+        // image in `doc_dir`'s own parent — outside the project entirely.
+        let outer = tempfile::tempdir().unwrap();
+        let doc_dir = outer.path().join("project_root");
+        std::fs::create_dir(&doc_dir).unwrap();
+        std::fs::write(outer.path().join("secret.png"), b"").unwrap();
+
+        let uri = resolve_image_uri(
+            "../secret.png",
+            ImageContext {
+                dir: Some(&doc_dir),
+                project_root: Some(&doc_dir),
+            },
+        );
+
+        assert_eq!(uri, "tachylite-blocked:outside-project");
+    }
+
+    #[test]
+    fn resolve_image_uri_blocks_an_absolute_path_outside_the_project_root() {
+        let project = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret.png");
+        std::fs::write(&secret, b"").unwrap();
+
+        let uri = resolve_image_uri(
+            secret.to_str().unwrap(),
+            ImageContext {
+                dir: Some(project.path()),
+                project_root: Some(project.path()),
+            },
+        );
+
+        assert_eq!(uri, "tachylite-blocked:outside-project");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_image_uri_blocks_a_symlink_that_resolves_outside_the_project_root() {
+        let project = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret.png");
+        std::fs::write(&secret, b"").unwrap();
+        std::os::unix::fs::symlink(&secret, project.path().join("Notes.png")).unwrap();
+
+        let uri = resolve_image_uri(
+            "Notes.png",
+            ImageContext {
+                dir: Some(project.path()),
+                project_root: Some(project.path()),
+            },
+        );
+
+        assert_eq!(uri, "tachylite-blocked:outside-project");
     }
 
     #[test]

@@ -34,10 +34,22 @@ pub fn scan_project(root: &Path) -> BinderTree {
             continue;
         }
 
-        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        // `entry.file_type()` reports the entry's own type (a symlink is neither a
+        // dir nor a file here, since the walker isn't following links — see
+        // `require_git`'s doc comment above for why `follow_links` is left at its
+        // default `false`). Requiring `is_file()`, not just a `.md` extension, keeps
+        // a symlink named e.g. `Notes.md` out of the binder entirely: `EditorState`'s
+        // plain `fs::read_to_string`/`fs::write` would otherwise transparently follow
+        // it, silently reading or overwriting whatever it points at (e.g. a synced
+        // project pulled from a collaborator's git remote could plant a symlink to a
+        // file outside the project).
+        let file_type = entry.file_type();
+        let is_dir = file_type.is_some_and(|ft| ft.is_dir());
         if is_dir {
             kinds.insert(path.clone(), EntryKind::Dir);
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+        } else if file_type.is_some_and(|ft| ft.is_file())
+            && path.extension().and_then(|ext| ext.to_str()) == Some("md")
+        {
             kinds.insert(path.clone(), EntryKind::Doc);
         } else {
             continue;
@@ -172,6 +184,21 @@ mod tests {
         assert!(
             matches!(tree.root.kind, BinderNodeKind::Folder { ref children } if children.is_empty())
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_symlink_to_a_file_outside_the_project_is_excluded_even_with_an_md_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret.txt");
+        fs::write(&secret, "not part of this project").unwrap();
+        std::os::unix::fs::symlink(&secret, dir.path().join("Notes.md")).unwrap();
+        fs::write(dir.path().join("real.md"), "").unwrap();
+
+        let tree = scan_project(dir.path());
+
+        assert_eq!(names(&tree.root), vec!["real.md"]);
     }
 
     #[test]

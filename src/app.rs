@@ -1531,8 +1531,9 @@ impl eframe::App for TachyliteApp {
             ViewMode::Preview => {
                 if self.editor.open_path.is_some() {
                     let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
+                    let project_root = self.project.as_ref().map(|project| project.root.as_path());
                     if let Some(activation) =
-                        ui::markdown_preview::show(ui, &self.editor.buffer, base_dir)
+                        ui::markdown_preview::show(ui, &self.editor.buffer, base_dir, project_root)
                     {
                         self.activate_wikilink(activation);
                     }

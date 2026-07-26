@@ -400,6 +400,7 @@ impl Project {
     /// project), record it at the end of that folder's manual order, and rescan.
     pub fn create_document(&mut self, parent: &Path, filename: &str) -> io::Result<PathBuf> {
         let filename = ensure_md_extension(filename);
+        ensure_simple_child_name(&filename)?;
         let path = parent.join(&filename);
         ensure_does_not_exist(&path)?;
         fs::write(&path, "")?;
@@ -411,6 +412,7 @@ impl Project {
     /// Create a new empty folder under `parent`, record it, and rescan. Refuses to
     /// overwrite an existing file or folder at the destination.
     pub fn create_folder(&mut self, parent: &Path, name: &str) -> io::Result<PathBuf> {
+        ensure_simple_child_name(name)?;
         let path = parent.join(name);
         ensure_does_not_exist(&path)?;
         fs::create_dir_all(&path)?;
@@ -442,6 +444,7 @@ impl Project {
         } else {
             ensure_md_extension(new_name)
         };
+        ensure_simple_child_name(&new_name)?;
         let new_path = parent.join(&new_name);
         ensure_does_not_exist(&new_path)?;
 
@@ -770,6 +773,29 @@ fn rewrite_prefix_in<V>(map: &mut HashMap<String, V>, old_prefix: &str, new_pref
 
 /// Guard against silently clobbering an existing file or folder — used before any
 /// operation (create, rename) that's about to write to a new destination path.
+/// Reject anything but a single, ordinary path component: no `/`/`\` separators, no
+/// `.`/`..`, not empty, not an absolute path. `create_document`/`create_folder`/
+/// `rename` all join a user- or document-supplied name (e.g. a wikilink target,
+/// which can be aliased so the text a user sees doesn't match it) directly onto a
+/// known-good parent directory — without this check, a name like `../../evil` or an
+/// absolute path would let `Path::join` escape (or entirely replace) that parent,
+/// writing outside the project.
+fn ensure_simple_child_name(name: &str) -> io::Result<()> {
+    let mut components = Path::new(name).components();
+    let is_single_normal_component = matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    );
+    if is_single_normal_component {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("\"{name}\" isn't a valid file or folder name"),
+        ))
+    }
+}
+
 fn ensure_does_not_exist(path: &Path) -> io::Result<()> {
     if path.exists() {
         Err(io::Error::new(
@@ -1704,6 +1730,54 @@ mod tests {
         let result = project.create_folder(dir.path(), "Existing");
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn create_document_refuses_a_name_that_escapes_the_project_with_dot_dot() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        let result = project.create_document(dir.path(), "../escaped");
+
+        assert!(result.is_err());
+        assert!(!dir.path().parent().unwrap().join("escaped.md").exists());
+    }
+
+    #[test]
+    fn create_document_refuses_an_absolute_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let absolute_target = outside.path().join("evil.md");
+
+        let result = project.create_document(dir.path(), absolute_target.to_str().unwrap());
+
+        assert!(result.is_err());
+        assert!(!absolute_target.exists());
+    }
+
+    #[test]
+    fn create_folder_refuses_a_name_containing_a_path_separator() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        let result = project.create_folder(dir.path(), "a/b");
+
+        assert!(result.is_err());
+        assert!(!dir.path().join("a").exists());
+    }
+
+    #[test]
+    fn rename_refuses_a_new_name_that_escapes_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let path = project.create_document(dir.path(), "Doc").unwrap();
+
+        let result = project.rename(&path, "../escaped");
+
+        assert!(result.is_err());
+        assert!(path.exists());
+        assert!(!dir.path().parent().unwrap().join("escaped.md").exists());
     }
 
     #[test]
