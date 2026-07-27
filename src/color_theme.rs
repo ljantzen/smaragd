@@ -1,7 +1,8 @@
-//! Helix-style color themes: a curated set of 15 popular color schemes, their
+//! Helix-style color themes: a curated set of 15 built-in color schemes, their
 //! background/foreground/accent colors verified against Helix's own
-//! `runtime/themes/*.toml` sources. Selectable via `:theme <id>` and the View > Theme
-//! menu.
+//! `runtime/themes/*.toml` sources, plus user-contributed *custom* themes loaded
+//! from `.toml` files in [`global_themes_dir`] (see [`load`]). Selectable via
+//! `:theme <id>` and the View > Theme menu.
 //!
 //! Deliberately a separate concept from the `:dmode`/dark-mode-toggle "appearance"
 //! switch (see the `dark_mode_vs_theme_naming` convention this codebase follows): a
@@ -12,28 +13,53 @@
 //! Tachylite's editor is a single plain-text `TextEdit` with no tokenizing/syntax
 //! highlighting pipeline (unlike Helix itself), so these themes reproduce each
 //! palette's overall look — background, body text, and one signature accent color
-//! used for selection/links — not full per-token syntax highlighting.
+//! used for selection/links — not full per-token syntax highlighting. A theme can
+//! optionally also override the markdown preview's heading/wikilink/quote-bar
+//! colors (`preview_heading`/`preview_wikilink`/`preview_quote_bar`) — see
+//! `ui::markdown_preview::Palette`; a theme that leaves these `None` renders the
+//! preview exactly as it always has.
+
+use std::path::PathBuf;
 
 use egui::Color32;
+use serde::Deserialize;
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct ColorTheme {
-    /// Canonical id, matched against `:theme <id>` — mirrors the corresponding Helix
-    /// theme file's name (`runtime/themes/<id>.toml`).
-    pub id: &'static str,
-    pub label: &'static str,
+    /// Canonical id, matched against `:theme <id>` — mirrors the corresponding
+    /// Helix theme file's name for built-ins, or a custom theme's own `id` key.
+    /// Always lowercase (custom ids are lowercased at load time, matching how
+    /// `:theme` itself lowercases its argument), so lookups are a plain `==`.
+    pub id: String,
+    pub label: String,
     /// Which base (`egui::Theme::Dark`/`Light`) this theme's palette is built for.
     pub dark: bool,
     pub background: Color32,
     pub foreground: Color32,
     pub accent: Color32,
+    pub preview_heading: Option<[Color32; 6]>,
+    pub preview_wikilink: Option<Color32>,
+    pub preview_quote_bar: Option<Color32>,
 }
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
-pub const THEMES: &[ColorTheme] = &[
-    ColorTheme {
+/// A built-in theme's raw color data — kept as a plain `const`-friendly struct
+/// (unlike the public, owned `ColorTheme`) purely so the 15 entries below stay a
+/// compact literal array; [`built_in_themes`] maps each into a real `ColorTheme`.
+struct BuiltIn {
+    id: &'static str,
+    label: &'static str,
+    dark: bool,
+    background: Color32,
+    foreground: Color32,
+    accent: Color32,
+}
+
+const BUILT_IN: &[BuiltIn] = &[
+    BuiltIn {
         id: "gruvbox",
         label: "Gruvbox",
         dark: true,
@@ -41,7 +67,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0xeb, 0xdb, 0xb2),
         accent: rgb(0xfe, 0x80, 0x19),
     },
-    ColorTheme {
+    BuiltIn {
         id: "gruvbox_light",
         label: "Gruvbox Light",
         dark: false,
@@ -49,7 +75,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0x3c, 0x38, 0x36),
         accent: rgb(0xaf, 0x3a, 0x03),
     },
-    ColorTheme {
+    BuiltIn {
         id: "dracula",
         label: "Dracula",
         dark: true,
@@ -57,7 +83,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0xf8, 0xf8, 0xf2),
         accent: rgb(0xbd, 0x93, 0xf9),
     },
-    ColorTheme {
+    BuiltIn {
         id: "nord",
         label: "Nord",
         dark: true,
@@ -65,7 +91,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0xd8, 0xde, 0xe9),
         accent: rgb(0x88, 0xc0, 0xd0),
     },
-    ColorTheme {
+    BuiltIn {
         id: "nord_light",
         label: "Nord Light",
         dark: false,
@@ -73,7 +99,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0x2e, 0x34, 0x40),
         accent: rgb(0x5e, 0x81, 0xac),
     },
-    ColorTheme {
+    BuiltIn {
         id: "solarized_dark",
         label: "Solarized Dark",
         dark: true,
@@ -81,7 +107,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0x93, 0xa1, 0xa1),
         accent: rgb(0x26, 0x8b, 0xd2),
     },
-    ColorTheme {
+    BuiltIn {
         id: "solarized_light",
         label: "Solarized Light",
         dark: false,
@@ -89,7 +115,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0x58, 0x6e, 0x75),
         accent: rgb(0x26, 0x8b, 0xd2),
     },
-    ColorTheme {
+    BuiltIn {
         id: "catppuccin_mocha",
         label: "Catppuccin Mocha",
         dark: true,
@@ -97,7 +123,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0xcd, 0xd6, 0xf4),
         accent: rgb(0xcb, 0xa6, 0xf7),
     },
-    ColorTheme {
+    BuiltIn {
         id: "catppuccin_latte",
         label: "Catppuccin Latte",
         dark: false,
@@ -105,7 +131,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0x4c, 0x4f, 0x69),
         accent: rgb(0x88, 0x39, 0xef),
     },
-    ColorTheme {
+    BuiltIn {
         id: "onedark",
         label: "One Dark",
         dark: true,
@@ -113,7 +139,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0xab, 0xb2, 0xbf),
         accent: rgb(0x61, 0xaf, 0xef),
     },
-    ColorTheme {
+    BuiltIn {
         id: "onelight",
         label: "One Light",
         dark: false,
@@ -121,7 +147,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0x28, 0x2c, 0x34),
         accent: rgb(0x00, 0x61, 0xff),
     },
-    ColorTheme {
+    BuiltIn {
         id: "tokyonight",
         label: "Tokyo Night",
         dark: true,
@@ -129,7 +155,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0xc0, 0xca, 0xf5),
         accent: rgb(0x7a, 0xa2, 0xf7),
     },
-    ColorTheme {
+    BuiltIn {
         id: "everforest_dark",
         label: "Everforest Dark",
         dark: true,
@@ -137,7 +163,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0xd3, 0xc6, 0xaa),
         accent: rgb(0xa7, 0xc0, 0x80),
     },
-    ColorTheme {
+    BuiltIn {
         id: "everforest_light",
         label: "Everforest Light",
         dark: false,
@@ -145,7 +171,7 @@ pub const THEMES: &[ColorTheme] = &[
         foreground: rgb(0x5c, 0x6a, 0x72),
         accent: rgb(0x8d, 0xa1, 0x01),
     },
-    ColorTheme {
+    BuiltIn {
         id: "ayu_dark",
         label: "Ayu Dark",
         dark: true,
@@ -155,29 +181,186 @@ pub const THEMES: &[ColorTheme] = &[
     },
 ];
 
-/// `THEMES`' ids, in the same order — kept as a flat, directly-completable list for
-/// `ui/command_prompt.rs`'s `:theme` argument autocomplete (guarded against drifting
-/// out of sync with `THEMES` by a test below).
-pub const THEME_IDS: &[&str] = &[
-    "gruvbox",
-    "gruvbox_light",
-    "dracula",
-    "nord",
-    "nord_light",
-    "solarized_dark",
-    "solarized_light",
-    "catppuccin_mocha",
-    "catppuccin_latte",
-    "onedark",
-    "onelight",
-    "tokyonight",
-    "everforest_dark",
-    "everforest_light",
-    "ayu_dark",
-];
+/// The 15 built-in themes, as owned `ColorTheme`s (none with a preview-color
+/// override) — the starting point [`load`] appends custom themes onto.
+pub fn built_in_themes() -> Vec<ColorTheme> {
+    BUILT_IN
+        .iter()
+        .map(|theme| ColorTheme {
+            id: theme.id.to_string(),
+            label: theme.label.to_string(),
+            dark: theme.dark,
+            background: theme.background,
+            foreground: theme.foreground,
+            accent: theme.accent,
+            preview_heading: None,
+            preview_wikilink: None,
+            preview_quote_bar: None,
+        })
+        .collect()
+}
 
-pub fn find(id: &str) -> Option<&'static ColorTheme> {
-    THEMES.iter().find(|theme| theme.id == id)
+/// The always-loaded custom-theme directory: `<config_dir>/tachylite/themes`, the
+/// same base path `plugins::global_plugins_dir` uses for its own `plugins`
+/// subdirectory. `None` if the platform's config directory can't be determined.
+pub fn global_themes_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "tachylite").map(|dirs| dirs.config_dir().join("themes"))
+}
+
+/// Parse a `"#RRGGBB"` (or `"RRGGBB"`, the `#` is optional) hex color.
+fn parse_hex_color(s: &str) -> Option<Color32> {
+    let s = s.strip_prefix('#').unwrap_or(s);
+    if s.len() != 6 || !s.is_ascii() {
+        return None;
+    }
+    let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+    Some(Color32::from_rgb(r, g, b))
+}
+
+/// The `[preview]` table of a custom theme's TOML file — every field optional,
+/// matching `ColorTheme::preview_*`.
+#[derive(Deserialize, Default)]
+struct RawPreview {
+    #[serde(default)]
+    heading: Option<[String; 6]>,
+    #[serde(default)]
+    wikilink: Option<String>,
+    #[serde(default)]
+    quote_bar: Option<String>,
+}
+
+/// The on-disk shape of a custom theme `.toml` file, with colors still as hex
+/// strings — converted (and validated) into a real `ColorTheme` by
+/// [`RawTheme::into_theme`].
+#[derive(Deserialize)]
+struct RawTheme {
+    id: String,
+    label: String,
+    dark: bool,
+    background: String,
+    foreground: String,
+    accent: String,
+    #[serde(default)]
+    preview: RawPreview,
+}
+
+impl RawTheme {
+    fn into_theme(self) -> Result<ColorTheme, String> {
+        let parse = |field: &str, value: &str| {
+            parse_hex_color(value).ok_or_else(|| format!("invalid color for {field}: {value:?}"))
+        };
+        let preview_heading = match self.preview.heading {
+            Some(hexes) => {
+                let mut colors = [Color32::BLACK; 6];
+                for (i, hex) in hexes.iter().enumerate() {
+                    colors[i] = parse("preview.heading", hex)?;
+                }
+                Some(colors)
+            }
+            None => None,
+        };
+        let preview_wikilink = self
+            .preview
+            .wikilink
+            .as_deref()
+            .map(|hex| parse("preview.wikilink", hex))
+            .transpose()?;
+        let preview_quote_bar = self
+            .preview
+            .quote_bar
+            .as_deref()
+            .map(|hex| parse("preview.quote_bar", hex))
+            .transpose()?;
+
+        Ok(ColorTheme {
+            id: self.id.to_lowercase(),
+            label: self.label,
+            dark: self.dark,
+            background: parse("background", &self.background)?,
+            foreground: parse("foreground", &self.foreground)?,
+            accent: parse("accent", &self.accent)?,
+            preview_heading,
+            preview_wikilink,
+            preview_quote_bar,
+        })
+    }
+}
+
+/// Load every theme: the 15 built-ins, plus every `*.toml` file directly inside
+/// each of `dirs` (flat, not recursive; a missing directory is silently skipped,
+/// not an error — same shape and tolerance as `plugins::load`). Directories are
+/// scanned in the order given and files within one in sorted-name order, so load
+/// — and therefore id-collision resolution — is deterministic. In practice always
+/// called as `load(&[global_themes_dir()...])`; taking the directory list as a
+/// parameter (rather than resolving it internally) keeps this unit-testable
+/// against a real temp directory.
+///
+/// Never fails outright: a file that doesn't parse, has an invalid color, or
+/// whose `id` collides with an already-loaded theme (a built-in, or an earlier
+/// custom one — first loaded wins) is skipped, with a message describing why
+/// appended to the returned list, rather than the whole load failing.
+pub fn load(dirs: &[&std::path::Path]) -> (Vec<ColorTheme>, Vec<String>) {
+    let mut themes = built_in_themes();
+    let mut errors = Vec::new();
+
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+
+        let mut paths: Vec<_> = entries
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("toml"))
+            .collect();
+        paths.sort();
+
+        for path in paths {
+            let name = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("theme")
+                .to_string();
+
+            let source = match std::fs::read_to_string(&path) {
+                Ok(source) => source,
+                Err(err) => {
+                    errors.push(format!("{name}: couldn't read file: {err}"));
+                    continue;
+                }
+            };
+            let raw: RawTheme = match toml::from_str(&source) {
+                Ok(raw) => raw,
+                Err(err) => {
+                    errors.push(format!("{name}: {err}"));
+                    continue;
+                }
+            };
+            let theme = match raw.into_theme() {
+                Ok(theme) => theme,
+                Err(err) => {
+                    errors.push(format!("{name}: {err}"));
+                    continue;
+                }
+            };
+            if let Some(existing) = themes.iter().find(|t| t.id == theme.id) {
+                errors.push(format!(
+                    "{name}: theme id \"{}\" is already used by \"{}\", skipping",
+                    theme.id, existing.label
+                ));
+                continue;
+            }
+            themes.push(theme);
+        }
+    }
+
+    (themes, errors)
+}
+
+pub fn find<'a>(themes: &'a [ColorTheme], id: &str) -> Option<&'a ColorTheme> {
+    themes.iter().find(|theme| theme.id == id)
 }
 
 /// Apply `theme`'s palette on top of whichever base (`Dark`/`Light`) it's built for,
@@ -243,39 +426,257 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn there_are_fifteen_themes() {
-        assert_eq!(THEMES.len(), 15);
+    fn there_are_fifteen_built_in_themes() {
+        assert_eq!(built_in_themes().len(), 15);
     }
 
     #[test]
-    fn theme_ids_are_unique() {
-        let ids: HashSet<&str> = THEMES.iter().map(|t| t.id).collect();
-        assert_eq!(ids.len(), THEMES.len());
-    }
-
-    #[test]
-    fn theme_ids_matches_themes_in_the_same_order() {
-        assert_eq!(THEME_IDS.len(), THEMES.len());
-        for (id, theme) in THEME_IDS.iter().zip(THEMES.iter()) {
-            assert_eq!(*id, theme.id);
-        }
+    fn built_in_theme_ids_are_unique() {
+        let themes = built_in_themes();
+        let ids: HashSet<&str> = themes.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids.len(), themes.len());
     }
 
     #[test]
     fn find_locates_a_known_theme() {
-        let theme = find("dracula").unwrap();
+        let themes = built_in_themes();
+        let theme = find(&themes, "dracula").unwrap();
         assert_eq!(theme.label, "Dracula");
         assert!(theme.dark);
     }
 
     #[test]
     fn find_returns_none_for_an_unknown_id() {
-        assert!(find("not-a-real-theme").is_none());
+        let themes = built_in_themes();
+        assert!(find(&themes, "not-a-real-theme").is_none());
     }
 
     #[test]
-    fn both_dark_and_light_themes_are_represented() {
-        assert!(THEMES.iter().any(|t| t.dark));
-        assert!(THEMES.iter().any(|t| !t.dark));
+    fn both_dark_and_light_built_in_themes_are_represented() {
+        let themes = built_in_themes();
+        assert!(themes.iter().any(|t| t.dark));
+        assert!(themes.iter().any(|t| !t.dark));
+    }
+
+    #[test]
+    fn parse_hex_color_accepts_a_leading_hash() {
+        assert_eq!(
+            parse_hex_color("#ff8800"),
+            Some(Color32::from_rgb(0xff, 0x88, 0x00))
+        );
+    }
+
+    #[test]
+    fn parse_hex_color_accepts_no_leading_hash() {
+        assert_eq!(
+            parse_hex_color("ff8800"),
+            Some(Color32::from_rgb(0xff, 0x88, 0x00))
+        );
+    }
+
+    #[test]
+    fn parse_hex_color_rejects_the_wrong_length() {
+        assert_eq!(parse_hex_color("#fff"), None);
+        assert_eq!(parse_hex_color("#ff88000"), None);
+    }
+
+    #[test]
+    fn parse_hex_color_rejects_non_hex_characters() {
+        assert_eq!(parse_hex_color("#zzzzzz"), None);
+    }
+
+    fn write_theme(dir: &std::path::Path, filename: &str, contents: &str) {
+        std::fs::write(dir.join(filename), contents).unwrap();
+    }
+
+    #[test]
+    fn load_is_just_the_built_ins_when_no_custom_theme_files_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        let (themes, errors) = load(&[dir.path()]);
+        assert!(errors.is_empty());
+        assert_eq!(themes.len(), 15);
+    }
+
+    #[test]
+    fn a_missing_directory_is_not_an_error() {
+        let (themes, errors) = load(&[std::path::Path::new("/does/not/exist")]);
+        assert!(errors.is_empty());
+        assert_eq!(themes.len(), 15);
+    }
+
+    #[test]
+    fn load_picks_up_a_valid_custom_theme_file() {
+        let dir = tempfile::tempdir().unwrap();
+        write_theme(
+            dir.path(),
+            "my_theme.toml",
+            r##"
+                id = "my_theme"
+                label = "My Theme"
+                dark = true
+                background = "#1e1e2e"
+                foreground = "#cdd6f4"
+                accent = "#cba6f7"
+            "##,
+        );
+        let (themes, errors) = load(&[dir.path()]);
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(themes.len(), 16);
+        assert!(find(&themes, "my_theme").is_some());
+    }
+
+    #[test]
+    fn a_custom_theme_id_colliding_with_a_built_in_is_skipped_and_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        write_theme(
+            dir.path(),
+            "fake_dracula.toml",
+            r##"
+                id = "dracula"
+                label = "Fake Dracula"
+                dark = true
+                background = "#000000"
+                foreground = "#ffffff"
+                accent = "#ffffff"
+            "##,
+        );
+        let (themes, errors) = load(&[dir.path()]);
+        assert_eq!(themes.len(), 15);
+        assert!(errors.iter().any(|e| e.contains("already used")));
+        // The real built-in survives untouched.
+        assert_eq!(find(&themes, "dracula").unwrap().label, "Dracula");
+    }
+
+    #[test]
+    fn two_custom_themes_racing_for_the_same_id_keeps_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        write_theme(
+            dir.path(),
+            "a_first.toml",
+            r##"
+                id = "dup"
+                label = "First"
+                dark = true
+                background = "#000000"
+                foreground = "#ffffff"
+                accent = "#ffffff"
+            "##,
+        );
+        write_theme(
+            dir.path(),
+            "b_second.toml",
+            r##"
+                id = "dup"
+                label = "Second"
+                dark = true
+                background = "#000000"
+                foreground = "#ffffff"
+                accent = "#ffffff"
+            "##,
+        );
+        let (themes, errors) = load(&[dir.path()]);
+        assert!(errors.iter().any(|e| e.contains("already used")));
+        assert_eq!(find(&themes, "dup").unwrap().label, "First");
+    }
+
+    #[test]
+    fn a_malformed_theme_file_is_skipped_and_does_not_prevent_others_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        write_theme(dir.path(), "broken.toml", "not = [valid");
+        write_theme(
+            dir.path(),
+            "fine.toml",
+            r##"
+                id = "fine"
+                label = "Fine"
+                dark = true
+                background = "#000000"
+                foreground = "#ffffff"
+                accent = "#ffffff"
+            "##,
+        );
+        let (themes, errors) = load(&[dir.path()]);
+        assert!(errors.iter().any(|e| e.starts_with("broken:")));
+        assert!(find(&themes, "fine").is_some());
+    }
+
+    #[test]
+    fn a_custom_theme_without_a_preview_table_has_no_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        write_theme(
+            dir.path(),
+            "custom.toml",
+            r##"
+                id = "my_theme"
+                label = "My Theme"
+                dark = true
+                background = "#1e1e2e"
+                foreground = "#cdd6f4"
+                accent = "#cba6f7"
+            "##,
+        );
+        let raw: RawTheme =
+            toml::from_str(&std::fs::read_to_string(dir.path().join("custom.toml")).unwrap())
+                .unwrap();
+        let theme = raw.into_theme().unwrap();
+        assert_eq!(theme.id, "my_theme");
+        assert_eq!(theme.background, Color32::from_rgb(0x1e, 0x1e, 0x2e));
+        assert!(theme.preview_heading.is_none());
+        assert!(theme.preview_wikilink.is_none());
+        assert!(theme.preview_quote_bar.is_none());
+    }
+
+    #[test]
+    fn a_custom_theme_with_a_preview_table_has_overrides() {
+        let source = r##"
+            id = "My_Theme"
+            label = "My Theme"
+            dark = true
+            background = "#1e1e2e"
+            foreground = "#cdd6f4"
+            accent = "#cba6f7"
+
+            [preview]
+            heading = ["#f38ba8", "#89b4fa", "#a6e3a1", "#cba6f7", "#f9e2af", "#fab387"]
+            wikilink = "#a6e3a1"
+            quote_bar = "#6c7086"
+        "##;
+        let raw: RawTheme = toml::from_str(source).unwrap();
+        let theme = raw.into_theme().unwrap();
+        // Ids are lowercased, matching how `:theme` lowercases its argument.
+        assert_eq!(theme.id, "my_theme");
+        assert_eq!(
+            theme.preview_heading,
+            Some([
+                Color32::from_rgb(0xf3, 0x8b, 0xa8),
+                Color32::from_rgb(0x89, 0xb4, 0xfa),
+                Color32::from_rgb(0xa6, 0xe3, 0xa1),
+                Color32::from_rgb(0xcb, 0xa6, 0xf7),
+                Color32::from_rgb(0xf9, 0xe2, 0xaf),
+                Color32::from_rgb(0xfa, 0xb3, 0x87),
+            ])
+        );
+        assert_eq!(
+            theme.preview_wikilink,
+            Some(Color32::from_rgb(0xa6, 0xe3, 0xa1))
+        );
+        assert_eq!(
+            theme.preview_quote_bar,
+            Some(Color32::from_rgb(0x6c, 0x70, 0x86))
+        );
+    }
+
+    #[test]
+    fn an_invalid_color_is_rejected() {
+        let source = r##"
+            id = "bad"
+            label = "Bad"
+            dark = true
+            background = "not-a-color"
+            foreground = "#ffffff"
+            accent = "#ffffff"
+        "##;
+        let raw: RawTheme = toml::from_str(source).unwrap();
+        assert!(raw.into_theme().is_err());
     }
 }

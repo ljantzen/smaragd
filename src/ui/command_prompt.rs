@@ -174,6 +174,7 @@ fn completions<'a>(
     input: &str,
     note_titles: &'a [String],
     plugin_commands: &'a [String],
+    theme_ids: &'a [String],
 ) -> Vec<&'a str> {
     let mut matches = match completion_target(input) {
         CompletionTarget::CommandName => {
@@ -193,7 +194,7 @@ fn completions<'a>(
             command: "theme",
             query,
         } => {
-            let mut matches = filter_candidates(crate::color_theme::THEME_IDS, query);
+            let mut matches = filter_candidates(theme_ids, query);
             if "default".starts_with(&query.to_lowercase()) {
                 // Inserted at the front, not pushed to the back: with MAX_SUGGESTIONS
                 // now truncating this list, appending would let "default" silently
@@ -259,6 +260,7 @@ pub fn show(
     state: &mut CommandPromptState,
     note_titles: &[String],
     plugin_commands: &[String],
+    theme_ids: &[String],
 ) -> Option<CommandPromptEvent> {
     if !state.open {
         return None;
@@ -267,7 +269,7 @@ pub fn show(
     let mut event = None;
     let mut close = false;
 
-    let candidates = completions(&state.input, note_titles, plugin_commands);
+    let candidates = completions(&state.input, note_titles, plugin_commands, theme_ids);
     if !candidates.is_empty() {
         state.selected = state.selected.min(candidates.len() - 1);
     }
@@ -509,13 +511,16 @@ mod tests {
     fn git_subcommand_completes_against_known_subcommands() {
         // Prefix match ("commit") ranks ahead of a mere substring match ("backup"
         // contains "c"), each group sorted alphabetically.
-        assert_eq!(completions("git c", &[], &[]), vec!["commit", "backup"]);
-        assert_eq!(completions("git pu", &[], &[]), vec!["pull", "push"]);
+        assert_eq!(
+            completions("git c", &[], &[], &[]),
+            vec!["commit", "backup"]
+        );
+        assert_eq!(completions("git pu", &[], &[], &[]), vec!["pull", "push"]);
     }
 
     #[test]
     fn git_message_argument_has_no_completions() {
-        assert!(completions("git commit fix", &[], &[]).is_empty());
+        assert!(completions("git commit fix", &[], &[], &[]).is_empty());
     }
 
     #[test]
@@ -596,52 +601,67 @@ mod tests {
     fn command_name_completions_are_prefix_filtered() {
         // Prefix matches ("wq", "write") rank ahead of a mere substring match
         // ("new" contains "w"), each group sorted alphabetically.
-        assert_eq!(completions("w", &[], &[]), vec!["wq", "write", "new"]);
+        assert_eq!(completions("w", &[], &[], &[]), vec!["wq", "write", "new"]);
         // Likewise "dmode" (prefix) ahead of "find" (contains "d").
-        assert_eq!(completions("d", &[], &[]), vec!["dmode", "find"]);
+        assert_eq!(completions("d", &[], &[], &[]), vec!["dmode", "find"]);
     }
 
     #[test]
     fn command_name_completions_still_include_a_fully_typed_exact_match() {
         // "quit" is itself the only candidate once you've typed the whole word.
-        assert_eq!(completions("quit", &[], &[]), vec!["quit"]);
+        assert_eq!(completions("quit", &[], &[], &[]), vec!["quit"]);
     }
 
     #[test]
     fn open_argument_completes_against_note_titles() {
         let titles = vec!["Opening Scene".to_string(), "Backstory".to_string()];
         assert_eq!(
-            completions("open open", &titles, &[]),
+            completions("open open", &titles, &[], &[]),
             vec!["Opening Scene"]
         );
-        assert_eq!(completions("o open", &titles, &[]), vec!["Opening Scene"]);
+        assert_eq!(
+            completions("o open", &titles, &[], &[]),
+            vec!["Opening Scene"]
+        );
     }
 
     #[test]
     fn open_argument_completions_are_capped_at_max_suggestions() {
         let titles: Vec<String> = (0..20).map(|n| format!("Note {n:02}")).collect();
-        let candidates = completions("open Note", &titles, &[]);
+        let candidates = completions("open Note", &titles, &[], &[]);
         assert_eq!(candidates.len(), MAX_SUGGESTIONS);
     }
 
     #[test]
     fn dmode_argument_completes_against_the_fixed_choices() {
-        assert_eq!(completions("dmode d", &[], &[]), vec!["dark"]);
+        assert_eq!(completions("dmode d", &[], &[], &[]), vec!["dark"]);
+    }
+
+    fn theme_ids_fixture() -> Vec<String> {
+        crate::color_theme::built_in_themes()
+            .into_iter()
+            .map(|theme| theme.id)
+            .collect()
     }
 
     #[test]
     fn theme_argument_completes_against_known_theme_ids() {
-        assert_eq!(completions("theme drac", &[], &[]), vec!["dracula"]);
+        let theme_ids = theme_ids_fixture();
+        assert_eq!(
+            completions("theme drac", &[], &[], &theme_ids),
+            vec!["dracula"]
+        );
     }
 
     #[test]
     fn theme_argument_completion_includes_default() {
-        assert_eq!(completions("theme def", &[], &[]), vec!["default"]);
+        assert_eq!(completions("theme def", &[], &[], &[]), vec!["default"]);
     }
 
     #[test]
     fn theme_argument_completion_with_an_empty_query_is_capped_and_leads_with_default() {
-        let candidates = completions("theme ", &[], &[]);
+        let theme_ids = theme_ids_fixture();
+        let candidates = completions("theme ", &[], &[], &theme_ids);
         assert_eq!(candidates.len(), MAX_SUGGESTIONS);
         assert_eq!(candidates[0], "default");
     }
@@ -649,13 +669,13 @@ mod tests {
     #[test]
     fn new_and_find_arguments_have_no_completions() {
         let titles = vec!["Opening Scene".to_string()];
-        assert!(completions("new Open", &titles, &[]).is_empty());
-        assert!(completions("find Open", &titles, &[]).is_empty());
+        assert!(completions("new Open", &titles, &[], &[]).is_empty());
+        assert!(completions("find Open", &titles, &[], &[]).is_empty());
     }
 
     #[test]
     fn unrecognized_command_has_no_argument_completions() {
-        assert!(completions("frobnicate a", &[], &[]).is_empty());
+        assert!(completions("frobnicate a", &[], &[], &[]).is_empty());
     }
 
     #[test]

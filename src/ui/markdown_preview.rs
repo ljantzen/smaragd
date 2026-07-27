@@ -67,12 +67,25 @@ struct Palette {
 }
 
 impl Palette {
-    fn from_visuals(visuals: &egui::Visuals) -> Self {
+    /// `active_theme`, if given, may override `heading`/`wikilink`/`quote_bar`
+    /// (via `ColorTheme::preview_heading`/`preview_wikilink`/`preview_quote_bar`)
+    /// — a theme that leaves any of those `None` falls back to the hardcoded
+    /// dark/light default for that one color, unchanged from before this existed.
+    fn new(visuals: &egui::Visuals, active_theme: Option<&crate::color_theme::ColorTheme>) -> Self {
         let (heading, quote_bar, wikilink) = if visuals.dark_mode {
             (HEADING_COLORS_DARK, QUOTE_BAR_DARK, WIKILINK_COLOR_DARK)
         } else {
             (HEADING_COLORS_LIGHT, QUOTE_BAR_LIGHT, WIKILINK_COLOR_LIGHT)
         };
+        let heading = active_theme
+            .and_then(|theme| theme.preview_heading)
+            .unwrap_or(heading);
+        let wikilink = active_theme
+            .and_then(|theme| theme.preview_wikilink)
+            .unwrap_or(wikilink);
+        let quote_bar = active_theme
+            .and_then(|theme| theme.preview_quote_bar)
+            .unwrap_or(quote_bar);
         Self {
             heading,
             body: visuals.text_color(),
@@ -118,13 +131,14 @@ pub fn show(
     markdown_text: &str,
     base_dir: Option<&Path>,
     project_root: Option<&Path>,
+    active_theme: Option<&crate::color_theme::ColorTheme>,
 ) -> Option<WikilinkActivation> {
     let base_dir = ImageContext {
         dir: base_dir,
         project_root,
     };
     let blocks = markdown::parse(crate::frontmatter::strip(markdown_text));
-    let palette = Palette::from_visuals(ui.visuals());
+    let palette = Palette::new(ui.visuals(), active_theme);
     egui::ScrollArea::vertical()
         .id_salt("markdown_preview_scroll")
         .show(ui, |ui| {
@@ -648,16 +662,43 @@ mod tests {
 
     #[test]
     fn palette_from_dark_visuals_uses_the_dark_heading_set() {
-        let palette = Palette::from_visuals(&egui::Visuals::dark());
+        let palette = Palette::new(&egui::Visuals::dark(), None);
         assert_eq!(palette.heading, HEADING_COLORS_DARK);
         assert!(palette.dark_mode);
     }
 
     #[test]
     fn palette_from_light_visuals_uses_the_light_heading_set() {
-        let palette = Palette::from_visuals(&egui::Visuals::light());
+        let palette = Palette::new(&egui::Visuals::light(), None);
         assert_eq!(palette.heading, HEADING_COLORS_LIGHT);
         assert!(!palette.dark_mode);
+    }
+
+    fn theme_with_preview_overrides() -> crate::color_theme::ColorTheme {
+        let mut theme = crate::color_theme::built_in_themes().remove(0);
+        theme.preview_heading = Some([Color32::WHITE; 6]);
+        theme.preview_wikilink = Some(Color32::WHITE);
+        theme.preview_quote_bar = Some(Color32::WHITE);
+        theme
+    }
+
+    #[test]
+    fn a_theme_with_preview_overrides_replaces_the_hardcoded_palette() {
+        let theme = theme_with_preview_overrides();
+        let palette = Palette::new(&egui::Visuals::dark(), Some(&theme));
+        assert_eq!(palette.heading, [Color32::WHITE; 6]);
+        assert_eq!(palette.wikilink, Color32::WHITE);
+        assert_eq!(palette.quote_bar, Color32::WHITE);
+    }
+
+    #[test]
+    fn a_theme_without_preview_overrides_leaves_the_hardcoded_palette_untouched() {
+        let theme = crate::color_theme::built_in_themes().remove(0);
+        assert!(theme.preview_heading.is_none());
+        let palette = Palette::new(&egui::Visuals::dark(), Some(&theme));
+        assert_eq!(palette.heading, HEADING_COLORS_DARK);
+        assert_eq!(palette.wikilink, WIKILINK_COLOR_DARK);
+        assert_eq!(palette.quote_bar, QUOTE_BAR_DARK);
     }
 
     #[test]

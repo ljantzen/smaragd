@@ -142,6 +142,9 @@ pub struct TachyliteApp {
     /// plugin shortcuts. Recomputed by `compute_effective_plugin_shortcuts`
     /// whenever either input changes (a plugin reload, or a Settings edit).
     plugin_shortcuts: Vec<(String, egui::KeyboardShortcut)>,
+    /// Every selectable color theme: the 15 built-ins plus whatever `*.toml` files
+    /// are in `color_theme::global_themes_dir()`. Rebuilt by `reload_color_themes`.
+    color_themes: Vec<crate::color_theme::ColorTheme>,
 }
 
 /// Which of the two network-bound git actions a `pending_git` background thread is
@@ -200,10 +203,15 @@ impl TachyliteApp {
             pending_git: None,
             plugin_engine: crate::plugins::PluginEngine::default(),
             plugin_shortcuts: Vec::new(),
+            color_themes: Vec::new(),
         };
 
+        // Before applying the persisted theme below, which needs `color_themes`
+        // populated to find it by id.
+        app.reload_color_themes(&cc.egui_ctx);
+
         if let Some(id) = &app.settings.color_theme
-            && let Some(theme) = crate::color_theme::find(id)
+            && let Some(theme) = crate::color_theme::find(&app.color_themes, id)
         {
             crate::color_theme::apply(&cc.egui_ctx, theme);
         }
@@ -249,6 +257,30 @@ impl TachyliteApp {
         self.plugin_shortcuts = self.compute_effective_plugin_shortcuts();
         if !errors.is_empty() {
             self.status_message = Some(errors.join("; "));
+        }
+    }
+
+    /// Rebuild `color_themes` from the built-ins plus whatever `*.toml` files are
+    /// currently in `color_theme::global_themes_dir()` — called on startup, and
+    /// from the View > Theme menu's "Reload Custom Themes" so a theme author can
+    /// iterate without restarting the app. If the currently active theme no
+    /// longer resolves afterward (e.g. the file being edited now has a syntax
+    /// error), falls back to the default (no theme) rather than leaving a now-
+    /// orphaned palette applied with nothing in the menu showing as selected.
+    fn reload_color_themes(&mut self, ctx: &egui::Context) {
+        let themes_dir = crate::color_theme::global_themes_dir();
+        let dirs: Vec<&Path> = themes_dir.as_deref().into_iter().collect();
+        let (themes, errors) = crate::color_theme::load(&dirs);
+        self.color_themes = themes;
+        if !errors.is_empty() {
+            self.status_message = Some(errors.join("; "));
+        }
+        if let Some(id) = self.settings.color_theme.clone()
+            && crate::color_theme::find(&self.color_themes, &id).is_none()
+        {
+            crate::color_theme::reset(ctx);
+            self.settings.color_theme = None;
+            self.persist_settings();
         }
     }
 
@@ -1214,7 +1246,7 @@ impl TachyliteApp {
     fn set_color_theme(&mut self, ctx: &egui::Context, id: Option<&str>) {
         match id {
             Some(id) => {
-                let Some(theme) = crate::color_theme::find(id) else {
+                let Some(theme) = crate::color_theme::find(&self.color_themes, id) else {
                     self.status_message = Some(format!("Unknown theme: {id}"));
                     return;
                 };
@@ -1762,19 +1794,26 @@ impl eframe::App for TachyliteApp {
                     // from under `SubMenuButton`'s (hover-to-open, keeps parents open)
                     // dedicated handling for exactly this case.
                     egui::containers::menu::SubMenuButton::new("Theme").ui(ui, |ui| {
+                        if ui.button("Reload Custom Themes").clicked() {
+                            let ctx = ui.ctx().clone();
+                            self.reload_color_themes(&ctx);
+                        }
+                        ui.separator();
                         // Cloned rather than borrowed: `set_color_theme` below needs
-                        // `&mut self`, which a live borrow of `self.settings` here
-                        // would conflict with across loop iterations.
+                        // `&mut self`, which a live borrow of `self.settings`/
+                        // `self.color_themes` here would conflict with across loop
+                        // iterations.
                         let current = self.settings.color_theme.clone();
+                        let themes = self.color_themes.clone();
                         if ui.radio(current.is_none(), "Default").clicked() {
                             self.set_color_theme(ui.ctx(), None);
                         }
-                        for theme in crate::color_theme::THEMES {
+                        for theme in &themes {
                             if ui
-                                .radio(current.as_deref() == Some(theme.id), theme.label)
+                                .radio(current.as_deref() == Some(theme.id.as_str()), &theme.label)
                                 .clicked()
                             {
-                                self.set_color_theme(ui.ctx(), Some(theme.id));
+                                self.set_color_theme(ui.ctx(), Some(&theme.id));
                             }
                         }
                     });
@@ -1900,11 +1939,13 @@ impl eframe::App for TachyliteApp {
                 .command_names()
                 .map(str::to_string)
                 .collect();
+            let theme_ids: Vec<String> = self.color_themes.iter().map(|t| t.id.clone()).collect();
             if let Some(event) = ui::command_prompt::show(
                 ui.ctx(),
                 &mut self.command_prompt,
                 &note_titles,
                 &plugin_commands,
+                &theme_ids,
             ) {
                 let ctx = ui.ctx().clone();
                 match event {
@@ -1963,9 +2004,18 @@ impl eframe::App for TachyliteApp {
                 if self.editor.open_path.is_some() {
                     let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
                     let project_root = self.project.as_ref().map(|project| project.root.as_path());
-                    if let Some(activation) =
-                        ui::markdown_preview::show(ui, &self.editor.buffer, base_dir, project_root)
-                    {
+                    let active_theme = self
+                        .settings
+                        .color_theme
+                        .as_deref()
+                        .and_then(|id| crate::color_theme::find(&self.color_themes, id));
+                    if let Some(activation) = ui::markdown_preview::show(
+                        ui,
+                        &self.editor.buffer,
+                        base_dir,
+                        project_root,
+                        active_theme,
+                    ) {
                         self.activate_wikilink(activation);
                     }
                 } else {
