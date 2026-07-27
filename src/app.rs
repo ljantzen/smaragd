@@ -65,6 +65,16 @@ struct PendingPrompt {
     state: NamePromptState,
 }
 
+/// State for the open Export dialog (`ui::export_panel`), from the binder's
+/// "Export…" context-menu entry — which folder to compile and the book
+/// title/author fields being edited live.
+struct ExportState {
+    source: PathBuf,
+    source_label: String,
+    meta: crate::export::BookMeta,
+    style_id: String,
+}
+
 /// Which of the three mutually exclusive ways of looking at the project is currently
 /// shown in the `CentralPanel`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +155,12 @@ pub struct TachyliteApp {
     /// Every selectable color theme: the 15 built-ins plus whatever `*.toml` files
     /// are in `color_theme::global_themes_dir()`. Rebuilt by `reload_color_themes`.
     color_themes: Vec<crate::color_theme::ColorTheme>,
+    /// The open Export dialog, if any — see `ExportState`.
+    export: Option<ExportState>,
+    /// Every selectable typesetting style: the 2 built-ins plus whatever
+    /// `*.toml` files are in `export::style::global_styles_dir()`. Rebuilt by
+    /// `reload_typeset_styles`.
+    typeset_styles: Vec<crate::export::style::TypesetStyle>,
 }
 
 /// Which of the two network-bound git actions a `pending_git` background thread is
@@ -204,7 +220,10 @@ impl TachyliteApp {
             plugin_engine: crate::plugins::PluginEngine::default(),
             plugin_shortcuts: Vec::new(),
             color_themes: Vec::new(),
+            export: None,
+            typeset_styles: Vec::new(),
         };
+        app.reload_typeset_styles();
 
         // Before applying the persisted theme below, which needs `color_themes`
         // populated to find it by id.
@@ -281,6 +300,19 @@ impl TachyliteApp {
             crate::color_theme::reset(ctx);
             self.settings.color_theme = None;
             self.persist_settings();
+        }
+    }
+
+    /// Reload the selectable typesetting styles (`self.typeset_styles`): the 2
+    /// built-ins plus every `*.toml` file in `export::style::global_styles_dir()`.
+    /// Called at startup and from the Export dialog's "Reload Styles" action.
+    fn reload_typeset_styles(&mut self) {
+        let styles_dir = crate::export::style::global_styles_dir();
+        let dirs: Vec<&Path> = styles_dir.as_deref().into_iter().collect();
+        let (styles, errors) = crate::export::style::load(&dirs);
+        self.typeset_styles = styles;
+        if !errors.is_empty() {
+            self.status_message = Some(errors.join("; "));
         }
     }
 
@@ -832,6 +864,181 @@ impl TachyliteApp {
             BinderEvent::SetFolderRole { path, role } => self.set_folder_role(&path, role),
             BinderEvent::EmptyTrash { path } => self.empty_trash_folder(&path),
             BinderEvent::MoveItem { path, new_parent } => self.move_item(&path, &new_parent),
+            BinderEvent::Export { path } => self.open_export(path),
+        }
+    }
+
+    /// Open the Export dialog for `path` (a binder folder) — pre-fills the
+    /// Title/Author fields from `ProjectMeta::book_title`/`book_author` and
+    /// the Style choice from `ProjectMeta::book_style`, falling back to the
+    /// first loaded style (built-in "Manuscript") if unset or no longer
+    /// resolves.
+    fn open_export(&mut self, path: PathBuf) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let source_label = project
+            .tree
+            .find_by_path(&path)
+            .map(|node| node.name.clone())
+            .unwrap_or_else(|| path.display().to_string());
+        let style_id = project
+            .meta
+            .book_style
+            .clone()
+            .filter(|id| crate::export::style::find(&self.typeset_styles, id).is_some())
+            .or_else(|| self.typeset_styles.first().map(|s| s.id.clone()))
+            .unwrap_or_default();
+        self.export = Some(ExportState {
+            source: path,
+            source_label,
+            meta: crate::export::BookMeta {
+                title: project.meta.book_title.clone().unwrap_or_default(),
+                author: project.meta.book_author.clone().unwrap_or_default(),
+            },
+            style_id,
+        });
+    }
+
+    /// Handle an outcome from the export dialog: Docx/Epub/Pdf opens a native
+    /// save dialog and runs the export; Reload re-scans custom styles; Close
+    /// dismisses it. Title/Author/Style edits are persisted to the project
+    /// regardless of which button was pressed, since the fields may have
+    /// changed even if the user just closes the dialog.
+    fn finish_export(&mut self, action: ui::export_panel::ExportAction) {
+        let Some(state) = &self.export else {
+            return;
+        };
+        let source = state.source.clone();
+        let meta = state.meta.clone();
+        let style_id = state.style_id.clone();
+
+        if let Some(project) = &mut self.project
+            && let Err(err) =
+                project.set_book_meta(meta.title.clone(), meta.author.clone(), style_id.clone())
+        {
+            self.status_message = Some(format!("Couldn't save settings: {err}"));
+        }
+
+        let Some(style) = crate::export::style::find(&self.typeset_styles, &style_id).cloned()
+        else {
+            match action {
+                ui::export_panel::ExportAction::Close => self.export = None,
+                ui::export_panel::ExportAction::ReloadStyles => self.reload_typeset_styles(),
+                _ => self.status_message = Some("No typesetting style selected".to_string()),
+            }
+            return;
+        };
+
+        match action {
+            ui::export_panel::ExportAction::Close => {
+                self.export = None;
+            }
+            ui::export_panel::ExportAction::ReloadStyles => {
+                self.reload_typeset_styles();
+            }
+            ui::export_panel::ExportAction::Docx => {
+                if let Some(out_path) = rfd::FileDialog::new()
+                    .set_file_name("manuscript.docx")
+                    .add_filter("Word Document", &["docx"])
+                    .save_file()
+                {
+                    self.run_export(&source, &meta, &style, &out_path);
+                }
+            }
+            ui::export_panel::ExportAction::Epub => {
+                if let Some(out_path) = rfd::FileDialog::new()
+                    .set_file_name("manuscript.epub")
+                    .add_filter("EPUB", &["epub"])
+                    .save_file()
+                {
+                    self.run_export_epub(&source, &meta, &style, &out_path);
+                }
+            }
+            ui::export_panel::ExportAction::Pdf => {
+                if let Some(out_path) = rfd::FileDialog::new()
+                    .set_file_name("manuscript.pdf")
+                    .add_filter("PDF", &["pdf"])
+                    .save_file()
+                {
+                    self.run_export_pdf(&source, &meta, &style, &out_path);
+                }
+            }
+        }
+    }
+
+    fn run_export(
+        &mut self,
+        source: &Path,
+        meta: &crate::export::BookMeta,
+        style: &crate::export::style::TypesetStyle,
+        out_path: &Path,
+    ) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let Some(folder) = project.tree.find_by_path(source) else {
+            return;
+        };
+        let docs = crate::export::gather(project, folder);
+        match crate::export::docx::export_docx(&docs, meta, style, &project.root, out_path) {
+            Ok(()) => {
+                self.status_message = Some(format!("Exported to {}", out_path.display()));
+            }
+            Err(err) => {
+                self.status_message = Some(format!("Export failed: {err}"));
+            }
+        }
+    }
+
+    fn run_export_epub(
+        &mut self,
+        source: &Path,
+        meta: &crate::export::BookMeta,
+        style: &crate::export::style::TypesetStyle,
+        out_path: &Path,
+    ) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let Some(folder) = project.tree.find_by_path(source) else {
+            return;
+        };
+        let docs = crate::export::gather(project, folder);
+        match crate::export::epub::export_epub(&docs, meta, style, &project.root, out_path) {
+            Ok(()) => {
+                self.status_message = Some(format!("Exported to {}", out_path.display()));
+            }
+            Err(err) => {
+                self.status_message = Some(format!("Export failed: {err}"));
+            }
+        }
+    }
+
+    fn run_export_pdf(
+        &mut self,
+        source: &Path,
+        meta: &crate::export::BookMeta,
+        style: &crate::export::style::TypesetStyle,
+        out_path: &Path,
+    ) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let Some(folder) = project.tree.find_by_path(source) else {
+            return;
+        };
+        let docs = crate::export::gather(project, folder);
+        match crate::export::pdf::export_pdf(&docs, meta, style, &project.root, out_path) {
+            Ok(spine_width_in) => {
+                self.status_message = Some(format!(
+                    "Exported to {} — estimated spine width: {spine_width_in:.2}in",
+                    out_path.display()
+                ));
+            }
+            Err(err) => {
+                self.status_message = Some(format!("Export failed: {err}"));
+            }
         }
     }
 
@@ -2067,6 +2274,19 @@ impl eframe::App for TachyliteApp {
                 ui::corkboard_panel::show_card_editor(ui.ctx(), draft, &note_titles)
             {
                 self.finish_card_editor(outcome);
+            }
+        }
+
+        if let Some(state) = &mut self.export {
+            let action = ui::export_panel::show(
+                ui.ctx(),
+                &state.source_label,
+                &mut state.meta,
+                &mut state.style_id,
+                &self.typeset_styles,
+            );
+            if let Some(action) = action {
+                self.finish_export(action);
             }
         }
     }

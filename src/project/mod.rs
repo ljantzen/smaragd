@@ -172,6 +172,20 @@ pub struct ProjectMeta {
     /// else's content, not just a convenience default.
     #[serde(default)]
     pub plugins_enabled: bool,
+    /// Book-level title/author, entered once in the Export dialog and reused on
+    /// every later export rather than retyped each time. `None` (not an empty
+    /// string) until the user has actually set one, so a never-exported project's
+    /// `project.json` doesn't grow two empty-string keys for no reason.
+    #[serde(default)]
+    pub book_title: Option<String>,
+    #[serde(default)]
+    pub book_author: Option<String>,
+    /// The chosen `export::style::TypesetStyle` id, same reuse-across-exports
+    /// rationale as `book_title`/`book_author`. `None` means "use the export
+    /// dialog's own default" rather than a project.json key with a specific
+    /// style id baked in, so the default can change later without a migration.
+    #[serde(default)]
+    pub book_style: Option<String>,
 }
 
 /// A single Lisa Cron "Story Genius" scene card: a structured cause-and-effect
@@ -472,6 +486,21 @@ impl Project {
     /// Set the protagonist's Misbelief — see `ProjectMeta::protagonist_misbelief`.
     pub fn set_protagonist_misbelief(&mut self, misbelief: String) -> io::Result<()> {
         self.meta.protagonist_misbelief = misbelief;
+        self.save_metadata()
+    }
+
+    /// Set the book-level title/author/typesetting-style shown in the Export
+    /// dialog — see `ProjectMeta::book_title`/`book_author`/`book_style`. An
+    /// empty title/author is stored as `None` rather than `Some(String::new())`.
+    pub fn set_book_meta(
+        &mut self,
+        title: String,
+        author: String,
+        style_id: String,
+    ) -> io::Result<()> {
+        self.meta.book_title = (!title.is_empty()).then_some(title);
+        self.meta.book_author = (!author.is_empty()).then_some(author);
+        self.meta.book_style = (!style_id.is_empty()).then_some(style_id);
         self.save_metadata()
     }
 
@@ -1254,6 +1283,52 @@ mod tests {
             reloaded.meta.protagonist_misbelief,
             "Believes she doesn't deserve a home"
         );
+    }
+
+    #[test]
+    fn set_book_meta_persists_across_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        assert_eq!(project.meta.book_title, None);
+        assert_eq!(project.meta.book_author, None);
+        assert_eq!(project.meta.book_style, None);
+
+        project
+            .set_book_meta(
+                "My Book".to_string(),
+                "Jane Doe".to_string(),
+                "trade_paperback".to_string(),
+            )
+            .unwrap();
+
+        let reloaded = Project::load_from_folder(dir.path()).unwrap();
+        assert_eq!(reloaded.meta.book_title, Some("My Book".to_string()));
+        assert_eq!(reloaded.meta.book_author, Some("Jane Doe".to_string()));
+        assert_eq!(
+            reloaded.meta.book_style,
+            Some("trade_paperback".to_string())
+        );
+    }
+
+    #[test]
+    fn set_book_meta_with_empty_fields_stores_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        project
+            .set_book_meta(
+                "My Book".to_string(),
+                "Jane Doe".to_string(),
+                "trade_paperback".to_string(),
+            )
+            .unwrap();
+        project
+            .set_book_meta(String::new(), String::new(), String::new())
+            .unwrap();
+
+        assert_eq!(project.meta.book_title, None);
+        assert_eq!(project.meta.book_author, None);
+        assert_eq!(project.meta.book_style, None);
     }
 
     #[test]

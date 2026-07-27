@@ -41,6 +41,11 @@ pub enum BinderEvent {
     EmptyTrash {
         path: PathBuf,
     },
+    /// "Export…" was picked for a folder — compile it and its subfolders to a
+    /// document format (DOCX/EPUB), handled by opening the export dialog.
+    Export {
+        path: PathBuf,
+    },
 }
 
 /// Keyboard filter claimed on every focused binder row: all four arrow keys are ours
@@ -119,7 +124,7 @@ fn role_suffix(role: Option<FolderRole>) -> &'static str {
 /// (with `.md`) since it's matched against on-disk names and `ProjectMeta::node_order`
 /// entries elsewhere (see `apply_order`) — only the binder's rendering trims the
 /// extension, Scrivener/Ulysses-style.
-fn document_label(name: &str) -> &str {
+pub(crate) fn document_label(name: &str) -> &str {
     name.strip_suffix(".md").unwrap_or(name)
 }
 
@@ -305,6 +310,12 @@ fn show_node(
                                 ui.close();
                             }
                         }
+                    });
+                }
+                ui.separator();
+                if ui.button("Export…").clicked() {
+                    *event = Some(BinderEvent::Export {
+                        path: node.path.clone(),
                     });
                 }
                 // Renaming, deleting, or assigning a role to the project's root

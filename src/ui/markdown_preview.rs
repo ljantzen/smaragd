@@ -485,6 +485,29 @@ fn is_within_project(resolved: &Path, project_root: Option<&Path>) -> bool {
     resolved.starts_with(project_root)
 }
 
+/// Like `resolve_image_uri`, but for a caller (`export.rs`) that wants to read the
+/// image's bytes off disk rather than hand egui a URI: resolves `src` relative to
+/// `doc_dir` and returns the filesystem path only if it's actually contained within
+/// `project_root` (same symlink-aware containment check as `resolve_image_uri`), or
+/// `None` for a remote `http(s)://`/`data:` URI (never fetched, per `resolve_image_uri`)
+/// or one that fails containment.
+pub(crate) fn resolve_image_fs_path(
+    src: &str,
+    doc_dir: &Path,
+    project_root: &Path,
+) -> Option<std::path::PathBuf> {
+    if src.starts_with("data:") || src.contains("://") {
+        return None;
+    }
+    let path = Path::new(src);
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        doc_dir.join(path)
+    };
+    is_within_project(&resolved, Some(project_root)).then_some(resolved)
+}
+
 fn build_layout_job(
     palette: &Palette,
     spans: &[Span],
