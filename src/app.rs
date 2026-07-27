@@ -1723,6 +1723,9 @@ impl eframe::App for TachyliteApp {
                     ui.radio_value(&mut self.view_mode, ViewMode::Preview, "Preview");
                     ui.radio_value(&mut self.view_mode, ViewMode::Corkboard, "Corkboard");
                     ui.separator();
+                    if ui.button("Binder").clicked() {
+                        self.toggle_dock_tab(DockTab::Binder);
+                    }
                     if ui.button("Backlinks").clicked() {
                         self.toggle_dock_tab(DockTab::Backlinks);
                     }

@@ -44,7 +44,7 @@ The **Binder**, **Backlinks**, and **Document Metadata** panels are dockable too
 - **Drag one tab onto another** to group them together, switching between them like browser tabs
 - **Resize** the dock area, or a floating window, by dragging its edge
 
-Binder is present from the moment a project is open. Backlinks and Metadata start closed — open them from the **View**/**Edit** menus or their shortcuts (below), and toggle them again to close.
+Binder is present from the moment a project is open; Backlinks and Metadata start closed. All three can be closed via their tab's × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, or **`Edit > Document Metadata`** (Backlinks and Metadata also have shortcuts — see below).
 
 ## The Binder
 
