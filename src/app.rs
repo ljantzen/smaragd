@@ -1071,6 +1071,10 @@ impl TachyliteApp {
             ShortcutAction::GitPush => self.run_git_push(ctx),
             ShortcutAction::ToggleBacklinks => self.toggle_dock_tab(DockTab::Backlinks),
             ShortcutAction::EditMetadata => self.toggle_dock_tab(DockTab::Metadata),
+            // Filtered out of the consumption pass above and handled inline in
+            // `editor_panel::show` instead — never actually reached, but the match
+            // above has to stay exhaustive over `ShortcutAction`.
+            ShortcutAction::ActivateWikilink => {}
         }
     }
 
@@ -1612,6 +1616,11 @@ impl eframe::App for TachyliteApp {
                 .shortcuts
                 .bindings()
                 .into_iter()
+                // `ActivateWikilink` is consumed inline in `editor_panel::show`
+                // instead (see its doc comment) — including it here too would let
+                // this pass steal the key event first, so `editor_panel::show`
+                // would never see it.
+                .filter(|(action, _)| *action != ShortcutAction::ActivateWikilink)
                 .map(|(action, shortcut)| (ShortcutTarget::BuiltIn(action), shortcut))
                 .collect();
             pairs.extend(
@@ -1955,7 +1964,16 @@ impl eframe::App for TachyliteApp {
                     .as_ref()
                     .map(|project| project.tree.document_names())
                     .unwrap_or_default();
-                match ui::editor_panel::show(ui, &mut self.editor, &note_titles) {
+                let activate_wikilink_shortcut = self
+                    .settings
+                    .shortcuts
+                    .get(ShortcutAction::ActivateWikilink);
+                match ui::editor_panel::show(
+                    ui,
+                    &mut self.editor,
+                    &note_titles,
+                    activate_wikilink_shortcut,
+                ) {
                     Some(EditorEvent::SaveError(err)) => self.status_message = Some(err),
                     Some(EditorEvent::Wikilink(activation)) => self.activate_wikilink(activation),
                     None => {}

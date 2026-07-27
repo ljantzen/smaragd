@@ -84,7 +84,7 @@ Relative image paths resolve against the open document's own folder, and must st
 Type `[[Topic]]` or `[[Topic|Alias]]` to link to another document by its filename (no path needed — resolution is by name, project-wide).
 
 - In the preview, wikilinks render as clickable links.
-- **Ctrl+Click** a link in the preview — or place your cursor on one in the editor and press **Ctrl+Enter** — to jump to it. If the target document doesn't exist yet, this creates it, in the same folder as the note you linked from.
+- **Ctrl+Click** a link in the preview — or place your cursor on one in the editor and press **Ctrl+Enter** (the remappable "Activate Wikilink" shortcut — see [Keyboard Shortcuts](#keyboard-shortcuts)) — to jump to it. If the target document doesn't exist yet, this creates it, in the same folder as the note you linked from.
 - While typing `[[` in the editor, an autocomplete popup filters matching document titles as you type. Navigate it with arrow keys or Tab, and press Enter (or click) to accept.
 
 ## Backlinks
@@ -305,6 +305,7 @@ All shortcuts are fully remappable in **`File > Settings`**. Defaults below use 
 | Commit (Git) | `Ctrl+Alt+C` |
 | Push (Git) | `Ctrl+Alt+P` |
 | Document Metadata | `Ctrl+Shift+M` |
+| Activate Wikilink | `Ctrl+Enter` |
 
 Two shortcuts can never overlap — rebinding one to a combo another action already owns automatically un-assigns it from the previous owner. This holds across built-ins and plugin shortcuts alike: if a loaded plugin registered a `:` command with its own shortcut (see [Plugins](#plugins)), it shows up in its own "Plugin Shortcuts" section further down the same window, remappable/unbindable the same way.
 

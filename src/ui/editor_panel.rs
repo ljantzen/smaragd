@@ -1,6 +1,6 @@
 use egui::text::{CCursor, CCursorRange};
 use egui::widgets::text_edit::TextEditOutput;
-use egui::{Id, Key, Modifiers};
+use egui::{Id, Key, KeyboardShortcut, Modifiers};
 
 use crate::autocomplete::{
     active_wikilink_query, apply_wikilink_completion, byte_offset_to_char, char_offset_to_byte,
@@ -52,12 +52,15 @@ pub fn editor_text_edit_id() -> Id {
 
 /// Renders the document editor, including an Obsidian-style `[[wikilink]]`
 /// autocomplete popup driven by `note_titles`. Returns `Some` if an autosave
-/// triggered by focus loss failed, or the user pressed Ctrl+Enter (Cmd+Enter on
-/// macOS) on a wikilink to follow it — the caller decides what to do with either.
+/// triggered by focus loss failed, or the user pressed `activate_wikilink_shortcut`
+/// (the remappable `ShortcutAction::ActivateWikilink`, `Ctrl+Enter`/`Cmd+Enter` by
+/// default — `None` if the user unbound it) on a wikilink to follow it — the caller
+/// decides what to do with either.
 pub fn show(
     ui: &mut egui::Ui,
     editor: &mut EditorState,
     note_titles: &[String],
+    activate_wikilink_shortcut: Option<KeyboardShortcut>,
 ) -> Option<EditorEvent> {
     if editor.open_path.is_none() {
         ui.label("Select a file from the binder to start editing.");
@@ -73,12 +76,12 @@ pub fn show(
 
     // If the popup was showing after the last frame, steal navigation keys before the
     // `TextEdit` below gets a chance to treat them as ordinary cursor movement or
-    // newline insertion. Ctrl+Enter is stolen unconditionally — the `TextEdit` would
-    // otherwise turn it into a plain newline.
+    // newline insertion. `activate_wikilink_shortcut` is stolen unconditionally —
+    // the `TextEdit` would otherwise turn a bare Enter-based binding into a plain
+    // newline.
     let pending_action = state.open.then(|| steal_popup_key(ui)).flatten();
-    let activate_wikilink_requested = ui
-        .ctx()
-        .input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter));
+    let activate_wikilink_requested = activate_wikilink_shortcut
+        .is_some_and(|shortcut| ui.ctx().input_mut(|i| i.consume_shortcut(&shortcut)));
 
     let output = egui::TextEdit::multiline(&mut editor.buffer)
         .desired_width(f32::INFINITY)

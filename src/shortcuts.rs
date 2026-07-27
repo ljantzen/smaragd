@@ -34,6 +34,13 @@ pub enum ShortcutAction {
     GitCommit,
     GitPush,
     EditMetadata,
+    /// Follow the `[[wikilink]]` the cursor is on in the editor — unlike every other
+    /// action, this one's consumption happens inside `editor_panel::show` itself
+    /// (it needs that frame's `TextEdit` cursor position, not available yet at the
+    /// point `TachyliteApp::ui` runs its generic shortcut-consumption pass), so it's
+    /// filtered out of that pass rather than dispatched through
+    /// `dispatch_shortcut_action` — see both call sites.
+    ActivateWikilink,
 }
 
 impl ShortcutAction {
@@ -58,6 +65,7 @@ impl ShortcutAction {
         Self::GitCommit,
         Self::GitPush,
         Self::EditMetadata,
+        Self::ActivateWikilink,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -83,6 +91,7 @@ impl ShortcutAction {
             Self::GitCommit => "Commit (Git)",
             Self::GitPush => "Push (Git)",
             Self::EditMetadata => "Document Metadata",
+            Self::ActivateWikilink => "Activate Wikilink",
         }
     }
 
@@ -110,6 +119,7 @@ impl ShortcutAction {
             Self::GitCommit => "git_commit",
             Self::GitPush => "git_push",
             Self::EditMetadata => "edit_metadata",
+            Self::ActivateWikilink => "activate_wikilink",
         }
     }
 
@@ -159,6 +169,7 @@ impl ShortcutAction {
             Self::EditMetadata => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::M)
             }
+            Self::ActivateWikilink => KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter),
         }
     }
 }
