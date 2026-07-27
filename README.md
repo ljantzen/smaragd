@@ -4,6 +4,8 @@ A native desktop authoring tool for writers, built in Rust with [egui](https://g
 
 A project is a folder of `.md` files and subfolders marked with a `.tachylite/project.json` file — no proprietary bundle format, but not just any folder either. `File > New Project` creates one from scratch; `File > Open Project` on a folder that hasn't been used by tachylite before offers to set it up in place rather than refusing outright. `.tachylite/project.json` stores manuscript ordering and folder roles that the filesystem can't express; if its *contents* are corrupt (as opposed to the marker being absent, which instead means "not a project yet") tachylite falls back to defaults rather than erroring.
 
+See [`docs/user-manual.md`](docs/user-manual.md) for a full user-facing guide to every feature below.
+
 ## Features
 
 - Binder tree view of a project folder (gitignore-aware, via the `ignore` crate); documents are shown without their `.md` extension. Drag-and-drop a file or folder onto another folder to move it. Keyboard-navigable: click a row (or Tab to it) then Up/Down moves between rows, Left/Right collapses/expands a folder, and Enter opens the focused document
