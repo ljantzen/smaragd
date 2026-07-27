@@ -5,6 +5,7 @@ use crate::project::{FolderRole, Project};
 
 /// Outcomes of user interaction with the binder tree, handled by the caller (`app.rs`)
 /// rather than mutated here — keeps this module a pure rendering layer over `&Project`.
+#[derive(Debug, PartialEq)]
 pub enum BinderEvent {
     Selected(PathBuf),
     NewFile {
@@ -86,7 +87,17 @@ pub fn show(ui: &mut egui::Ui, project: &Project, selected: Option<&Path>) -> Op
         } else {
             None
         };
-        if let Some(next) = next {
+        // Skip the `request_focus` call entirely when clamped at either end (`next
+        // == current`): `Memory::request_focus` unconditionally resets the target's
+        // focus-lock filter to its default (unclaimed) state, even when it's
+        // already the focused widget — calling it every frame while pinned at the
+        // last/first row would repeatedly wipe `ARROW_KEYS_FILTER` right back off,
+        // reopening the one-frame gap where egui's own built-in arrow-key focus
+        // navigation can step in (see `Harness::press`'s doc comment in the tests
+        // below for the full mechanism).
+        if let Some(next) = next
+            && next != current
+        {
             ui.ctx()
                 .memory_mut(|mem| mem.request_focus(visible_rows[next]));
         }
@@ -215,7 +226,14 @@ fn show_node(
 
             if header_response.clicked() {
                 state.toggle(ui);
-                header_response.request_focus();
+                // `request_focus` unconditionally resets the target's focus-lock
+                // filter (see the comment on the equivalent guard in `show`) — skip
+                // it when this row is already focused, so re-clicking an
+                // already-focused folder to toggle it doesn't wipe the filter and
+                // reopen the one-frame gap for its very next keypress.
+                if !header_response.has_focus() {
+                    header_response.request_focus();
+                }
             }
             if header_response.has_focus() {
                 ui.ctx().memory_mut(|mem| {
@@ -377,6 +395,22 @@ fn show_node(
             visible_rows.push(response.id);
             if response.clicked() {
                 *event = Some(BinderEvent::Selected(node.path.clone()));
+                // Unlike `folder_header`, `Button` doesn't request focus on click by
+                // itself — without this, clicking a document (the most common first
+                // interaction with the binder) would leave nothing focused, and
+                // arrow keys would have no row to act on at all. This also makes
+                // Enter/Space open the focused document "for free": egui already
+                // treats Space/Enter on a focused click-sensing widget as a click
+                // (`Response::clicked`'s doc comment), so no extra handling is
+                // needed for that once focus itself works. Guarded on `has_focus`
+                // for the same reason `folder_header`'s click handler is: repeatedly
+                // clicking an already-focused row would otherwise keep resetting
+                // its focus-lock filter (`request_focus` always does that, even
+                // when the target is already focused), reopening the one-frame gap
+                // for its very next keypress every time.
+                if !response.has_focus() {
+                    response.request_focus();
+                }
             }
             // Claimed so Left/Right don't trigger egui's built-in spatial
             // focus-jump while a document row has focus — see `ARROW_KEYS_FILTER`.
@@ -428,5 +462,289 @@ mod tests {
     #[test]
     fn document_label_only_strips_a_trailing_md_extension() {
         assert_eq!(document_label("notes.md.bak"), "notes.md.bak");
+    }
+
+    /// Drives `show` with synthetic input across frames, so keyboard-navigation
+    /// behavior can be checked without a running window — worth the extra machinery
+    /// specifically because this exact class of bug (a click that silently fails to
+    /// grant keyboard focus, breaking every arrow-key interaction downstream of it)
+    /// already shipped once undetected by build/clippy/fmt and a crash-only manual
+    /// smoke test.
+    #[derive(Default)]
+    struct Harness {
+        ctx: egui::Context,
+    }
+
+    impl Harness {
+        fn frame(&self, project: &Project, events: Vec<egui::Event>) -> Option<BinderEvent> {
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut event = None;
+            let _ = self.ctx.run_ui(input, |ui| {
+                event = show(ui, project, None);
+            });
+            event
+        }
+
+        /// Zero animation time, so a folder's open/closed `openness` snaps
+        /// immediately instead of taking many real frames to tween — otherwise a
+        /// freshly-collapsed folder's children would still be "visible" (mid-fade)
+        /// for a while and this test would need to wait out that animation, rather
+        /// than being able to assert on the state right after the keypress that
+        /// caused it. Then a couple of empty frames so any other first-render
+        /// transients settle before rendered rects/order are relied on to stay put.
+        fn settle(&self, project: &Project) {
+            self.ctx.all_styles_mut(|style| style.animation_time = 0.0);
+            self.frame(project, vec![]);
+            self.frame(project, vec![]);
+        }
+
+        fn click(&self, project: &Project, pos: egui::Pos2) -> Option<BinderEvent> {
+            self.frame(
+                project,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            )
+        }
+
+        /// One frame with no input at all — see `press`'s doc comment for why tests
+        /// need this between a focus change and the next key press.
+        fn idle(&self, project: &Project) {
+            self.frame(project, vec![]);
+        }
+
+        /// Press `key` and return the resulting event. Always call `idle` first if
+        /// the previously-focused row *just* gained focus this same test step (e.g.
+        /// right after `click_first_row`, or right after a previous `press` moved
+        /// focus to a new row): egui's own focus-lock filter — the mechanism
+        /// `set_focus_lock_filter`/`ARROW_KEYS_FILTER` uses to stop it from treating
+        /// arrow keys as its own built-in "jump focus to the nearest widget"
+        /// shortcut — only takes effect starting the *second* frame a widget has
+        /// focus (see `Memory::set_focus_lock_filter`'s doc comment: "You must first
+        /// give focus to the widget before calling this"). A key pressed on the very
+        /// same frame focus lands somewhere new can therefore still be treated as a
+        /// focus-direction request by egui itself, racing our own handling. This
+        /// isn't reachable from an actual keyboard — a real click and a real
+        /// subsequent keypress are always several frames apart — and it's the exact
+        /// same one-frame gap `TextEdit` itself has, but our synthetic frames need
+        /// an explicit `idle` to reproduce that natural gap.
+        fn press(&self, project: &Project, key: egui::Key) -> Option<BinderEvent> {
+            self.frame(
+                project,
+                vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            )
+        }
+
+        fn focused(&self) -> Option<egui::Id> {
+            self.ctx.memory(|mem| mem.focused())
+        }
+
+        /// Click down the left column, row by row, until keyboard focus actually
+        /// changes — reaches the first row without hand-computing pixel offsets,
+        /// which shift depending on how many rows are above it. The first row is
+        /// always the project root's own folder header, so this doubles as the
+        /// "click a folder to focus it" case: a second click at the same spot
+        /// immediately undoes the open/closed toggle that click also causes,
+        /// since tests using this just want focus, not a collapsed root hiding
+        /// everything under it.
+        fn click_first_row(&self, project: &Project) -> egui::Id {
+            let before = self.focused();
+            for y in (8..2000).step_by(4) {
+                let pos = egui::pos2(20.0, y as f32);
+                self.click(project, pos);
+                if let Some(after) = self.focused()
+                    && Some(after) != before
+                {
+                    self.click(project, pos);
+                    return after;
+                }
+            }
+            panic!("clicking down the column never changed keyboard focus");
+        }
+
+        /// Click down the left column until `target` is the one that gets selected
+        /// — unlike `click_first_row`, this specifically reaches a *document* row
+        /// (not whichever folder header happens to render above it), since that's
+        /// the exact row kind whose click handler was missing `request_focus`.
+        fn click_document(&self, project: &Project, target: &Path) {
+            for y in (8..2000).step_by(4) {
+                if let Some(BinderEvent::Selected(path)) =
+                    self.click(project, egui::pos2(20.0, y as f32))
+                    && path == target
+                {
+                    return;
+                }
+            }
+            panic!(
+                "clicking down the column never selected {}",
+                target.display()
+            );
+        }
+    }
+
+    #[test]
+    fn clicking_a_document_row_grants_it_keyboard_focus() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = crate::project::Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc A").unwrap();
+
+        let harness = Harness::default();
+        harness.settle(&project);
+        assert_eq!(harness.focused(), None);
+
+        harness.click_document(&project, &doc);
+        assert!(
+            harness.focused().is_some(),
+            "clicking a document row should grant it keyboard focus, the same way \
+             clicking a folder header already does"
+        );
+    }
+
+    #[test]
+    fn clicking_a_row_grants_it_keyboard_focus() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = crate::project::Project::initialize(dir.path()).unwrap();
+        project.create_document(dir.path(), "Doc A").unwrap();
+
+        let harness = Harness::default();
+        harness.settle(&project);
+        assert_eq!(harness.focused(), None);
+
+        harness.click_first_row(&project);
+        assert!(harness.focused().is_some());
+    }
+
+    #[test]
+    fn arrow_down_moves_focus_to_the_next_row_and_arrow_up_moves_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = crate::project::Project::initialize(dir.path()).unwrap();
+        project.create_document(dir.path(), "Doc A").unwrap();
+        project.create_document(dir.path(), "Doc B").unwrap();
+
+        let harness = Harness::default();
+        harness.settle(&project);
+        let first = harness.click_first_row(&project);
+        harness.idle(&project);
+
+        harness.press(&project, egui::Key::ArrowDown);
+        let second = harness.focused().unwrap();
+        assert_ne!(
+            first, second,
+            "ArrowDown should move focus to a different row"
+        );
+        harness.idle(&project);
+
+        harness.press(&project, egui::Key::ArrowUp);
+        assert_eq!(
+            harness.focused(),
+            Some(first),
+            "ArrowUp should move focus back to the previous row"
+        );
+    }
+
+    #[test]
+    fn arrow_down_does_not_move_past_the_last_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = crate::project::Project::initialize(dir.path()).unwrap();
+        project.create_document(dir.path(), "Doc A").unwrap();
+
+        let harness = Harness::default();
+        harness.settle(&project);
+        harness.click_first_row(&project);
+
+        // root + Doc A = 2 rows; pressing down far more than that should just stay
+        // on the last row instead of panicking (an out-of-bounds index) or wrapping.
+        for _ in 0..10 {
+            harness.idle(&project);
+            harness.press(&project, egui::Key::ArrowDown);
+        }
+        assert!(harness.focused().is_some());
+    }
+
+    #[test]
+    fn enter_opens_the_focused_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = crate::project::Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc A").unwrap();
+
+        let harness = Harness::default();
+        harness.settle(&project);
+        harness.click_first_row(&project); // focuses the root header
+        harness.idle(&project);
+        harness.press(&project, egui::Key::ArrowDown); // -> Doc A
+        harness.idle(&project);
+
+        let event = harness.press(&project, egui::Key::Enter);
+        assert_eq!(event, Some(BinderEvent::Selected(doc)));
+    }
+
+    #[test]
+    fn left_and_right_arrows_collapse_and_expand_a_focused_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = crate::project::Project::initialize(dir.path()).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        project.create_document(&chapter, "Scene 1").unwrap();
+
+        let harness = Harness::default();
+        harness.settle(&project);
+
+        harness.click_first_row(&project); // focuses the root header
+        harness.idle(&project);
+        harness.press(&project, egui::Key::ArrowDown); // -> Chapter 1 (open by default)
+        let chapter_focus = harness.focused().unwrap();
+        harness.idle(&project);
+
+        // Sanity check: with Chapter 1 open, ArrowDown should reach "Scene 1" — a
+        // third, distinct row.
+        harness.press(&project, egui::Key::ArrowDown);
+        let scene_focus = harness.focused().unwrap();
+        assert_ne!(chapter_focus, scene_focus);
+        harness.idle(&project);
+
+        // Refocus Chapter 1, collapse it, and confirm ArrowDown no longer descends
+        // into it — there's nothing else below it, so focus should just stay put.
+        harness.press(&project, egui::Key::ArrowUp);
+        assert_eq!(harness.focused(), Some(chapter_focus));
+        harness.idle(&project);
+        harness.press(&project, egui::Key::ArrowLeft);
+        harness.idle(&project);
+        harness.press(&project, egui::Key::ArrowDown);
+        assert_eq!(
+            harness.focused(),
+            Some(chapter_focus),
+            "a collapsed folder has no visible children to move down into"
+        );
+
+        // Expand it again and confirm the child is reachable once more.
+        harness.idle(&project);
+        harness.press(&project, egui::Key::ArrowRight);
+        harness.idle(&project);
+        harness.press(&project, egui::Key::ArrowDown);
+        assert_eq!(
+            harness.focused(),
+            Some(scene_focus),
+            "expanding the folder again should make its child reachable"
+        );
     }
 }
