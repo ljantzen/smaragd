@@ -7,10 +7,12 @@ This manual covers what the app does and how to use it. For internals (source la
 ## Contents
 
 - [Projects](#projects)
+- [Dockable Tool Windows](#dockable-tool-windows)
 - [The Binder](#the-binder)
 - [Writing and the Editor](#writing-and-the-editor)
 - [Markdown Preview](#markdown-preview)
 - [Wikilinks](#wikilinks)
+- [Backlinks](#backlinks)
 - [Document Metadata (Frontmatter)](#document-metadata-frontmatter)
 - [Folder Roles: Research, Trash, Templates](#folder-roles-research-trash-templates)
 - [Story Cards (Corkboard)](#story-cards-corkboard)
@@ -33,9 +35,20 @@ A **project** is just a folder on disk containing `.md` files and subfolders, ma
 
 `File > Settings` has a **"Reopen project on launch"** option, and a separate **"Ensure Research and Trash folders exist in every project"** option (off by default) that creates those two role folders automatically whenever you open a project, recreating them at their original path if they were deleted since.
 
+## Dockable Tool Windows
+
+The **Binder**, **Backlinks**, and **Document Metadata** panels are dockable tool windows, not fixed panels or modals — similar to the Properties window in Visual Basic's IDE. Each shows up as a tab on the left by default, but you can:
+
+- **Drag a tab's title** onto empty space to pop it out into its own floating window
+- **Drag a floating window's title back** onto the dock area to re-dock it
+- **Drag one tab onto another** to group them together, switching between them like browser tabs
+- **Resize** the dock area, or a floating window, by dragging its edge
+
+Binder is present from the moment a project is open. Backlinks and Metadata start closed — open them from the **View**/**Edit** menus or their shortcuts (below), and toggle them again to close.
+
 ## The Binder
 
-The left-hand panel is the **binder** — a tree view of your project folder. It's `.gitignore`-aware, and documents are shown without their `.md` extension.
+The left-hand panel is the **binder** — a tree view of your project folder, one of the dockable tool windows described above. It's `.gitignore`-aware, and documents are shown without their `.md` extension.
 
 - **Navigate by keyboard**: click a row (or Tab to it) to give it focus, then:
   - `Up`/`Down` moves between rows
@@ -74,6 +87,14 @@ Type `[[Topic]]` or `[[Topic|Alias]]` to link to another document by its filenam
 - **Ctrl+Click** a link in the preview — or place your cursor on one in the editor and press **Ctrl+Enter** — to jump to it. If the target document doesn't exist yet, this creates it, in the same folder as the note you linked from.
 - While typing `[[` in the editor, an autocomplete popup filters matching document titles as you type. Navigate it with arrow keys or Tab, and press Enter (or click) to accept.
 
+## Backlinks
+
+**`View > Backlinks`** (or **`Ctrl+Shift+B`**) opens a dockable tool window (see [Dockable Tool Windows](#dockable-tool-windows)) listing every other document that `[[links]]` to whichever one is currently open — the reverse of a wikilink.
+
+Each entry shows the linking document's title and a short snippet of the surrounding text, so you can tell *why* it links here without opening it. Click a title to jump to that document. A document that links more than once gets one entry per occurrence, grouped under its title. A **Refresh** button re-scans on demand, for the rare case where a file changed outside the app (e.g. a git pull) while your current document stayed open — otherwise the list updates automatically whenever you switch documents.
+
+If no document is open, or nothing links to the current one yet, the panel says so instead of showing an empty list.
+
 ## Document Metadata (Frontmatter)
 
 Each document can carry a YAML frontmatter block (Longform/Scrivener-style manuscript metadata) at the very top of the file:
@@ -88,7 +109,7 @@ tags: [action, chapter-3]
 ---
 ```
 
-Open **`Edit > Document Metadata`** to edit these fields through a form instead of hand-editing YAML. Tachylite only ever reads/writes these five keys:
+Open **`Edit > Document Metadata`** (or **`Ctrl+Shift+M`**) to edit these fields through a dockable form (see [Dockable Tool Windows](#dockable-tool-windows)) instead of hand-editing YAML. Unlike a typical dialog, there's no Save/Cancel step — edits apply as you type, the same way typing in the main editor does. Tachylite only ever reads/writes these five keys:
 
 | Field | Meaning |
 |---|---|
@@ -279,6 +300,7 @@ All shortcuts are fully remappable in **`File > Settings`**. Defaults below use 
 | Toggle Full Screen | `F11` |
 | Find and Replace | `Ctrl+F` |
 | Toggle Corkboard | `Ctrl+Shift+K` |
+| Toggle Backlinks | `Ctrl+Shift+B` |
 | Command Prompt | `Ctrl+:` |
 | Commit (Git) | `Ctrl+Alt+C` |
 | Push (Git) | `Ctrl+Alt+P` |
@@ -301,6 +323,6 @@ If the settings file is missing or its contents can't be parsed, tachylite falls
 
 Menu items present but not yet functional: `File > Close Project`, `Help > About`.
 
-Not yet implemented: an Excalidraw-style canvas, a backlink index, compile/export, multi-tab editing, and template folders/subfolders beyond a flat list (only documents directly inside the Templates folder are offered — not ones nested in a subfolder of it).
+Not yet implemented: an Excalidraw-style canvas, compile/export, multi-tab editing, and template folders/subfolders beyond a flat list (only documents directly inside the Templates folder are offered — not ones nested in a subfolder of it).
 
 In the Markdown preview specifically: raw HTML is dropped rather than rendered; table column alignment (`:---:`) is parsed but not yet reflected visually; GFM task lists and footnotes aren't enabled; mixing container types (e.g. a list inside a blockquote) doesn't preserve proper nesting; and `![[Note]]` only actually embeds when `Note` has an image extension — embedding another note's rendered content (transclusion) falls back to behaving like a plain `[[Note]]` link.

@@ -211,6 +211,22 @@ impl Default for StoryCard {
     }
 }
 
+/// One `[[wikilink]]` occurrence elsewhere in the project that resolves to a given
+/// target document, found by [`Project::backlinks`]. A derived, on-demand query
+/// result over a `Project` — not part of the binder tree's own shape, so it lives
+/// here rather than in `model.rs`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BacklinkEntry {
+    /// Absolute path of the document containing the link.
+    pub source_path: PathBuf,
+    /// The linking document's display title — its filename without the `.md`
+    /// extension, matching how the binder and `document_names` present titles.
+    pub source_title: String,
+    /// A short, single-line excerpt of text around the link (see
+    /// `markdown::wikilink_context_snippet`).
+    pub snippet: String,
+}
+
 pub struct Project {
     pub root: PathBuf,
     pub tree: BinderTree,
@@ -261,6 +277,49 @@ impl Project {
     pub fn document_meta(&self, path: &Path) -> io::Result<crate::frontmatter::DocumentMeta> {
         let contents = fs::read_to_string(path)?;
         Ok(crate::frontmatter::parse(&contents))
+    }
+
+    /// Every `[[wikilink]]` elsewhere in the project whose target resolves (by
+    /// filename, full-Unicode-case-insensitively — the same rule
+    /// `BinderTree::find_document_by_stem` uses) to the document at `target_path`.
+    /// Excludes links from `target_path` to itself. One entry per link occurrence,
+    /// not collapsed per source document — a document linking twice produces two
+    /// entries, each with its own snippet, matching how Obsidian's own backlinks
+    /// panel never hides a second occurrence's distinct context.
+    ///
+    /// Recomputed fresh from disk on every call, like everything else in `Project`/
+    /// `BinderTree` (see `rename_wikilinks_everywhere`) — a document that can't be
+    /// read is skipped rather than failing the whole scan, since one unreadable file
+    /// shouldn't blank out every other legitimate backlink.
+    pub fn backlinks(&self, target_path: &Path) -> Vec<BacklinkEntry> {
+        let Some(target_stem) = target_path.file_stem().and_then(|stem| stem.to_str()) else {
+            return Vec::new();
+        };
+        let target_stem = target_stem.to_lowercase();
+
+        let mut entries = Vec::new();
+        for doc_path in self.tree.document_paths() {
+            if doc_path == target_path {
+                continue;
+            }
+            let Ok(contents) = fs::read_to_string(&doc_path) else {
+                continue;
+            };
+            let Some(source_title) = doc_path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            for (range, link_target) in crate::markdown::wikilink_spans(&contents) {
+                if link_target.to_lowercase() != target_stem {
+                    continue;
+                }
+                entries.push(BacklinkEntry {
+                    source_path: doc_path.clone(),
+                    source_title: source_title.to_string(),
+                    snippet: crate::markdown::wikilink_context_snippet(&contents, &range),
+                });
+            }
+        }
+        entries
     }
 
     /// The role assigned to the folder at `path`, if any.
@@ -2298,5 +2357,88 @@ mod tests {
             .unwrap();
         assert_eq!(restored, chapter.join("Notes.md"));
         assert!(restored.exists());
+    }
+
+    #[test]
+    fn backlinks_finds_a_link_from_another_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Target").unwrap();
+        let referrer = project.create_document(dir.path(), "Referrer").unwrap();
+        fs::write(&referrer, "See [[Target]] for more.").unwrap();
+
+        let backlinks = project.backlinks(&target);
+
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].source_path, referrer);
+        assert_eq!(backlinks[0].source_title, "Referrer");
+        assert!(backlinks[0].snippet.contains("[[Target]]"));
+    }
+
+    #[test]
+    fn backlinks_excludes_a_self_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Target").unwrap();
+        fs::write(&target, "This document links to [[Target]] itself.").unwrap();
+
+        let backlinks = project.backlinks(&target);
+
+        assert!(backlinks.is_empty());
+    }
+
+    #[test]
+    fn backlinks_matches_target_case_insensitively() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Café").unwrap();
+        let referrer = project.create_document(dir.path(), "Referrer").unwrap();
+        fs::write(&referrer, "See [[CAFÉ]] for more.").unwrap();
+
+        let backlinks = project.backlinks(&target);
+
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].source_path, referrer);
+    }
+
+    #[test]
+    fn backlinks_returns_one_entry_per_occurrence_when_a_document_links_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Target").unwrap();
+        let referrer = project.create_document(dir.path(), "Referrer").unwrap();
+        fs::write(
+            &referrer,
+            "First [[Target]] mention.\n\nSecond [[Target]] mention.",
+        )
+        .unwrap();
+
+        let backlinks = project.backlinks(&target);
+
+        assert_eq!(backlinks.len(), 2);
+        assert!(backlinks[0].snippet.contains("First"));
+        assert!(backlinks[1].snippet.contains("Second"));
+    }
+
+    #[test]
+    fn backlinks_is_empty_when_nothing_links_to_the_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Target").unwrap();
+        let other = project.create_document(dir.path(), "Other").unwrap();
+        fs::write(&other, "Nothing to see here.").unwrap();
+
+        assert!(project.backlinks(&target).is_empty());
+    }
+
+    #[test]
+    fn backlinks_ignores_links_inside_fenced_code_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Target").unwrap();
+        let referrer = project.create_document(dir.path(), "Referrer").unwrap();
+        fs::write(&referrer, "```\n[[Target]]\n```\n").unwrap();
+
+        assert!(project.backlinks(&target).is_empty());
     }
 }

@@ -1,3 +1,4 @@
+pub mod backlinks_panel;
 pub mod binder_panel;
 pub mod command_prompt;
 pub mod corkboard_panel;

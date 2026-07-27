@@ -628,8 +628,10 @@ fn rename_wikilink_target_in_line(
 }
 
 /// The byte range (covering the full `[[...]]`) and target of every wikilink in
-/// `markdown`, skipping fenced code blocks.
-fn wikilink_spans(markdown: &str) -> Vec<(std::ops::Range<usize>, String)> {
+/// `markdown`, skipping fenced code blocks. `pub(crate)` rather than private since
+/// `project::backlinks` (a different module) needs the same byte ranges this crate's
+/// own `wikilink_target_at` already relies on.
+pub(crate) fn wikilink_spans(markdown: &str) -> Vec<(std::ops::Range<usize>, String)> {
     let mut spans = Vec::new();
     let mut in_fence = false;
     let mut line_start = 0usize;
@@ -668,6 +670,81 @@ pub fn wikilink_target_at(markdown: &str, cursor: usize) -> Option<String> {
         .into_iter()
         .find(|(range, _)| range.contains(&cursor) || range.end == cursor)
         .map(|(_, target)| target)
+}
+
+/// Total characters of context a backlink snippet shows, split ~evenly before/after
+/// the link.
+const MAX_SNIPPET_CHARS: usize = 120;
+
+/// Build a short, single-line, human-readable snippet of the text surrounding
+/// `link_range` (as returned by [`wikilink_spans`]) within `markdown`, for display in
+/// the backlinks panel: up to [`MAX_SNIPPET_CHARS`] characters of context total,
+/// split ~evenly before/after the link — a side that runs out of text early
+/// (because the link sits near the start or end of the document) gives its unused
+/// share to the other side, so a link near an edge still gets a full-length
+/// snippet. Embedded newlines/whitespace runs collapse to a single space (a link can
+/// sit on a soft-wrapped line), and an ellipsis is added on whichever end doesn't
+/// reach the document's actual start/end. Leaves the `[[...]]` syntax itself as-is —
+/// this is a plain-text excerpt, not rendered markdown.
+///
+/// Works entirely in char (not byte) offsets internally, only converting back to
+/// byte offsets to slice `markdown` — `link_range`'s own byte offsets are safe to
+/// index directly (they land on the ASCII `[[`/`]]` delimiters), but a *computed*
+/// cut point further away must never land in the middle of a multi-byte UTF-8
+/// scalar, which naive byte arithmetic wouldn't protect against.
+pub(crate) fn wikilink_context_snippet(
+    markdown: &str,
+    link_range: &std::ops::Range<usize>,
+) -> String {
+    let total_chars = markdown.chars().count();
+    let link_start_char = markdown[..link_range.start].chars().count();
+    let link_end_char = markdown[..link_range.end].chars().count();
+
+    let before_budget = MAX_SNIPPET_CHARS / 2;
+    let after_budget = MAX_SNIPPET_CHARS - before_budget;
+
+    let available_before = link_start_char;
+    let available_after = total_chars - link_end_char;
+
+    let before = before_budget.min(available_before);
+    let after = after_budget.min(available_after);
+    let before_shortfall = before_budget - before;
+    let after_shortfall = after_budget - after;
+
+    let after = (after + before_shortfall).min(available_after);
+    let before = (before + after_shortfall).min(available_before);
+
+    let start_char = link_start_char - before;
+    let end_char = link_end_char + after;
+
+    let start_byte = char_index_to_byte(markdown, total_chars, start_char);
+    let end_byte = char_index_to_byte(markdown, total_chars, end_char);
+
+    let mut snippet = markdown[start_byte..end_byte]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if start_char > 0 {
+        snippet = format!("…{snippet}");
+    }
+    if end_char < total_chars {
+        snippet = format!("{snippet}…");
+    }
+    snippet
+}
+
+/// The byte offset of the `char_index`-th character in `s` (`total_chars` is
+/// `s.chars().count()`, passed in since callers already have it and would otherwise
+/// recompute it). `char_index == total_chars` (one past the last character, as valid
+/// an end-of-range as `s.len()`) maps to `s.len()` rather than `None`.
+fn char_index_to_byte(s: &str, total_chars: usize, char_index: usize) -> usize {
+    if char_index >= total_chars {
+        return s.len();
+    }
+    s.char_indices()
+        .nth(char_index)
+        .map_or(s.len(), |(byte, _)| byte)
 }
 
 fn heading_level_to_u8(level: HeadingLevel) -> u8 {
@@ -1055,6 +1132,83 @@ mod tests {
         let text = "```\n[[Topic]]\n```\n";
         let inside = text.find("Topic").unwrap();
         assert_eq!(wikilink_target_at(text, inside), None);
+    }
+
+    fn only_span(markdown: &str) -> std::ops::Range<usize> {
+        let spans = wikilink_spans(markdown);
+        assert_eq!(
+            spans.len(),
+            1,
+            "expected exactly one wikilink in {markdown:?}"
+        );
+        spans.into_iter().next().unwrap().0
+    }
+
+    #[test]
+    fn wikilink_context_snippet_returns_whole_document_when_it_fits_the_budget() {
+        let text = "Short intro. [[Topic]] short outro.";
+        let range = only_span(text);
+        assert_eq!(
+            wikilink_context_snippet(text, &range),
+            "Short intro. [[Topic]] short outro."
+        );
+    }
+
+    #[test]
+    fn wikilink_context_snippet_truncates_only_the_trailing_side_near_document_start() {
+        let filler = "word ".repeat(100);
+        let text = format!("[[Topic]] {filler}");
+        let range = only_span(&text);
+        let snippet = wikilink_context_snippet(&text, &range);
+        assert!(snippet.starts_with("[[Topic]]"), "{snippet:?}");
+        assert!(!snippet.starts_with('…'), "{snippet:?}");
+        assert!(snippet.ends_with('…'), "{snippet:?}");
+    }
+
+    #[test]
+    fn wikilink_context_snippet_truncates_only_the_leading_side_near_document_end() {
+        let filler = "word ".repeat(100);
+        let text = format!("{filler}[[Topic]]");
+        let range = only_span(&text);
+        let snippet = wikilink_context_snippet(&text, &range);
+        assert!(snippet.ends_with("[[Topic]]"), "{snippet:?}");
+        assert!(snippet.starts_with('…'), "{snippet:?}");
+    }
+
+    #[test]
+    fn wikilink_context_snippet_truncates_both_sides_in_the_middle_of_a_long_document() {
+        let filler = "word ".repeat(100);
+        let text = format!("{filler}[[Topic]] {filler}");
+        let range = only_span(&text);
+        let snippet = wikilink_context_snippet(&text, &range);
+        assert!(snippet.starts_with('…'), "{snippet:?}");
+        assert!(snippet.ends_with('…'), "{snippet:?}");
+        assert!(snippet.contains("[[Topic]]"), "{snippet:?}");
+    }
+
+    #[test]
+    fn wikilink_context_snippet_collapses_an_embedded_newline_to_a_space() {
+        let text = "Line one\n[[Topic]]\nLine two";
+        let range = only_span(text);
+        assert_eq!(
+            wikilink_context_snippet(text, &range),
+            "Line one [[Topic]] Line two"
+        );
+    }
+
+    #[test]
+    fn wikilink_context_snippet_does_not_split_a_multi_byte_character() {
+        // Pad with enough multi-byte "é" characters that the computed cut point on
+        // each side lands in the middle of a run of them, not just at a clean word
+        // boundary at the very edge of the budget.
+        let filler: String = std::iter::repeat_n('é', 200).collect();
+        let text = format!("{filler}[[Topic]]{filler}");
+        let range = only_span(&text);
+        // Must not panic (a byte-index slice into the middle of a multi-byte 'é'
+        // would), and the result must be valid, parseable UTF-8 by construction
+        // (String always is) with the link intact.
+        let snippet = wikilink_context_snippet(&text, &range);
+        assert!(snippet.contains("[[Topic]]"), "{snippet:?}");
     }
 
     #[test]

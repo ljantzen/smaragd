@@ -29,6 +29,7 @@ pub enum ShortcutAction {
     ToggleFullscreen,
     FindReplace,
     ToggleCorkboard,
+    ToggleBacklinks,
     CommandPrompt,
     GitCommit,
     GitPush,
@@ -52,6 +53,7 @@ impl ShortcutAction {
         Self::ToggleFullscreen,
         Self::FindReplace,
         Self::ToggleCorkboard,
+        Self::ToggleBacklinks,
         Self::CommandPrompt,
         Self::GitCommit,
         Self::GitPush,
@@ -76,6 +78,7 @@ impl ShortcutAction {
             Self::ToggleFullscreen => "Toggle Full Screen",
             Self::FindReplace => "Find and Replace",
             Self::ToggleCorkboard => "Toggle Corkboard",
+            Self::ToggleBacklinks => "Toggle Backlinks",
             Self::CommandPrompt => "Command Prompt",
             Self::GitCommit => "Commit (Git)",
             Self::GitPush => "Push (Git)",
@@ -102,6 +105,7 @@ impl ShortcutAction {
             Self::ToggleFullscreen => "toggle_fullscreen",
             Self::FindReplace => "find_replace",
             Self::ToggleCorkboard => "toggle_corkboard",
+            Self::ToggleBacklinks => "toggle_backlinks",
             Self::CommandPrompt => "command_prompt",
             Self::GitCommit => "git_commit",
             Self::GitPush => "git_push",
@@ -145,6 +149,9 @@ impl ShortcutAction {
             Self::FindReplace => KeyboardShortcut::new(Modifiers::COMMAND, Key::F),
             Self::ToggleCorkboard => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::K)
+            }
+            Self::ToggleBacklinks => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::B)
             }
             Self::CommandPrompt => KeyboardShortcut::new(Modifiers::COMMAND, Key::Colon),
             Self::GitCommit => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::C),

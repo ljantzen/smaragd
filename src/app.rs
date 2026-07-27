@@ -2,13 +2,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::editor::EditorState;
-use crate::project::{LoadError, Project, RestoreError};
+use crate::frontmatter::DocumentMeta;
+use crate::project::{BacklinkEntry, LoadError, Project, RestoreError};
 use crate::search::{self, SearchScope};
 use crate::settings::PluginShortcutOverride;
 use crate::settings::Settings;
 use crate::shortcuts::{ShortcutAction, ShortcutTarget, sorted_by_specificity};
 use crate::ui;
 use crate::ui::WikilinkActivation;
+use crate::ui::backlinks_panel::BacklinksEvent;
 use crate::ui::binder_panel::BinderEvent;
 use crate::ui::command_prompt::{
     Command, CommandPromptEvent, CommandPromptState, DarkModeChoice, GitCommand,
@@ -16,7 +18,7 @@ use crate::ui::command_prompt::{
 use crate::ui::corkboard_panel::{CardDraft, CardEditorOutcome, CorkboardEvent};
 use crate::ui::editor_panel::EditorEvent;
 use crate::ui::find_replace_panel::{FindReplaceEvent, FindReplaceState};
-use crate::ui::metadata_panel::{MetadataDraft, MetadataOutcome};
+use crate::ui::metadata_panel::MetadataDraft;
 use crate::ui::name_prompt::{NamePromptOutcome, NamePromptState};
 
 /// Shows `label` as a menu-bar button, with `shortcut`'s formatted text (if any)
@@ -72,6 +74,18 @@ enum ViewMode {
     Corkboard,
 }
 
+/// A dockable tool window in `dock_state` — Binder, Backlinks, and Metadata, each of
+/// which used to be (respectively) a fixed left panel or a blocking modal, now all
+/// float/dock/tab together like Visual Basic's Properties window. Deliberately
+/// separate from `ViewMode`: these are auxiliary tool windows that coexist with
+/// whichever central view is showing, not another central view themselves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DockTab {
+    Binder,
+    Backlinks,
+    Metadata,
+}
+
 pub struct TachyliteApp {
     project: Option<Project>,
     editor: EditorState,
@@ -85,7 +99,31 @@ pub struct TachyliteApp {
     find_replace: FindReplaceState,
     card_draft: Option<CardDraft>,
     command_prompt: CommandPromptState,
-    metadata_draft: Option<MetadataDraft>,
+    /// Live editing buffers for the open document's frontmatter, always kept in sync
+    /// with whichever document is open (see `refresh_metadata_if_needed`) — there's
+    /// no "closed" state to represent here, since the Metadata dock tab's own
+    /// presence in `dock_state` is what tracks visibility.
+    metadata_draft: MetadataDraft,
+    /// Which document `metadata_draft`/`metadata_last_applied` were last computed
+    /// for, so a later frame can tell whether `editor.open_path` has since changed.
+    metadata_computed_for: Option<PathBuf>,
+    /// The `DocumentMeta` last written into `editor.buffer` — compared against
+    /// `metadata_draft.to_meta()` each frame to notice a live edit (see
+    /// `apply_metadata_edits_if_changed`) without re-writing the buffer when nothing
+    /// changed.
+    metadata_last_applied: DocumentMeta,
+    /// Every `[[wikilink]]` elsewhere in the project pointing at the open document,
+    /// kept in sync with whichever document is open (see
+    /// `refresh_backlinks_if_needed`).
+    backlinks: Vec<BacklinkEntry>,
+    /// Which document `backlinks` was last computed for.
+    backlinks_computed_for: Option<PathBuf>,
+    /// Binder/Backlinks/Metadata's dockable layout — which tabs are open, and
+    /// whether they're docked together, split, or floating in their own window.
+    /// Starts with just Binder present, matching this app's previous always-shown
+    /// left panel; Backlinks/Metadata are added/removed on demand by
+    /// `toggle_dock_tab`.
+    dock_state: egui_dock::DockState<DockTab>,
     /// A push or pull currently running on a background thread, if any — `git push`/
     /// `git pull` hit the network and can hang or run long, so they're never run
     /// synchronously on the UI thread. `None` once `poll_git_operation` has picked up
@@ -153,7 +191,12 @@ impl TachyliteApp {
             find_replace: FindReplaceState::default(),
             card_draft: None,
             command_prompt: CommandPromptState::default(),
-            metadata_draft: None,
+            metadata_draft: MetadataDraft::from_meta(&DocumentMeta::default()),
+            metadata_computed_for: None,
+            metadata_last_applied: DocumentMeta::default(),
+            backlinks: Vec::new(),
+            backlinks_computed_for: None,
+            dock_state: egui_dock::DockState::new(vec![DockTab::Binder]),
             pending_git: None,
             plugin_engine: crate::plugins::PluginEngine::default(),
             plugin_shortcuts: Vec::new(),
@@ -626,30 +669,75 @@ impl TachyliteApp {
         }
     }
 
-    /// Open the document metadata modal, pre-filled from the open document's current
-    /// frontmatter (parsed from the live buffer, not necessarily what's on disk yet,
-    /// so it reflects any unsaved edits to the block itself).
-    fn open_metadata_editor(&mut self) {
-        if self.editor.open_path.is_none() {
-            self.status_message = Some("No document open".to_string());
+    /// Refresh `metadata_draft` from the open document's current frontmatter
+    /// (parsed from the live buffer, not necessarily what's on disk yet, so it
+    /// reflects any unsaved edits to the block itself) whenever the open document
+    /// has changed since the last computation — a no-op most frames. Called before
+    /// the dock renders each frame, alongside `refresh_backlinks_if_needed`.
+    fn refresh_metadata_if_needed(&mut self) {
+        if self.editor.open_path == self.metadata_computed_for {
             return;
         }
-        let meta = crate::frontmatter::parse(&self.editor.buffer);
-        self.metadata_draft = Some(MetadataDraft::from_meta(&meta));
+        let meta = match &self.editor.open_path {
+            Some(_) => crate::frontmatter::parse(&self.editor.buffer),
+            None => DocumentMeta::default(),
+        };
+        self.metadata_draft = MetadataDraft::from_meta(&meta);
+        self.metadata_last_applied = meta;
+        self.metadata_computed_for = self.editor.open_path.clone();
     }
 
-    /// Handle the metadata modal closing this frame. On save, rewrites the editor
-    /// buffer's frontmatter block in place (preserving any keys the form doesn't
-    /// expose — see `frontmatter::write_back`) and marks it dirty, same as any other
-    /// in-buffer edit; the existing save path (explicit Save, autosave on focus loss,
-    /// etc.) takes it from there.
-    fn finish_metadata_editor(&mut self, outcome: MetadataOutcome) {
-        self.metadata_draft = None;
-        let MetadataOutcome::Save(meta) = outcome else {
+    /// Notice a live edit to `metadata_draft` (typed into the Metadata dock tab this
+    /// frame, if it was visible) and, if anything actually changed, rewrite the
+    /// editor buffer's frontmatter block in place (preserving any keys the form
+    /// doesn't expose — see `frontmatter::write_back`) and mark it dirty, same as
+    /// any other in-buffer edit; the existing save path (explicit Save, autosave on
+    /// focus loss, etc.) takes it from there. Called after the dock renders each
+    /// frame. A safe no-op when no document is open or nothing changed — the draft
+    /// can only be mutated by the user typing into a visible Metadata tab.
+    fn apply_metadata_edits_if_changed(&mut self) {
+        if self.editor.open_path.is_none() {
             return;
-        };
-        self.editor.buffer = crate::frontmatter::write_back(&self.editor.buffer, &meta);
+        }
+        let current = self.metadata_draft.to_meta();
+        if current == self.metadata_last_applied {
+            return;
+        }
+        self.editor.buffer = crate::frontmatter::write_back(&self.editor.buffer, &current);
         self.editor.mark_dirty();
+        self.metadata_last_applied = current;
+    }
+
+    /// Refresh `backlinks` from the project whenever the open document has changed
+    /// since the last scan — a no-op most frames. Called before the dock renders
+    /// each frame; recomputing regardless of whether the Backlinks tab happens to
+    /// be visible right now is simplest, since the scan itself is cheap (see
+    /// `Project::backlinks`).
+    fn refresh_backlinks_if_needed(&mut self) {
+        if self.editor.open_path == self.backlinks_computed_for {
+            return;
+        }
+        self.recompute_backlinks();
+    }
+
+    fn recompute_backlinks(&mut self) {
+        self.backlinks = match (&self.project, &self.editor.open_path) {
+            (Some(project), Some(path)) => project.backlinks(path),
+            _ => Vec::new(),
+        };
+        self.backlinks_computed_for = self.editor.open_path.clone();
+    }
+
+    /// Open or close a dock tab, mirroring how `ShortcutAction::TogglePreview`/
+    /// `ToggleCorkboard` toggle `view_mode` — just backed by dock-tab presence
+    /// instead of a bool, since `Backlinks`/`Metadata` aren't a `ViewMode` variant
+    /// (see `DockTab`'s doc comment).
+    fn toggle_dock_tab(&mut self, tab: DockTab) {
+        if let Some(path) = self.dock_state.find_tab(&tab) {
+            self.dock_state.remove_tab(path);
+        } else {
+            self.dock_state.push_to_focused_leaf(tab);
+        }
     }
 
     /// Resolve a `[[wikilink]]` activated (clicked in the preview, or Ctrl+Enter in
@@ -981,7 +1069,8 @@ impl TachyliteApp {
             ShortcutAction::CommandPrompt => self.command_prompt.request_open(),
             ShortcutAction::GitCommit => self.prompt_git_commit(false),
             ShortcutAction::GitPush => self.run_git_push(ctx),
-            ShortcutAction::EditMetadata => self.open_metadata_editor(),
+            ShortcutAction::ToggleBacklinks => self.toggle_dock_tab(DockTab::Backlinks),
+            ShortcutAction::EditMetadata => self.toggle_dock_tab(DockTab::Metadata),
         }
     }
 
@@ -1448,6 +1537,70 @@ impl TachyliteApp {
     }
 }
 
+/// Requests raised by `AppTabViewer::ui` for the caller to apply once the dock has
+/// finished rendering for the frame — `egui_dock::TabViewer::ui` only gets `&mut
+/// self` on the *viewer*, not on `TachyliteApp`, so it can't call `&mut self`
+/// methods like `open_document` directly; it collects what it wants done instead.
+enum DockAction {
+    OpenDocument(PathBuf),
+    Binder(BinderEvent),
+    RefreshBacklinks,
+}
+
+/// A short-lived `egui_dock::TabViewer` impl, constructed fresh each frame right
+/// before `DockArea::show_inside` and drained right after (see `DockAction`).
+/// Borrows exactly what each tab's content needs to render; `metadata_draft` is the
+/// one `&mut` since the Metadata tab mutates it directly (live editing, no event
+/// needed — see `apply_metadata_edits_if_changed`).
+struct AppTabViewer<'a> {
+    project: Option<&'a Project>,
+    selected_path: Option<&'a Path>,
+    open_path: Option<&'a Path>,
+    backlinks: &'a [BacklinkEntry],
+    metadata_draft: &'a mut MetadataDraft,
+    actions: Vec<DockAction>,
+}
+
+impl egui_dock::TabViewer for AppTabViewer<'_> {
+    type Tab = DockTab;
+
+    fn title(&mut self, tab: &mut DockTab) -> egui::WidgetText {
+        match tab {
+            DockTab::Binder => "Binder".into(),
+            DockTab::Backlinks => "Backlinks".into(),
+            DockTab::Metadata => "Metadata".into(),
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut DockTab) {
+        match tab {
+            DockTab::Binder => match self.project {
+                Some(project) => {
+                    if let Some(event) = ui::binder_panel::show(ui, project, self.selected_path) {
+                        self.actions.push(DockAction::Binder(event));
+                    }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
+            DockTab::Backlinks => {
+                if let Some(event) = ui::backlinks_panel::show(ui, self.open_path, self.backlinks) {
+                    match event {
+                        BacklinksEvent::OpenDocument(path) => {
+                            self.actions.push(DockAction::OpenDocument(path));
+                        }
+                        BacklinksEvent::Refresh => self.actions.push(DockAction::RefreshBacklinks),
+                    }
+                }
+            }
+            DockTab::Metadata => {
+                ui::metadata_panel::show(ui, self.open_path, self.metadata_draft);
+            }
+        }
+    }
+}
+
 impl eframe::App for TachyliteApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_git_operation();
@@ -1562,13 +1715,17 @@ impl eframe::App for TachyliteApp {
                     if menu_button_with_shortcut(ui, "Document Metadata", metadata_shortcut)
                         .clicked()
                     {
-                        self.open_metadata_editor();
+                        self.toggle_dock_tab(DockTab::Metadata);
                     }
                 });
                 egui::containers::menu::MenuButton::new("View").ui(ui, |ui| {
                     ui.radio_value(&mut self.view_mode, ViewMode::Editor, "Editor");
                     ui.radio_value(&mut self.view_mode, ViewMode::Preview, "Preview");
                     ui.radio_value(&mut self.view_mode, ViewMode::Corkboard, "Corkboard");
+                    ui.separator();
+                    if ui.button("Backlinks").clicked() {
+                        self.toggle_dock_tab(DockTab::Backlinks);
+                    }
                     ui.separator();
                     // `SubMenuButton`, not `MenuButton`: this is nested *inside* the
                     // View menu, and `MenuButton` is for top-level, click-to-open menu
@@ -1746,21 +1903,34 @@ impl eframe::App for TachyliteApp {
             });
         });
 
-        egui::Panel::left("binder_panel")
+        self.refresh_backlinks_if_needed();
+        self.refresh_metadata_if_needed();
+
+        egui::Panel::left("dock_panel")
             .resizable(true)
             .default_size(220.0)
-            .show(ui, |ui| match &self.project {
-                Some(project) => {
-                    if let Some(event) =
-                        ui::binder_panel::show(ui, project, self.selected_path.as_deref())
-                    {
-                        self.handle_binder_event(event);
+            .show(ui, |ui| {
+                let mut viewer = AppTabViewer {
+                    project: self.project.as_ref(),
+                    selected_path: self.selected_path.as_deref(),
+                    open_path: self.editor.open_path.as_deref(),
+                    backlinks: &self.backlinks,
+                    metadata_draft: &mut self.metadata_draft,
+                    actions: Vec::new(),
+                };
+                egui_dock::DockArea::new(&mut self.dock_state)
+                    .style(egui_dock::Style::from_egui(ui.style().as_ref()))
+                    .show_inside(ui, &mut viewer);
+                for action in viewer.actions {
+                    match action {
+                        DockAction::OpenDocument(path) => self.open_document(&path),
+                        DockAction::Binder(event) => self.handle_binder_event(event),
+                        DockAction::RefreshBacklinks => self.recompute_backlinks(),
                     }
                 }
-                None => {
-                    ui.label("Open a project folder to get started.");
-                }
             });
+
+        self.apply_metadata_edits_if_changed();
 
         egui::CentralPanel::default().show(ui, |ui| match self.view_mode {
             ViewMode::Preview => {
@@ -1813,12 +1983,6 @@ impl eframe::App for TachyliteApp {
             {
                 self.finish_card_editor(outcome);
             }
-        }
-
-        if let Some(draft) = &mut self.metadata_draft
-            && let Some(outcome) = ui::metadata_panel::show(ui.ctx(), draft)
-        {
-            self.finish_metadata_editor(outcome);
         }
     }
 }

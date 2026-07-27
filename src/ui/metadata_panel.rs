@@ -1,7 +1,10 @@
-//! A form editor for a document's YAML frontmatter (`frontmatter::DocumentMeta`),
-//! following the same small-modal pattern as `name_prompt.rs`/`corkboard_panel.rs`'s
-//! card editor rather than a raw YAML text box — the whole point is that a user never
-//! has to hand-edit the `---` block to change one field.
+//! A form editor for a document's YAML frontmatter (`frontmatter::DocumentMeta`) — a
+//! dockable, always-live tool window (Visual-Basic-Properties-window style) rather
+//! than a raw YAML text box or a modal with an explicit Save step: the whole point is
+//! that a user never has to hand-edit the `---` block, and edits here take effect as
+//! soon as they're typed. `app.rs`'s `apply_metadata_edits_if_changed` is what
+//! actually notices a change and writes it back into the open document's buffer —
+//! this module only renders the fields and mutates the draft.
 
 use crate::frontmatter::DocumentMeta;
 
@@ -55,57 +58,45 @@ fn non_empty(s: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-pub enum MetadataOutcome {
-    Save(DocumentMeta),
-    Cancel,
-}
+/// Renders the metadata form directly into `ui` (a dock tab's content area, not a
+/// modal overlay). `open_path` is only used to show an empty-state message when no
+/// document is open — `draft` itself is kept in sync with whatever document is open
+/// by the caller (`app.rs`'s `refresh_metadata_if_needed`). Edits land directly in
+/// `draft`'s buffers via the `text_edit_singleline` calls below; there's no Save/
+/// Cancel here, since `apply_metadata_edits_if_changed` picks up any change after
+/// this renders each frame.
+pub fn show(ui: &mut egui::Ui, open_path: Option<&std::path::Path>, draft: &mut MetadataDraft) {
+    ui.heading("Metadata");
+    ui.separator();
 
-/// Renders the metadata modal. Returns `Some` once the user saves or cancels this
-/// frame.
-pub fn show(ctx: &egui::Context, draft: &mut MetadataDraft) -> Option<MetadataOutcome> {
-    let mut outcome = None;
+    if open_path.is_none() {
+        ui.label("Open a document to edit its metadata.");
+        return;
+    }
 
-    egui::Modal::new(egui::Id::new("document_metadata_modal")).show(ctx, |ui| {
-        ui.set_min_width(360.0);
-        ui.heading("Document Metadata");
-        ui.add_space(8.0);
+    egui::Grid::new("document_metadata_grid")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Type:");
+            ui.text_edit_singleline(&mut draft.section_type);
+            ui.end_row();
 
-        egui::Grid::new("document_metadata_grid")
-            .num_columns(2)
-            .show(ui, |ui| {
-                ui.label("Type:");
-                ui.text_edit_singleline(&mut draft.section_type);
-                ui.end_row();
+            ui.label("Status:");
+            ui.text_edit_singleline(&mut draft.status);
+            ui.end_row();
 
-                ui.label("Status:");
-                ui.text_edit_singleline(&mut draft.status);
-                ui.end_row();
+            ui.label("POV:");
+            ui.text_edit_singleline(&mut draft.pov);
+            ui.end_row();
 
-                ui.label("POV:");
-                ui.text_edit_singleline(&mut draft.pov);
-                ui.end_row();
+            ui.label("Word count target:");
+            ui.text_edit_singleline(&mut draft.word_count_target_text);
+            ui.end_row();
 
-                ui.label("Word count target:");
-                ui.text_edit_singleline(&mut draft.word_count_target_text);
-                ui.end_row();
-
-                ui.label("Tags:");
-                ui.text_edit_singleline(&mut draft.tags_text);
-                ui.end_row();
-            });
-
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if ui.button("Save").clicked() {
-                outcome = Some(MetadataOutcome::Save(draft.to_meta()));
-            }
-            if ui.button("Cancel").clicked() {
-                outcome = Some(MetadataOutcome::Cancel);
-            }
+            ui.label("Tags:");
+            ui.text_edit_singleline(&mut draft.tags_text);
+            ui.end_row();
         });
-    });
-
-    outcome
 }
 
 #[cfg(test)]
