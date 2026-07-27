@@ -859,6 +859,20 @@ impl TachyliteApp {
                 self.open_document(&path);
                 self.view_mode = ViewMode::Editor;
             }
+            CorkboardEvent::SetProtagonistDesire(desire) => {
+                if let Some(project) = &mut self.project
+                    && let Err(err) = project.set_protagonist_desire(desire)
+                {
+                    self.status_message = Some(format!("Couldn't save desire: {err}"));
+                }
+            }
+            CorkboardEvent::SetProtagonistMisbelief(misbelief) => {
+                if let Some(project) = &mut self.project
+                    && let Err(err) = project.set_protagonist_misbelief(misbelief)
+                {
+                    self.status_message = Some(format!("Couldn't save misbelief: {err}"));
+                }
+            }
         }
     }
 

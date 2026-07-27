@@ -139,6 +139,17 @@ pub struct ProjectMeta {
     /// entirely (see `frontmatter.rs`'s doc comment on why that isn't implemented).
     #[serde(default)]
     pub story_cards: Vec<StoryCard>,
+    /// The protagonist's driving external/internal want — half of Lisa Cron's
+    /// "Third Rail" (the other half is `protagonist_misbelief`): the throughline
+    /// every scene's `StoryCard::why_it_matters` should ultimately test or advance.
+    /// Project-wide rather than per-scene, since it's meant to anchor the whole
+    /// manuscript's arc, not vary scene to scene. Edited from the Corkboard view.
+    #[serde(default)]
+    pub protagonist_desire: String,
+    /// The flawed, usually childhood-formed belief standing between the protagonist
+    /// and `protagonist_desire` — see that field's doc comment.
+    #[serde(default)]
+    pub protagonist_misbelief: String,
     /// Whether git version control (commit/push/pull from the Versions menu, modeled
     /// after the Obsidian Git plugin) is turned on for this project. Deliberately a
     /// per-project setting, not a global one in `Settings`/`settings.rs`: one project
@@ -163,8 +174,9 @@ pub struct ProjectMeta {
     pub plugins_enabled: bool,
 }
 
-/// A single Lisa Cron "Story Genius" scene card: a structured, four-quadrant
-/// cause-and-effect schema, not a freeform synopsis. Optionally soft-linked to a
+/// A single Lisa Cron "Story Genius" scene card: a structured cause-and-effect
+/// schema (Cause, Effect, Why It Matters, Realization, And So), not a freeform
+/// synopsis. Optionally soft-linked to a
 /// document by title (see `linked_document_stem`), the same way `[[wikilinks]]`
 /// resolve — never by path or by the document's `BinderNode::id` (which is
 /// regenerated on every rescan and so isn't a durable reference).
@@ -174,10 +186,17 @@ pub struct StoryCard {
     pub scene_number: String,
     pub alpha_point: String,
     pub subplot_tags: Vec<String>,
-    /// External event + why it matters given the protagonist's current goal.
+    /// External event that occurs.
     pub cause: String,
     /// External and internal consequence of the cause.
     pub effect: String,
+    /// Why these events matter to the protagonist personally — the scene's link to
+    /// their internal struggle, per Lisa Cron's "Third Rail" concept (see
+    /// `ProjectMeta::protagonist_desire`/`protagonist_misbelief`). `#[serde(default)]`
+    /// since story cards saved before this field existed have no `why_it_matters`
+    /// key at all.
+    #[serde(default)]
+    pub why_it_matters: String,
     pub realization: String,
     /// What the protagonist does next, as a result of `realization`.
     pub and_so: String,
@@ -198,6 +217,7 @@ impl StoryCard {
             subplot_tags: Vec::new(),
             cause: String::new(),
             effect: String::new(),
+            why_it_matters: String::new(),
             realization: String::new(),
             and_so: String::new(),
             linked_document_stem: None,
@@ -440,6 +460,18 @@ impl Project {
     /// auto-detection to avoid re-asking about, just an explicit menu action.
     pub fn set_plugins_enabled(&mut self, enabled: bool) -> io::Result<()> {
         self.meta.plugins_enabled = enabled;
+        self.save_metadata()
+    }
+
+    /// Set the protagonist's Desire — see `ProjectMeta::protagonist_desire`.
+    pub fn set_protagonist_desire(&mut self, desire: String) -> io::Result<()> {
+        self.meta.protagonist_desire = desire;
+        self.save_metadata()
+    }
+
+    /// Set the protagonist's Misbelief — see `ProjectMeta::protagonist_misbelief`.
+    pub fn set_protagonist_misbelief(&mut self, misbelief: String) -> io::Result<()> {
+        self.meta.protagonist_misbelief = misbelief;
         self.save_metadata()
     }
 
@@ -1197,6 +1229,65 @@ mod tests {
         assert!(!project.meta.plugins_enabled);
         let reloaded = Project::load_from_folder(dir.path()).unwrap();
         assert!(!reloaded.meta.plugins_enabled);
+    }
+
+    #[test]
+    fn set_protagonist_desire_and_misbelief_persist_across_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        assert_eq!(project.meta.protagonist_desire, "");
+        assert_eq!(project.meta.protagonist_misbelief, "");
+
+        project
+            .set_protagonist_desire("Wants to reclaim the family farm".to_string())
+            .unwrap();
+        project
+            .set_protagonist_misbelief("Believes she doesn't deserve a home".to_string())
+            .unwrap();
+
+        let reloaded = Project::load_from_folder(dir.path()).unwrap();
+        assert_eq!(
+            reloaded.meta.protagonist_desire,
+            "Wants to reclaim the family farm"
+        );
+        assert_eq!(
+            reloaded.meta.protagonist_misbelief,
+            "Believes she doesn't deserve a home"
+        );
+    }
+
+    #[test]
+    fn story_card_json_without_why_it_matters_loads_with_it_blank() {
+        // Guards `#[serde(default)]` on `StoryCard::why_it_matters`: a project.json
+        // written before this field existed has no `why_it_matters` key at all in
+        // its story card entries.
+        let dir = tempfile::tempdir().unwrap();
+        let meta_dir = dir.path().join(METADATA_DIR);
+        fs::create_dir_all(&meta_dir).unwrap();
+        fs::write(
+            meta_dir.join(METADATA_FILE),
+            r#"{
+                "version": 1,
+                "node_order": {},
+                "story_cards": [{
+                    "id": "3f9e2b1a-0c1d-4a8e-9b2a-2a6f8f7d9c11",
+                    "scene_number": "1",
+                    "alpha_point": "",
+                    "subplot_tags": [],
+                    "cause": "",
+                    "effect": "",
+                    "realization": "",
+                    "and_so": "",
+                    "linked_document_stem": null
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let project = Project::load_from_folder(dir.path()).unwrap();
+
+        assert_eq!(project.meta.story_cards.len(), 1);
+        assert_eq!(project.meta.story_cards[0].why_it_matters, "");
     }
 
     #[test]

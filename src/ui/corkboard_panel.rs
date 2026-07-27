@@ -22,6 +22,11 @@ pub enum CorkboardEvent {
         new_index: usize,
     },
     OpenLinkedDocument(std::path::PathBuf),
+    /// The project-wide Desire field changed (see `ProjectMeta::protagonist_desire`).
+    SetProtagonistDesire(String),
+    /// The project-wide Misbelief field changed (see
+    /// `ProjectMeta::protagonist_misbelief`).
+    SetProtagonistMisbelief(String),
 }
 
 /// Renders the corkboard: a wrapping grid of story-card summaries. Card count is
@@ -30,6 +35,30 @@ pub enum CorkboardEvent {
 /// `egui::Grid`.
 pub fn show(ui: &mut egui::Ui, project: &Project) -> Option<CorkboardEvent> {
     let mut event = None;
+
+    // Lisa Cron's "Third Rail": the protagonist's Desire and Misbelief, project-wide
+    // rather than per-card — the throughline every card's `why_it_matters` should
+    // ultimately test or advance. Edited live, the same "mutate a local copy, raise
+    // an event on change" pattern every other field in this module already uses,
+    // rather than requiring its own Save step.
+    egui::Grid::new("protagonist_third_rail_grid")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Desire:");
+            let mut desire = project.meta.protagonist_desire.clone();
+            if ui.text_edit_singleline(&mut desire).changed() {
+                event = Some(CorkboardEvent::SetProtagonistDesire(desire));
+            }
+            ui.end_row();
+
+            ui.label("Misbelief:");
+            let mut misbelief = project.meta.protagonist_misbelief.clone();
+            if ui.text_edit_singleline(&mut misbelief).changed() {
+                event = Some(CorkboardEvent::SetProtagonistMisbelief(misbelief));
+            }
+            ui.end_row();
+        });
+    ui.separator();
 
     ui.horizontal(|ui| {
         if ui.button("+ New Card").clicked() {
@@ -106,6 +135,12 @@ fn show_card(
                 if !card.effect.is_empty() {
                     ui.label(format!("Effect: {}", truncate(&card.effect, 90)));
                 }
+                if !card.why_it_matters.is_empty() {
+                    ui.label(format!(
+                        "Why it matters: {}",
+                        truncate(&card.why_it_matters, 90)
+                    ));
+                }
 
                 if let Some(stem) = &card.linked_document_stem {
                     let resolved = project.tree.find_document_by_stem(stem);
@@ -148,8 +183,8 @@ fn truncate(text: &str, max_chars: usize) -> String {
     }
 }
 
-/// Editing state for the card-editor modal — a form matching Lisa Cron's
-/// four-quadrant schema field-for-field, not a raw YAML/frontmatter editor.
+/// Editing state for the card-editor modal — a form matching Lisa Cron's scene-card
+/// schema field-for-field, not a raw YAML/frontmatter editor.
 /// `subplot_tags_text`/`linked_document_text` are plain-text editing buffers for the
 /// underlying `Vec<String>`/`Option<String>` fields, folded back in on save.
 pub struct CardDraft {
@@ -333,11 +368,14 @@ pub fn show_card_editor(
         }
 
         ui.separator();
-        ui.label("Cause (what happens, and why it matters to the protagonist's goal):");
+        ui.label("Cause (what happens):");
         ui.text_edit_multiline(&mut draft.story_card.cause);
         ui.add_space(6.0);
         ui.label("Effect (external and internal consequence):");
         ui.text_edit_multiline(&mut draft.story_card.effect);
+        ui.add_space(6.0);
+        ui.label("Why it matters (the link to the protagonist's Desire/Misbelief):");
+        ui.text_edit_multiline(&mut draft.story_card.why_it_matters);
         ui.add_space(6.0);
         ui.label("Realization:");
         ui.text_edit_multiline(&mut draft.story_card.realization);
