@@ -15,6 +15,7 @@ This manual covers what the app does and how to use it. For internals (source la
 - [Backlinks](#backlinks)
 - [Document Metadata (Frontmatter)](#document-metadata-frontmatter)
 - [Folder Roles: Research, Trash, Templates](#folder-roles-research-trash-templates)
+- [Export](#export)
 - [Story Cards (Corkboard)](#story-cards-corkboard)
 - [Find and Replace](#find-and-replace)
 - [The Command Prompt](#the-command-prompt)
@@ -127,7 +128,96 @@ Right-click a folder and choose **Folder Role** to designate it as one of three 
 
 - **Trash**: deleting a file or folder moves it here instead of removing it from disk. Right-click the Trash folder for **Empty Trash** (permanent, with confirmation), or right-click a trashed item for **Restore**.
 - **Templates**: any document placed directly inside this folder (not in a subfolder of it) shows up in every other folder's right-click **"New From Template"** submenu. Picking one creates a new document that's a verbatim copy — frontmatter included — after prompting you for a name. The template itself is never modified.
-- **Research**: currently just a marker with no behavior yet attached — reserved for future features like compile or word-count rollups.
+- **Research**: currently just a marker with no behavior yet attached — reserved for future features like word-count rollups. Unlike Trash and Templates, [Export](#export) does *not* skip a Research-role folder — right-clicking one to export it exports it like any other folder.
+
+## Export
+
+Right-click any folder in the binder and choose **Export…** to compile it — and everything nested inside it, in the same top-to-bottom order shown in the binder — into a single DOCX, EPUB, or print-ready PDF file. A nested folder whose role is **Trash** or **Templates** is skipped automatically, so deleted or template content never accidentally ends up in a compiled manuscript.
+
+The export dialog has:
+
+- **Title** / **Author** — plain book metadata, remembered for next time.
+- **Style** — a dropdown of typesetting styles (see below). Fonts, page size, running headers, and drop caps all come from whichever style is selected, not from anything typed into this dialog.
+- **Export as DOCX…** / **Export as EPUB…** / **Export as Print PDF…** — each opens a native "Save As" dialog, then compiles.
+
+All three formats read from the *same* style, so switching styles changes DOCX, EPUB, and PDF output alike — closer to how a book-design tool like Deckle Studio treats "one style set drives every output" than to a plain markdown-to-Word converter.
+
+### Typesetting styles
+
+Two built-in styles ship with tachylite:
+
+| id | Label | What it looks like |
+|---|---|---|
+| `manuscript` | Manuscript | Plain submission format: US Letter, 1in margins, double-spaced, ragged-right (not justified), no running header or drop cap |
+| `trade_paperback` | Trade Paperback | 6×9in trim, justified body text, a running header (author's name / current chapter), and a drop cap on each chapter's first paragraph |
+
+Like [color themes](#custom-themes) and plugins, custom styles are `.toml` files you author or drop into `tachylite/styles/` inside tachylite's config directory (no in-app style editor):
+
+- Linux: `~/.config/tachylite/styles`
+- macOS: `~/Library/Application Support/tachylite/styles`
+- Windows: `%APPDATA%\tachylite\config\styles`
+
+A minimal custom style:
+
+```toml
+id = "novella"
+label = "Novella"
+
+[page]
+width_mm = 139.7   # 5.5in
+height_mm = 215.9  # 8.5in
+margin_mm = 15.0
+
+[body]
+font = "Libertinus Serif"
+size_pt = 11
+line_height = 1.2
+justify = true
+
+[headings]
+font = "Libertinus Serif"
+sizes_pt = [22, 19, 16, 14, 13, 12]
+
+[blockquote]
+font = "Libertinus Serif"
+size_pt = 11
+italic = true
+
+[code]
+font = "DejaVu Sans Mono"
+size_pt = 10
+```
+
+`id` and `label` are required, along with the `[page]`/`[body]`/`[headings]`/`[blockquote]`/`[code]` tables — `id` is what selects the style and is lowercased automatically. `sizes_pt` needs all six sizes (one per heading level, `h1`–`h6`). Two more tables are optional:
+
+```toml
+[drop_cap]
+scale = 3.0  # first letter renders at 3x body size
+
+[running_header]
+left = "{author}"
+right = "{chapter}"
+```
+
+`{title}`/`{author}` are substituted with whatever's typed into the export dialog; `{chapter}` (supported as a whole side's content, not mixed with other text) shows the current chapter on the print PDF specifically — DOCX and EPUB don't have a per-page "current chapter" concept, so a `{chapter}` token is just left blank there.
+
+**"Libertinus Serif" and "DejaVu Sans Mono"** (the built-in styles' fonts) aren't arbitrary choices — they're guaranteed available to the PDF renderer specifically, bundled with tachylite itself rather than depending on what's installed on your system. A custom style naming some other font still works for DOCX/EPUB (which just reference a font by name, the same way any other document does — Word/an e-reader substitutes if it's not installed), and for PDF too if that font happens to be installed locally; if not, the PDF falls back to *some* available font rather than failing the export.
+
+Use **Reload Custom Styles** in the export dialog to pick up a new or edited `.toml` file without restarting. A style file that fails to parse, or whose `id` collides with an already-loaded style (built-in or another custom one — whichever loaded first wins), is skipped with an error message rather than stopping other styles from loading.
+
+### The print PDF specifically
+
+Unlike DOCX/EPUB (which place text on the page or in an XHTML flow), the PDF target is real typesetting: tachylite embeds the [Typst](https://typst.app) compiler directly (no separate install, no network access) and generates a Typst document from your manuscript and the chosen style, then lets Typst do the actual page layout — the same category of tool as LaTeX or InDesign, not a "print to PDF" of a web page.
+
+That gets you, for free or close to it: automatic widow/orphan avoidance (Typst's default), a running header that tracks which chapter you're actually on per page, and a drop cap rendered as an oversized inline initial letter (a *raised* cap — it doesn't wrap subsequent lines around it the way a true sunk drop cap does; that needs either a Typst package fetched over the network, which tachylite deliberately avoids, or more elaborate manual layout math than a v1 warrants).
+
+After a successful PDF export, the status bar reports an estimated spine width for the resulting page count — useful for sizing a paperback cover, but a rough estimate based on a standard white-paper thickness constant, not a print-broker-grade figure. Confirm against your printer's own spine-width calculator (e.g. KDP's) before sending a cover to print.
+
+### What export doesn't do (yet)
+
+- No per-block styling for verse, dialogue, or other special block types — the markdown parser has no such concept today, only headings/paragraphs/quotes/lists/tables/code/images.
+- EPUB output is one general-purpose file, not separately tuned per e-reader (Kindle/Apple Books/Kobo).
+- Wikilinks resolve to a real in-book link in EPUB, when the target document is also part of the same export — otherwise (and always, in DOCX) they render as plain text.
 
 ## Story Cards (Corkboard)
 
@@ -353,7 +443,7 @@ Two shortcuts can never overlap — rebinding one to a combo another action alre
 
 ## Settings
 
-Settings are stored as `tachylite.toml` in the platform's config directory (the same base path as the global plugins and custom-themes folders — see [Plugins](#plugins) and [Custom themes](#custom-themes)). Available in **`File > Settings`**:
+Settings are stored as `tachylite.toml` in the platform's config directory (the same base path as the global plugins, custom-themes, and custom-styles folders — see [Plugins](#plugins), [Custom themes](#custom-themes), and [Typesetting styles](#typesetting-styles)). Available in **`File > Settings`**:
 
 - **Reopen project on launch** — automatically reopens the last project you had open (off by default)
 - **Ensure Research and Trash folders exist in every project** — off by default; see [Projects](#projects)
@@ -366,6 +456,6 @@ If the settings file is missing or its contents can't be parsed, tachylite falls
 
 Menu items present but not yet functional: `File > Close Project`, `Help > About`.
 
-Not yet implemented: an Excalidraw-style canvas, compile/export, multi-tab editing, and template folders/subfolders beyond a flat list (only documents directly inside the Templates folder are offered — not ones nested in a subfolder of it).
+Not yet implemented: an Excalidraw-style canvas, multi-tab editing, and template folders/subfolders beyond a flat list (only documents directly inside the Templates folder are offered — not ones nested in a subfolder of it). [Export](#export)'s own gaps are listed at the end of that section.
 
 In the Markdown preview specifically: raw HTML is dropped rather than rendered; table column alignment (`:---:`) is parsed but not yet reflected visually; GFM task lists and footnotes aren't enabled; mixing container types (e.g. a list inside a blockquote) doesn't preserve proper nesting; and `![[Note]]` only actually embeds when `Note` has an image extension — embedding another note's rendered content (transclusion) falls back to behaving like a plain `[[Note]]` link.
