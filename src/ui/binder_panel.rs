@@ -42,9 +42,56 @@ pub enum BinderEvent {
     },
 }
 
+/// Keyboard filter claimed on every focused binder row: all four arrow keys are ours
+/// (Up/Down move the tree cursor, Left/Right expand/collapse), so egui's own built-in
+/// "arrow keys move focus to the nearest widget in that direction" behavior never
+/// fires and fights with — or unpredictably jumps focus out of the tree instead of —
+/// our own handling. This is the same mechanism `TextEdit` uses to claim arrow keys
+/// for cursor movement instead of focus navigation.
+const ARROW_KEYS_FILTER: egui::EventFilter = egui::EventFilter {
+    tab: false,
+    horizontal_arrows: true,
+    vertical_arrows: true,
+    escape: false,
+};
+
 pub fn show(ui: &mut egui::Ui, project: &Project, selected: Option<&Path>) -> Option<BinderEvent> {
     let mut event = None;
-    show_node(ui, project, &project.tree.root, selected, &mut event, true);
+    let mut visible_rows = Vec::new();
+    show_node(
+        ui,
+        project,
+        &project.tree.root,
+        selected,
+        &mut event,
+        true,
+        &mut visible_rows,
+    );
+
+    // Up/Down move the keyboard cursor between rows, in the same top-to-bottom order
+    // they were just rendered in — which already skips the children of any collapsed
+    // folder, since `show_node` never recurses into those in the first place. Only
+    // acts when a binder row actually has focus, so this can't steal Up/Down from,
+    // say, the main editor's `TextEdit` while the user is typing there.
+    if let Some(focused_id) = ui.ctx().memory(|mem| mem.focused())
+        && let Some(current) = visible_rows.iter().position(|id| *id == focused_id)
+    {
+        let move_down =
+            ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown));
+        let move_up = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp));
+        let next = if move_down {
+            Some((current + 1).min(visible_rows.len() - 1))
+        } else if move_up {
+            Some(current.saturating_sub(1))
+        } else {
+            None
+        };
+        if let Some(next) = next {
+            ui.ctx()
+                .memory_mut(|mem| mem.request_focus(visible_rows[next]));
+        }
+    }
+
     event
 }
 
@@ -123,6 +170,19 @@ fn folder_header(
 
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact_selectable(&header_response, false);
+        // Unlike `CollapsingHeader` (which only paints this when explicitly made
+        // `.selectable(true)`, which we never do), always show it on hover/focus —
+        // otherwise there'd be no visual sign of which row the Up/Down keyboard
+        // cursor is currently on.
+        if header_response.hovered() || header_response.has_focus() {
+            ui.painter().rect(
+                header_response.rect.expand(visuals.expansion),
+                visuals.corner_radius,
+                visuals.weak_bg_fill,
+                visuals.bg_stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
         let (mut icon_rect, _) = ui.spacing().icon_rectangles(header_response.rect);
         icon_rect.set_center(egui::pos2(
             header_response.rect.left() + ui.spacing().indent / 2.0,
@@ -143,6 +203,7 @@ fn show_node(
     selected: Option<&Path>,
     event: &mut Option<BinderEvent>,
     is_root: bool,
+    visible_rows: &mut Vec<egui::Id>,
 ) {
     match &node.kind {
         BinderNodeKind::Folder { children } => {
@@ -150,14 +211,18 @@ fn show_node(
             let label = format!("{}{}", node.name, role_suffix(role));
             let id = ui.make_persistent_id(&node.path);
             let (header_response, mut state) = folder_header(ui, id, &label, true);
+            visible_rows.push(header_response.id);
 
             if header_response.clicked() {
                 state.toggle(ui);
                 header_response.request_focus();
             }
-            // Keyboard expand/collapse (Left/Right arrow), only while this row has
-            // focus — otherwise every folder in the tree would react to one keypress.
             if header_response.has_focus() {
+                ui.ctx().memory_mut(|mem| {
+                    mem.set_focus_lock_filter(header_response.id, ARROW_KEYS_FILTER)
+                });
+                // Left/Right expand/collapse. Up/Down are handled once, after the
+                // whole tree has been rendered, by `show` — see its doc comment.
                 let collapse = state.is_open()
                     && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
                 let expand = !state.is_open()
@@ -293,7 +358,7 @@ fn show_node(
 
             state.show_body_indented(&header_response, ui, |ui| {
                 for child in children {
-                    show_node(ui, project, child, selected, event, false);
+                    show_node(ui, project, child, selected, event, false, visible_rows);
                 }
             });
         }
@@ -309,8 +374,18 @@ fn show_node(
                 egui::Button::selectable(is_selected, document_label(&node.name))
                     .sense(egui::Sense::click_and_drag()),
             );
+            visible_rows.push(response.id);
             if response.clicked() {
                 *event = Some(BinderEvent::Selected(node.path.clone()));
+            }
+            // Claimed so Left/Right don't trigger egui's built-in spatial
+            // focus-jump while a document row has focus — see `ARROW_KEYS_FILTER`.
+            // Documents have no children to expand/collapse, so Left/Right are
+            // otherwise inert here; only Up/Down (handled once by `show`) do
+            // anything.
+            if response.has_focus() {
+                ui.ctx()
+                    .memory_mut(|mem| mem.set_focus_lock_filter(response.id, ARROW_KEYS_FILTER));
             }
             // Drag source: see the matching folder-header handling above for the
             // other draggable case.
