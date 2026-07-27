@@ -159,6 +159,16 @@ fn show_recording_modal(
             else {
                 return true;
             };
+            // A bare modifier press (e.g. just Shift, held down before the real key
+            // arrives) shows up as its own `Event::Key` with `key` set to one of
+            // egui's physical `ShiftLeft`/`ControlRight`/etc. variants — never a
+            // valid shortcut on its own. Drop it without setting `handled`, so
+            // scanning continues for the actual key the user is holding it to
+            // combine with, rather than capturing e.g. "Ctrl+ShiftLeft" as the
+            // whole shortcut the instant Shift goes down.
+            if is_bare_modifier_key(*key) {
+                return false;
+            }
             handled = true;
             if *key == egui::Key::Escape && modifiers.is_none() {
                 cancelled = true;
@@ -203,4 +213,23 @@ fn show_recording_modal(
     });
 
     changed
+}
+
+/// True for the physical "which side" modifier-key variants (`ShiftLeft`,
+/// `ControlRight`, etc.) `egui::Key` reports pressing a modifier on its own as —
+/// never a valid shortcut by itself, so the recording modal above must skip past
+/// these rather than capturing one as the whole shortcut the moment a user starts
+/// holding Ctrl or Shift, before the actual key.
+fn is_bare_modifier_key(key: egui::Key) -> bool {
+    matches!(
+        key,
+        egui::Key::ShiftLeft
+            | egui::Key::ShiftRight
+            | egui::Key::ControlLeft
+            | egui::Key::ControlRight
+            | egui::Key::AltLeft
+            | egui::Key::AltRight
+            | egui::Key::SuperLeft
+            | egui::Key::SuperRight
+    )
 }
