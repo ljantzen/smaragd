@@ -131,11 +131,19 @@ Right-click a folder and choose **Folder Role** to designate it as one of three 
 
 ## Story Cards (Corkboard)
 
-**`View > Corkboard`** opens a wrapping grid of scene cards, modeled on Lisa Cron's *Story Genius* method — a structured cause-and-effect breakdown rather than a freeform synopsis. Each card has:
+**`View > Corkboard`** opens a wrapping grid of scene cards, modeled on Lisa Cron's *Story Genius* method — a structured cause-and-effect breakdown rather than a freeform synopsis.
+
+At the top of the Corkboard, two project-wide fields capture what Cron calls the "Third Rail" — the protagonist's driving force, not tied to any one scene:
+
+- **Desire** — the external/internal want the protagonist is pursuing
+- **Misbelief** — the flawed, usually childhood-formed belief standing in its way
+
+Every scene card below is meant to test or advance this pair. Each card has:
 
 - **Alpha Point** — the scene's core moment
-- **Cause** — the external event, and why it matters given the protagonist's current goal
+- **Cause** — the external event that occurs
 - **Effect** — the external and internal consequence of the cause
+- **Why It Matters** — the scene's link back to the protagonist's Desire/Misbelief — why these events matter to them personally
 - **Realization** — what the protagonist comes to understand
 - **And so?** — what the protagonist does next, as a result of that realization
 - Optional **subplot tags**
