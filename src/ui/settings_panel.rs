@@ -23,7 +23,8 @@ pub fn show(
     egui::Window::new("Settings")
         .open(open)
         .resizable(true)
-        .default_height(480.0)
+        .default_width(560.0)
+        .default_height(680.0)
         .collapsible(false)
         .show(ctx, |ui| {
             changed |= ui
@@ -55,48 +56,52 @@ pub fn show(
             // Settings unmanageable, and scrolling the whole window would also push the
             // checkboxes/Theme section above out of view along with it.
             egui::ScrollArea::vertical()
-                .max_height(320.0)
+                .max_height(440.0)
                 .show(ui, |ui| {
-                    // Grouped by functional category, alphabetically by label within
-                    // each group — independent of `ShortcutAction::ALL`'s own
-                    // (declaration-order) sequence, which has no bearing on how this
-                    // list reads best to a user scanning for a specific action.
-                    for category in ShortcutCategory::ALL {
-                        let mut actions: Vec<ShortcutAction> = ShortcutAction::ALL
+                    // Sorted by functional category (`ShortcutCategory::ALL`'s order),
+                    // then alphabetically by label within each — shown as a "Category"
+                    // column on every row rather than a heading per group, so the whole
+                    // list stays one scannable grid instead of several disjoint ones.
+                    let mut actions: Vec<ShortcutAction> = ShortcutAction::ALL.to_vec();
+                    actions.sort_by_key(|action| {
+                        let category_index = ShortcutCategory::ALL
                             .iter()
-                            .copied()
-                            .filter(|action| action.category() == *category)
-                            .collect();
-                        actions.sort_by_key(|action| action.label());
+                            .position(|category| *category == action.category())
+                            .unwrap_or(usize::MAX);
+                        (category_index, action.label())
+                    });
 
-                        ui.add_space(8.0);
-                        ui.strong(category.label());
-                        egui::Grid::new(format!("shortcuts_grid_{}", category.label()))
-                            .num_columns(3)
-                            .striped(true)
-                            .show(ui, |ui| {
-                                for action in &actions {
-                                    ui.label(action.label());
-                                    let text = settings
-                                        .shortcuts
-                                        .get(*action)
-                                        .map(|s| ctx.format_shortcut(&s))
-                                        .unwrap_or_else(|| "Unbound".to_string());
-                                    ui.label(text);
-                                    ui.horizontal(|ui| {
-                                        if ui.button("Change").clicked() {
-                                            *recording_shortcut =
-                                                Some(ShortcutTarget::BuiltIn(*action));
-                                        }
-                                        if ui.button("Clear").clicked() {
-                                            settings.shortcuts.set(*action, None);
-                                            changed = true;
-                                        }
-                                    });
-                                    ui.end_row();
-                                }
-                            });
-                    }
+                    egui::Grid::new("shortcuts_grid")
+                        .num_columns(4)
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.strong("Category");
+                            ui.strong("Action");
+                            ui.strong("Shortcut");
+                            ui.end_row();
+
+                            for action in &actions {
+                                ui.label(action.category().label());
+                                ui.label(action.label());
+                                let text = settings
+                                    .shortcuts
+                                    .get(*action)
+                                    .map(|s| ctx.format_shortcut(&s))
+                                    .unwrap_or_else(|| "Unbound".to_string());
+                                ui.label(text);
+                                ui.horizontal(|ui| {
+                                    if ui.button("Change").clicked() {
+                                        *recording_shortcut =
+                                            Some(ShortcutTarget::BuiltIn(*action));
+                                    }
+                                    if ui.button("Clear").clicked() {
+                                        settings.shortcuts.set(*action, None);
+                                        changed = true;
+                                    }
+                                });
+                                ui.end_row();
+                            }
+                        });
                 });
 
             if !plugin_shortcut_rows.is_empty() {

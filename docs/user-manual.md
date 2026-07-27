@@ -281,7 +281,7 @@ Since the editor is a single plain-text field with no syntax-highlighting pipeli
 
 ## Keyboard Shortcuts
 
-All shortcuts are fully remappable in **`File > Settings`**, grouped there by function (Application, Project, Files & Folders, Editing, View, Git, Tools) and alphabetical within each group. Defaults below use `Ctrl` (shown as `Cmd` on macOS):
+All shortcuts are fully remappable in **`File > Settings`**, listed with a Category column (Application, Project, Files & Folders, Editing, View, Git, Tools) and sorted by category, then alphabetically within each. Defaults below use `Ctrl` (shown as `Cmd` on macOS):
 
 | Action | Default shortcut |
 |---|---|
