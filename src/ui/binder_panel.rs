@@ -65,6 +65,77 @@ fn document_label(name: &str) -> &str {
     name.strip_suffix(".md").unwrap_or(name)
 }
 
+/// A hand-built stand-in for `egui::CollapsingHeader::new(label).id_salt(id).show(...)`'s
+/// header half — closely mirroring that widget's own internals (see egui's
+/// `containers/collapsing_header.rs`) — because `CollapsingHeader` hardcodes its header
+/// to `Sense::click()` with no way to also make it sense drags, which a folder row needs
+/// (so it can be both clicked to expand/collapse and dragged to move, matching how a
+/// document row's `Sense::click_and_drag()` button already works).
+///
+/// An earlier version of this worked around that by layering a second, drag-only
+/// `ui.interact()` over the header's rect *after* building it. That doesn't actually
+/// work: egui's hit-test resolves two interactive widgets sharing the same rect by
+/// which was added last ("topmost"), and a drag-only widget necessarily has to be added
+/// after the header (it needs the header's already-resolved rect) — so it always won
+/// the hit test and swallowed every click before the header's own `Sense::click()`
+/// widget ever saw it, silently breaking expand/collapse by mouse. Building the header
+/// ourselves with a single `Sense::click_and_drag()` interact avoids the ambiguity
+/// entirely: there's only ever one widget over that rect.
+///
+/// Returns the header's response (click/drag/focus, same as `CollapsingHeader`'s own
+/// `header_response`) and the `CollapsingState` the caller drives (toggle it, then pass
+/// the response to `CollapsingState::show_body_indented` to render the children).
+fn folder_header(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    label: &str,
+    default_open: bool,
+) -> (
+    egui::Response,
+    egui::containers::collapsing_header::CollapsingState,
+) {
+    use egui::NumExt as _;
+    use egui::containers::collapsing_header::{CollapsingState, paint_default_icon};
+
+    let button_padding = ui.spacing().button_padding;
+    let available = ui.available_rect_before_wrap();
+    let text_pos = available.min + egui::vec2(ui.spacing().indent, 0.0);
+    let wrap_width = available.right() - text_pos.x;
+    let galley = egui::WidgetText::from(label).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        wrap_width,
+        egui::TextStyle::Button,
+    );
+    let desired_width = text_pos.x + galley.size().x + button_padding.x - available.left();
+    let desired_size = egui::vec2(desired_width, galley.size().y + 2.0 * button_padding.y)
+        .at_least(ui.spacing().interact_size);
+    let (_, rect) = ui.allocate_space(desired_size);
+
+    let header_response = ui.interact(rect, id, egui::Sense::click_and_drag());
+    let text_pos = egui::pos2(
+        text_pos.x,
+        header_response.rect.center().y - galley.size().y / 2.0,
+    );
+
+    let state = CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
+    let openness = state.openness(ui.ctx());
+
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact_selectable(&header_response, false);
+        let (mut icon_rect, _) = ui.spacing().icon_rectangles(header_response.rect);
+        icon_rect.set_center(egui::pos2(
+            header_response.rect.left() + ui.spacing().indent / 2.0,
+            header_response.rect.center().y,
+        ));
+        let icon_response = header_response.clone().with_new_rect(icon_rect);
+        paint_default_icon(ui, openness, &icon_response);
+        ui.painter().galley(text_pos, galley, visuals.text_color());
+    }
+
+    (header_response, state)
+}
+
 fn show_node(
     ui: &mut egui::Ui,
     project: &Project,
@@ -77,35 +148,35 @@ fn show_node(
         BinderNodeKind::Folder { children } => {
             let role = project.folder_role(&node.path);
             let label = format!("{}{}", node.name, role_suffix(role));
-            let response = egui::CollapsingHeader::new(label)
-                .id_salt(&node.path)
-                .default_open(true)
-                .show(ui, |ui| {
-                    for child in children {
-                        show_node(ui, project, child, selected, event, false);
-                    }
-                });
-            let header_response = response.header_response;
+            let id = ui.make_persistent_id(&node.path);
+            let (header_response, mut state) = folder_header(ui, id, &label, true);
+
+            if header_response.clicked() {
+                state.toggle(ui);
+                header_response.request_focus();
+            }
+            // Keyboard expand/collapse (Left/Right arrow), only while this row has
+            // focus — otherwise every folder in the tree would react to one keypress.
+            if header_response.has_focus() {
+                let collapse = state.is_open()
+                    && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
+                let expand = !state.is_open()
+                    && ui
+                        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight));
+                if collapse {
+                    state.set_open(false);
+                } else if expand {
+                    state.set_open(true);
+                }
+            }
 
             // Drag source: a folder (with everything under it) can be dragged onto a
             // different folder, same as a document — except the project root, which
             // isn't a real, movable node in the tree. `Project::move_item` catches
             // (with a clear error) dropping a folder into itself or one of its own
             // subfolders, so no need to filter that out here.
-            //
-            // `CollapsingHeader` hardcodes its header to `Sense::click()` with no way
-            // to opt into drag sensing (unlike a plain `Button`, see the document-row
-            // fix below), so a second, invisible interaction is layered over the same
-            // rect purely to sense drags — a distinct id (`.with("drag_handle")`)
-            // keeps it from clashing with the header's own click-sensing interact call
-            // over that same rect.
             if !is_root {
-                let drag_response = ui.interact(
-                    header_response.rect,
-                    header_response.id.with("drag_handle"),
-                    egui::Sense::drag(),
-                );
-                drag_response.dnd_set_drag_payload(node.path.clone());
+                header_response.dnd_set_drag_payload(node.path.clone());
             }
 
             // Drop target: a file or folder being dragged, released over this
@@ -217,6 +288,12 @@ fn show_node(
                             path: node.path.clone(),
                         });
                     }
+                }
+            });
+
+            state.show_body_indented(&header_response, ui, |ui| {
+                for child in children {
+                    show_node(ui, project, child, selected, event, false);
                 }
             });
         }
