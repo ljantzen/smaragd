@@ -1,17 +1,23 @@
 use crate::settings::Settings;
-use crate::shortcuts::{ShortcutAction, is_safe_binding};
+use crate::shortcuts::{ShortcutAction, ShortcutTarget, is_safe_binding};
 
 /// Renders the settings window when `open` is true (closing it via the window's own
 /// close button flips `open` back to `false`). `recording_shortcut` tracks which
-/// action, if any, is currently capturing its next keypress — it must persist across
-/// frames while the recording modal is open, so the caller owns it alongside
-/// `settings`. Returns `true` if `settings` changed this frame, so the caller can
-/// persist it to disk.
+/// binding, if any, is currently capturing its next keypress (built-in or plugin —
+/// see `ShortcutTarget`) — it must persist across frames while the recording modal
+/// is open, so the caller owns it alongside `settings`. `plugin_shortcut_rows` is
+/// every plugin `:` command that declared a shortcut (`register_shortcut`) paired
+/// with its current effective binding, if any (`app.rs`'s
+/// `compute_effective_plugin_shortcuts`) — `Settings` alone doesn't know which
+/// plugins are loaded. Returns `true` if `settings` changed this frame, so the
+/// caller can persist it to disk (and recompute the effective plugin shortcuts,
+/// since an edit here can change which ones are free).
 pub fn show(
     ctx: &egui::Context,
     open: &mut bool,
     settings: &mut Settings,
-    recording_shortcut: &mut Option<ShortcutAction>,
+    recording_shortcut: &mut Option<ShortcutTarget>,
+    plugin_shortcut_rows: &[(String, Option<egui::KeyboardShortcut>)],
 ) -> bool {
     let mut changed = false;
     egui::Window::new("Settings")
@@ -65,7 +71,8 @@ pub fn show(
                                 ui.label(text);
                                 ui.horizontal(|ui| {
                                     if ui.button("Change").clicked() {
-                                        *recording_shortcut = Some(*action);
+                                        *recording_shortcut =
+                                            Some(ShortcutTarget::BuiltIn(*action));
                                     }
                                     if ui.button("Clear").clicked() {
                                         settings.shortcuts.set(*action, None);
@@ -76,10 +83,44 @@ pub fn show(
                             }
                         });
                 });
+
+            if !plugin_shortcut_rows.is_empty() {
+                ui.separator();
+                ui.heading("Plugin Shortcuts");
+                egui::Grid::new("plugin_shortcuts_grid")
+                    .num_columns(3)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for (name, current) in plugin_shortcut_rows {
+                            ui.label(format!(":{name}"));
+                            let text = current
+                                .map(|s| ctx.format_shortcut(&s))
+                                .unwrap_or_else(|| "Unbound".to_string());
+                            ui.label(text);
+                            ui.horizontal(|ui| {
+                                if ui.button("Change").clicked() {
+                                    *recording_shortcut =
+                                        Some(ShortcutTarget::Plugin(name.clone()));
+                                }
+                                if ui.button("Clear").clicked() {
+                                    settings.set_plugin_shortcut(name, None, plugin_shortcut_rows);
+                                    changed = true;
+                                }
+                            });
+                            ui.end_row();
+                        }
+                    });
+            }
         });
 
-    if let Some(action) = *recording_shortcut {
-        changed |= show_recording_modal(ctx, settings, recording_shortcut, action);
+    if let Some(target) = recording_shortcut.clone() {
+        changed |= show_recording_modal(
+            ctx,
+            settings,
+            recording_shortcut,
+            target,
+            plugin_shortcut_rows,
+        );
     }
 
     changed
@@ -94,8 +135,9 @@ pub fn show(
 fn show_recording_modal(
     ctx: &egui::Context,
     settings: &mut Settings,
-    recording_shortcut: &mut Option<ShortcutAction>,
-    action: ShortcutAction,
+    recording_shortcut: &mut Option<ShortcutTarget>,
+    target: ShortcutTarget,
+    plugin_shortcut_rows: &[(String, Option<egui::KeyboardShortcut>)],
 ) -> bool {
     let mut changed = false;
     let mut cancelled = false;
@@ -131,7 +173,12 @@ fn show_recording_modal(
         *recording_shortcut = None;
     } else if let Some(shortcut) = captured {
         if is_safe_binding(&shortcut) {
-            settings.shortcuts.set(action, Some(shortcut));
+            match &target {
+                ShortcutTarget::BuiltIn(action) => settings.shortcuts.set(*action, Some(shortcut)),
+                ShortcutTarget::Plugin(name) => {
+                    settings.set_plugin_shortcut(name, Some(shortcut), plugin_shortcut_rows)
+                }
+            }
             changed = true;
             *recording_shortcut = None;
         } else {
@@ -139,9 +186,13 @@ fn show_recording_modal(
         }
     }
 
+    let label = match &target {
+        ShortcutTarget::BuiltIn(action) => action.label().to_string(),
+        ShortcutTarget::Plugin(name) => format!(":{name}"),
+    };
     egui::Modal::new(egui::Id::new("shortcut_recording_modal")).show(ctx, |ui| {
         ui.set_min_width(280.0);
-        ui.heading(format!("Press a new shortcut for \"{}\"", action.label()));
+        ui.heading(format!("Press a new shortcut for \"{label}\""));
         ui.label("Press Escape to cancel.");
         if rejected {
             ui.colored_label(

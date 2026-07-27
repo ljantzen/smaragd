@@ -183,6 +183,7 @@ A loaded plugin can shell out to any program on your system, with the same acces
 - `tachylite_set_document_text(text)` — replaces it
 - `tachylite_run_command(cmd, args)` — runs `cmd` (an array of string `args`) as a subprocess, waits for it to finish, and returns a map with `stdout`, `stderr`, `exit_code`, and `success`. Runs in the open project's root, and blocks the app's UI until the process exits — avoid anything long-running.
 - `register_command(name, fn_name)` — called once at script load time to expose a `:` command
+- `register_shortcut(name, key_spec)` — called at script load time to give a registered `:` command a default keyboard shortcut, e.g. `register_shortcut("hello", "ctrl+shift+h")`. `key_spec` is `+`-separated modifiers (`ctrl`/`cmd`/`command`, `shift`, `alt`/`option` — case-insensitive) followed by a key name (`k`, `F2`, `Enter`, `Colon`, ...). A bare key with no modifier is rejected unless it's a function key or Escape, same rule as built-in shortcuts.
 
 ### Example: a custom `:` command
 
@@ -191,9 +192,12 @@ fn say_hello(arg) {
     tachylite_status("Hello, " + arg + "!");
 }
 register_command("hello", "say_hello");
+register_shortcut("hello", "ctrl+shift+h");
 ```
 
-Typing `:hello world` in the command prompt calls `say_hello("world")` and shows "Hello, world!" in the status bar. Everything after the command name is passed as a single string argument.
+Typing `:hello world` in the command prompt calls `say_hello("world")` and shows "Hello, world!" in the status bar. Everything after the command name is passed as a single string argument. Pressing `Ctrl+Shift+H` runs the same command with an empty argument.
+
+Whatever shortcut a script asks for is just a *default*: **`File > Settings`** lists every plugin command that registered one, alongside the built-in shortcuts, and lets you remap or unbind it exactly the same way. If a script's requested combo is already in use by a built-in action or another plugin command, it's simply left unbound (with a message explaining why) rather than stealing it — you can still assign it a free combo yourself from Settings.
 
 ### Example: shelling out to a tool
 
@@ -280,7 +284,7 @@ All shortcuts are fully remappable in **`File > Settings`**. Defaults below use 
 | Push (Git) | `Ctrl+Alt+P` |
 | Document Metadata | `Ctrl+Shift+M` |
 
-Two shortcuts can never overlap — rebinding one to a combo another action already owns automatically un-assigns it from the previous owner.
+Two shortcuts can never overlap — rebinding one to a combo another action already owns automatically un-assigns it from the previous owner. This holds across built-ins and plugin shortcuts alike: if a loaded plugin registered a `:` command with its own shortcut (see [Plugins](#plugins)), it shows up in its own "Plugin Shortcuts" section further down the same window, remappable/unbindable the same way.
 
 ## Settings
 

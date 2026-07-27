@@ -222,11 +222,27 @@ fn specificity(shortcut: &KeyboardShortcut) -> u32 {
 /// Order `(action, shortcut)` pairs by descending modifier specificity, so the
 /// per-frame consumption loop checks the most specific shortcuts first and a
 /// less-specific shortcut can never swallow a more-specific one's keypress.
-pub fn sorted_by_specificity(
-    mut pairs: Vec<(ShortcutAction, KeyboardShortcut)>,
-) -> Vec<(ShortcutAction, KeyboardShortcut)> {
+/// Generic over the action payload so `app.rs` can sort a single merged list of
+/// built-in actions and plugin-registered shortcuts together (see
+/// [`ShortcutTarget`]) — specificity depends only on the shortcut, never on what
+/// it triggers.
+pub fn sorted_by_specificity<T>(
+    mut pairs: Vec<(T, KeyboardShortcut)>,
+) -> Vec<(T, KeyboardShortcut)> {
     pairs.sort_by_key(|(_, shortcut)| std::cmp::Reverse(specificity(shortcut)));
     pairs
+}
+
+/// Whichever shortcut binding is in play at a given point — either a built-in
+/// [`ShortcutAction`], or a plugin-registered `:` command by name (see
+/// `plugins::PluginEngine::shortcut_defaults`). Used both as the per-frame
+/// consumption loop's dispatch payload and as the Settings window's "which
+/// binding is the recording modal currently capturing a keypress for" state,
+/// since both need to treat the two kinds of shortcut identically.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShortcutTarget {
+    BuiltIn(ShortcutAction),
+    Plugin(String),
 }
 
 /// Persisted action -> shortcut bindings. Keyed by `ShortcutAction::id()` (a stable

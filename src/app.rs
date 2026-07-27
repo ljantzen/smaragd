@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use crate::editor::EditorState;
 use crate::project::{LoadError, Project, RestoreError};
 use crate::search::{self, SearchScope};
+use crate::settings::PluginShortcutOverride;
 use crate::settings::Settings;
-use crate::shortcuts::{ShortcutAction, sorted_by_specificity};
+use crate::shortcuts::{ShortcutAction, ShortcutTarget, sorted_by_specificity};
 use crate::ui;
 use crate::ui::WikilinkActivation;
 use crate::ui::binder_panel::BinderEvent;
@@ -80,7 +81,7 @@ pub struct TachyliteApp {
     settings: Settings,
     show_settings: bool,
     prompt: Option<PendingPrompt>,
-    recording_shortcut: Option<ShortcutAction>,
+    recording_shortcut: Option<ShortcutTarget>,
     find_replace: FindReplaceState,
     card_draft: Option<CardDraft>,
     command_prompt: CommandPromptState,
@@ -97,6 +98,12 @@ pub struct TachyliteApp {
     /// project's own `.tachylite/plugins` if it has opted in (see
     /// `ProjectMeta::plugins_enabled`). Rebuilt by `reload_plugins`.
     plugin_engine: crate::plugins::PluginEngine,
+    /// The currently-active shortcut for each plugin command that has one —
+    /// `plugin_engine`'s declared defaults layered with `settings`'
+    /// `plugin_shortcut_overrides` and de-conflicted against built-in and other
+    /// plugin shortcuts. Recomputed by `compute_effective_plugin_shortcuts`
+    /// whenever either input changes (a plugin reload, or a Settings edit).
+    plugin_shortcuts: Vec<(String, egui::KeyboardShortcut)>,
 }
 
 /// Which of the two network-bound git actions a `pending_git` background thread is
@@ -149,6 +156,7 @@ impl TachyliteApp {
             metadata_draft: None,
             pending_git: None,
             plugin_engine: crate::plugins::PluginEngine::default(),
+            plugin_shortcuts: Vec::new(),
         };
 
         if let Some(id) = &app.settings.color_theme
@@ -195,9 +203,49 @@ impl TachyliteApp {
         let project_root = self.project.as_ref().map(|project| project.root.as_path());
         let (engine, errors) = crate::plugins::load(&dir_refs, project_root);
         self.plugin_engine = engine;
+        self.plugin_shortcuts = self.compute_effective_plugin_shortcuts();
         if !errors.is_empty() {
             self.status_message = Some(errors.join("; "));
         }
+    }
+
+    /// Resolve each loaded plugin command's default shortcut
+    /// (`plugin_engine.shortcut_defaults`) against `settings.plugin_shortcut_overrides`
+    /// and the currently-bound built-in shortcuts, producing the set the per-frame
+    /// consumption loop and the Settings panel actually use. An explicit `Unbound`
+    /// override always wins; an explicit `Bound` override always wins too (the
+    /// user's own remap, which already claimed the combo away from anyone else at
+    /// the moment it was made — see `Settings::set_plugin_shortcut`). Absent an
+    /// override, the script's own default applies only if it doesn't collide with
+    /// a built-in or an already-placed plugin shortcut earlier in this pass —
+    /// a collision leaves that command with no shortcut this session rather than
+    /// erroring, since the same script default might become free again on a later
+    /// reload.
+    fn compute_effective_plugin_shortcuts(&self) -> Vec<(String, egui::KeyboardShortcut)> {
+        let mut taken: std::collections::HashSet<egui::KeyboardShortcut> = self
+            .settings
+            .shortcuts
+            .bindings()
+            .into_iter()
+            .map(|(_, shortcut)| shortcut)
+            .collect();
+
+        let mut effective = Vec::new();
+        for (name, default_shortcut) in self.plugin_engine.shortcut_defaults() {
+            let shortcut = match self.settings.plugin_shortcut_overrides.get(name) {
+                Some(PluginShortcutOverride::Unbound) => continue,
+                Some(PluginShortcutOverride::Bound(shortcut)) => *shortcut,
+                None => {
+                    if taken.contains(&default_shortcut) {
+                        continue;
+                    }
+                    default_shortcut
+                }
+            };
+            taken.insert(shortcut);
+            effective.push((name.to_string(), shortcut));
+        }
+        effective
     }
 
     /// Open `path` as a project. Used for the automatic "reopen last project" path at
@@ -1406,14 +1454,29 @@ impl eframe::App for TachyliteApp {
 
         if self.recording_shortcut.is_none() {
             let ctx = ui.ctx().clone();
-            let bindings = sorted_by_specificity(self.settings.shortcuts.bindings());
-            let triggered: Vec<ShortcutAction> = bindings
+            let mut pairs: Vec<(ShortcutTarget, egui::KeyboardShortcut)> = self
+                .settings
+                .shortcuts
+                .bindings()
+                .into_iter()
+                .map(|(action, shortcut)| (ShortcutTarget::BuiltIn(action), shortcut))
+                .collect();
+            pairs.extend(
+                self.plugin_shortcuts
+                    .iter()
+                    .map(|(name, shortcut)| (ShortcutTarget::Plugin(name.clone()), *shortcut)),
+            );
+            let bindings = sorted_by_specificity(pairs);
+            let triggered: Vec<ShortcutTarget> = bindings
                 .into_iter()
                 .filter(|(_, shortcut)| ctx.input_mut(|i| i.consume_shortcut(shortcut)))
-                .map(|(action, _)| action)
+                .map(|(target, _)| target)
                 .collect();
-            for action in triggered {
-                self.dispatch_shortcut_action(&ctx, action);
+            for target in triggered {
+                match target {
+                    ShortcutTarget::BuiltIn(action) => self.dispatch_shortcut_action(&ctx, action),
+                    ShortcutTarget::Plugin(name) => self.run_plugin_command(&name, ""),
+                }
             }
         }
 
@@ -1602,13 +1665,28 @@ impl eframe::App for TachyliteApp {
             });
         });
 
+        let plugin_shortcut_rows: Vec<(String, Option<egui::KeyboardShortcut>)> = self
+            .plugin_engine
+            .shortcut_defaults()
+            .map(|(name, _default)| {
+                let current = self
+                    .plugin_shortcuts
+                    .iter()
+                    .find(|(bound_name, _)| bound_name == name)
+                    .map(|(_, shortcut)| *shortcut);
+                (name.to_string(), current)
+            })
+            .collect();
+
         if ui::settings_panel::show(
             ui.ctx(),
             &mut self.show_settings,
             &mut self.settings,
             &mut self.recording_shortcut,
+            &plugin_shortcut_rows,
         ) {
             self.persist_settings();
+            self.plugin_shortcuts = self.compute_effective_plugin_shortcuts();
         }
 
         if self.prompt.is_some() {

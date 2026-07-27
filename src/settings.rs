@@ -3,12 +3,25 @@
 //! directory — `~/.config/tachylite` on Linux, `~/Library/Application Support/tachylite`
 //! on macOS, `%APPDATA%\tachylite\config` on Windows — via the `directories` crate.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::shortcuts::ShortcutMap;
+
+/// A user's explicit choice for a plugin-registered `:` command's shortcut, kept
+/// separate from a plain `Option<KeyboardShortcut>` so `Unbound` can be told apart
+/// from "no override recorded yet" (see `plugin_shortcut_overrides`'s doc comment)
+/// — and represented as an enum rather than `Option` because TOML has no null, so
+/// an `Option::None` stored as a map *value* (as opposed to a whole field) can't
+/// round-trip through it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PluginShortcutOverride {
+    Bound(egui::KeyboardShortcut),
+    Unbound,
+}
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -35,6 +48,14 @@ pub struct Settings {
     /// if any — `None` means no theme is applied, just plain dark/light styling per
     /// `theme_preference`. Set via `:theme <id>` or the View > Theme menu.
     pub color_theme: Option<String>,
+    /// User overrides for plugin `:` command shortcuts, keyed by command name (see
+    /// `plugins::PluginEngine::shortcut_defaults`). Unlike `shortcuts` above (whose
+    /// fixed set of built-in ids never changes), a plugin re-declares its own
+    /// default shortcut every time it's (re)loaded, so an id simply absent from
+    /// this map doesn't mean "unbound" — it means "no override, use the plugin
+    /// script's own default if that combo is currently free." An explicit
+    /// `Unbound` entry is what actually keeps a command unbound across reloads.
+    pub plugin_shortcut_overrides: BTreeMap<String, PluginShortcutOverride>,
 }
 
 /// The full path to the settings file, e.g. `~/.config/tachylite/tachylite.toml` on
@@ -62,6 +83,52 @@ impl Settings {
         let contents =
             toml::to_string_pretty(self).expect("Settings always serializes to valid TOML");
         std::fs::write(path, contents)
+    }
+
+    /// Bind a plugin `:` command's shortcut to `shortcut` (`None` to unbind it —
+    /// which, unlike a plain removal, must be recorded explicitly so it sticks
+    /// across plugin reloads; see `plugin_shortcut_overrides`'s doc comment).
+    /// First clears that exact combo from whichever built-in action or other
+    /// plugin command in `current_plugin_shortcuts` currently holds it, mirroring
+    /// `ShortcutMap::set`'s 1:1 invariant but extended across both namespaces —
+    /// they draw from the same physical keyboard. `current_plugin_shortcuts` is
+    /// the caller's last-computed effective set (`app.rs`'s
+    /// `compute_effective_plugin_shortcuts`), since `Settings` alone doesn't have
+    /// the loaded `PluginEngine` needed to derive it.
+    pub fn set_plugin_shortcut(
+        &mut self,
+        command_name: &str,
+        shortcut: Option<egui::KeyboardShortcut>,
+        current_plugin_shortcuts: &[(String, Option<egui::KeyboardShortcut>)],
+    ) {
+        let Some(shortcut) = shortcut else {
+            self.plugin_shortcut_overrides
+                .insert(command_name.to_string(), PluginShortcutOverride::Unbound);
+            return;
+        };
+
+        if let Some(action) = self
+            .shortcuts
+            .bindings()
+            .into_iter()
+            .find(|(_, bound)| *bound == shortcut)
+            .map(|(action, _)| action)
+        {
+            self.shortcuts.set(action, None);
+        }
+
+        let other_owner = current_plugin_shortcuts.iter().find_map(|(name, current)| {
+            (name.as_str() != command_name && *current == Some(shortcut)).then(|| name.clone())
+        });
+        if let Some(other_owner) = other_owner {
+            self.plugin_shortcut_overrides
+                .insert(other_owner, PluginShortcutOverride::Unbound);
+        }
+
+        self.plugin_shortcut_overrides.insert(
+            command_name.to_string(),
+            PluginShortcutOverride::Bound(shortcut),
+        );
     }
 }
 
@@ -118,6 +185,15 @@ mod tests {
                 egui::Key::S,
             )),
         );
+        let mut plugin_shortcut_overrides = BTreeMap::new();
+        plugin_shortcut_overrides.insert(
+            "wordcount".to_string(),
+            PluginShortcutOverride::Bound(egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::L,
+            )),
+        );
+        plugin_shortcut_overrides.insert("hello".to_string(), PluginShortcutOverride::Unbound);
         let settings = Settings {
             reopen_last_project: true,
             last_project_path: Some(PathBuf::from("/home/author/my-novel")),
@@ -125,6 +201,7 @@ mod tests {
             shortcuts,
             theme_preference: egui::ThemePreference::Dark,
             color_theme: Some("dracula".to_string()),
+            plugin_shortcut_overrides,
         };
 
         settings.save_to_path(&path).unwrap();
@@ -173,5 +250,70 @@ mod tests {
         Settings::default().save_to_path(&path).unwrap();
 
         assert!(path.exists());
+    }
+
+    #[test]
+    fn set_plugin_shortcut_binds_with_no_conflicts() {
+        let mut settings = Settings::default();
+        let shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::L);
+
+        settings.set_plugin_shortcut("wordcount", Some(shortcut), &[]);
+
+        assert_eq!(
+            settings.plugin_shortcut_overrides.get("wordcount"),
+            Some(&PluginShortcutOverride::Bound(shortcut))
+        );
+    }
+
+    #[test]
+    fn set_plugin_shortcut_none_records_an_explicit_unbind() {
+        let mut settings = Settings::default();
+
+        settings.set_plugin_shortcut("wordcount", None, &[]);
+
+        assert_eq!(
+            settings.plugin_shortcut_overrides.get("wordcount"),
+            Some(&PluginShortcutOverride::Unbound)
+        );
+    }
+
+    #[test]
+    fn set_plugin_shortcut_steals_from_a_built_in_action_that_currently_holds_it() {
+        let mut settings = Settings::default();
+        let save_shortcut = settings
+            .shortcuts
+            .get(crate::shortcuts::ShortcutAction::Save)
+            .unwrap();
+
+        settings.set_plugin_shortcut("wordcount", Some(save_shortcut), &[]);
+
+        assert_eq!(
+            settings
+                .shortcuts
+                .get(crate::shortcuts::ShortcutAction::Save),
+            None
+        );
+        assert_eq!(
+            settings.plugin_shortcut_overrides.get("wordcount"),
+            Some(&PluginShortcutOverride::Bound(save_shortcut))
+        );
+    }
+
+    #[test]
+    fn set_plugin_shortcut_steals_from_another_plugin_command_that_currently_holds_it() {
+        let mut settings = Settings::default();
+        let shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::L);
+        let current = vec![("other_command".to_string(), Some(shortcut))];
+
+        settings.set_plugin_shortcut("wordcount", Some(shortcut), &current);
+
+        assert_eq!(
+            settings.plugin_shortcut_overrides.get("other_command"),
+            Some(&PluginShortcutOverride::Unbound)
+        );
+        assert_eq!(
+            settings.plugin_shortcut_overrides.get("wordcount"),
+            Some(&PluginShortcutOverride::Bound(shortcut))
+        );
     }
 }

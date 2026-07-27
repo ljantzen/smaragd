@@ -18,6 +18,12 @@
 //! run under the user's own account — the trust boundary is loading the plugin at
 //! all (see [`load`]'s docs on the global vs. project directories), not anything
 //! enforced per call.
+//!
+//! A registered `:` command can also ask for a default keyboard shortcut via
+//! `register_shortcut(name, key_spec)` (e.g. `"ctrl+shift+k"` — see
+//! [`parse_shortcut_spec`]), which the app's Settings window then lets the user
+//! remap or unbind exactly like a built-in shortcut — see `app.rs`'s
+//! `compute_effective_plugin_shortcuts`.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -26,7 +32,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 
+use egui::{Key, KeyboardShortcut, Modifiers};
 use rhai::{AST, Array, Dynamic, Engine, EvalAltResult, Map, Scope};
+
+use crate::shortcuts::is_safe_binding;
 
 /// The global, always-loaded plugin directory: `<config_dir>/tachylite/plugins`,
 /// the same base path `settings::config_file_path` uses for `tachylite.toml`.
@@ -63,6 +72,9 @@ struct LoadedPlugin {
     /// `:` command name -> the script function it invokes.
     commands: HashMap<String, String>,
     has_on_save: bool,
+    /// `:` command name -> the default shortcut it asked for via
+    /// `register_shortcut`, if any and if it didn't lose a conflict at load time.
+    shortcuts: HashMap<String, KeyboardShortcut>,
 }
 
 /// A loaded set of plugins, ready to run commands/hooks against. Build with
@@ -83,6 +95,21 @@ impl Default for PluginEngine {
 }
 
 impl PluginEngine {
+    /// Every loaded plugin command's default keyboard shortcut, as (command name,
+    /// shortcut) pairs — `:` command names are already globally unique across
+    /// loaded plugins (see `load`'s conflict handling), so no plugin-name
+    /// qualification is needed here. `app.rs`'s `compute_effective_plugin_shortcuts`
+    /// layers the user's Settings overrides and built-in-shortcut conflicts on top
+    /// of this to get what's actually active.
+    pub fn shortcut_defaults(&self) -> impl Iterator<Item = (&str, KeyboardShortcut)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .shortcuts
+                .iter()
+                .map(|(name, shortcut)| (name.as_str(), *shortcut))
+        })
+    }
+
     /// The `:` command names every loaded plugin registered, for
     /// `command_prompt.rs`'s parser and tab-completion.
     pub fn command_names(&self) -> impl Iterator<Item = &str> {
@@ -174,6 +201,7 @@ impl PluginEngine {
 fn new_engine(
     io: &Rc<RefCell<PluginIo>>,
     pending_commands: &Rc<RefCell<Vec<(String, String)>>>,
+    pending_shortcuts: &Rc<RefCell<Vec<(String, String)>>>,
     working_dir: Option<PathBuf>,
 ) -> Engine {
     let mut engine = Engine::new();
@@ -202,6 +230,13 @@ fn new_engine(
         commands
             .borrow_mut()
             .push((name.to_string(), fn_name.to_string()));
+    });
+
+    let shortcuts = Rc::clone(pending_shortcuts);
+    engine.register_fn("register_shortcut", move |name: &str, key_spec: &str| {
+        shortcuts
+            .borrow_mut()
+            .push((name.to_string(), key_spec.to_string()));
     });
 
     engine.register_fn(
@@ -260,6 +295,44 @@ fn run_command(
     Ok(result)
 }
 
+/// Parses a `register_shortcut` key spec like `"ctrl+shift+k"` into a
+/// `KeyboardShortcut`: `+`-separated tokens, modifiers first, the key name last.
+/// Modifier names are case-insensitive (`ctrl`/`cmd`/`command` all map to
+/// `Modifiers::COMMAND` — Ctrl on Windows/Linux, Cmd on macOS — matching the
+/// convention `shortcuts::ShortcutAction::default_shortcut` already uses;
+/// `shift`, `alt`/`option`). The key name matches `egui::Key::from_name` (e.g.
+/// `"K"`, `"F2"`, `"Enter"`, `"Colon"`), tried both as given and capitalized, so a
+/// script can write either `"Enter"` or `"enter"`.
+fn parse_shortcut_spec(spec: &str) -> Result<KeyboardShortcut, String> {
+    let mut parts: Vec<&str> = spec.split('+').map(str::trim).collect();
+    let Some(key_part) = parts.pop().filter(|part| !part.is_empty()) else {
+        return Err(format!("empty shortcut spec: {spec:?}"));
+    };
+
+    let mut modifiers = Modifiers::NONE;
+    for part in parts {
+        modifiers |= match part.to_ascii_lowercase().as_str() {
+            "ctrl" | "cmd" | "command" => Modifiers::COMMAND,
+            "shift" => Modifiers::SHIFT,
+            "alt" | "option" => Modifiers::ALT,
+            other => return Err(format!("unknown modifier {other:?} in shortcut {spec:?}")),
+        };
+    }
+
+    let capitalized = {
+        let mut chars = key_part.chars();
+        match chars.next() {
+            Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str().to_lowercase()),
+            None => String::new(),
+        }
+    };
+    let key = Key::from_name(key_part)
+        .or_else(|| Key::from_name(&capitalized))
+        .ok_or_else(|| format!("unknown key {key_part:?} in shortcut {spec:?}"))?;
+
+    Ok(KeyboardShortcut::new(modifiers, key))
+}
+
 /// Load every `*.rhai` file found directly inside each of `dirs` (flat, not
 /// recursive; a missing directory is silently skipped, not an error — global
 /// plugins usually won't exist until a user creates the folder). Directories are
@@ -278,11 +351,18 @@ fn run_command(
 pub fn load(dirs: &[&Path], working_dir: Option<&Path>) -> (PluginEngine, Vec<String>) {
     let io = Rc::new(RefCell::new(PluginIo::default()));
     let pending_commands = Rc::new(RefCell::new(Vec::new()));
-    let engine = new_engine(&io, &pending_commands, working_dir.map(Path::to_path_buf));
+    let pending_shortcuts = Rc::new(RefCell::new(Vec::new()));
+    let engine = new_engine(
+        &io,
+        &pending_commands,
+        &pending_shortcuts,
+        working_dir.map(Path::to_path_buf),
+    );
 
     let mut plugins = Vec::new();
     let mut errors = Vec::new();
     let mut command_owners: HashMap<String, String> = HashMap::new();
+    let mut shortcut_owners: HashMap<KeyboardShortcut, String> = HashMap::new();
 
     for dir in dirs {
         let Ok(entries) = fs::read_dir(dir) else {
@@ -321,6 +401,7 @@ pub fn load(dirs: &[&Path], working_dir: Option<&Path>) -> (PluginEngine, Vec<St
                 .any(|meta| meta.name == "on_save" && meta.params.len() == 1);
 
             pending_commands.borrow_mut().clear();
+            pending_shortcuts.borrow_mut().clear();
             let mut scope = Scope::new();
             if let Err(err) = engine.run_ast_with_scope(&mut scope, &ast) {
                 errors.push(format!("{name}: {err}"));
@@ -339,11 +420,46 @@ pub fn load(dirs: &[&Path], working_dir: Option<&Path>) -> (PluginEngine, Vec<St
                 commands.insert(command_name, fn_name);
             }
 
+            let mut shortcuts = HashMap::new();
+            for (command_name, key_spec) in pending_shortcuts.borrow_mut().drain(..) {
+                if !commands.contains_key(&command_name) {
+                    errors.push(format!(
+                        "{name}: register_shortcut(\"{command_name}\", ..) doesn't match a command \
+                         this plugin registered, skipping"
+                    ));
+                    continue;
+                }
+                let shortcut = match parse_shortcut_spec(&key_spec) {
+                    Ok(shortcut) => shortcut,
+                    Err(err) => {
+                        errors.push(format!("{name}: {err}"));
+                        continue;
+                    }
+                };
+                if !is_safe_binding(&shortcut) {
+                    errors.push(format!(
+                        "{name}: shortcut {key_spec:?} for \":{command_name}\" needs Ctrl, Alt, or \
+                         Shift (function keys and Escape are exempt), skipping"
+                    ));
+                    continue;
+                }
+                if let Some(owner) = shortcut_owners.get(&shortcut) {
+                    errors.push(format!(
+                        "{name}: shortcut {key_spec:?} for \":{command_name}\" is already used by \
+                         {owner}, leaving \":{command_name}\" unbound"
+                    ));
+                    continue;
+                }
+                shortcut_owners.insert(shortcut, format!("{name}:{command_name}"));
+                shortcuts.insert(command_name, shortcut);
+            }
+
             plugins.push(LoadedPlugin {
                 name,
                 ast,
                 commands,
                 has_on_save,
+                shortcuts,
             });
         }
     }
@@ -627,6 +743,124 @@ mod tests {
         assert_eq!(
             effects.status_message.map(PathBuf::from),
             Some(dir.path().canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn parse_shortcut_spec_accepts_modifiers_and_a_key_in_any_case() {
+        assert_eq!(
+            parse_shortcut_spec("ctrl+shift+k").unwrap(),
+            KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::K)
+        );
+        assert_eq!(
+            parse_shortcut_spec("Alt+Enter").unwrap(),
+            KeyboardShortcut::new(Modifiers::ALT, Key::Enter)
+        );
+        assert_eq!(
+            parse_shortcut_spec("F2").unwrap(),
+            KeyboardShortcut::new(Modifiers::NONE, Key::F2)
+        );
+    }
+
+    #[test]
+    fn parse_shortcut_spec_rejects_an_unknown_modifier_or_key() {
+        assert!(parse_shortcut_spec("hyper+k").is_err());
+        assert!(parse_shortcut_spec("ctrl+not_a_key").is_err());
+    }
+
+    #[test]
+    fn a_command_can_register_a_default_shortcut() {
+        let dir = tempfile::tempdir().unwrap();
+        write_plugin(
+            dir.path(),
+            "wordcount",
+            r#"
+                fn run(arg) { tachylite_status("ran"); }
+                register_command("wordcount", "run");
+                register_shortcut("wordcount", "ctrl+shift+w");
+            "#,
+        );
+
+        let (engine, errors) = load(&[dir.path()], None);
+        assert!(errors.is_empty(), "unexpected load errors: {errors:?}");
+        assert_eq!(
+            engine.shortcut_defaults().collect::<Vec<_>>(),
+            vec![(
+                "wordcount",
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::W)
+            )]
+        );
+    }
+
+    #[test]
+    fn a_shortcut_for_an_unregistered_command_is_a_load_error() {
+        let dir = tempfile::tempdir().unwrap();
+        write_plugin(
+            dir.path(),
+            "broken",
+            r#"
+                fn run(arg) { }
+                register_command("real", "run");
+                register_shortcut("typo", "ctrl+k");
+            "#,
+        );
+
+        let (engine, errors) = load(&[dir.path()], None);
+        assert!(errors.iter().any(|e| e.contains("typo")));
+        assert_eq!(engine.shortcut_defaults().count(), 0);
+    }
+
+    #[test]
+    fn an_unsafe_shortcut_is_rejected_but_the_command_still_works() {
+        let dir = tempfile::tempdir().unwrap();
+        write_plugin(
+            dir.path(),
+            "unsafe_shortcut",
+            r#"
+                fn run(arg) { tachylite_status("ran"); }
+                register_command("run_it", "run");
+                register_shortcut("run_it", "k");
+            "#,
+        );
+
+        let (engine, errors) = load(&[dir.path()], None);
+        assert!(errors.iter().any(|e| e.contains("Ctrl, Alt, or Shift")));
+        assert_eq!(engine.shortcut_defaults().count(), 0);
+
+        let (_, result) = engine.run_command("run_it", "", None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn two_plugins_racing_for_the_same_shortcut_keeps_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        write_plugin(
+            dir.path(),
+            "a_first",
+            r#"
+                fn run(arg) { }
+                register_command("first_cmd", "run");
+                register_shortcut("first_cmd", "ctrl+k");
+            "#,
+        );
+        write_plugin(
+            dir.path(),
+            "b_second",
+            r#"
+                fn run(arg) { }
+                register_command("second_cmd", "run");
+                register_shortcut("second_cmd", "ctrl+k");
+            "#,
+        );
+
+        let (engine, errors) = load(&[dir.path()], None);
+        assert!(errors.iter().any(|e| e.contains("already used by")));
+        assert_eq!(
+            engine.shortcut_defaults().collect::<Vec<_>>(),
+            vec![(
+                "first_cmd",
+                KeyboardShortcut::new(Modifiers::COMMAND, Key::K)
+            )]
         );
     }
 }
