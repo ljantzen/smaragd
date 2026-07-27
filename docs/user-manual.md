@@ -265,7 +265,9 @@ Two independent settings:
 - **Appearance** (`File > Settings`, or `:dmode <dark|light|system>`): plain Dark/Light/System styling. System follows your OS preference and updates immediately.
 - **Color Theme** (`View > Theme`, or `:theme <id>`): a full Helix-inspired palette layered on top of the appearance base. `:theme` with no argument clears back to plain appearance styling.
 
-Available theme ids:
+Since the editor is a single plain-text field with no syntax-highlighting pipeline, each theme reproduces its palette's overall look (background, body text, one accent color for selection/links) rather than full per-token syntax highlighting.
+
+### Built-in themes
 
 | id | Label |
 |---|---|
@@ -285,7 +287,39 @@ Available theme ids:
 | `everforest_light` | Everforest Light |
 | `ayu_dark` | Ayu Dark |
 
-Since the editor is a single plain-text field with no syntax-highlighting pipeline, each theme reproduces its palette's overall look (background, body text, one accent color for selection/links) rather than full per-token syntax highlighting.
+### Custom themes
+
+You can add your own themes as `.toml` files — no in-app editor, the same "drop a file in a folder" model as [Plugins](#plugins). Custom themes live in `tachylite/themes/` inside tachylite's config directory (the same base path as the global plugins folder):
+
+- Linux: `~/.config/tachylite/themes`
+- macOS: `~/Library/Application Support/tachylite/themes`
+- Windows: `%APPDATA%\tachylite\config\themes`
+
+A minimal custom theme:
+
+```toml
+id = "my_theme"
+label = "My Theme"
+dark = true
+background = "#1e1e2e"
+foreground = "#cdd6f4"
+accent = "#cba6f7"
+```
+
+`id`, `label`, `dark`, and the three colors are required; colors are `"#RRGGBB"` hex strings (the `#` is optional). `id` is what you'd type as `:theme my_theme` — it's lowercased automatically, so casing in the file doesn't matter.
+
+You can optionally also override the markdown preview's heading-color ladder, wikilink color, and quote-bar color (otherwise a fixed dark/light pair used by every theme, built-in or custom, that doesn't specify its own):
+
+```toml
+[preview]
+heading = ["#f38ba8", "#89b4fa", "#a6e3a1", "#cba6f7", "#f9e2af", "#fab387"]
+wikilink = "#a6e3a1"
+quote_bar = "#6c7086"
+```
+
+`heading` needs all six colors (one per heading level, `h1`–`h6`); `wikilink` and `quote_bar` are independent of each other and of `heading` — include only the ones you want to override.
+
+Use **`View > Theme > Reload Custom Themes`** to pick up a new or edited file without restarting the app. A theme file that fails to parse, has an invalid color, or whose `id` collides with an already-loaded theme (built-in or another custom one — whichever loaded first wins) is skipped with an error message rather than stopping other themes from loading. If the theme you currently have active stops resolving after a reload (for instance, you just introduced a mistake into the file you're editing), tachylite falls back to the default appearance rather than leaving a stale palette applied with nothing in the menu showing as selected.
 
 ## Keyboard Shortcuts
 
@@ -319,7 +353,7 @@ Two shortcuts can never overlap — rebinding one to a combo another action alre
 
 ## Settings
 
-Settings are stored as `tachylite.toml` in the platform's config directory (the same base path as the global plugins folder — see [Plugins](#plugins)). Available in **`File > Settings`**:
+Settings are stored as `tachylite.toml` in the platform's config directory (the same base path as the global plugins and custom-themes folders — see [Plugins](#plugins) and [Custom themes](#custom-themes)). Available in **`File > Settings`**:
 
 - **Reopen project on launch** — automatically reopens the last project you had open (off by default)
 - **Ensure Research and Trash folders exist in every project** — off by default; see [Projects](#projects)
