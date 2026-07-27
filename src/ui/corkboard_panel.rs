@@ -66,63 +66,71 @@ fn show_card(
         .show(ui, |ui| {
             ui.set_width(220.0);
 
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("\u{2193}").clicked() && index + 1 < count {
-                        event = Some(CorkboardEvent::MoveCard {
-                            id: card.id,
-                            new_index: index + 1,
-                        });
-                    }
-                    if ui.small_button("\u{2191}").clicked() && index > 0 {
-                        event = Some(CorkboardEvent::MoveCard {
-                            id: card.id,
-                            new_index: index - 1,
-                        });
-                    }
-                    let title = if card.scene_number.is_empty() {
-                        "Untitled scene".to_string()
-                    } else {
-                        format!("Scene {}", card.scene_number)
-                    };
-                    ui.strong(title);
+            // `Frame::show`'s inner `Ui` inherits its parent's layout rather than
+            // defaulting to one — since `show_card` is called from inside `show`'s
+            // `horizontal_wrapped`, everything below would otherwise be laid out as
+            // wrapped inline items (like flowing text) instead of a vertical stack,
+            // garbling the card's contents. Forcing a vertical layout here is what
+            // actually makes this a card rather than a run of wrapped widgets.
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Down").clicked() && index + 1 < count {
+                            event = Some(CorkboardEvent::MoveCard {
+                                id: card.id,
+                                new_index: index + 1,
+                            });
+                        }
+                        if ui.small_button("Up").clicked() && index > 0 {
+                            event = Some(CorkboardEvent::MoveCard {
+                                id: card.id,
+                                new_index: index - 1,
+                            });
+                        }
+                        let title = if card.scene_number.is_empty() {
+                            "Untitled scene".to_string()
+                        } else {
+                            format!("Scene {}", card.scene_number)
+                        };
+                        ui.strong(title);
+                    });
                 });
-            });
 
-            if !card.alpha_point.is_empty() {
-                ui.label(egui::RichText::new(&card.alpha_point).italics().weak());
-            }
-            ui.add_space(4.0);
-            if !card.cause.is_empty() {
-                ui.label(format!("Cause: {}", truncate(&card.cause, 90)));
-            }
-            if !card.effect.is_empty() {
-                ui.label(format!("Effect: {}", truncate(&card.effect, 90)));
-            }
-
-            if let Some(stem) = &card.linked_document_stem {
-                let resolved = project.tree.find_document_by_stem(stem);
+                if !card.alpha_point.is_empty() {
+                    ui.label(egui::RichText::new(&card.alpha_point).italics().weak());
+                }
                 ui.add_space(4.0);
-                let label = match resolved {
-                    Some(_) => format!("\u{1F517} {stem}"),
-                    None => format!("\u{26A0} {stem} (not found)"),
-                };
-                let response = ui.small_button(label);
-                if response.clicked()
-                    && let Some(node) = resolved
-                {
-                    event = Some(CorkboardEvent::OpenLinkedDocument(node.path.clone()));
+                if !card.cause.is_empty() {
+                    ui.label(format!("Cause: {}", truncate(&card.cause, 90)));
                 }
-            }
+                if !card.effect.is_empty() {
+                    ui.label(format!("Effect: {}", truncate(&card.effect, 90)));
+                }
 
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if ui.button("Edit").clicked() {
-                    event = Some(CorkboardEvent::EditCard(card.id));
+                if let Some(stem) = &card.linked_document_stem {
+                    let resolved = project.tree.find_document_by_stem(stem);
+                    ui.add_space(4.0);
+                    let label = match resolved {
+                        Some(_) => format!("\u{1F517} {stem}"),
+                        None => format!("\u{26A0} {stem} (not found)"),
+                    };
+                    let response = ui.small_button(label);
+                    if response.clicked()
+                        && let Some(node) = resolved
+                    {
+                        event = Some(CorkboardEvent::OpenLinkedDocument(node.path.clone()));
+                    }
                 }
-                if ui.button("Delete").clicked() {
-                    event = Some(CorkboardEvent::DeleteCard(card.id));
-                }
+
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Edit").clicked() {
+                        event = Some(CorkboardEvent::EditCard(card.id));
+                    }
+                    if ui.button("Delete").clicked() {
+                        event = Some(CorkboardEvent::DeleteCard(card.id));
+                    }
+                });
             });
         });
 
