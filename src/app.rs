@@ -192,7 +192,8 @@ impl TachyliteApp {
     fn reload_plugins(&mut self) {
         let dirs = self.plugin_dirs();
         let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
-        let (engine, errors) = crate::plugins::load(&dir_refs);
+        let project_root = self.project.as_ref().map(|project| project.root.as_path());
+        let (engine, errors) = crate::plugins::load(&dir_refs, project_root);
         self.plugin_engine = engine;
         if !errors.is_empty() {
             self.status_message = Some(errors.join("; "));

@@ -1,8 +1,6 @@
 //! User-contributed plugins: `.rhai` scripts (the [Rhai](https://rhai.rs) embedded
-//! scripting language — pure Rust, and with none of Rhai's own no filesystem/
-//! network/process APIs registered here, so the sandbox is simply "we never expose
-//! one," not something this module has to build or maintain) that can register
-//! custom `:` commands and an `on_save` text-transform hook.
+//! scripting language — pure Rust, with no filesystem/network access of its own)
+//! that can register custom `:` commands and an `on_save` text-transform hook.
 //!
 //! A plugin's top-level script runs once at load time (see [`load`]) and is
 //! expected to call the host-provided `register_command(name, fn_name)` for each
@@ -11,18 +9,24 @@
 //! replaces the saved text, returning anything else (typically unit `()`) leaves
 //! it unchanged.
 //!
-//! Scripts talk to the app through three flat, `tachylite_`-prefixed host
-//! functions (deliberately not Rhai's module-namespacing system, which would add
-//! API surface with no benefit here): `tachylite_status(msg)`,
-//! `tachylite_document_text()`, and `tachylite_set_document_text(text)`.
+//! Scripts talk to the app through flat, `tachylite_`-prefixed host functions
+//! (deliberately not Rhai's module-namespacing system, which would add API
+//! surface with no benefit here): `tachylite_status(msg)`,
+//! `tachylite_document_text()`, `tachylite_set_document_text(text)`, and
+//! `tachylite_run_command(cmd, args)`, which shells out to an arbitrary program on
+//! `PATH`. That last one means a loaded plugin has the same reach as anything else
+//! run under the user's own account — the trust boundary is loading the plugin at
+//! all (see [`load`]'s docs on the global vs. project directories), not anything
+//! enforced per call.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::rc::Rc;
 
-use rhai::{AST, Dynamic, Engine, Scope};
+use rhai::{AST, Array, Dynamic, Engine, EvalAltResult, Map, Scope};
 
 /// The global, always-loaded plugin directory: `<config_dir>/tachylite/plugins`,
 /// the same base path `settings::config_file_path` uses for `tachylite.toml`.
@@ -74,7 +78,7 @@ impl Default for PluginEngine {
     /// value to construct itself with before it knows which directories to load
     /// from; `reload_plugins` replaces this immediately after.
     fn default() -> Self {
-        load(&[]).0
+        load(&[], None).0
     }
 }
 
@@ -170,6 +174,7 @@ impl PluginEngine {
 fn new_engine(
     io: &Rc<RefCell<PluginIo>>,
     pending_commands: &Rc<RefCell<Vec<(String, String)>>>,
+    working_dir: Option<PathBuf>,
 ) -> Engine {
     let mut engine = Engine::new();
 
@@ -199,7 +204,60 @@ fn new_engine(
             .push((name.to_string(), fn_name.to_string()));
     });
 
+    engine.register_fn(
+        "tachylite_run_command",
+        move |cmd: &str, args: Array| -> Result<Map, Box<EvalAltResult>> {
+            run_command(cmd, args, working_dir.as_deref())
+        },
+    );
+
     engine
+}
+
+/// Backs the `tachylite_run_command(cmd, args)` host function: runs `cmd` with
+/// `args` (each coerced to a string; a non-string element is a script bug, so that
+/// errors out like any other type mismatch) in `working_dir` (the open project's
+/// root, if any — `None` inherits the app's own working directory), waiting for it
+/// to exit. Returns a map with `stdout`/`stderr` (lossily decoded, untrimmed) and
+/// `exit_code`/`success`, mirroring `std::process::Output` rather than trying to
+/// interpret failure for the caller: a non-zero exit is a normal, scriptable
+/// outcome. Only spawning itself (e.g. `cmd` not found) raises a Rhai error, since
+/// that's the one failure a script can't meaningfully branch on.
+fn run_command(
+    cmd: &str,
+    args: Array,
+    working_dir: Option<&Path>,
+) -> Result<Map, Box<EvalAltResult>> {
+    let args = args
+        .into_iter()
+        .map(|arg| arg.into_string())
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut command = Command::new(cmd);
+    command.args(args);
+    if let Some(dir) = working_dir {
+        command.current_dir(dir);
+    }
+
+    let output = command
+        .output()
+        .map_err(|err| format!("couldn't run '{cmd}': {err}"))?;
+
+    let mut result = Map::new();
+    result.insert(
+        "stdout".into(),
+        String::from_utf8_lossy(&output.stdout).into_owned().into(),
+    );
+    result.insert(
+        "stderr".into(),
+        String::from_utf8_lossy(&output.stderr).into_owned().into(),
+    );
+    result.insert(
+        "exit_code".into(),
+        (output.status.code().unwrap_or(-1) as i64).into(),
+    );
+    result.insert("success".into(), output.status.success().into());
+    Ok(result)
 }
 
 /// Load every `*.rhai` file found directly inside each of `dirs` (flat, not
@@ -212,10 +270,15 @@ fn new_engine(
 /// register a `:` command another already-loaded plugin owns is skipped, with a
 /// message describing why appended to the returned list, rather than the whole
 /// load failing.
-pub fn load(dirs: &[&Path]) -> (PluginEngine, Vec<String>) {
+///
+/// `working_dir` is where `tachylite_run_command` runs a plugin's shell commands
+/// (the open project's root, or `None` to inherit the app's own working
+/// directory) — it doesn't affect where `.rhai` files themselves are read from,
+/// that's `dirs`.
+pub fn load(dirs: &[&Path], working_dir: Option<&Path>) -> (PluginEngine, Vec<String>) {
     let io = Rc::new(RefCell::new(PluginIo::default()));
     let pending_commands = Rc::new(RefCell::new(Vec::new()));
-    let engine = new_engine(&io, &pending_commands);
+    let engine = new_engine(&io, &pending_commands, working_dir.map(Path::to_path_buf));
 
     let mut plugins = Vec::new();
     let mut errors = Vec::new();
@@ -317,7 +380,7 @@ mod tests {
             "#,
         );
 
-        let (engine, errors) = load(&[dir.path()]);
+        let (engine, errors) = load(&[dir.path()], None);
         assert!(errors.is_empty(), "unexpected load errors: {errors:?}");
         assert_eq!(engine.command_names().collect::<Vec<_>>(), vec!["hello"]);
 
@@ -340,7 +403,7 @@ mod tests {
             "#,
         );
 
-        let (engine, _) = load(&[dir.path()]);
+        let (engine, _) = load(&[dir.path()], None);
         let (effects, result) = engine.run_command("shout", "", Some("hello there"));
         assert!(result.is_ok());
         assert_eq!(effects.set_document_text.as_deref(), Some("HELLO THERE"));
@@ -348,7 +411,7 @@ mod tests {
 
     #[test]
     fn running_an_unregistered_command_is_an_error() {
-        let (engine, _) = load(&[]);
+        let (engine, _) = load(&[], None);
         let (_, result) = engine.run_command("nope", "", None);
         assert!(result.is_err());
     }
@@ -373,7 +436,7 @@ mod tests {
             "#,
         );
 
-        let (engine, errors) = load(&[dir.path()]);
+        let (engine, errors) = load(&[dir.path()], None);
         assert!(errors.iter().any(|e| e.contains("already registered")));
 
         let (effects, result) = engine.run_command("dup", "", None);
@@ -394,7 +457,7 @@ mod tests {
             "#,
         );
 
-        let (engine, errors) = load(&[dir.path()]);
+        let (engine, errors) = load(&[dir.path()], None);
         assert!(errors.iter().any(|e| e.starts_with("broken:")));
         assert_eq!(engine.command_names().collect::<Vec<_>>(), vec!["ok"]);
     }
@@ -413,7 +476,7 @@ mod tests {
             "#,
         );
 
-        let (engine, errors) = load(&[dir.path()]);
+        let (engine, errors) = load(&[dir.path()], None);
         assert!(errors.is_empty());
         let (text, errors) = engine.run_on_save("  hello world  \n\n");
         assert!(errors.is_empty(), "errors: {errors:?}");
@@ -433,7 +496,7 @@ mod tests {
             "#,
         );
 
-        let (engine, _) = load(&[dir.path()]);
+        let (engine, _) = load(&[dir.path()], None);
         let (text, errors) = engine.run_on_save("unchanged");
         assert!(errors.is_empty());
         assert_eq!(text, "unchanged");
@@ -452,7 +515,7 @@ mod tests {
             "#,
         );
 
-        let (engine, _) = load(&[dir.path()]);
+        let (engine, _) = load(&[dir.path()], None);
         let (text, errors) = engine.run_on_save("unchanged");
         assert_eq!(text, "unchanged");
         assert!(errors.iter().any(|e| e.contains("boom")));
@@ -461,15 +524,109 @@ mod tests {
     #[test]
     fn a_directory_with_no_rhai_files_loads_cleanly() {
         let dir = tempfile::tempdir().unwrap();
-        let (engine, errors) = load(&[dir.path()]);
+        let (engine, errors) = load(&[dir.path()], None);
         assert!(errors.is_empty());
         assert_eq!(engine.command_names().count(), 0);
     }
 
     #[test]
     fn a_missing_directory_is_not_an_error() {
-        let (engine, errors) = load(&[Path::new("/does/not/exist")]);
+        let (engine, errors) = load(&[Path::new("/does/not/exist")], None);
         assert!(errors.is_empty());
         assert_eq!(engine.command_names().count(), 0);
+    }
+
+    #[test]
+    fn a_command_can_run_a_shell_command_and_read_its_output() {
+        let dir = tempfile::tempdir().unwrap();
+        write_plugin(
+            dir.path(),
+            "shell",
+            r#"
+                fn run(arg) {
+                    let result = tachylite_run_command("printf", ["hello %s", arg]);
+                    tachylite_status(result.stdout);
+                }
+                register_command("shell", "run");
+            "#,
+        );
+
+        let (engine, errors) = load(&[dir.path()], None);
+        assert!(errors.is_empty(), "unexpected load errors: {errors:?}");
+
+        let (effects, result) = engine.run_command("shell", "world", None);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(effects.status_message.as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn a_shell_command_reports_a_non_zero_exit_without_erroring() {
+        let dir = tempfile::tempdir().unwrap();
+        write_plugin(
+            dir.path(),
+            "shell",
+            r#"
+                fn run(arg) {
+                    let result = tachylite_run_command("false", []);
+                    tachylite_status(`exit=${result.exit_code} success=${result.success}`);
+                }
+                register_command("shell", "run");
+            "#,
+        );
+
+        let (engine, _) = load(&[dir.path()], None);
+        let (effects, result) = engine.run_command("shell", "", None);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            effects.status_message.as_deref(),
+            Some("exit=1 success=false")
+        );
+    }
+
+    #[test]
+    fn a_shell_command_that_cannot_spawn_is_a_script_error() {
+        let dir = tempfile::tempdir().unwrap();
+        write_plugin(
+            dir.path(),
+            "shell",
+            r#"
+                fn run(arg) {
+                    tachylite_run_command("definitely-not-a-real-binary", []);
+                }
+                register_command("shell", "run");
+            "#,
+        );
+
+        let (engine, _) = load(&[dir.path()], None);
+        let (_, result) = engine.run_command("shell", "", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_shell_command_runs_in_the_configured_working_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        write_plugin(
+            dir.path(),
+            "shell",
+            r#"
+                fn run(arg) {
+                    let result = tachylite_run_command("pwd", []);
+                    let out = result.stdout;
+                    out.trim();
+                    tachylite_status(out);
+                }
+                register_command("shell", "run");
+            "#,
+        );
+
+        let (engine, _) = load(&[dir.path()], Some(dir.path()));
+        let (effects, result) = engine.run_command("shell", "", None);
+        assert!(result.is_ok(), "{result:?}");
+        // Canonicalize both sides: on macOS `pwd` reports a `/private/...`-resolved
+        // path for a tempdir under a symlinked `/tmp`.
+        assert_eq!(
+            effects.status_message.map(PathBuf::from),
+            Some(dir.path().canonicalize().unwrap())
+        );
     }
 }
