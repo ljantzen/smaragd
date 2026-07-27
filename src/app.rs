@@ -40,6 +40,10 @@ enum PromptAction {
     NewFolder {
         parent: PathBuf,
     },
+    NewFileFromTemplate {
+        parent: PathBuf,
+        template_path: PathBuf,
+    },
     Rename {
         path: PathBuf,
     },
@@ -610,6 +614,10 @@ impl TachyliteApp {
             BinderEvent::Selected(path) => self.open_document(&path),
             BinderEvent::NewFile { parent } => self.prompt_new_file(parent),
             BinderEvent::NewFolder { parent } => self.prompt_new_folder(parent),
+            BinderEvent::NewFileFromTemplate {
+                parent,
+                template_path,
+            } => self.prompt_new_file_from_template(parent, template_path),
             BinderEvent::Rename { path } => self.prompt_rename(path),
             BinderEvent::Delete { path } => self.delete_node(&path),
             BinderEvent::Restore { path } => self.restore_node(&path),
@@ -727,6 +735,29 @@ impl TachyliteApp {
                 title: "New Folder".to_string(),
                 confirm_label: "Create".to_string(),
                 name: String::new(),
+            },
+        });
+    }
+
+    /// Open the "New From Template" name-prompt modal for a document to be created
+    /// inside `parent`, copying `template_path`'s content — pre-filled with the
+    /// template's own stem, same as `prompt_rename` pre-fills from the renamed
+    /// item's current name.
+    fn prompt_new_file_from_template(&mut self, parent: PathBuf, template_path: PathBuf) {
+        let name = template_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        self.prompt = Some(PendingPrompt {
+            action: PromptAction::NewFileFromTemplate {
+                parent,
+                template_path,
+            },
+            state: NamePromptState {
+                title: "New From Template".to_string(),
+                confirm_label: "Create".to_string(),
+                name,
             },
         });
     }
@@ -1155,6 +1186,10 @@ impl TachyliteApp {
         match pending.action {
             PromptAction::NewFile { parent } => self.create_document(&parent, name),
             PromptAction::NewFolder { parent } => self.create_folder(&parent, name),
+            PromptAction::NewFileFromTemplate {
+                parent,
+                template_path,
+            } => self.create_document_from_template(&parent, name, &template_path),
             PromptAction::Rename { path } => self.rename_node(&path, name),
             PromptAction::NewProject { location } => self.create_project(&location, name),
             PromptAction::GitCommit { push_after } => self.run_git_commit(ctx, name, push_after),
@@ -1267,6 +1302,16 @@ impl TachyliteApp {
         };
         if let Err(err) = project.create_folder(parent, name) {
             self.status_message = Some(format!("Couldn't create folder: {err}"));
+        }
+    }
+
+    fn create_document_from_template(&mut self, parent: &Path, name: &str, template_path: &Path) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        match project.create_document_from_template(parent, name, template_path) {
+            Ok(path) => self.open_document(&path),
+            Err(err) => self.status_message = Some(format!("Couldn't create file: {err}")),
         }
     }
 }

@@ -88,15 +88,18 @@ impl From<io::Error> for RestoreError {
     }
 }
 
-/// A Scrivener-Research/Trash-style role assigned to a folder, decoupled from its
-/// position in the tree. At most one folder project-wide holds a given role at a
-/// time. `Research` is currently just a marker — a forward-looking extension point
-/// for features (Compile, word-count rollups) that don't exist yet. `Trash` has a
-/// real behavior change: see [`Project::delete`].
+/// A Scrivener-Research/Trash/Templates-style role assigned to a folder, decoupled
+/// from its position in the tree. At most one folder project-wide holds a given role
+/// at a time. `Research` is currently just a marker — a forward-looking extension
+/// point for features (Compile, word-count rollups) that don't exist yet. `Trash` has
+/// a real behavior change: see [`Project::delete`]. `Templates`'s direct child
+/// documents become the candidate list for "New From Template": see
+/// [`Project::template_documents`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FolderRole {
     Research,
     Trash,
+    Templates,
 }
 
 /// How `move_node_with` should resolve a name collision in the destination folder —
@@ -399,14 +402,69 @@ impl Project {
     /// Create a new empty markdown document under `parent` (a folder within this
     /// project), record it at the end of that folder's manual order, and rescan.
     pub fn create_document(&mut self, parent: &Path, filename: &str) -> io::Result<PathBuf> {
+        self.write_new_document(parent, filename, "")
+    }
+
+    /// Create a new markdown document under `parent` whose initial content is a
+    /// verbatim copy of `template_path`'s (frontmatter included) — Scrivener-style
+    /// "New From Template". `template_path` itself is left untouched. Goes through
+    /// the same name-validation and collision-refusal path as `create_document`.
+    pub fn create_document_from_template(
+        &mut self,
+        parent: &Path,
+        filename: &str,
+        template_path: &Path,
+    ) -> io::Result<PathBuf> {
+        let contents = fs::read_to_string(template_path)?;
+        self.write_new_document(parent, filename, &contents)
+    }
+
+    fn write_new_document(
+        &mut self,
+        parent: &Path,
+        filename: &str,
+        contents: &str,
+    ) -> io::Result<PathBuf> {
         let filename = ensure_md_extension(filename);
         ensure_simple_child_name(&filename)?;
         let path = parent.join(&filename);
         ensure_does_not_exist(&path)?;
-        fs::write(&path, "")?;
+        fs::write(&path, contents)?;
         self.record_new_child(parent, &filename)?;
         self.rescan();
         Ok(path)
+    }
+
+    /// The documents (folders excluded) directly inside the project's designated
+    /// Templates folder, if any — the candidate list for "New From Template". Not
+    /// recursive: a template in a subfolder of the Templates folder isn't listed.
+    pub fn template_documents(&self) -> Vec<&BinderNode> {
+        let Some(path) = self.templates_path() else {
+            return Vec::new();
+        };
+        let Some(folder) = self.tree.find_by_path(&path) else {
+            return Vec::new();
+        };
+        folder
+            .children()
+            .iter()
+            .filter(|child| matches!(child.kind, BinderNodeKind::Document))
+            .collect()
+    }
+
+    /// The absolute path of the project's designated Templates folder, if any.
+    fn templates_path(&self) -> Option<PathBuf> {
+        self.meta
+            .folder_roles
+            .iter()
+            .find(|(_, role)| **role == FolderRole::Templates)
+            .map(|(key, _)| {
+                if key.is_empty() {
+                    self.root.clone()
+                } else {
+                    self.root.join(key)
+                }
+            })
     }
 
     /// Create a new empty folder under `parent`, record it, and rescan. Refuses to
@@ -1730,6 +1788,88 @@ mod tests {
         let result = project.create_folder(dir.path(), "Existing");
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn template_documents_is_empty_when_no_folder_holds_the_templates_role() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let templates = project.create_folder(dir.path(), "Templates").unwrap();
+        project.create_document(&templates, "Character").unwrap();
+
+        assert!(project.template_documents().is_empty());
+    }
+
+    #[test]
+    fn template_documents_lists_only_direct_child_documents_of_the_templates_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let templates = project.create_folder(dir.path(), "Templates").unwrap();
+        project
+            .set_folder_role(&templates, Some(FolderRole::Templates))
+            .unwrap();
+        project
+            .create_document(&templates, "Character Sheet")
+            .unwrap();
+        let nested = project.create_folder(&templates, "Nested").unwrap();
+        project.create_document(&nested, "Too Deep").unwrap();
+
+        let names: Vec<&str> = project
+            .template_documents()
+            .iter()
+            .map(|doc| doc.name.as_str())
+            .collect();
+
+        assert_eq!(names, vec!["Character Sheet.md"]);
+    }
+
+    #[test]
+    fn create_document_from_template_copies_content_including_frontmatter_verbatim() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let templates = project.create_folder(dir.path(), "Templates").unwrap();
+        project
+            .set_folder_role(&templates, Some(FolderRole::Templates))
+            .unwrap();
+        let template_path = project
+            .create_document(&templates, "Character Sheet")
+            .unwrap();
+        let contents = "---\ntype: Character\n---\n## Backstory\n\n";
+        fs::write(&template_path, contents).unwrap();
+
+        let new_path = project
+            .create_document_from_template(dir.path(), "Aria", &template_path)
+            .unwrap();
+
+        assert_eq!(fs::read_to_string(&new_path).unwrap(), contents);
+        assert_eq!(fs::read_to_string(&template_path).unwrap(), contents);
+    }
+
+    #[test]
+    fn create_document_from_template_refuses_to_overwrite_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let template_path = project.create_document(dir.path(), "Template").unwrap();
+        let existing = project.create_document(dir.path(), "Existing").unwrap();
+        fs::write(&existing, "original content").unwrap();
+
+        let result = project.create_document_from_template(dir.path(), "Existing", &template_path);
+
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "original content");
+    }
+
+    #[test]
+    fn create_document_from_template_refuses_a_name_that_escapes_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let template_path = project.create_document(dir.path(), "Template").unwrap();
+
+        let result =
+            project.create_document_from_template(dir.path(), "../escaped", &template_path);
+
+        assert!(result.is_err());
+        assert!(!dir.path().parent().unwrap().join("escaped.md").exists());
     }
 
     #[test]

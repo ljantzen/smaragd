@@ -13,6 +13,12 @@ pub enum BinderEvent {
     NewFolder {
         parent: PathBuf,
     },
+    /// A "New From Template" menu entry was picked: create a document under
+    /// `parent` whose initial content copies `template_path`.
+    NewFileFromTemplate {
+        parent: PathBuf,
+        template_path: PathBuf,
+    },
     Rename {
         path: PathBuf,
     },
@@ -46,6 +52,7 @@ fn role_suffix(role: Option<FolderRole>) -> &'static str {
     match role {
         Some(FolderRole::Research) => " (Research)",
         Some(FolderRole::Trash) => " (Trash)",
+        Some(FolderRole::Templates) => " (Templates)",
         None => "",
     }
 }
@@ -132,6 +139,20 @@ fn show_node(
                         parent: node.path.clone(),
                     });
                 }
+                let templates = project.template_documents();
+                if !templates.is_empty() {
+                    ui.menu_button("New From Template", |ui| {
+                        for template in templates {
+                            if ui.button(document_label(&template.name)).clicked() {
+                                *event = Some(BinderEvent::NewFileFromTemplate {
+                                    parent: node.path.clone(),
+                                    template_path: template.path.clone(),
+                                });
+                                ui.close();
+                            }
+                        }
+                    });
+                }
                 // Renaming, deleting, or assigning a role to the project's root
                 // folder isn't something the binder should offer — that's the
                 // project folder itself, currently open.
@@ -170,6 +191,16 @@ fn show_node(
                             *event = Some(BinderEvent::SetFolderRole {
                                 path: node.path.clone(),
                                 role: Some(FolderRole::Trash),
+                            });
+                            ui.close();
+                        }
+                        if ui
+                            .radio(role == Some(FolderRole::Templates), "Templates")
+                            .clicked()
+                        {
+                            *event = Some(BinderEvent::SetFolderRole {
+                                path: node.path.clone(),
+                                role: Some(FolderRole::Templates),
                             });
                             ui.close();
                         }
