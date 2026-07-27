@@ -51,6 +51,9 @@ pub enum Command {
     ColorTheme(Option<String>),
     Git(GitCommand),
     Find(String),
+    /// A `:` command a loaded plugin registered (name, argument) — `app.rs` looks
+    /// up which plugin owns `name` and runs it.
+    Plugin(String, String),
 }
 
 /// A `:git <subcommand>` action, modeled after the Obsidian Git plugin's core
@@ -87,8 +90,9 @@ const GIT_SUBCOMMANDS: &[&str] = &["enable", "commit", "push", "pull", "backup"]
 
 /// Parse a line of command-prompt input (a leading `:`, if the user typed one, is
 /// tolerated and ignored) into a `Command`, following Helix's short-name-first
-/// convention (`:w` before `:write`).
-fn parse_command(input: &str) -> Result<Command, String> {
+/// convention (`:w` before `:write`). `plugin_commands` is checked only once none
+/// of the built-in names match, so a plugin can never shadow a built-in command.
+fn parse_command(input: &str, plugin_commands: &[String]) -> Result<Command, String> {
     let input = input.trim().trim_start_matches(':').trim();
     if input.is_empty() {
         return Err("Empty command".to_string());
@@ -118,6 +122,9 @@ fn parse_command(input: &str) -> Result<Command, String> {
         "git" if !rest.is_empty() => parse_git_subcommand(rest),
         "git" => Err("Usage: :git enable|commit|push|pull|backup [message]".to_string()),
         "find" => Ok(Command::Find(rest.to_string())),
+        other if plugin_commands.iter().any(|c| c == other) => {
+            Ok(Command::Plugin(other.to_string(), rest.to_string()))
+        }
         other => Err(format!("Unknown command: {other}")),
     }
 }
@@ -163,9 +170,17 @@ const MAX_SUGGESTIONS: usize = 8;
 /// Completion candidates for the current input. Empty for commands that take
 /// freeform text (`:new`, `:find`) or none at all (`:w`, `:q`, `:wq`) — there's
 /// nothing sensible to suggest there.
-fn completions<'a>(input: &str, note_titles: &'a [String]) -> Vec<&'a str> {
+fn completions<'a>(
+    input: &str,
+    note_titles: &'a [String],
+    plugin_commands: &'a [String],
+) -> Vec<&'a str> {
     let mut matches = match completion_target(input) {
-        CompletionTarget::CommandName => filter_candidates(COMMAND_NAMES, input),
+        CompletionTarget::CommandName => {
+            let mut matches = filter_candidates(COMMAND_NAMES, input);
+            matches.extend(filter_candidates(plugin_commands, input));
+            matches
+        }
         CompletionTarget::Argument {
             command: "o" | "open",
             query,
@@ -243,6 +258,7 @@ pub fn show(
     ctx: &egui::Context,
     state: &mut CommandPromptState,
     note_titles: &[String],
+    plugin_commands: &[String],
 ) -> Option<CommandPromptEvent> {
     if !state.open {
         return None;
@@ -251,7 +267,7 @@ pub fn show(
     let mut event = None;
     let mut close = false;
 
-    let candidates = completions(&state.input, note_titles);
+    let candidates = completions(&state.input, note_titles, plugin_commands);
     if !candidates.is_empty() {
         state.selected = state.selected.min(candidates.len() - 1);
     }
@@ -286,7 +302,7 @@ pub fn show(
                 state.focus_requested = false;
             }
             if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                event = Some(match parse_command(&state.input) {
+                event = Some(match parse_command(&state.input, plugin_commands) {
                     Ok(command) => CommandPromptEvent::Run(command),
                     Err(err) => CommandPromptEvent::Error(err),
                 });
@@ -324,25 +340,25 @@ mod tests {
 
     #[test]
     fn parses_short_and_long_save() {
-        assert!(matches!(parse_command("w"), Ok(Command::Save)));
-        assert!(matches!(parse_command("write"), Ok(Command::Save)));
+        assert!(matches!(parse_command("w", &[]), Ok(Command::Save)));
+        assert!(matches!(parse_command("write", &[]), Ok(Command::Save)));
     }
 
     #[test]
     fn parses_short_and_long_quit() {
-        assert!(matches!(parse_command("q"), Ok(Command::Quit)));
-        assert!(matches!(parse_command("quit"), Ok(Command::Quit)));
+        assert!(matches!(parse_command("q", &[]), Ok(Command::Quit)));
+        assert!(matches!(parse_command("quit", &[]), Ok(Command::Quit)));
     }
 
     #[test]
     fn parses_save_and_quit_aliases() {
-        assert!(matches!(parse_command("wq"), Ok(Command::SaveAndQuit)));
-        assert!(matches!(parse_command("x"), Ok(Command::SaveAndQuit)));
+        assert!(matches!(parse_command("wq", &[]), Ok(Command::SaveAndQuit)));
+        assert!(matches!(parse_command("x", &[]), Ok(Command::SaveAndQuit)));
     }
 
     #[test]
     fn parses_open_with_a_multi_word_title() {
-        match parse_command("open Opening Scene") {
+        match parse_command("open Opening Scene", &[]) {
             Ok(Command::Open(title)) => assert_eq!(title, "Opening Scene"),
             other => panic!("expected Command::Open, got {}", describe(&other)),
         }
@@ -350,13 +366,13 @@ mod tests {
 
     #[test]
     fn open_without_a_title_is_an_error() {
-        assert!(parse_command("open").is_err());
-        assert!(parse_command("o").is_err());
+        assert!(parse_command("open", &[]).is_err());
+        assert!(parse_command("o", &[]).is_err());
     }
 
     #[test]
     fn parses_new_with_a_title() {
-        match parse_command("new Chapter 2") {
+        match parse_command("new Chapter 2", &[]) {
             Ok(Command::New(title)) => assert_eq!(title, "Chapter 2"),
             other => panic!("expected Command::New, got {}", describe(&other)),
         }
@@ -364,34 +380,34 @@ mod tests {
 
     #[test]
     fn new_without_a_title_is_an_error() {
-        assert!(parse_command("new").is_err());
+        assert!(parse_command("new", &[]).is_err());
     }
 
     #[test]
     fn parses_dmode_choices() {
         assert!(matches!(
-            parse_command("dmode dark"),
+            parse_command("dmode dark", &[]),
             Ok(Command::DarkMode(DarkModeChoice::Dark))
         ));
         assert!(matches!(
-            parse_command("dmode light"),
+            parse_command("dmode light", &[]),
             Ok(Command::DarkMode(DarkModeChoice::Light))
         ));
         assert!(matches!(
-            parse_command("dmode system"),
+            parse_command("dmode system", &[]),
             Ok(Command::DarkMode(DarkModeChoice::System))
         ));
     }
 
     #[test]
     fn dmode_with_an_invalid_argument_is_an_error() {
-        assert!(parse_command("dmode neon").is_err());
-        assert!(parse_command("dmode").is_err());
+        assert!(parse_command("dmode neon", &[]).is_err());
+        assert!(parse_command("dmode", &[]).is_err());
     }
 
     #[test]
     fn parses_theme_by_id() {
-        match parse_command("theme dracula") {
+        match parse_command("theme dracula", &[]) {
             Ok(Command::ColorTheme(Some(id))) => assert_eq!(id, "dracula"),
             other => panic!("expected Command::ColorTheme, got {}", describe(&other)),
         }
@@ -399,7 +415,7 @@ mod tests {
 
     #[test]
     fn theme_id_is_lowercased() {
-        match parse_command("theme Dracula") {
+        match parse_command("theme Dracula", &[]) {
             Ok(Command::ColorTheme(Some(id))) => assert_eq!(id, "dracula"),
             other => panic!("expected Command::ColorTheme, got {}", describe(&other)),
         }
@@ -408,32 +424,32 @@ mod tests {
     #[test]
     fn parses_theme_default_as_none() {
         assert!(matches!(
-            parse_command("theme default"),
+            parse_command("theme default", &[]),
             Ok(Command::ColorTheme(None))
         ));
         assert!(matches!(
-            parse_command("theme Default"),
+            parse_command("theme Default", &[]),
             Ok(Command::ColorTheme(None))
         ));
     }
 
     #[test]
     fn theme_without_a_name_is_an_error() {
-        assert!(parse_command("theme").is_err());
+        assert!(parse_command("theme", &[]).is_err());
     }
 
     #[test]
     fn parses_git_enable_push_pull() {
         assert!(matches!(
-            parse_command("git enable"),
+            parse_command("git enable", &[]),
             Ok(Command::Git(GitCommand::Enable))
         ));
         assert!(matches!(
-            parse_command("git push"),
+            parse_command("git push", &[]),
             Ok(Command::Git(GitCommand::Push))
         ));
         assert!(matches!(
-            parse_command("git pull"),
+            parse_command("git pull", &[]),
             Ok(Command::Git(GitCommand::Pull))
         ));
     }
@@ -441,14 +457,14 @@ mod tests {
     #[test]
     fn parses_git_commit_without_a_message_as_none() {
         assert!(matches!(
-            parse_command("git commit"),
+            parse_command("git commit", &[]),
             Ok(Command::Git(GitCommand::Commit(None)))
         ));
     }
 
     #[test]
     fn parses_git_commit_with_an_inline_message() {
-        match parse_command("git commit fixed typo") {
+        match parse_command("git commit fixed typo", &[]) {
             Ok(Command::Git(GitCommand::Commit(Some(message)))) => {
                 assert_eq!(message, "fixed typo");
             }
@@ -462,10 +478,10 @@ mod tests {
     #[test]
     fn parses_git_backup_with_and_without_a_message() {
         assert!(matches!(
-            parse_command("git backup"),
+            parse_command("git backup", &[]),
             Ok(Command::Git(GitCommand::Backup(None)))
         ));
-        match parse_command("git backup end of day") {
+        match parse_command("git backup end of day", &[]) {
             Ok(Command::Git(GitCommand::Backup(Some(message)))) => {
                 assert_eq!(message, "end of day");
             }
@@ -478,12 +494,12 @@ mod tests {
 
     #[test]
     fn git_without_a_subcommand_is_an_error() {
-        assert!(parse_command("git").is_err());
+        assert!(parse_command("git", &[]).is_err());
     }
 
     #[test]
     fn git_with_an_unknown_subcommand_is_an_error_naming_it() {
-        match parse_command("git frobnicate") {
+        match parse_command("git frobnicate", &[]) {
             Err(msg) => assert!(msg.contains("frobnicate")),
             Ok(_) => panic!("expected an error"),
         }
@@ -493,46 +509,80 @@ mod tests {
     fn git_subcommand_completes_against_known_subcommands() {
         // Prefix match ("commit") ranks ahead of a mere substring match ("backup"
         // contains "c"), each group sorted alphabetically.
-        assert_eq!(completions("git c", &[]), vec!["commit", "backup"]);
-        assert_eq!(completions("git pu", &[]), vec!["pull", "push"]);
+        assert_eq!(completions("git c", &[], &[]), vec!["commit", "backup"]);
+        assert_eq!(completions("git pu", &[], &[]), vec!["pull", "push"]);
     }
 
     #[test]
     fn git_message_argument_has_no_completions() {
-        assert!(completions("git commit fix", &[]).is_empty());
+        assert!(completions("git commit fix", &[], &[]).is_empty());
     }
 
     #[test]
     fn parses_find_with_and_without_a_query() {
-        match parse_command("find needle") {
+        match parse_command("find needle", &[]) {
             Ok(Command::Find(query)) => assert_eq!(query, "needle"),
             other => panic!("expected Command::Find, got {}", describe(&other)),
         }
-        assert!(matches!(parse_command("find"), Ok(Command::Find(query)) if query.is_empty()));
+        assert!(matches!(parse_command("find", &[]), Ok(Command::Find(query)) if query.is_empty()));
     }
 
     #[test]
     fn a_leading_colon_is_tolerated() {
-        assert!(matches!(parse_command(":w"), Ok(Command::Save)));
+        assert!(matches!(parse_command(":w", &[]), Ok(Command::Save)));
     }
 
     #[test]
     fn surrounding_whitespace_is_trimmed() {
-        assert!(matches!(parse_command("  w  "), Ok(Command::Save)));
+        assert!(matches!(parse_command("  w  ", &[]), Ok(Command::Save)));
     }
 
     #[test]
     fn empty_input_is_an_error() {
-        assert!(parse_command("").is_err());
-        assert!(parse_command("   ").is_err());
+        assert!(parse_command("", &[]).is_err());
+        assert!(parse_command("   ", &[]).is_err());
     }
 
     #[test]
     fn unknown_command_is_an_error_naming_it() {
-        match parse_command("frobnicate") {
+        match parse_command("frobnicate", &[]) {
             Err(msg) => assert!(msg.contains("frobnicate")),
             Ok(_) => panic!("expected an error"),
         }
+    }
+
+    #[test]
+    fn a_registered_plugin_command_parses_with_its_argument() {
+        let plugins = vec!["wordcount".to_string()];
+        match parse_command("wordcount", &plugins) {
+            Ok(Command::Plugin(name, arg)) => {
+                assert_eq!(name, "wordcount");
+                assert_eq!(arg, "");
+            }
+            other => panic!("expected Command::Plugin, got {}", describe(&other)),
+        }
+        match parse_command("wordcount extra text", &plugins) {
+            Ok(Command::Plugin(name, arg)) => {
+                assert_eq!(name, "wordcount");
+                assert_eq!(arg, "extra text");
+            }
+            other => panic!("expected Command::Plugin, got {}", describe(&other)),
+        }
+    }
+
+    #[test]
+    fn a_built_in_command_name_is_never_shadowed_by_a_plugin() {
+        // "find" is a real built-in — a plugin claiming the same name must lose.
+        let plugins = vec!["find".to_string()];
+        assert!(matches!(
+            parse_command("find needle", &plugins),
+            Ok(Command::Find(query)) if query == "needle"
+        ));
+    }
+
+    #[test]
+    fn an_unregistered_name_is_still_an_unknown_command_error() {
+        assert!(parse_command("wordcount", &[]).is_err());
     }
 
     fn describe(result: &Result<Command, String>) -> &'static str {
@@ -546,49 +596,52 @@ mod tests {
     fn command_name_completions_are_prefix_filtered() {
         // Prefix matches ("wq", "write") rank ahead of a mere substring match
         // ("new" contains "w"), each group sorted alphabetically.
-        assert_eq!(completions("w", &[]), vec!["wq", "write", "new"]);
+        assert_eq!(completions("w", &[], &[]), vec!["wq", "write", "new"]);
         // Likewise "dmode" (prefix) ahead of "find" (contains "d").
-        assert_eq!(completions("d", &[]), vec!["dmode", "find"]);
+        assert_eq!(completions("d", &[], &[]), vec!["dmode", "find"]);
     }
 
     #[test]
     fn command_name_completions_still_include_a_fully_typed_exact_match() {
         // "quit" is itself the only candidate once you've typed the whole word.
-        assert_eq!(completions("quit", &[]), vec!["quit"]);
+        assert_eq!(completions("quit", &[], &[]), vec!["quit"]);
     }
 
     #[test]
     fn open_argument_completes_against_note_titles() {
         let titles = vec!["Opening Scene".to_string(), "Backstory".to_string()];
-        assert_eq!(completions("open open", &titles), vec!["Opening Scene"]);
-        assert_eq!(completions("o open", &titles), vec!["Opening Scene"]);
+        assert_eq!(
+            completions("open open", &titles, &[]),
+            vec!["Opening Scene"]
+        );
+        assert_eq!(completions("o open", &titles, &[]), vec!["Opening Scene"]);
     }
 
     #[test]
     fn open_argument_completions_are_capped_at_max_suggestions() {
         let titles: Vec<String> = (0..20).map(|n| format!("Note {n:02}")).collect();
-        let candidates = completions("open Note", &titles);
+        let candidates = completions("open Note", &titles, &[]);
         assert_eq!(candidates.len(), MAX_SUGGESTIONS);
     }
 
     #[test]
     fn dmode_argument_completes_against_the_fixed_choices() {
-        assert_eq!(completions("dmode d", &[]), vec!["dark"]);
+        assert_eq!(completions("dmode d", &[], &[]), vec!["dark"]);
     }
 
     #[test]
     fn theme_argument_completes_against_known_theme_ids() {
-        assert_eq!(completions("theme drac", &[]), vec!["dracula"]);
+        assert_eq!(completions("theme drac", &[], &[]), vec!["dracula"]);
     }
 
     #[test]
     fn theme_argument_completion_includes_default() {
-        assert_eq!(completions("theme def", &[]), vec!["default"]);
+        assert_eq!(completions("theme def", &[], &[]), vec!["default"]);
     }
 
     #[test]
     fn theme_argument_completion_with_an_empty_query_is_capped_and_leads_with_default() {
-        let candidates = completions("theme ", &[]);
+        let candidates = completions("theme ", &[], &[]);
         assert_eq!(candidates.len(), MAX_SUGGESTIONS);
         assert_eq!(candidates[0], "default");
     }
@@ -596,13 +649,13 @@ mod tests {
     #[test]
     fn new_and_find_arguments_have_no_completions() {
         let titles = vec!["Opening Scene".to_string()];
-        assert!(completions("new Open", &titles).is_empty());
-        assert!(completions("find Open", &titles).is_empty());
+        assert!(completions("new Open", &titles, &[]).is_empty());
+        assert!(completions("find Open", &titles, &[]).is_empty());
     }
 
     #[test]
     fn unrecognized_command_has_no_argument_completions() {
-        assert!(completions("frobnicate a", &[]).is_empty());
+        assert!(completions("frobnicate a", &[], &[]).is_empty());
     }
 
     #[test]

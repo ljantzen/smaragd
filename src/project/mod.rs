@@ -152,6 +152,15 @@ pub struct ProjectMeta {
     /// block a later manual "Enable Git Support" from the Versions menu.
     #[serde(default)]
     pub git_prompted: bool,
+    /// Whether this project's own `.tachylite/plugins/*.rhai` scripts are loaded,
+    /// in addition to the always-loaded global plugin directory. Off by default and
+    /// requires an explicit action to turn on (see `Project::set_plugins_enabled`)
+    /// — unlike a global plugin (which the user deliberately placed themselves), a
+    /// project's own plugin folder could arrive via a shared/pulled git repo, so
+    /// loading it without consent would be silent code execution from someone
+    /// else's content, not just a convenience default.
+    #[serde(default)]
+    pub plugins_enabled: bool,
 }
 
 /// A single Lisa Cron "Story Genius" scene card: a structured, four-quadrant
@@ -363,6 +372,15 @@ impl Project {
     /// Versions menu's "Enable Git Support" item.
     pub fn decline_git_support(&mut self) -> io::Result<()> {
         self.meta.git_prompted = true;
+        self.save_metadata()
+    }
+
+    /// Turn this project's own `.tachylite/plugins/*.rhai` on or off (the global
+    /// plugin directory always loads regardless — see `plugins_enabled`'s doc
+    /// comment). No "prompted" flag to go with it, unlike git support: there's no
+    /// auto-detection to avoid re-asking about, just an explicit menu action.
+    pub fn set_plugins_enabled(&mut self, enabled: bool) -> io::Result<()> {
+        self.meta.plugins_enabled = enabled;
         self.save_metadata()
     }
 
@@ -1102,6 +1120,24 @@ mod tests {
         assert!(meta.story_cards.is_empty());
         assert!(!meta.git_enabled);
         assert!(!meta.git_prompted);
+        assert!(!meta.plugins_enabled);
+    }
+
+    #[test]
+    fn set_plugins_enabled_persists_across_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        assert!(!project.meta.plugins_enabled);
+
+        project.set_plugins_enabled(true).unwrap();
+        assert!(project.meta.plugins_enabled);
+        let reloaded = Project::load_from_folder(dir.path()).unwrap();
+        assert!(reloaded.meta.plugins_enabled);
+
+        project.set_plugins_enabled(false).unwrap();
+        assert!(!project.meta.plugins_enabled);
+        let reloaded = Project::load_from_folder(dir.path()).unwrap();
+        assert!(!reloaded.meta.plugins_enabled);
     }
 
     #[test]

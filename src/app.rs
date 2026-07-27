@@ -93,6 +93,10 @@ pub struct TachyliteApp {
         GitOperation,
         std::sync::mpsc::Receiver<Result<(), crate::git::GitError>>,
     )>,
+    /// Loaded `.rhai` plugins — the global directory always, plus the open
+    /// project's own `.tachylite/plugins` if it has opted in (see
+    /// `ProjectMeta::plugins_enabled`). Rebuilt by `reload_plugins`.
+    plugin_engine: crate::plugins::PluginEngine,
 }
 
 /// Which of the two network-bound git actions a `pending_git` background thread is
@@ -144,6 +148,7 @@ impl TachyliteApp {
             command_prompt: CommandPromptState::default(),
             metadata_draft: None,
             pending_git: None,
+            plugin_engine: crate::plugins::PluginEngine::default(),
         };
 
         if let Some(id) = &app.settings.color_theme
@@ -152,6 +157,12 @@ impl TachyliteApp {
             crate::color_theme::apply(&cc.egui_ctx, theme);
         }
 
+        // Before `open_project` below, which — if the reopened project has its own
+        // plugins enabled — needs `reload_plugins` to pick up its directory too;
+        // calling it here first means global-only plugins are loaded even when
+        // there's no project to reopen.
+        app.reload_plugins();
+
         if app.settings.reopen_last_project
             && let Some(path) = app.settings.last_project_path.clone()
         {
@@ -159,6 +170,33 @@ impl TachyliteApp {
         }
 
         app
+    }
+
+    /// The plugin directories that currently apply: the global directory always,
+    /// plus the open project's own `.tachylite/plugins` if it has opted in.
+    fn plugin_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = crate::plugins::global_plugins_dir().into_iter().collect();
+        if let Some(project) = &self.project
+            && project.meta.plugins_enabled
+        {
+            dirs.push(project.root.join(".tachylite").join("plugins"));
+        }
+        dirs
+    }
+
+    /// Rebuild `plugin_engine` from whichever directories currently apply (see
+    /// `plugin_dirs`) — called on startup, whenever a project is opened, and from
+    /// the "Reload Plugins" menu item so a plugin author can iterate without
+    /// restarting the app. Any load errors (a script that failed to compile/run, a
+    /// `:` command name collision) become the status message.
+    fn reload_plugins(&mut self) {
+        let dirs = self.plugin_dirs();
+        let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+        let (engine, errors) = crate::plugins::load(&dir_refs);
+        self.plugin_engine = engine;
+        if !errors.is_empty() {
+            self.status_message = Some(errors.join("; "));
+        }
     }
 
     /// Open `path` as a project. Used for the automatic "reopen last project" path at
@@ -190,6 +228,7 @@ impl TachyliteApp {
         {
             self.status_message = Some(format!("Couldn't initialize git: {err}"));
         }
+        self.reload_plugins();
     }
 
     /// If git support is enabled for `project` but its `.git` directory is missing —
@@ -835,7 +874,7 @@ impl TachyliteApp {
                 };
             }
             ShortcutAction::Save => {
-                if let Err(err) = self.editor.save() {
+                if let Err(err) = self.save_editor() {
                     self.status_message = Some(format!("Save failed: {err}"));
                 }
             }
@@ -897,17 +936,37 @@ impl TachyliteApp {
         }
     }
 
+    /// Save the open document, first running every loaded plugin's `on_save` hook
+    /// over the buffer (see `plugins::PluginEngine::run_on_save`) — a hook that
+    /// errors just leaves the text as-is rather than blocking the save, so a
+    /// broken plugin can never stop the user from saving. Used by the explicit
+    /// save actions (`:w`/`Ctrl+S`, `:wq`) only; the focus-loss autosave in
+    /// `editor_panel.rs` and the save-before-switching-documents path inside
+    /// `EditorState::open` both stay plugin-agnostic (see `plugins.rs`'s v1 scope
+    /// note) rather than threading plugin awareness into those lower layers.
+    fn save_editor(&mut self) -> std::io::Result<()> {
+        let (transformed, errors) = self.plugin_engine.run_on_save(&self.editor.buffer);
+        if !errors.is_empty() {
+            self.status_message = Some(errors.join("; "));
+        }
+        if transformed != self.editor.buffer {
+            self.editor.buffer = transformed;
+            self.editor.mark_dirty();
+        }
+        self.editor.save()
+    }
+
     /// Run a command parsed from the `:` command prompt.
     fn execute_command(&mut self, ctx: &egui::Context, command: Command) {
         match command {
             Command::Save => {
-                if let Err(err) = self.editor.save() {
+                if let Err(err) = self.save_editor() {
                     self.status_message = Some(format!("Save failed: {err}"));
                 }
             }
             Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Command::SaveAndQuit => {
-                if let Err(err) = self.editor.save() {
+                if let Err(err) = self.save_editor() {
                     self.status_message = Some(format!("Save failed: {err}"));
                     return;
                 }
@@ -964,6 +1023,30 @@ impl TachyliteApp {
                 }
                 self.find_replace.request_open();
             }
+            Command::Plugin(name, arg) => self.run_plugin_command(&name, &arg),
+        }
+    }
+
+    /// Run a plugin-registered `:` command, giving it the open document's live
+    /// buffer to read via `tachylite_document_text()` and applying whatever
+    /// effects it produced (a status message, and/or a new buffer if it called
+    /// `tachylite_set_document_text`) back onto real app state. Never saves —
+    /// like any other edit, the user's own save action does that.
+    fn run_plugin_command(&mut self, name: &str, arg: &str) {
+        let document_open = self.editor.open_path.is_some();
+        let document_text = document_open.then_some(self.editor.buffer.as_str());
+        let (effects, result) = self.plugin_engine.run_command(name, arg, document_text);
+        if let Err(err) = result {
+            self.status_message = Some(err);
+            return;
+        }
+        // Only meaningful with a document open — a plugin can't fabricate one.
+        if document_open && let Some(text) = effects.set_document_text {
+            self.editor.buffer = text;
+            self.editor.mark_dirty();
+        }
+        if let Some(message) = effects.status_message {
+            self.status_message = Some(message);
         }
     }
 
@@ -1457,6 +1540,26 @@ impl eframe::App for TachyliteApp {
                     {
                         self.command_prompt.request_open();
                     }
+                    ui.separator();
+                    if ui.button("Reload Plugins").clicked() {
+                        self.reload_plugins();
+                    }
+                    let project_plugins_enabled = self
+                        .project
+                        .as_ref()
+                        .is_some_and(|project| project.meta.plugins_enabled);
+                    if self.project.is_some()
+                        && !project_plugins_enabled
+                        && ui.button("Enable Project Plugins").clicked()
+                    {
+                        if let Some(project) = &mut self.project
+                            && let Err(err) = project.set_plugins_enabled(true)
+                        {
+                            self.status_message =
+                                Some(format!("Couldn't enable project plugins: {err}"));
+                        }
+                        self.reload_plugins();
+                    }
                 });
                 egui::containers::menu::MenuButton::new("Versions").ui(ui, |ui| {
                     let git_enabled = self
@@ -1530,9 +1633,17 @@ impl eframe::App for TachyliteApp {
                 .as_ref()
                 .map(|project| project.tree.document_names())
                 .unwrap_or_default();
-            if let Some(event) =
-                ui::command_prompt::show(ui.ctx(), &mut self.command_prompt, &note_titles)
-            {
+            let plugin_commands: Vec<String> = self
+                .plugin_engine
+                .command_names()
+                .map(str::to_string)
+                .collect();
+            if let Some(event) = ui::command_prompt::show(
+                ui.ctx(),
+                &mut self.command_prompt,
+                &note_titles,
+                &plugin_commands,
+            ) {
                 let ctx = ui.ctx().clone();
                 match event {
                     CommandPromptEvent::Run(command) => self.execute_command(&ctx, command),

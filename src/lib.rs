@@ -5,6 +5,7 @@ pub mod editor;
 pub mod frontmatter;
 pub mod git;
 pub mod markdown;
+pub mod plugins;
 pub mod project;
 pub mod search;
 pub mod settings;
