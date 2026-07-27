@@ -127,6 +127,29 @@ impl ShortcutAction {
         Self::ALL.iter().copied().find(|action| action.id() == id)
     }
 
+    /// Which functional group this action belongs to in the Settings window's
+    /// shortcuts list — purely a display grouping (see [`ShortcutCategory`]),
+    /// independent of `ALL`'s declaration order.
+    pub fn category(&self) -> ShortcutCategory {
+        match self {
+            Self::OpenSettings | Self::Exit => ShortcutCategory::Application,
+            Self::NewProject | Self::OpenProject => ShortcutCategory::Project,
+            Self::NewFile | Self::NewFolder | Self::Rename | Self::Delete | Self::Restore => {
+                ShortcutCategory::FilesAndFolders
+            }
+            Self::Save | Self::FindReplace | Self::EditMetadata | Self::ActivateWikilink => {
+                ShortcutCategory::Editing
+            }
+            Self::TogglePreview
+            | Self::ToggleCorkboard
+            | Self::ToggleBacklinks
+            | Self::ToggleDarkMode
+            | Self::ToggleFullscreen => ShortcutCategory::View,
+            Self::GitCommit | Self::GitPush => ShortcutCategory::Git,
+            Self::CommandPrompt => ShortcutCategory::Tools,
+        }
+    }
+
     /// The keybinding this action starts out with in a fresh `ShortcutMap`. All use
     /// `Modifiers::COMMAND` (Ctrl on Windows/Linux, Cmd on Mac) rather than raw
     /// `Modifiers::CTRL`, matching the app's one pre-existing shortcut (Ctrl+S).
@@ -170,6 +193,45 @@ impl ShortcutAction {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::M)
             }
             Self::ActivateWikilink => KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter),
+        }
+    }
+}
+
+/// A functional grouping of `ShortcutAction`s, used to organize the Settings
+/// window's shortcuts list — see `ShortcutAction::category`. Purely a display
+/// concern: it has no effect on persistence, dispatch, or `ShortcutAction::ALL`'s
+/// own order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutCategory {
+    Application,
+    Project,
+    FilesAndFolders,
+    Editing,
+    View,
+    Git,
+    Tools,
+}
+
+impl ShortcutCategory {
+    pub const ALL: &'static [ShortcutCategory] = &[
+        Self::Application,
+        Self::Project,
+        Self::FilesAndFolders,
+        Self::Editing,
+        Self::View,
+        Self::Git,
+        Self::Tools,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Application => "Application",
+            Self::Project => "Project",
+            Self::FilesAndFolders => "Files & Folders",
+            Self::Editing => "Editing",
+            Self::View => "View",
+            Self::Git => "Git",
+            Self::Tools => "Tools",
         }
     }
 }
@@ -327,6 +389,19 @@ mod tests {
                 map.get(*action).is_some(),
                 "{} has no default",
                 action.label()
+            );
+        }
+    }
+
+    #[test]
+    fn every_action_categorizes_into_a_category_listed_in_shortcut_category_all() {
+        for action in ShortcutAction::ALL {
+            assert!(
+                ShortcutCategory::ALL.contains(&action.category()),
+                "{}'s category {:?} is missing from ShortcutCategory::ALL, so it would \
+                 be invisible in the Settings window",
+                action.label(),
+                action.category()
             );
         }
     }
