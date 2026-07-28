@@ -29,10 +29,19 @@ pub enum BinderEvent {
     Restore {
         path: PathBuf,
     },
-    /// A file or folder was dragged onto a different folder and dropped there.
+    /// A file or folder was dragged onto a different folder's header and
+    /// dropped there — always lands at the end of that folder.
     MoveItem {
         path: PathBuf,
         new_parent: PathBuf,
+    },
+    /// A file or folder was dragged and dropped directly onto a document row —
+    /// moved to that document's parent folder (which may be the dragged item's
+    /// own current parent — a pure reorder) and positioned immediately before
+    /// it, unlike `MoveItem`'s always-append-at-the-end.
+    MoveItemBefore {
+        path: PathBuf,
+        before: PathBuf,
     },
     SetFolderRole {
         path: PathBuf,
@@ -453,6 +462,25 @@ fn show_node(
             // Drag source: see the matching folder-header handling above for the
             // other draggable case.
             response.dnd_set_drag_payload(node.path.clone());
+            // Drop target: unlike a folder header (which always appends to the
+            // end), dropping directly onto a document row reorders — the dragged
+            // item lands immediately before this one, whether it's a sibling
+            // (a pure reorder) or from a different folder (a move, positioned
+            // rather than appended) — see `Project::move_item_before`.
+            if let Some(dragged_path) = response.dnd_release_payload::<PathBuf>() {
+                *event = Some(BinderEvent::MoveItemBefore {
+                    path: (*dragged_path).clone(),
+                    before: node.path.clone(),
+                });
+            }
+            if response.dnd_hover_payload::<PathBuf>().is_some() {
+                ui.painter().rect_stroke(
+                    response.rect,
+                    2.0,
+                    egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
+                    egui::StrokeKind::Inside,
+                );
+            }
             response.context_menu(|ui| {
                 if ui.button("Rename").clicked() {
                     *event = Some(BinderEvent::Rename {

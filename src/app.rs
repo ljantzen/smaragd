@@ -1069,6 +1069,7 @@ impl TachyliteApp {
             BinderEvent::SetFolderRole { path, role } => self.set_folder_role(&path, role),
             BinderEvent::EmptyTrash { path } => self.empty_trash_folder(&path),
             BinderEvent::MoveItem { path, new_parent } => self.move_item(&path, &new_parent),
+            BinderEvent::MoveItemBefore { path, before } => self.move_item_before(&path, &before),
             BinderEvent::Export { path } => self.open_export(path),
         }
     }
@@ -1258,6 +1259,31 @@ impl TachyliteApp {
             return;
         };
         match project.move_item(path, new_parent) {
+            Ok(new_path) => {
+                let rebase = |p: &Path| -> Option<PathBuf> {
+                    p.strip_prefix(path).ok().map(|rest| new_path.join(rest))
+                };
+                if let Some(rebased) = self.selected_path.as_deref().and_then(rebase) {
+                    self.selected_path = Some(rebased);
+                }
+                if let Some(rebased) = self.editor.open_path.as_deref().and_then(rebase) {
+                    self.editor.open_path = Some(rebased);
+                }
+            }
+            Err(err) => {
+                self.status_message = Some(format!("Couldn't move {}: {err}", path.display()));
+            }
+        }
+    }
+
+    /// Same rebase-selected/open-path logic as `move_item`, for a document or
+    /// folder dropped directly onto another document row (see
+    /// `Project::move_item_before`).
+    fn move_item_before(&mut self, path: &Path, before: &Path) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        match project.move_item_before(path, before) {
             Ok(new_path) => {
                 let rebase = |p: &Path| -> Option<PathBuf> {
                     p.strip_prefix(path).ok().map(|rest| new_path.join(rest))

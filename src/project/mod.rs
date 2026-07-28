@@ -736,6 +736,13 @@ impl Project {
     /// renaming around a collision would be surprising. Also refuses moving a folder
     /// into itself or one of its own subfolders, which `fs::rename` would otherwise
     /// reject with a much less legible OS error.
+    ///
+    /// Dropping an item onto its *own* parent folder's header (as opposed to a
+    /// sibling document row — see `move_item_before` for that) is handled as a
+    /// special case: there's no actual filesystem move to make, just a
+    /// reposition to the end of that folder's order, since `move_node_with`'s
+    /// `NameCollision::Refuse` would otherwise reject this as a collision with
+    /// the item's own still-existing path.
     pub fn move_item(&mut self, path: &Path, new_parent: &Path) -> io::Result<PathBuf> {
         if new_parent.starts_with(path) {
             return Err(io::Error::new(
@@ -743,10 +750,105 @@ impl Project {
                 "can't move a folder into itself or one of its own subfolders",
             ));
         }
-        let dest = self.move_node_with(path, new_parent, NameCollision::Refuse)?;
+        let dest = if path.parent() == Some(new_parent) {
+            let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "path has no file name")
+            })?;
+            self.reposition_in_order(new_parent, name, None);
+            path.to_path_buf()
+        } else {
+            self.move_node_with(path, new_parent, NameCollision::Refuse)?
+        };
         self.save_metadata()?;
         self.rescan();
         Ok(dest)
+    }
+
+    /// Move `path` (a file or folder) to sit immediately before `before` among
+    /// `before`'s parent's children — used when something is dragged and dropped
+    /// directly onto another document row in the binder (as opposed to a folder
+    /// header, which always appends to the end — see `move_item`). Works whether
+    /// `before` is currently a sibling of `path` (a pure reorder) or in a
+    /// different folder (a move, positioned rather than appended). Refuses
+    /// moving an item before itself, or a folder into itself/one of its own
+    /// subfolders, same reasoning as `move_item`.
+    pub fn move_item_before(&mut self, path: &Path, before: &Path) -> io::Result<PathBuf> {
+        if path == before {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "can't move an item before itself",
+            ));
+        }
+        let new_parent = before
+            .parent()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "target has no parent"))?;
+        if new_parent.starts_with(path) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "can't move a folder into itself or one of its own subfolders",
+            ));
+        }
+
+        let dest = if path.parent() == Some(new_parent) {
+            path.to_path_buf()
+        } else {
+            self.move_node_with(path, new_parent, NameCollision::Refuse)?
+        };
+
+        let name = dest
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
+        let before_name = before.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "target has no file name")
+        })?;
+        self.reposition_in_order(new_parent, name, Some(before_name));
+
+        self.save_metadata()?;
+        self.rescan();
+        Ok(dest)
+    }
+
+    /// Remove `name` from `parent`'s child order and reinsert it immediately
+    /// before `before` — or at the end, if `before` is `None` or not found.
+    /// `before` is looked up *after* `name` is removed, so a `before` that
+    /// originally sat right after `name` in the list doesn't shift by one and
+    /// end up landing after it.
+    ///
+    /// Starts from `self.tree`'s current children for `parent` (still the
+    /// *pre-move* tree at this point — callers run this before `rescan()`),
+    /// not directly from `self.meta.node_order`'s entry: `node_order` is a
+    /// sparse override list — anything never explicitly reordered has no entry
+    /// at all, filled in by `apply_order`'s fallback (existing/alphabetical
+    /// order, sorted last) rather than being absent from the *displayed* list.
+    /// Computing the target index against that raw, possibly-incomplete list
+    /// previously let an untracked sibling's true position throw the result
+    /// off — e.g. dragging the last of 5 never-explicitly-reordered scenes
+    /// onto its neighbor landed it at the very top of the chapter instead of
+    /// where it was dropped, because the stored order only had one or two
+    /// tracked entries and the target's position among *those* wasn't its
+    /// real, currently-displayed position. `self.tree`'s children are always
+    /// the complete, already-`apply_order`-resolved list, so this can't happen
+    /// — and writing the full resulting list back (instead of just patching
+    /// the old sparse one) also fixes `parent`'s entry going forward.
+    fn reposition_in_order(&mut self, parent: &Path, name: &str, before: Option<&str>) {
+        let mut order: Vec<String> = self
+            .tree
+            .find_by_path(parent)
+            .map(|node| {
+                node.children()
+                    .iter()
+                    .map(|child| child.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        order.retain(|entry| entry != name);
+        let index = before
+            .and_then(|before_name| order.iter().position(|entry| entry == before_name))
+            .unwrap_or(order.len());
+        order.insert(index, name.to_string());
+        let parent_key = relative_key(&self.root, parent);
+        self.meta.node_order.insert(parent_key, order);
     }
 
     /// Move `path` (already inside this project) to be a child of `new_parent`,
@@ -801,12 +903,11 @@ impl Project {
                 &relative_key(&self.root, &dest),
             );
         }
-        let new_parent_key = relative_key(&self.root, new_parent);
-        self.meta
-            .node_order
-            .entry(new_parent_key)
-            .or_default()
-            .push(dest_name);
+        // Appends `dest_name` after every one of `new_parent`'s *current*
+        // children — tracked or not — rather than just whatever was already in
+        // its (possibly sparse) `node_order` entry; see `reposition_in_order`'s
+        // doc comment for why that distinction matters.
+        self.reposition_in_order(new_parent, &dest_name, None);
         Ok(dest)
     }
 
@@ -2523,6 +2624,143 @@ mod tests {
             .unwrap();
         assert_eq!(restored, chapter.join("Notes.md"));
         assert!(restored.exists());
+    }
+
+    #[test]
+    fn move_item_dropped_onto_its_own_parent_repositions_to_the_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let folder = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let scene1 = project.create_document(&folder, "Scene 1").unwrap();
+        project.create_document(&folder, "Scene 2").unwrap();
+
+        // Dropping Scene 1 onto Chapter 1's own header — previously this refused
+        // (treated as a collision with the item's own still-existing path).
+        let new_path = project.move_item(&scene1, &folder).unwrap();
+
+        assert_eq!(new_path, scene1);
+        assert!(scene1.exists());
+        assert_eq!(
+            project.meta.node_order.get("Chapter 1"),
+            Some(&vec!["Scene 2.md".to_string(), "Scene 1.md".to_string()])
+        );
+    }
+
+    #[test]
+    fn move_item_before_reorders_siblings_within_the_same_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let folder = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        project.create_document(&folder, "Scene 1").unwrap();
+        project.create_document(&folder, "Scene 2").unwrap();
+        let scene3 = project.create_document(&folder, "Scene 3").unwrap();
+        let scene1 = folder.join("Scene 1.md");
+
+        // Drag Scene 3 to sit immediately before Scene 1.
+        let new_path = project.move_item_before(&scene3, &scene1).unwrap();
+
+        assert_eq!(new_path, scene3, "same folder: no filesystem move needed");
+        assert!(scene3.exists());
+        assert_eq!(
+            project.meta.node_order.get("Chapter 1"),
+            Some(&vec![
+                "Scene 3.md".to_string(),
+                "Scene 1.md".to_string(),
+                "Scene 2.md".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn move_item_before_moves_into_a_different_folder_at_the_target_position() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let chapter1 = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let chapter2 = project.create_folder(dir.path(), "Chapter 2").unwrap();
+        let doc = project.create_document(&chapter1, "Scene 1").unwrap();
+        project.create_document(&chapter2, "Scene A").unwrap();
+        let scene_b = project.create_document(&chapter2, "Scene B").unwrap();
+
+        let new_path = project.move_item_before(&doc, &scene_b).unwrap();
+
+        assert_eq!(new_path, chapter2.join("Scene 1.md"));
+        assert!(!doc.exists());
+        assert!(new_path.exists());
+        assert_eq!(project.meta.node_order.get("Chapter 1"), Some(&vec![]));
+        assert_eq!(
+            project.meta.node_order.get("Chapter 2"),
+            Some(&vec![
+                "Scene A.md".to_string(),
+                "Scene 1.md".to_string(),
+                "Scene B.md".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn move_item_before_refuses_to_move_an_item_before_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Scene 1").unwrap();
+
+        let result = project.move_item_before(&doc, &doc);
+
+        assert!(result.is_err());
+        assert!(doc.exists());
+    }
+
+    #[test]
+    fn move_item_before_refuses_to_move_a_folder_before_something_inside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let folder = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let nested = project.create_document(&folder, "Scene 1").unwrap();
+
+        let result = project.move_item_before(&folder, &nested);
+
+        assert!(result.is_err());
+        assert!(folder.exists());
+        assert!(nested.exists());
+    }
+
+    #[test]
+    fn move_item_before_reorders_correctly_among_siblings_never_explicitly_ordered() {
+        // Regression test for a reported bug: 5 scene files that had never been
+        // individually reordered before (so `node_order` had no entry for any
+        // of them — the exact state of files discovered by scanning, as
+        // opposed to created one at a time through `create_document`, each of
+        // which calls `record_new_child` and gets an entry immediately).
+        // Dragging the last one onto its neighbor sent it to the very top of
+        // the chapter instead of landing next to where it was dropped, because
+        // the target's position was found (or not) in that near-empty
+        // `node_order` list rather than in the full, currently-displayed list
+        // of siblings.
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let folder = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        for i in 1..=5 {
+            fs::write(folder.join(format!("Scene {i}.md")), "").unwrap();
+        }
+        project.rescan();
+        assert!(
+            !project.meta.node_order.contains_key("Chapter 1"),
+            "sanity check: none of the 5 scenes should be individually tracked yet"
+        );
+
+        let scene4 = folder.join("Scene 4.md");
+        let scene5 = folder.join("Scene 5.md");
+        project.move_item_before(&scene5, &scene4).unwrap();
+
+        assert_eq!(
+            project.meta.node_order.get("Chapter 1"),
+            Some(&vec![
+                "Scene 1.md".to_string(),
+                "Scene 2.md".to_string(),
+                "Scene 3.md".to_string(),
+                "Scene 5.md".to_string(),
+                "Scene 4.md".to_string(),
+            ])
+        );
     }
 
     #[test]
