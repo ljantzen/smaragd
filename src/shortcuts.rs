@@ -34,6 +34,7 @@ pub enum ShortcutAction {
     GitCommit,
     GitPush,
     EditMetadata,
+    ToggleBinderFocus,
     /// Follow the `[[wikilink]]` the cursor is on in the editor — unlike every other
     /// action, this one's consumption happens inside `editor_panel::show` itself
     /// (it needs that frame's `TextEdit` cursor position, not available yet at the
@@ -65,6 +66,7 @@ impl ShortcutAction {
         Self::GitCommit,
         Self::GitPush,
         Self::EditMetadata,
+        Self::ToggleBinderFocus,
         Self::ActivateWikilink,
     ];
 
@@ -91,6 +93,7 @@ impl ShortcutAction {
             Self::GitCommit => "Commit (Git)",
             Self::GitPush => "Push (Git)",
             Self::EditMetadata => "Document Metadata",
+            Self::ToggleBinderFocus => "Toggle Binder/Editor Focus",
             Self::ActivateWikilink => "Activate Wikilink",
         }
     }
@@ -119,6 +122,7 @@ impl ShortcutAction {
             Self::GitCommit => "git_commit",
             Self::GitPush => "git_push",
             Self::EditMetadata => "edit_metadata",
+            Self::ToggleBinderFocus => "toggle_binder_focus",
             Self::ActivateWikilink => "activate_wikilink",
         }
     }
@@ -144,7 +148,8 @@ impl ShortcutAction {
             | Self::ToggleCorkboard
             | Self::ToggleBacklinks
             | Self::ToggleDarkMode
-            | Self::ToggleFullscreen => ShortcutCategory::View,
+            | Self::ToggleFullscreen
+            | Self::ToggleBinderFocus => ShortcutCategory::View,
             Self::GitCommit | Self::GitPush => ShortcutCategory::Git,
             Self::CommandPrompt => ShortcutCategory::Tools,
         }
@@ -192,6 +197,9 @@ impl ShortcutAction {
             Self::EditMetadata => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::M)
             }
+            // Bare F6, Visual-Studio-style "switch to the other pane" — safe
+            // modifier-free per `is_modifier_free_safe_key`, and otherwise unused.
+            Self::ToggleBinderFocus => KeyboardShortcut::new(Modifiers::NONE, Key::F6),
             Self::ActivateWikilink => KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter),
         }
     }

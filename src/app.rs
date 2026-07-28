@@ -161,6 +161,12 @@ pub struct TachyliteApp {
     /// `*.toml` files are in `export::style::global_styles_dir()`. Rebuilt by
     /// `reload_typeset_styles`.
     typeset_styles: Vec<crate::export::style::TypesetStyle>,
+    /// One-shot flag set by `ShortcutAction::ToggleBinderFocus` and consumed (via
+    /// `std::mem::take`) the same frame it's rendered — `binder_panel::show` needs
+    /// it to know whether to grab keyboard focus this frame, but the dock's
+    /// `AppTabViewer` only borrows `&mut self` fields it's handed, not `self`
+    /// itself, so it can't read a shortcut result directly.
+    focus_binder_requested: bool,
 }
 
 /// Which of the two network-bound git actions a `pending_git` background thread is
@@ -222,6 +228,7 @@ impl TachyliteApp {
             color_themes: Vec::new(),
             export: None,
             typeset_styles: Vec::new(),
+            focus_binder_requested: false,
         };
         app.reload_typeset_styles();
 
@@ -1324,6 +1331,21 @@ impl TachyliteApp {
             ShortcutAction::GitPush => self.run_git_push(ctx),
             ShortcutAction::ToggleBacklinks => self.toggle_dock_tab(DockTab::Backlinks),
             ShortcutAction::EditMetadata => self.toggle_dock_tab(DockTab::Metadata),
+            ShortcutAction::ToggleBinderFocus => {
+                let editor_id = ui::editor_panel::editor_text_edit_id();
+                if ctx.memory(|m| m.focused()) == Some(editor_id) {
+                    // Bring the Binder tab to the front in case it's currently
+                    // buried behind Backlinks/Metadata in the same dock node —
+                    // otherwise `binder_panel::show` would never render this frame
+                    // and the focus request would just sit there unclaimed.
+                    if let Some(path) = self.dock_state.find_tab(&DockTab::Binder) {
+                        let _ = self.dock_state.set_active_tab(path);
+                    }
+                    self.focus_binder_requested = true;
+                } else {
+                    ctx.memory_mut(|m| m.request_focus(editor_id));
+                }
+            }
             // Filtered out of the consumption pass above and handled inline in
             // `editor_panel::show` instead — never actually reached, but the match
             // above has to stay exhaustive over `ShortcutAction`.
@@ -1816,6 +1838,8 @@ struct AppTabViewer<'a> {
     backlinks: &'a [BacklinkEntry],
     metadata_draft: &'a mut MetadataDraft,
     actions: Vec<DockAction>,
+    /// See `TachyliteApp::focus_binder_requested`.
+    focus_binder_requested: bool,
 }
 
 impl egui_dock::TabViewer for AppTabViewer<'_> {
@@ -1833,7 +1857,12 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
         match tab {
             DockTab::Binder => match self.project {
                 Some(project) => {
-                    if let Some(event) = ui::binder_panel::show(ui, project, self.selected_path) {
+                    if let Some(event) = ui::binder_panel::show(
+                        ui,
+                        project,
+                        self.selected_path,
+                        self.focus_binder_requested,
+                    ) {
                         self.actions.push(DockAction::Binder(event));
                     }
                 }
@@ -2191,6 +2220,7 @@ impl eframe::App for TachyliteApp {
                     backlinks: &self.backlinks,
                     metadata_draft: &mut self.metadata_draft,
                     actions: Vec::new(),
+                    focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
                 };
                 egui_dock::DockArea::new(&mut self.dock_state)
                     .style(egui_dock::Style::from_egui(ui.style().as_ref()))

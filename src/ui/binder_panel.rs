@@ -61,9 +61,14 @@ const ARROW_KEYS_FILTER: egui::EventFilter = egui::EventFilter {
     escape: false,
 };
 
-pub fn show(ui: &mut egui::Ui, project: &Project, selected: Option<&Path>) -> Option<BinderEvent> {
+pub fn show(
+    ui: &mut egui::Ui,
+    project: &Project,
+    selected: Option<&Path>,
+    focus_requested: bool,
+) -> Option<BinderEvent> {
     let mut event = None;
-    let mut visible_rows = Vec::new();
+    let mut visible_rows: Vec<(PathBuf, egui::Id)> = Vec::new();
     show_node(
         ui,
         project,
@@ -80,7 +85,7 @@ pub fn show(ui: &mut egui::Ui, project: &Project, selected: Option<&Path>) -> Op
     // acts when a binder row actually has focus, so this can't steal Up/Down from,
     // say, the main editor's `TextEdit` while the user is typing there.
     if let Some(focused_id) = ui.ctx().memory(|mem| mem.focused())
-        && let Some(current) = visible_rows.iter().position(|id| *id == focused_id)
+        && let Some(current) = visible_rows.iter().position(|(_, id)| *id == focused_id)
     {
         let move_down =
             ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown));
@@ -104,8 +109,21 @@ pub fn show(ui: &mut egui::Ui, project: &Project, selected: Option<&Path>) -> Op
             && next != current
         {
             ui.ctx()
-                .memory_mut(|mem| mem.request_focus(visible_rows[next]));
+                .memory_mut(|mem| mem.request_focus(visible_rows[next].1));
         }
+    }
+
+    // `ShortcutAction::ToggleBinderFocus` asking us to take keyboard focus this
+    // frame — land on the currently selected document's row if it's visible (not
+    // hidden inside a collapsed folder), otherwise fall back to the first row so
+    // the shortcut always does *something* useful.
+    if focus_requested
+        && let Some(&(_, id)) = visible_rows
+            .iter()
+            .find(|(path, _)| Some(path.as_path()) == selected)
+            .or_else(|| visible_rows.first())
+    {
+        ui.ctx().memory_mut(|mem| mem.request_focus(id));
     }
 
     event
@@ -219,7 +237,7 @@ fn show_node(
     selected: Option<&Path>,
     event: &mut Option<BinderEvent>,
     is_root: bool,
-    visible_rows: &mut Vec<egui::Id>,
+    visible_rows: &mut Vec<(PathBuf, egui::Id)>,
 ) {
     match &node.kind {
         BinderNodeKind::Folder { children } => {
@@ -227,7 +245,7 @@ fn show_node(
             let label = format!("{}{}", node.name, role_suffix(role));
             let id = ui.make_persistent_id(&node.path);
             let (header_response, mut state) = folder_header(ui, id, &label, true);
-            visible_rows.push(header_response.id);
+            visible_rows.push((node.path.clone(), header_response.id));
 
             if header_response.clicked() {
                 state.toggle(ui);
@@ -403,7 +421,7 @@ fn show_node(
                 egui::Button::selectable(is_selected, document_label(&node.name))
                     .sense(egui::Sense::click_and_drag()),
             );
-            visible_rows.push(response.id);
+            visible_rows.push((node.path.clone(), response.id));
             if response.clicked() {
                 *event = Some(BinderEvent::Selected(node.path.clone()));
                 // Unlike `folder_header`, `Button` doesn't request focus on click by
@@ -488,13 +506,27 @@ mod tests {
 
     impl Harness {
         fn frame(&self, project: &Project, events: Vec<egui::Event>) -> Option<BinderEvent> {
+            self.frame_with(project, None, false, events)
+        }
+
+        /// Like `frame`, but exposes `selected`/`focus_requested` — the two `show`
+        /// parameters `frame` otherwise hardcodes to `None`/`false` — for testing
+        /// `ShortcutAction::ToggleBinderFocus`'s "land on the selected row, or the
+        /// first row if nothing's selected" behavior.
+        fn frame_with(
+            &self,
+            project: &Project,
+            selected: Option<&Path>,
+            focus_requested: bool,
+            events: Vec<egui::Event>,
+        ) -> Option<BinderEvent> {
             let input = egui::RawInput {
                 events,
                 ..Default::default()
             };
             let mut event = None;
             let _ = self.ctx.run_ui(input, |ui| {
-                event = show(ui, project, None);
+                event = show(ui, project, selected, focus_requested);
             });
             event
         }
@@ -691,6 +723,57 @@ mod tests {
             harness.press(&project, egui::Key::ArrowDown);
         }
         assert!(harness.focused().is_some());
+    }
+
+    #[test]
+    fn focus_requested_lands_on_the_selected_documents_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = crate::project::Project::initialize(dir.path()).unwrap();
+        project.create_document(dir.path(), "Doc A").unwrap();
+        let doc_b = project.create_document(dir.path(), "Doc B").unwrap();
+
+        // A separate harness (fresh `egui::Context`) clicks Doc B directly, so its
+        // row id can be captured for comparison — widget ids are derived purely
+        // from the (deterministic) tree structure, not from anything specific to
+        // one `egui::Context`, so this id is exactly what a focus request in a
+        // different harness should land on too.
+        let reference = Harness::default();
+        reference.settle(&project);
+        reference.click_document(&project, &doc_b);
+        let expected = reference.focused().unwrap();
+
+        let harness = Harness::default();
+        harness.settle(&project);
+        assert_eq!(harness.focused(), None);
+        harness.frame_with(&project, Some(&doc_b), true, vec![]);
+
+        assert_eq!(
+            harness.focused(),
+            Some(expected),
+            "ShortcutAction::ToggleBinderFocus should focus the currently selected \
+             document's row"
+        );
+    }
+
+    #[test]
+    fn focus_requested_falls_back_to_the_first_row_when_nothing_is_selected() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = crate::project::Project::initialize(dir.path()).unwrap();
+        project.create_document(dir.path(), "Doc A").unwrap();
+
+        let reference = Harness::default();
+        reference.settle(&project);
+        let expected = reference.click_first_row(&project);
+
+        let harness = Harness::default();
+        harness.settle(&project);
+        harness.frame_with(&project, None, true, vec![]);
+
+        assert_eq!(
+            harness.focused(),
+            Some(expected),
+            "with nothing selected, ToggleBinderFocus should fall back to the first row"
+        );
     }
 
     #[test]
