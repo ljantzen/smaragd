@@ -339,17 +339,21 @@ impl Project {
             let Ok(contents) = fs::read_to_string(&doc_path) else {
                 continue;
             };
+            // Strip frontmatter before scanning: without this, a wikilink close to
+            // the top of a document's body could pull YAML frontmatter text into
+            // its snippet's "surrounding context" window instead of actual prose.
+            let contents = crate::frontmatter::strip(&contents);
             let Some(source_title) = doc_path.file_stem().and_then(|stem| stem.to_str()) else {
                 continue;
             };
-            for (range, link_target) in crate::markdown::wikilink_spans(&contents) {
+            for (range, link_target) in crate::markdown::wikilink_spans(contents) {
                 if link_target.to_lowercase() != target_stem {
                     continue;
                 }
                 entries.push(BacklinkEntry {
                     source_path: doc_path.clone(),
                     source_title: source_title.to_string(),
-                    snippet: crate::markdown::wikilink_context_snippet(&contents, &range),
+                    snippet: crate::markdown::wikilink_context_snippet(contents, &range),
                 });
             }
         }
@@ -2802,6 +2806,26 @@ mod tests {
         assert_eq!(backlinks[0].source_path, referrer);
         assert_eq!(backlinks[0].source_title, "Referrer");
         assert!(backlinks[0].snippet.contains("[[Target]]"));
+    }
+
+    #[test]
+    fn backlinks_snippet_excludes_frontmatter_even_for_a_link_near_the_top_of_the_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Target").unwrap();
+        let referrer = project.create_document(dir.path(), "Referrer").unwrap();
+        fs::write(
+            &referrer,
+            "---\ntype: Scene\nstatus: draft\n---\nLink here: [[Target]]",
+        )
+        .unwrap();
+
+        let backlinks = project.backlinks(&target);
+
+        assert_eq!(backlinks.len(), 1);
+        assert!(backlinks[0].snippet.contains("[[Target]]"));
+        assert!(!backlinks[0].snippet.contains("type: Scene"));
+        assert!(!backlinks[0].snippet.contains("---"));
     }
 
     #[test]
