@@ -2,6 +2,7 @@ pub mod app;
 pub mod autocomplete;
 pub mod color_theme;
 pub mod editor;
+pub mod editor_font;
 pub mod export;
 pub mod frontmatter;
 pub mod fuzzy;

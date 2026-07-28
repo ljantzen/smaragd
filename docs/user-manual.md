@@ -466,6 +466,19 @@ quote_bar = "#6c7086"
 
 Use **`View > Theme > Reload Custom Themes`** to pick up a new or edited file without restarting the app. A theme file that fails to parse, has an invalid color, or whose `id` collides with an already-loaded theme (built-in or another custom one — whichever loaded first wins) is skipped with an error message rather than stopping other themes from loading. If the theme you currently have active stops resolving after a reload (for instance, you just introduced a mistake into the file you're editing), tachylite falls back to the default appearance rather than leaving a stale palette applied with nothing in the menu showing as selected.
 
+### Editor and Preview Font
+
+**`File > Settings`** has a **Font** section with one shared font and size, used by both the Editor and the Preview — not independent settings for each, so what you write in looks the same as what you preview.
+
+| Font | What it looks like |
+|---|---|
+| Proportional | egui's built-in sans-serif — the default |
+| Monospace | egui's built-in fixed-width face |
+| Libertinus Serif | A literary serif text font — the same one used by the [Trade Paperback export style](#typesetting-styles) |
+| DejaVu Sans Mono | A fixed-width face — the same one used by the [Manuscript export style](#typesetting-styles) |
+
+These four are the only choices — not a live picker over every font installed on your system, so the app looks and behaves identically on every platform. Code blocks in the Preview always render in a fixed-width face regardless of this setting, matching how virtually every other markdown renderer treats code.
+
 ## Keyboard Shortcuts
 
 All shortcuts are fully remappable in **`File > Settings`**, listed with a Category column (Application, Project, Files & Folders, Editing, View, Git, Tools) and sorted by category, then alphabetically within each. Defaults below use `Ctrl` (shown as `Cmd` on macOS):
@@ -507,6 +520,7 @@ Settings are stored as `tachylite.toml` in the platform's config directory (the 
 - **Reopen project on launch** — automatically reopens the last project you had open (off by default)
 - **Ensure Research and Trash folders exist in every project** — off by default; see [Projects](#projects)
 - **Appearance** (Dark/Light/System) and **Color Theme** — see [Themes](#themes-and-appearance)
+- **Editor and Preview font** (and size) — see [Editor and Preview Font](#editor-and-preview-font)
 - **Date format for `${{date}}`** — see [Template Variables](#template-variables)
 - **Keyboard shortcuts** — remap or unbind any action, including a fullscreen toggle
 

@@ -2,6 +2,7 @@ use std::path::Path;
 
 use egui::{Color32, FontId, RichText, TextFormat, text::LayoutJob};
 
+use crate::editor_font::EditorFont;
 use crate::markdown::{self, Block, BlockKind, ImageRef, Span};
 use crate::ui::WikilinkActivation;
 
@@ -32,7 +33,11 @@ const WIKILINK_COLOR_LIGHT: Color32 = Color32::from_rgb(0x1E, 0x8E, 0x3A);
 const QUOTE_BAR_DARK: Color32 = Color32::from_rgb(0x62, 0x72, 0xA4);
 const QUOTE_BAR_LIGHT: Color32 = Color32::from_rgb(0x4A, 0x55, 0x78);
 
-const BODY_SIZE: f32 = 15.0;
+/// The body size the fixed per-level heading sizes below were tuned against —
+/// `heading_size` scales them proportionally to whatever body size `Settings`
+/// actually configures, so the H1..H6 hierarchy's *relative* proportions stay
+/// the same regardless of the user's chosen font size.
+const REFERENCE_BODY_SIZE: f32 = 15.0;
 const BLOCK_SPACING: f32 = 10.0;
 const INDENT_PER_DEPTH: f32 = 20.0;
 
@@ -64,6 +69,12 @@ struct Palette {
     link: Color32,
     wikilink: Color32,
     dark_mode: bool,
+    /// The user's configured body font/size (`Settings::editor_font`/
+    /// `editor_font_size`, shared with the Editor) — everything except code
+    /// blocks (always monospace, matching every other markdown renderer's
+    /// convention) renders in this.
+    body_font: EditorFont,
+    body_size: f32,
 }
 
 impl Palette {
@@ -71,7 +82,12 @@ impl Palette {
     /// (via `ColorTheme::preview_heading`/`preview_wikilink`/`preview_quote_bar`)
     /// — a theme that leaves any of those `None` falls back to the hardcoded
     /// dark/light default for that one color, unchanged from before this existed.
-    fn new(visuals: &egui::Visuals, active_theme: Option<&crate::color_theme::ColorTheme>) -> Self {
+    fn new(
+        visuals: &egui::Visuals,
+        active_theme: Option<&crate::color_theme::ColorTheme>,
+        body_font: EditorFont,
+        body_size: f32,
+    ) -> Self {
         let (heading, quote_bar, wikilink) = if visuals.dark_mode {
             (HEADING_COLORS_DARK, QUOTE_BAR_DARK, WIKILINK_COLOR_DARK)
         } else {
@@ -96,8 +112,31 @@ impl Palette {
             link: visuals.hyperlink_color,
             wikilink,
             dark_mode: visuals.dark_mode,
+            body_font,
+            body_size,
         }
     }
+
+    /// The body font at `size` points — every non-code-block text run resolves
+    /// its `FontId` through this, rather than a hardcoded `FontId::proportional`.
+    fn font_id(&self, size: f32) -> FontId {
+        FontId::new(size, self.body_font.family())
+    }
+}
+
+/// H1..H6 point size, scaled from the fixed reference sizes below (tuned at
+/// `REFERENCE_BODY_SIZE`) so the hierarchy's proportions hold regardless of the
+/// user's configured body size.
+fn heading_size(level: u8, body_size: f32) -> f32 {
+    let reference = match level {
+        1 => 28.0,
+        2 => 24.0,
+        3 => 20.0,
+        4 => 18.0,
+        5 => 16.5,
+        _ => 15.5,
+    };
+    reference * (body_size / REFERENCE_BODY_SIZE)
 }
 
 /// Push `color` further from the background — toward white in dark mode, toward
@@ -132,13 +171,15 @@ pub fn show(
     base_dir: Option<&Path>,
     project_root: Option<&Path>,
     active_theme: Option<&crate::color_theme::ColorTheme>,
+    body_font: EditorFont,
+    body_size: f32,
 ) -> Option<WikilinkActivation> {
     let base_dir = ImageContext {
         dir: base_dir,
         project_root,
     };
     let blocks = markdown::parse(crate::frontmatter::strip(markdown_text));
-    let palette = Palette::new(ui.visuals(), active_theme);
+    let palette = Palette::new(ui.visuals(), active_theme, body_font, body_size);
     egui::ScrollArea::vertical()
         .id_salt("markdown_preview_scroll")
         .show(ui, |ui| {
@@ -170,7 +211,7 @@ fn render_block(
             ui,
             palette,
             &block.spans,
-            FontId::proportional(BODY_SIZE),
+            palette.font_id(palette.body_size),
             palette.body,
             base_dir,
         ),
@@ -209,22 +250,8 @@ fn render_heading(
     base_dir: ImageContext<'_>,
 ) -> Option<WikilinkActivation> {
     let color = palette.heading[(level.saturating_sub(1).min(5)) as usize];
-    let size = match level {
-        1 => 28.0,
-        2 => 24.0,
-        3 => 20.0,
-        4 => 18.0,
-        5 => 16.5,
-        _ => 15.5,
-    };
-    let clicked = render_spans(
-        ui,
-        palette,
-        spans,
-        FontId::proportional(size),
-        color,
-        base_dir,
-    );
+    let size = heading_size(level, palette.body_size);
+    let clicked = render_spans(ui, palette, spans, palette.font_id(size), color, base_dir);
     if level == 1 {
         ui.add_space(2.0);
         ui.separator();
@@ -244,7 +271,7 @@ fn render_code_block(ui: &mut egui::Ui, palette: &Palette, language: Option<&str
             let text: String = spans.iter().map(|s| s.text.as_str()).collect();
             ui.add(egui::Label::new(
                 RichText::new(text.trim_end_matches('\n'))
-                    .font(FontId::monospace(BODY_SIZE))
+                    .font(FontId::monospace(palette.body_size))
                     .color(palette.body),
             ));
         });
@@ -270,7 +297,7 @@ fn render_blockquote(
             ui,
             palette,
             &italic_spans,
-            FontId::proportional(BODY_SIZE),
+            palette.font_id(palette.body_size),
             palette.quote_text,
             base_dir,
         )
@@ -301,7 +328,7 @@ fn render_list_item(
             ui,
             palette,
             spans,
-            FontId::proportional(BODY_SIZE),
+            palette.font_id(palette.body_size),
             palette.body,
             base_dir,
         )
@@ -331,7 +358,7 @@ fn render_table(
                             ui,
                             palette,
                             cell,
-                            FontId::proportional(BODY_SIZE),
+                            palette.font_id(palette.body_size),
                             emphasize(palette.body, palette.dark_mode),
                             base_dir,
                         ) {
@@ -345,7 +372,7 @@ fn render_table(
                                 ui,
                                 palette,
                                 cell,
-                                FontId::proportional(BODY_SIZE),
+                                palette.font_id(palette.body_size),
                                 palette.body,
                                 base_dir,
                             ) {
@@ -685,14 +712,19 @@ mod tests {
 
     #[test]
     fn palette_from_dark_visuals_uses_the_dark_heading_set() {
-        let palette = Palette::new(&egui::Visuals::dark(), None);
+        let palette = Palette::new(&egui::Visuals::dark(), None, EditorFont::Proportional, 15.0);
         assert_eq!(palette.heading, HEADING_COLORS_DARK);
         assert!(palette.dark_mode);
     }
 
     #[test]
     fn palette_from_light_visuals_uses_the_light_heading_set() {
-        let palette = Palette::new(&egui::Visuals::light(), None);
+        let palette = Palette::new(
+            &egui::Visuals::light(),
+            None,
+            EditorFont::Proportional,
+            15.0,
+        );
         assert_eq!(palette.heading, HEADING_COLORS_LIGHT);
         assert!(!palette.dark_mode);
     }
@@ -708,7 +740,12 @@ mod tests {
     #[test]
     fn a_theme_with_preview_overrides_replaces_the_hardcoded_palette() {
         let theme = theme_with_preview_overrides();
-        let palette = Palette::new(&egui::Visuals::dark(), Some(&theme));
+        let palette = Palette::new(
+            &egui::Visuals::dark(),
+            Some(&theme),
+            EditorFont::Proportional,
+            15.0,
+        );
         assert_eq!(palette.heading, [Color32::WHITE; 6]);
         assert_eq!(palette.wikilink, Color32::WHITE);
         assert_eq!(palette.quote_bar, Color32::WHITE);
@@ -718,7 +755,12 @@ mod tests {
     fn a_theme_without_preview_overrides_leaves_the_hardcoded_palette_untouched() {
         let theme = crate::color_theme::built_in_themes().remove(0);
         assert!(theme.preview_heading.is_none());
-        let palette = Palette::new(&egui::Visuals::dark(), Some(&theme));
+        let palette = Palette::new(
+            &egui::Visuals::dark(),
+            Some(&theme),
+            EditorFont::Proportional,
+            15.0,
+        );
         assert_eq!(palette.heading, HEADING_COLORS_DARK);
         assert_eq!(palette.wikilink, WIKILINK_COLOR_DARK);
         assert_eq!(palette.quote_bar, QUOTE_BAR_DARK);

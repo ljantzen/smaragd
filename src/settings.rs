@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::editor_font::EditorFont;
 use crate::shortcuts::ShortcutMap;
 
 /// A user's explicit choice for a plugin-registered `:` command's shortcut, kept
@@ -62,6 +63,17 @@ pub struct Settings {
     /// `templates::DEFAULT_DATE_FORMAT` rather than emitting an empty string, the
     /// same fallback it also applies to a format that fails to render at all.
     pub template_date_format: String,
+    /// The font the Editor and Preview render body text in — one shared choice
+    /// for both, not independent per-view settings (see `editor_font::EditorFont`).
+    pub editor_font: EditorFont,
+    /// Body text size (points) for both the Editor and Preview. `0.0` (this
+    /// struct's derived `Default`, and TOML's own implicit default for a missing
+    /// float key) means "not yet configured" — resolved to
+    /// `editor_font::DEFAULT_FONT_SIZE` at the point of use
+    /// (`editor_font::resolve_size`) rather than fought with a custom `Default`
+    /// impl, the same blank-means-unset convention `template_date_format` above
+    /// already uses.
+    pub editor_font_size: f32,
 }
 
 /// The full path to the settings file, e.g. `~/.config/tachylite/tachylite.toml` on
@@ -233,6 +245,8 @@ mod tests {
             color_theme: Some("dracula".to_string()),
             plugin_shortcut_overrides,
             template_date_format: "%d %B %Y".to_string(),
+            editor_font: EditorFont::LibertinusSerif,
+            editor_font_size: 16.0,
         };
 
         settings.save_to_path(&path).unwrap();

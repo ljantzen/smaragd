@@ -1,3 +1,4 @@
+use crate::editor_font::EditorFont;
 use crate::settings::Settings;
 use crate::shortcuts::{ShortcutAction, ShortcutCategory, ShortcutTarget, is_safe_binding};
 
@@ -48,6 +49,36 @@ pub fn show(
                 ctx.set_theme(settings.theme_preference);
                 changed = true;
             }
+
+            ui.separator();
+            ui.heading("Font");
+            ui.horizontal(|ui| {
+                ui.label("Editor and Preview font:");
+                let previous_font = settings.editor_font;
+                egui::ComboBox::new("editor_font_combo", "")
+                    .selected_text(settings.editor_font.label())
+                    .show_ui(ui, |ui| {
+                        for font in EditorFont::ALL {
+                            ui.selectable_value(&mut settings.editor_font, font, font.label());
+                        }
+                    });
+                changed |= settings.editor_font != previous_font;
+            });
+            ui.horizontal(|ui| {
+                ui.label("Size:");
+                let mut size = crate::editor_font::resolve_size(settings.editor_font_size);
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut size)
+                            .range(8.0..=48.0)
+                            .suffix("pt"),
+                    )
+                    .changed()
+                {
+                    settings.editor_font_size = size;
+                    changed = true;
+                }
+            });
 
             ui.separator();
             ui.heading("Templates");

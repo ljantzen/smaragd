@@ -289,6 +289,7 @@ impl GitOperation {
 impl TachyliteApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
+        crate::editor_font::install(&cc.egui_ctx);
 
         let settings = crate::settings::config_file_path()
             .map(|path| Settings::load_from_path(&path))
@@ -2217,6 +2218,8 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     &note_titles,
                     activate_wikilink_shortcut,
                     false,
+                    self.settings.editor_font,
+                    crate::editor_font::resolve_size(self.settings.editor_font_size),
                 ) {
                     Some(EditorEvent::SaveError(err)) => {
                         self.actions.push(DockAction::EditorSaveError(err));
@@ -2242,6 +2245,8 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         base_dir,
                         project_root,
                         active_theme,
+                        self.settings.editor_font,
+                        crate::editor_font::resolve_size(self.settings.editor_font_size),
                     ) {
                         self.actions.push(DockAction::Wikilink(activation));
                     }
@@ -2771,6 +2776,8 @@ impl eframe::App for TachyliteApp {
                     &note_titles,
                     activate_wikilink_shortcut,
                     true,
+                    self.settings.editor_font,
+                    crate::editor_font::resolve_size(self.settings.editor_font_size),
                 ) {
                     Some(EditorEvent::SaveError(err)) => self.status_message = Some(err),
                     Some(EditorEvent::Wikilink(activation)) => self.activate_wikilink(activation),

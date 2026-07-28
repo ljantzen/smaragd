@@ -7,6 +7,7 @@ use crate::autocomplete::{
     filter_candidates,
 };
 use crate::editor::EditorState;
+use crate::editor_font::EditorFont;
 use crate::markdown::wikilink_target_at;
 use crate::ui::WikilinkActivation;
 
@@ -61,12 +62,18 @@ pub fn editor_text_edit_id() -> Id {
 /// containing the cursor renders at full strength, every other paragraph
 /// dimmed — see `paragraph_byte_range`. `false` (normal dock-tab editing)
 /// renders exactly as before, with no custom layouter at all.
+///
+/// `font`/`font_size` are `Settings::editor_font`/`editor_font_size` (already
+/// resolved via `editor_font::resolve_size` — this takes a real point size, not
+/// the raw possibly-`0.0` setting), shared with the Preview.
 pub fn show(
     ui: &mut egui::Ui,
     editor: &mut EditorState,
     note_titles: &[String],
     activate_wikilink_shortcut: Option<KeyboardShortcut>,
     focus_mode: bool,
+    font: EditorFont,
+    font_size: f32,
 ) -> Option<EditorEvent> {
     if editor.open_path.is_none() {
         ui.label("Select a file from the binder to start editing.");
@@ -104,7 +111,7 @@ pub fn show(
     let mut focus_mode_layouter =
         move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
             let text = buf.as_str();
-            let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+            let font_id = font.font_id(font_size);
             let mut job = egui::text::LayoutJob {
                 wrap: egui::text::TextWrapping {
                     max_width: wrap_width,
@@ -176,7 +183,7 @@ pub fn show(
     // area match what it looks like it covers; a longer document still grows
     // and scrolls past that minimum exactly as before.
     let available_height = ui.available_height();
-    let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+    let row_height = ui.fonts_mut(|f| f.row_height(&font.font_id(font_size)));
     let desired_rows = ((available_height / row_height).floor() as usize).max(1);
 
     let output = egui::ScrollArea::vertical()
@@ -187,10 +194,15 @@ pub fn show(
             // around it — with the frame left on, a short document renders as a
             // small boxed page sitting in a lot of otherwise-dead-looking empty
             // space below it, rather than one editable area that fills the tab.
+            // `lock_focus` (normally bundled into `.code_editor()`, which also
+            // hardcodes the Monospace font — not wanted now that the font is
+            // configurable) keeps Tab inserting a tab character instead of
+            // leaving the field, still desirable for a plain-text editor.
             let mut text_edit = egui::TextEdit::multiline(&mut editor.buffer)
                 .desired_width(f32::INFINITY)
                 .desired_rows(desired_rows)
-                .code_editor()
+                .font(font.font_id(font_size))
+                .lock_focus(true)
                 .frame(egui::Frame::NONE)
                 .id(text_edit_id);
             if focus_mode {
@@ -380,6 +392,7 @@ pub fn move_cursor_to(ctx: &egui::Context, id: Id, text: &str, byte_offset: usiz
 mod tests {
     use super::{editor_text_edit_id, paragraph_byte_range, show};
     use crate::editor::EditorState;
+    use crate::editor_font::EditorFont;
 
     /// Reproduces the reported bug: a short document's actual *interactive* area
     /// (what you can click to focus/place the cursor) used to stop at content
@@ -407,7 +420,15 @@ mod tests {
         };
 
         let _ = ctx.run_ui(input, |ui| {
-            show(ui, &mut editor, &[], None, false);
+            show(
+                ui,
+                &mut editor,
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+            );
         });
 
         let response = ctx
