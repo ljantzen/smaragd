@@ -46,14 +46,22 @@ pub fn show(ui: &mut egui::Ui, project: &Project) -> Option<CorkboardEvent> {
         .show(ui, |ui| {
             ui.label("Desire:");
             let mut desire = project.meta.protagonist_desire.clone();
-            if ui.text_edit_singleline(&mut desire).changed() {
+            let width = ui.available_width();
+            if ui
+                .add(egui::TextEdit::singleline(&mut desire).desired_width(width))
+                .changed()
+            {
                 event = Some(CorkboardEvent::SetProtagonistDesire(desire));
             }
             ui.end_row();
 
             ui.label("Misbelief:");
             let mut misbelief = project.meta.protagonist_misbelief.clone();
-            if ui.text_edit_singleline(&mut misbelief).changed() {
+            let width = ui.available_width();
+            if ui
+                .add(egui::TextEdit::singleline(&mut misbelief).desired_width(width))
+                .changed()
+            {
                 event = Some(CorkboardEvent::SetProtagonistMisbelief(misbelief));
             }
             ui.end_row();
@@ -324,7 +332,7 @@ pub fn show_card_editor(
     }
 
     egui::Modal::new(egui::Id::new("story_card_editor_modal")).show(ctx, |ui| {
-        ui.set_min_width(420.0);
+        ui.set_min_width(640.0);
         ui.heading(if draft.is_new {
             "New Story Card"
         } else {
@@ -340,20 +348,40 @@ pub fn show_card_editor(
             .num_columns(2)
             .show(ui, |ui| {
                 ui.label("Scene #:");
-                scene_response = Some(ui.text_edit_singleline(&mut draft.story_card.scene_number));
+                let width = ui.available_width();
+                scene_response = Some(
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.story_card.scene_number)
+                            .desired_width(width),
+                    ),
+                );
                 ui.end_row();
 
                 ui.label("Alpha Point:");
-                alpha_response = Some(ui.text_edit_singleline(&mut draft.story_card.alpha_point));
+                let width = ui.available_width();
+                alpha_response = Some(
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.story_card.alpha_point)
+                            .desired_width(width),
+                    ),
+                );
                 ui.end_row();
 
                 ui.label("Subplots:");
-                subplot_response = Some(ui.text_edit_singleline(&mut draft.subplot_tags_text));
+                let width = ui.available_width();
+                subplot_response = Some(ui.add(
+                    egui::TextEdit::singleline(&mut draft.subplot_tags_text).desired_width(width),
+                ));
                 ui.end_row();
 
                 ui.label("Linked document:");
-                linked_document_response =
-                    Some(ui.text_edit_singleline(&mut draft.linked_document_text));
+                let width = ui.available_width();
+                linked_document_response = Some(
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.linked_document_text)
+                            .desired_width(width),
+                    ),
+                );
                 ui.end_row();
             });
         draft.linked_document_focused = linked_document_response
@@ -386,21 +414,39 @@ pub fn show_card_editor(
             }
         }
 
+        // Fill the modal's width rather than the fixed `text_edit_width` `TextEdit`
+        // defaults to — the modal is wide precisely so these prose fields have room
+        // to breathe. The modal's own frame padding already gives an equal margin on
+        // both sides, so filling the remaining available width (rather than shaving
+        // more off just the right edge) keeps left and right margins matching.
+        let field_width = ui.available_width();
+
         ui.separator();
+        ui.label(egui::RichText::new("Plot").strong().size(16.0));
         ui.label("Cause (what happens):");
-        ui.text_edit_multiline(&mut draft.story_card.cause);
+        ui.add(egui::TextEdit::multiline(&mut draft.story_card.cause).desired_width(field_width));
         ui.add_space(6.0);
         ui.label("Effect (external and internal consequence):");
-        ui.text_edit_multiline(&mut draft.story_card.effect);
-        ui.add_space(6.0);
+        ui.add(egui::TextEdit::multiline(&mut draft.story_card.effect).desired_width(field_width));
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.label(egui::RichText::new("Third rail").strong().size(16.0));
         ui.label("Why it matters (the link to the protagonist's Desire/Misbelief):");
-        ui.text_edit_multiline(&mut draft.story_card.why_it_matters);
+        ui.add(
+            egui::TextEdit::multiline(&mut draft.story_card.why_it_matters)
+                .desired_width(field_width),
+        );
         ui.add_space(6.0);
         ui.label("Realization:");
-        ui.text_edit_multiline(&mut draft.story_card.realization);
-        ui.add_space(6.0);
+        ui.add(
+            egui::TextEdit::multiline(&mut draft.story_card.realization).desired_width(field_width),
+        );
+
+        ui.add_space(8.0);
+        ui.separator();
         ui.label("And so? (what they do next):");
-        ui.text_edit_multiline(&mut draft.story_card.and_so);
+        ui.add(egui::TextEdit::multiline(&mut draft.story_card.and_so).desired_width(field_width));
 
         ui.add_space(8.0);
         ui.horizontal(|ui| {
