@@ -332,20 +332,23 @@ pub fn show_card_editor(
         });
         ui.add_space(8.0);
 
+        let mut scene_response = None;
+        let mut alpha_response = None;
+        let mut subplot_response = None;
         let mut linked_document_response = None;
         egui::Grid::new("story_card_editor_grid")
             .num_columns(2)
             .show(ui, |ui| {
                 ui.label("Scene #:");
-                ui.text_edit_singleline(&mut draft.story_card.scene_number);
+                scene_response = Some(ui.text_edit_singleline(&mut draft.story_card.scene_number));
                 ui.end_row();
 
                 ui.label("Alpha Point:");
-                ui.text_edit_singleline(&mut draft.story_card.alpha_point);
+                alpha_response = Some(ui.text_edit_singleline(&mut draft.story_card.alpha_point));
                 ui.end_row();
 
                 ui.label("Subplots:");
-                ui.text_edit_singleline(&mut draft.subplot_tags_text);
+                subplot_response = Some(ui.text_edit_singleline(&mut draft.subplot_tags_text));
                 ui.end_row();
 
                 ui.label("Linked document:");
@@ -353,7 +356,23 @@ pub fn show_card_editor(
                     Some(ui.text_edit_singleline(&mut draft.linked_document_text));
                 ui.end_row();
             });
-        draft.linked_document_focused = linked_document_response.is_some_and(|r| r.has_focus());
+        draft.linked_document_focused = linked_document_response
+            .as_ref()
+            .is_some_and(|r| r.has_focus());
+        // Enter confirms (like every other modal) only when it made one of this
+        // form's *single-line* fields lose focus — the multiline fields below
+        // (Cause, Effect, etc.) never lose focus on Enter in the first place (it
+        // just inserts a newline, as it should), so this can't misfire while
+        // editing prose.
+        let confirmed_by_enter = ui.input(|i| i.key_pressed(egui::Key::Enter))
+            && [
+                &scene_response,
+                &alpha_response,
+                &subplot_response,
+                &linked_document_response,
+            ]
+            .into_iter()
+            .any(|r| r.as_ref().is_some_and(|r| r.lost_focus()));
 
         if !candidates.is_empty() {
             for (index, candidate) in candidates.iter().enumerate() {
@@ -385,7 +404,7 @@ pub fn show_card_editor(
 
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button("Save").clicked() {
+            if ui.button("Save").clicked() || confirmed_by_enter {
                 outcome = Some(CardEditorOutcome::Save);
             }
             if !draft.is_new && ui.button("Delete").clicked() {
@@ -395,6 +414,10 @@ pub fn show_card_editor(
                 outcome = Some(CardEditorOutcome::Cancel);
             }
         });
+
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            outcome = Some(CardEditorOutcome::Cancel);
+        }
     });
 
     outcome

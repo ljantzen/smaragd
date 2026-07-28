@@ -75,6 +75,14 @@ pub fn show(
                 action = Some(ExportAction::Close);
             }
         });
+
+        // No Enter-to-confirm here, unlike other modals: there are three
+        // non-equivalent export actions (DOCX/EPUB/PDF) and no single obvious
+        // default among them — binding Enter to one would risk kicking off the
+        // wrong export format from a stray keypress while editing Title/Author.
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            action = Some(ExportAction::Close);
+        }
     });
     action
 }
