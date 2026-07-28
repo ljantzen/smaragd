@@ -47,6 +47,17 @@ impl EditorState {
     fn save_if_dirty(&mut self) -> io::Result<()> {
         if self.dirty { self.save() } else { Ok(()) }
     }
+
+    /// Close the currently open document, if any — saving first if dirty (same
+    /// silent-autosave convention as `open`, no discard/cancel prompt). A no-op if
+    /// nothing is open.
+    pub fn close(&mut self) -> io::Result<()> {
+        self.save_if_dirty()?;
+        self.open_path = None;
+        self.buffer.clear();
+        self.dirty = false;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -169,5 +180,33 @@ mod tests {
             "switching away shouldn't forget that a file was edited this session"
         );
         assert!(!state.modified_paths.contains(&second));
+    }
+
+    #[test]
+    fn close_saves_a_dirty_document_first_then_clears_editor_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scene.md");
+        fs::write(&path, "original").unwrap();
+
+        let mut state = EditorState::default();
+        state.open(&path).unwrap();
+        state.buffer = "edited content".to_string();
+        state.mark_dirty();
+
+        state.close().unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "edited content");
+        assert_eq!(state.open_path, None);
+        assert_eq!(state.buffer, "");
+        assert!(!state.dirty);
+    }
+
+    #[test]
+    fn close_with_nothing_open_is_a_no_op() {
+        let mut state = EditorState::default();
+
+        assert!(state.close().is_ok());
+        assert_eq!(state.open_path, None);
+        assert_eq!(state.buffer, "");
     }
 }

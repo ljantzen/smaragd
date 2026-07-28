@@ -4,6 +4,7 @@ pub mod color_theme;
 pub mod editor;
 pub mod export;
 pub mod frontmatter;
+pub mod fuzzy;
 pub mod git;
 pub mod markdown;
 pub mod plugins;

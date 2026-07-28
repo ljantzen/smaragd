@@ -36,6 +36,8 @@ pub enum ShortcutAction {
     EditMetadata,
     ToggleBinderFocus,
     ToggleFocusMode,
+    OpenDocument,
+    CloseDocument,
     /// Follow the `[[wikilink]]` the cursor is on in the editor — unlike every other
     /// action, this one's consumption happens inside `editor_panel::show` itself
     /// (it needs that frame's `TextEdit` cursor position, not available yet at the
@@ -69,6 +71,8 @@ impl ShortcutAction {
         Self::EditMetadata,
         Self::ToggleBinderFocus,
         Self::ToggleFocusMode,
+        Self::OpenDocument,
+        Self::CloseDocument,
         Self::ActivateWikilink,
     ];
 
@@ -97,6 +101,8 @@ impl ShortcutAction {
             Self::EditMetadata => "Document Metadata",
             Self::ToggleBinderFocus => "Toggle Binder/Editor Focus",
             Self::ToggleFocusMode => "Toggle Focus Mode",
+            Self::OpenDocument => "Open Document",
+            Self::CloseDocument => "Close Document",
             Self::ActivateWikilink => "Activate Wikilink",
         }
     }
@@ -127,6 +133,8 @@ impl ShortcutAction {
             Self::EditMetadata => "edit_metadata",
             Self::ToggleBinderFocus => "toggle_binder_focus",
             Self::ToggleFocusMode => "toggle_focus_mode",
+            Self::OpenDocument => "open_document",
+            Self::CloseDocument => "close_document",
             Self::ActivateWikilink => "activate_wikilink",
         }
     }
@@ -142,9 +150,13 @@ impl ShortcutAction {
         match self {
             Self::OpenSettings | Self::Exit => ShortcutCategory::Application,
             Self::NewProject | Self::OpenProject => ShortcutCategory::Project,
-            Self::NewFile | Self::NewFolder | Self::Rename | Self::Delete | Self::Restore => {
-                ShortcutCategory::FilesAndFolders
-            }
+            Self::NewFile
+            | Self::NewFolder
+            | Self::Rename
+            | Self::Delete
+            | Self::Restore
+            | Self::OpenDocument
+            | Self::CloseDocument => ShortcutCategory::FilesAndFolders,
             Self::Save | Self::FindReplace | Self::EditMetadata | Self::ActivateWikilink => {
                 ShortcutCategory::Editing
             }
@@ -206,6 +218,8 @@ impl ShortcutAction {
             // modifier-free per `is_modifier_free_safe_key`, and otherwise unused.
             Self::ToggleBinderFocus => KeyboardShortcut::new(Modifiers::NONE, Key::F6),
             Self::ToggleFocusMode => KeyboardShortcut::new(Modifiers::NONE, Key::F9),
+            Self::OpenDocument => KeyboardShortcut::new(Modifiers::COMMAND, Key::P),
+            Self::CloseDocument => KeyboardShortcut::new(Modifiers::COMMAND, Key::W),
             Self::ActivateWikilink => KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter),
         }
     }

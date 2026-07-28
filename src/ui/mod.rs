@@ -8,6 +8,7 @@ pub mod find_replace_panel;
 pub mod markdown_preview;
 pub mod metadata_panel;
 pub mod name_prompt;
+pub mod open_document_prompt;
 pub mod settings_panel;
 
 /// A user request to navigate to a `[[wikilink]]` target, raised by a click in the

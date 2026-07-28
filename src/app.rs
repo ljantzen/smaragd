@@ -194,6 +194,7 @@ pub struct TachyliteApp {
     find_replace: FindReplaceState,
     card_draft: Option<CardDraft>,
     command_prompt: CommandPromptState,
+    open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState,
     /// Live editing buffers for the open document's frontmatter, always kept in sync
     /// with whichever document is open (see `refresh_metadata_if_needed`) — there's
     /// no "closed" state to represent here, since the Metadata dock tab's own
@@ -313,6 +314,7 @@ impl TachyliteApp {
             find_replace: FindReplaceState::default(),
             card_draft: None,
             command_prompt: CommandPromptState::default(),
+            open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
             metadata_draft: MetadataDraft::from_meta(&DocumentMeta::default()),
             metadata_computed_for: None,
             metadata_last_applied: DocumentMeta::default(),
@@ -921,6 +923,22 @@ impl TachyliteApp {
             Err(err) => {
                 self.status_message = Some(format!("Couldn't open {}: {err}", path.display()));
             }
+        }
+    }
+
+    /// Close the currently open document (silently autosaving first if dirty — same
+    /// convention as `open_document`/`rename_node`, no discard/cancel prompt).
+    fn close_document(&mut self, ctx: &egui::Context) {
+        if let Err(err) = self.editor.close() {
+            self.status_message = Some(format!("Couldn't save before closing: {err}"));
+            return;
+        }
+        self.selected_path = None;
+        if self.focus_mode {
+            // Nothing left to show if the closed document was the one Focus Mode
+            // was displaying — same reasoning as `set_focus_mode`'s own "refuses to
+            // enter with no document open" guard, applied here on the way out.
+            self.set_focus_mode(ctx, false);
         }
     }
 
@@ -1579,6 +1597,14 @@ impl TachyliteApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
             }
             ShortcutAction::ToggleFocusMode => self.set_focus_mode(ctx, !self.focus_mode),
+            ShortcutAction::OpenDocument => {
+                if self.project.is_some() {
+                    self.open_document_prompt.request_open();
+                } else {
+                    self.status_message = Some("No project open".to_string());
+                }
+            }
+            ShortcutAction::CloseDocument => self.close_document(ctx),
             ShortcutAction::FindReplace => self.find_replace.request_open(),
             ShortcutAction::CommandPrompt => self.command_prompt.request_open(),
             ShortcutAction::GitCommit => self.prompt_git_commit(false),
@@ -2312,6 +2338,10 @@ impl eframe::App for TachyliteApp {
                         let open_settings_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::OpenSettings);
                         let exit_shortcut = self.settings.shortcuts.get(ShortcutAction::Exit);
+                        let open_document_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::OpenDocument);
+                        let close_document_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::CloseDocument);
 
                         if menu_button_with_shortcut(ui, "New Project", new_project_shortcut)
                             .clicked()
@@ -2324,6 +2354,23 @@ impl eframe::App for TachyliteApp {
                             self.browse_for_project();
                         }
                         ui.add_enabled(false, egui::Button::new("Close Project"));
+                        ui.separator();
+                        if menu_button_with_shortcut(ui, "Open Document…", open_document_shortcut)
+                            .clicked()
+                        {
+                            if self.project.is_some() {
+                                self.open_document_prompt.request_open();
+                            } else {
+                                self.status_message = Some("No project open".to_string());
+                            }
+                        }
+                        if menu_button_with_shortcut(ui, "Close Document", close_document_shortcut)
+                            .clicked()
+                        {
+                            let ctx = ui.ctx().clone();
+                            self.close_document(&ctx);
+                        }
+                        ui.separator();
                         if menu_button_with_shortcut(ui, "Settings", open_settings_shortcut)
                             .clicked()
                         {
@@ -2614,6 +2661,36 @@ impl eframe::App for TachyliteApp {
                     CommandPromptEvent::Run(command) => self.execute_command(&ctx, command),
                     CommandPromptEvent::Error(err) => self.status_message = Some(err),
                 }
+            }
+        }
+
+        if self.open_document_prompt.open {
+            // Only walk the document tree while the dialog is actually visible,
+            // same reasoning as the command prompt's own note-title gathering above.
+            let candidates: Vec<(String, PathBuf)> = self
+                .project
+                .as_ref()
+                .map(|project| {
+                    project
+                        .tree
+                        .document_paths()
+                        .into_iter()
+                        .map(|path| {
+                            let relative = path.strip_prefix(&project.root).unwrap_or(&path);
+                            let display =
+                                ui::binder_panel::document_label(&relative.to_string_lossy())
+                                    .to_string();
+                            (display, path)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(path) = ui::open_document_prompt::show(
+                ui.ctx(),
+                &mut self.open_document_prompt,
+                &candidates,
+            ) {
+                self.open_document(&path);
             }
         }
 
