@@ -308,6 +308,7 @@ impl TachyliteApp {
         for theme in [egui::Theme::Dark, egui::Theme::Light] {
             cc.egui_ctx.style_mut_of(theme, |style| {
                 style.visuals.text_edit_bg_color = Some(style.visuals.panel_fill);
+                crate::color_theme::show_input_frame(&mut style.visuals);
             });
         }
 

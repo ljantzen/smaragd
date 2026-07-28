@@ -363,6 +363,14 @@ pub fn find<'a>(themes: &'a [ColorTheme], id: &str) -> Option<&'a ColorTheme> {
     themes.iter().find(|theme| theme.id == id)
 }
 
+/// Give inactive text-input widgets (any `TextEdit`) a always-visible outline,
+/// matching `noninteractive`'s separator/window-border stroke, instead of egui's
+/// default `inactive.bg_stroke` (zero-width, so the frame only appears once the
+/// mouse hovers it). Called after anything that (re)sets `visuals.widgets`.
+pub fn show_input_frame(visuals: &mut egui::Visuals) {
+    visuals.widgets.inactive.bg_stroke = visuals.widgets.noninteractive.bg_stroke;
+}
+
 /// Apply `theme`'s palette on top of whichever base (`Dark`/`Light`) it's built for,
 /// and switch the active `egui::Theme` to match — so everything this doesn't
 /// explicitly override (button hover/press states, etc.) still comes from a base
@@ -392,6 +400,7 @@ pub fn apply(ctx: &egui::Context, theme: &ColorTheme) {
         ] {
             widgets.fg_stroke.color = theme.foreground;
         }
+        show_input_frame(visuals);
     });
 }
 
@@ -416,6 +425,7 @@ pub fn reset(ctx: &egui::Context) {
             visuals.hyperlink_color = defaults.hyperlink_color;
             visuals.selection = defaults.selection;
             visuals.widgets = defaults.widgets;
+            show_input_frame(visuals);
         });
     }
 }
