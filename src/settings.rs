@@ -77,6 +77,18 @@ pub fn dock_layout_file_path() -> Option<PathBuf> {
         .map(|dirs| dirs.config_dir().join("dock_layout.json"))
 }
 
+/// The full path to the user's named, saved dock layouts (Window > Save Current
+/// Layout…/Layouts), e.g. `~/.config/tachylite/saved_layouts.json` on Linux. Kept
+/// separate from `dock_layout_file_path` — that one tracks only the single
+/// currently-active layout, persisted on shutdown; this one is a named map,
+/// persisted immediately whenever the user explicitly saves one. Same JSON (not
+/// TOML) reasoning as `dock_layout_file_path`. `None` if the platform's config
+/// directory can't be determined.
+pub fn saved_layouts_file_path() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "tachylite")
+        .map(|dirs| dirs.config_dir().join("saved_layouts.json"))
+}
+
 impl Settings {
     /// Load settings from `path`, falling back to defaults if the file is missing or
     /// its contents can't be parsed — a first launch or a hand-edited file should

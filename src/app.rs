@@ -60,6 +60,9 @@ enum PromptAction {
     GitCommit {
         push_after: bool,
     },
+    /// Save the current dock layout under the confirmed name (see
+    /// `save_named_layout`).
+    SaveLayout,
 }
 
 struct PendingPrompt {
@@ -95,16 +98,21 @@ enum DockTab {
 }
 
 /// The initial dock layout for a fresh install (no persisted `dock_layout.json`
-/// yet), and the "Restore Default Layout" View-menu action: a narrow Binder
+/// yet), and the "Restore Default Layout" Window-menu action: a narrow Binder
 /// column on the left, Editor filling the rest — the same visual arrangement
 /// this app always had back when Binder's dock and the editor were two
 /// separate, non-`egui_dock` layout systems (a fixed-width side `Panel` and a
 /// `CentralPanel`, respectively).
 fn default_dock_state() -> egui_dock::DockState<DockTab> {
     let mut state = egui_dock::DockState::new(vec![DockTab::Editor]);
+    // `split_left`'s `fraction` is the *new* (left/Binder) node's share, despite
+    // its doc comment's wording ("how much of the parent's area the old node
+    // will occupy") — confirmed empirically: 0.78 here actually gave Binder 78%
+    // of the width and Editor the remaining 22%, the opposite of intended. 0.22
+    // gives Binder a narrow column and leaves Editor the majority.
     state
         .main_surface_mut()
-        .split_left(egui_dock::NodeIndex::root(), 0.78, vec![DockTab::Binder]);
+        .split_left(egui_dock::NodeIndex::root(), 0.22, vec![DockTab::Binder]);
     state
 }
 
@@ -205,12 +213,19 @@ pub struct TachyliteApp {
     backlinks: Vec<BacklinkEntry>,
     /// Which document `backlinks` was last computed for.
     backlinks_computed_for: Option<PathBuf>,
-    /// Binder/Backlinks/Metadata's dockable layout — which tabs are open, and
-    /// whether they're docked together, split, or floating in their own window.
-    /// Starts with just Binder present, matching this app's previous always-shown
-    /// left panel; Backlinks/Metadata are added/removed on demand by
-    /// `toggle_dock_tab`.
+    /// The current dock layout — which tabs are open, and whether they're docked
+    /// together, split, or floating in their own window. Persisted across
+    /// restarts (see `persist_dock_layout`); defaults to `default_dock_state()`.
     dock_state: egui_dock::DockState<DockTab>,
+    /// Named layouts the user has explicitly saved (Window > Save Current
+    /// Layout…), switchable from Window > Layouts. Keyed by name (`BTreeMap` so
+    /// the menu lists them alphabetically and re-saving under an existing name
+    /// naturally overwrites it) — separate from `dock_state`/`persist_dock_layout`,
+    /// which only ever tracks the one currently-active, unnamed layout. Persisted
+    /// immediately on save (see `persist_saved_layouts`), not deferred to
+    /// shutdown, since saving one is an explicit, infrequent action the user
+    /// should be able to trust actually landed on disk.
+    saved_layouts: std::collections::BTreeMap<String, egui_dock::DockState<DockTab>>,
     /// A push or pull currently running on a background thread, if any — `git push`/
     /// `git pull` hit the network and can hang or run long, so they're never run
     /// synchronously on the UI thread. `None` once `poll_git_operation` has picked up
@@ -298,6 +313,7 @@ impl TachyliteApp {
             backlinks: Vec::new(),
             backlinks_computed_for: None,
             dock_state: Self::load_dock_state(),
+            saved_layouts: Self::load_saved_layouts(),
             pending_git: None,
             plugin_engine: crate::plugins::PluginEngine::default(),
             plugin_shortcuts: Vec::new(),
@@ -752,6 +768,53 @@ impl TachyliteApp {
         if let Ok(contents) = serde_json::to_string_pretty(&self.dock_state) {
             let _ = fs::write(path, contents);
         }
+    }
+
+    /// Load the user's named, saved dock layouts (see `saved_layouts`), falling
+    /// back to an empty map if there's nothing on disk yet or it fails to parse.
+    fn load_saved_layouts() -> std::collections::BTreeMap<String, egui_dock::DockState<DockTab>> {
+        crate::settings::saved_layouts_file_path()
+            .and_then(|path| fs::read_to_string(path).ok())
+            .and_then(|contents| serde_json::from_str(&contents).ok())
+            .unwrap_or_default()
+    }
+
+    /// Persist `saved_layouts` immediately — called right after a save, not
+    /// deferred to shutdown like `persist_dock_layout`, since this only happens
+    /// on an explicit user action rather than every frame.
+    fn persist_saved_layouts(&self) {
+        let Some(path) = crate::settings::saved_layouts_file_path() else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(contents) = serde_json::to_string_pretty(&self.saved_layouts) {
+            let _ = fs::write(path, contents);
+        }
+    }
+
+    /// Open the "Save Layout" name-prompt modal, so the user can name the current
+    /// dock arrangement before it's added to `saved_layouts` (see `finish_prompt`'s
+    /// `PromptAction::SaveLayout` arm).
+    fn prompt_save_layout(&mut self) {
+        self.prompt = Some(PendingPrompt {
+            action: PromptAction::SaveLayout,
+            state: NamePromptState {
+                title: "Save Layout".to_string(),
+                confirm_label: "Save".to_string(),
+                name: String::new(),
+            },
+        });
+    }
+
+    /// Snapshot the current dock layout under `name` (overwriting any existing
+    /// layout of that name) and persist it right away.
+    fn save_named_layout(&mut self, ctx: &egui::Context, name: &str) {
+        let mut snapshot = self.dock_state.clone();
+        capture_floating_window_positions(&mut snapshot, ctx);
+        self.saved_layouts.insert(name.to_string(), snapshot);
+        self.persist_saved_layouts();
     }
 
     /// Open `path` as a project in response to an explicit user action (the "Open
@@ -1833,6 +1896,7 @@ impl TachyliteApp {
             PromptAction::Rename { path } => self.rename_node(&path, name),
             PromptAction::NewProject { location } => self.create_project(&location, name),
             PromptAction::GitCommit { push_after } => self.run_git_commit(ctx, name, push_after),
+            PromptAction::SaveLayout => self.save_named_layout(ctx, name),
         }
     }
 
@@ -2262,10 +2326,6 @@ impl eframe::App for TachyliteApp {
                         self.toggle_dock_tab(DockTab::Backlinks);
                     }
                     ui.separator();
-                    if ui.button("Restore Default Layout").clicked() {
-                        self.dock_state = default_dock_state();
-                    }
-                    ui.separator();
                     // `SubMenuButton`, not `MenuButton`: this is nested *inside* the
                     // View menu, and `MenuButton` is for top-level, click-to-open menu
                     // bar buttons. Using it here meant clicking "Theme" behaved like
@@ -2360,6 +2420,35 @@ impl eframe::App for TachyliteApp {
                                 self.run_git_pull(ui.ctx());
                             }
                         });
+                    }
+                });
+                egui::containers::menu::MenuButton::new("Window").ui(ui, |ui| {
+                    if ui.button("Save Current Layout…").clicked() {
+                        self.prompt_save_layout();
+                    }
+                    // `SubMenuButton`, not `MenuButton` — see the matching comment on
+                    // View's "Theme" submenu for why.
+                    egui::containers::menu::SubMenuButton::new("Layouts").ui(ui, |ui| {
+                        if self.saved_layouts.is_empty() {
+                            ui.add_enabled(false, egui::Button::new("No saved layouts"));
+                        } else {
+                            // Collected up front rather than iterating
+                            // `self.saved_layouts` directly: clicking an entry needs
+                            // `&mut self.dock_state`, which an active immutable borrow
+                            // of `self.saved_layouts` (the loop) would conflict with.
+                            let names: Vec<String> = self.saved_layouts.keys().cloned().collect();
+                            for name in names {
+                                if ui.button(&name).clicked()
+                                    && let Some(layout) = self.saved_layouts.get(&name)
+                                {
+                                    self.dock_state = layout.clone();
+                                }
+                            }
+                        }
+                    });
+                    ui.separator();
+                    if ui.button("Restore Default Layout").clicked() {
+                        self.dock_state = default_dock_state();
                     }
                 });
                 egui::containers::menu::MenuButton::new("Help").ui(ui, |ui| {
@@ -2645,6 +2734,35 @@ mod dock_layout_persistence_tests {
     }
 
     #[test]
+    fn default_dock_state_gives_the_editor_the_majority_of_the_width() {
+        // Regression test: `split_left`'s `fraction` turned out to be the *new*
+        // (left/Binder) node's share, not the old node's as its own doc comment
+        // claims — a `fraction` of 0.78 was previously giving Binder 78% of the
+        // width and Editor only 22%, backwards from the intent of a narrow
+        // Binder column with Editor filling the rest.
+        let state = rendered(super::default_dock_state());
+
+        let mut binder_width = None;
+        let mut editor_width = None;
+        for node in state.main_surface().iter() {
+            let Some(rect) = node.rect() else { continue };
+            match node.tabs() {
+                Some(tabs) if tabs.contains(&DockTab::Binder) => binder_width = Some(rect.width()),
+                Some(tabs) if tabs.contains(&DockTab::Editor) => editor_width = Some(rect.width()),
+                _ => {}
+            }
+        }
+        let binder_width = binder_width.expect("Binder should be a leaf with a rect");
+        let editor_width = editor_width.expect("Editor should be a leaf with a rect");
+
+        assert!(
+            editor_width > binder_width,
+            "expected Editor ({editor_width}) to occupy the majority of the width, \
+             not Binder ({binder_width})"
+        );
+    }
+
+    #[test]
     fn ensure_editor_tab_present_adds_editor_when_missing() {
         // Simulates a `dock_layout.json` persisted before the editor became a dock
         // tab (or a hand-edited file) — deserializes fine, but has no Editor tab.
@@ -2665,5 +2783,33 @@ mod dock_layout_persistence_tests {
         super::ensure_editor_tab_present(&mut state);
 
         assert_eq!(tab_set(&state), vec![DockTab::Binder, DockTab::Editor]);
+    }
+
+    #[test]
+    fn named_saved_layouts_round_trip_through_json() {
+        let mut saved: std::collections::BTreeMap<String, egui_dock::DockState<DockTab>> =
+            std::collections::BTreeMap::new();
+        saved.insert(
+            "Writing".to_string(),
+            rendered(egui_dock::DockState::new(vec![DockTab::Editor])),
+        );
+        let mut research = egui_dock::DockState::new(vec![DockTab::Binder]);
+        research.push_to_focused_leaf(DockTab::Corkboard);
+        saved.insert("Research".to_string(), rendered(research));
+
+        let json = serde_json::to_string(&saved).unwrap();
+        let restored: std::collections::BTreeMap<String, egui_dock::DockState<DockTab>> =
+            serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            restored.keys().cloned().collect::<Vec<_>>(),
+            vec!["Research".to_string(), "Writing".to_string()],
+            "BTreeMap should keep saved layouts sorted by name"
+        );
+        assert_eq!(tab_set(&restored["Writing"]), vec![DockTab::Editor]);
+        assert_eq!(
+            tab_set(&restored["Research"]),
+            vec![DockTab::Binder, DockTab::Corkboard]
+        );
     }
 }
