@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 directories = "6.0"
 docx-rs = "0.4.22"
 eframe = "0.35"

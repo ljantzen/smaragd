@@ -56,6 +56,12 @@ pub struct Settings {
     /// script's own default if that combo is currently free." An explicit
     /// `Unbound` entry is what actually keeps a command unbound across reloads.
     pub plugin_shortcut_overrides: BTreeMap<String, PluginShortcutOverride>,
+    /// strftime-style format string for `${{date}}` in "New From Template"
+    /// substitution (see `templates::substitute`). Blank means "not yet
+    /// configured" — `templates::format_date` falls back to
+    /// `templates::DEFAULT_DATE_FORMAT` rather than emitting an empty string, the
+    /// same fallback it also applies to a format that fails to render at all.
+    pub template_date_format: String,
 }
 
 /// The full path to the settings file, e.g. `~/.config/tachylite/tachylite.toml` on
@@ -226,6 +232,7 @@ mod tests {
             theme_preference: egui::ThemePreference::Dark,
             color_theme: Some("dracula".to_string()),
             plugin_shortcut_overrides,
+            template_date_format: "%d %B %Y".to_string(),
         };
 
         settings.save_to_path(&path).unwrap();

@@ -144,8 +144,44 @@ Any other YAML key you've hand-added to the block (or that some other tool wrote
 Right-click a folder and choose **Folder Role** to designate it as one of three special folders. At most one folder can hold each role, project-wide.
 
 - **Trash**: deleting a file or folder moves it here instead of removing it from disk. Right-click the Trash folder for **Empty Trash** (permanent, with confirmation), or right-click a trashed item for **Restore**.
-- **Templates**: any document placed directly inside this folder (not in a subfolder of it) shows up in every other folder's right-click **"New From Template"** submenu. Picking one creates a new document that's a verbatim copy — frontmatter included — after prompting you for a name. The template itself is never modified.
+- **Templates**: any document placed directly inside this folder (not in a subfolder of it) shows up in every other folder's right-click **"New From Template"** submenu. Picking one creates a new document from a copy of it — frontmatter included, with [template variables](#template-variables) substituted — after prompting you for a name. The template itself is never modified.
 - **Research**: currently just a marker with no behavior yet attached — reserved for future features like word-count rollups. Unlike Trash and Templates, [Export](#export) does *not* skip a Research-role folder — right-clicking one to export it exports it like any other folder.
+
+### Template Variables
+
+A template document can use two placeholders, substituted when a new document is created from it:
+
+| Placeholder | Substituted with |
+|---|---|
+| `${{name}}` | The name you typed when creating the document (without the `.md` extension) |
+| `${{date}}` | Today's date, formatted per the date format set in **`File > Settings`** |
+
+For example, a template starting with:
+
+```markdown
+---
+type: Scene
+---
+# ${{name}}
+
+Started ${{date}}.
+```
+
+typed into the "New From Template" prompt as "Aria" would produce a document starting with `# Aria` and today's date in place of `${{date}}`.
+
+The date format is a single format string, shared by every template — it's a [strftime](https://en.wikipedia.org/wiki/Strftime) pattern, the same mini-language used by `date`, `printf`, and most other tools that format dates from a code. It defaults to `%Y-%m-%d` (e.g. `2026-07-28`) when left blank. Some common formats:
+
+| Format | Example output |
+|---|---|
+| `%Y-%m-%d` | `2026-07-28` |
+| `%d/%m/%Y` | `28/07/2026` |
+| `%m/%d/%Y` | `07/28/2026` |
+| `%d %B %Y` | `28 July 2026` |
+| `%B %-d, %Y` | `July 28, 2026` |
+| `%A, %d %B %Y` | `Tuesday, 28 July 2026` |
+| `%Y%m%d` | `20260728` |
+
+A format that isn't a valid strftime pattern falls back to `%Y-%m-%d` automatically, both in a created document and in Settings' own live preview of the format — a typo here never blocks document creation.
 
 ## Export
 
@@ -469,6 +505,7 @@ Settings are stored as `tachylite.toml` in the platform's config directory (the 
 - **Reopen project on launch** — automatically reopens the last project you had open (off by default)
 - **Ensure Research and Trash folders exist in every project** — off by default; see [Projects](#projects)
 - **Appearance** (Dark/Light/System) and **Color Theme** — see [Themes](#themes-and-appearance)
+- **Date format for `${{date}}`** — see [Template Variables](#template-variables)
 - **Keyboard shortcuts** — remap or unbind any action, including a fullscreen toggle
 
 If the settings file is missing or its contents can't be parsed, tachylite falls back to defaults rather than failing to start.

@@ -50,6 +50,20 @@ pub fn show(
             }
 
             ui.separator();
+            ui.heading("Templates");
+            ui.horizontal(|ui| {
+                ui.label("Date format for ${{date}}:");
+                changed |= ui
+                    .text_edit_singleline(&mut settings.template_date_format)
+                    .on_hover_text("A chrono strftime pattern, e.g. %Y-%m-%d. Blank uses %Y-%m-%d.")
+                    .changed();
+            });
+            ui.weak(format!(
+                "Preview: {}",
+                crate::templates::format_date(&settings.template_date_format)
+            ));
+
+            ui.separator();
             ui.heading("Keyboard Shortcuts");
             // A scroll area of its own, not the whole window: with `ShortcutAction::ALL`
             // now well past a dozen entries, letting it grow the window unbounded made

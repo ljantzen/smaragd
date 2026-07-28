@@ -543,17 +543,23 @@ impl Project {
         self.write_new_document(parent, filename, "")
     }
 
-    /// Create a new markdown document under `parent` whose initial content is a
-    /// verbatim copy of `template_path`'s (frontmatter included) — Scrivener-style
-    /// "New From Template". `template_path` itself is left untouched. Goes through
+    /// Create a new markdown document under `parent` whose initial content is
+    /// `template_path`'s (frontmatter included) with `${{name}}`/`${{date}}`
+    /// substituted (see `crate::templates::substitute`) — Scrivener-style "New
+    /// From Template". `template_path` itself is left untouched. `date_format` is
+    /// `Settings::template_date_format`, threaded through rather than read
+    /// directly since `Project` has no access to app-wide `Settings`. Goes through
     /// the same name-validation and collision-refusal path as `create_document`.
     pub fn create_document_from_template(
         &mut self,
         parent: &Path,
         filename: &str,
         template_path: &Path,
+        date_format: &str,
     ) -> io::Result<PathBuf> {
         let contents = fs::read_to_string(template_path)?;
+        let name = filename.strip_suffix(".md").unwrap_or(filename);
+        let contents = crate::templates::substitute(&contents, name, date_format);
         self.write_new_document(parent, filename, &contents)
     }
 
@@ -2200,11 +2206,29 @@ mod tests {
         fs::write(&template_path, contents).unwrap();
 
         let new_path = project
-            .create_document_from_template(dir.path(), "Aria", &template_path)
+            .create_document_from_template(dir.path(), "Aria", &template_path, "")
             .unwrap();
 
         assert_eq!(fs::read_to_string(&new_path).unwrap(), contents);
         assert_eq!(fs::read_to_string(&template_path).unwrap(), contents);
+    }
+
+    #[test]
+    fn create_document_from_template_substitutes_name_and_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let template_path = project.create_document(dir.path(), "Template").unwrap();
+        fs::write(&template_path, "# ${{name}}\n\nStarted ${{date}}.\n").unwrap();
+
+        let new_path = project
+            .create_document_from_template(dir.path(), "Aria", &template_path, "%Y")
+            .unwrap();
+
+        let year = chrono::Local::now().format("%Y").to_string();
+        assert_eq!(
+            fs::read_to_string(&new_path).unwrap(),
+            format!("# Aria\n\nStarted {year}.\n")
+        );
     }
 
     #[test]
@@ -2215,7 +2239,8 @@ mod tests {
         let existing = project.create_document(dir.path(), "Existing").unwrap();
         fs::write(&existing, "original content").unwrap();
 
-        let result = project.create_document_from_template(dir.path(), "Existing", &template_path);
+        let result =
+            project.create_document_from_template(dir.path(), "Existing", &template_path, "");
 
         assert!(result.is_err());
         assert_eq!(fs::read_to_string(&existing).unwrap(), "original content");
@@ -2228,7 +2253,7 @@ mod tests {
         let template_path = project.create_document(dir.path(), "Template").unwrap();
 
         let result =
-            project.create_document_from_template(dir.path(), "../escaped", &template_path);
+            project.create_document_from_template(dir.path(), "../escaped", &template_path, "");
 
         assert!(result.is_err());
         assert!(!dir.path().parent().unwrap().join("escaped.md").exists());

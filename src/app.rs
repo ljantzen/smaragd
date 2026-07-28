@@ -2074,7 +2074,12 @@ impl TachyliteApp {
         let Some(project) = &mut self.project else {
             return;
         };
-        match project.create_document_from_template(parent, name, template_path) {
+        match project.create_document_from_template(
+            parent,
+            name,
+            template_path,
+            &self.settings.template_date_format,
+        ) {
             Ok(path) => self.open_document(&path),
             Err(err) => self.status_message = Some(format!("Couldn't create file: {err}")),
         }
