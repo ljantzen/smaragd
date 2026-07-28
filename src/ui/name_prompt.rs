@@ -24,7 +24,13 @@ pub fn show(ctx: &egui::Context, state: &mut NamePromptState) -> Option<NameProm
         ui.add_space(8.0);
 
         let response = ui.text_edit_singleline(&mut state.name);
-        response.request_focus();
+        // Guard on `has_focus`: `request_focus` unconditionally resets the target's
+        // focus-lock filter, even when it's already focused, reopening a one-frame
+        // gap that swallows the very next keypress — see `binder_panel.rs` for the
+        // same issue. Without this guard, Enter never reaches `lost_focus()` below.
+        if !response.has_focus() {
+            response.request_focus();
+        }
         let confirmed_by_enter =
             response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
@@ -37,6 +43,10 @@ pub fn show(ctx: &egui::Context, state: &mut NamePromptState) -> Option<NameProm
                 outcome = Some(NamePromptOutcome::Cancelled);
             }
         });
+
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            outcome = Some(NamePromptOutcome::Cancelled);
+        }
     });
     outcome
 }
