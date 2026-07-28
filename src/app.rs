@@ -605,15 +605,15 @@ impl TachyliteApp {
         }
         self.prompt = Some(PendingPrompt {
             action: PromptAction::GitCommit { push_after },
-            state: NamePromptState {
-                title: "Commit".to_string(),
-                confirm_label: if push_after {
-                    "Commit and Push".to_string()
+            state: NamePromptState::new(
+                "Commit",
+                if push_after {
+                    "Commit and Push"
                 } else {
-                    "Commit".to_string()
+                    "Commit"
                 },
-                name: "Tachylite backup".to_string(),
-            },
+                "Tachylite backup",
+            ),
         });
     }
 
@@ -811,11 +811,7 @@ impl TachyliteApp {
     fn prompt_save_layout(&mut self) {
         self.prompt = Some(PendingPrompt {
             action: PromptAction::SaveLayout,
-            state: NamePromptState {
-                title: "Save Layout".to_string(),
-                confirm_label: "Save".to_string(),
-                name: String::new(),
-            },
+            state: NamePromptState::new("Save Layout", "Save", ""),
         });
     }
 
@@ -878,11 +874,7 @@ impl TachyliteApp {
         };
         self.prompt = Some(PendingPrompt {
             action: PromptAction::NewProject { location },
-            state: NamePromptState {
-                title: "New Project".to_string(),
-                confirm_label: "Create".to_string(),
-                name: String::new(),
-            },
+            state: NamePromptState::new("New Project", "Create", ""),
         });
     }
 
@@ -1432,11 +1424,7 @@ impl TachyliteApp {
     fn prompt_new_file(&mut self, parent: PathBuf) {
         self.prompt = Some(PendingPrompt {
             action: PromptAction::NewFile { parent },
-            state: NamePromptState {
-                title: "New File".to_string(),
-                confirm_label: "Create".to_string(),
-                name: String::new(),
-            },
+            state: NamePromptState::new("New File", "Create", ""),
         });
     }
 
@@ -1446,11 +1434,7 @@ impl TachyliteApp {
     fn prompt_new_folder(&mut self, parent: PathBuf) {
         self.prompt = Some(PendingPrompt {
             action: PromptAction::NewFolder { parent },
-            state: NamePromptState {
-                title: "New Folder".to_string(),
-                confirm_label: "Create".to_string(),
-                name: String::new(),
-            },
+            state: NamePromptState::new("New Folder", "Create", ""),
         });
     }
 
@@ -1469,11 +1453,7 @@ impl TachyliteApp {
                 parent,
                 template_path,
             },
-            state: NamePromptState {
-                title: "New From Template".to_string(),
-                confirm_label: "Create".to_string(),
-                name,
-            },
+            state: NamePromptState::new("New From Template", "Create", name),
         });
     }
 
@@ -1487,11 +1467,7 @@ impl TachyliteApp {
             .to_string();
         self.prompt = Some(PendingPrompt {
             action: PromptAction::Rename { path },
-            state: NamePromptState {
-                title: "Rename".to_string(),
-                confirm_label: "Rename".to_string(),
-                name,
-            },
+            state: NamePromptState::new("Rename", "Rename", name),
         });
     }
 
