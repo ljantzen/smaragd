@@ -8,8 +8,11 @@ See [`docs/user-manual.md`](docs/user-manual.md) for a full user-facing guide to
 
 ## Features
 
-- Binder tree view of a project folder (gitignore-aware, via the `ignore` crate); documents are shown without their `.md` extension. Drag-and-drop a file or folder onto another folder to move it. Keyboard-navigable: click a row (or Tab to it) then Up/Down moves between rows, Left/Right collapses/expands a folder, and Enter opens the focused document. Binder, Backlinks (see below), and Document Metadata (see below) are all dockable tool windows (via `egui_dock`) rather than fixed panels or modals — drag a tab's title to float it in its own window, tab it together with another, or dock it to an edge, Visual-Basic-Properties-window style
+- Binder tree view of a project folder (gitignore-aware, via the `ignore` crate); documents are shown without their `.md` extension. Drag-and-drop a file or folder onto another folder to move it into that folder (appended at the end); drag one onto another *document* row instead to reorder it to sit immediately before that document, within the same folder or a different one. Keyboard-navigable: click a row (or Tab to it) then Up/Down moves between rows, Left/Right collapses/expands a folder, and Enter opens the focused document. The remappable "Toggle Binder/Editor Focus" shortcut (`F6`) jumps keyboard focus between the binder and the editor and back
+- Binder, Backlinks, Document Metadata, and the Editor/Preview/Corkboard central views are *all* one shared dockable layout (via `egui_dock`) rather than fixed panels, modals, or mutually-exclusive view modes — drag a tab's title to float it in its own window, tab it together with another, split it against any other tab, or dock it to an edge, Visual-Basic-Properties-window style. Toggling Preview/Corkboard (`View` menu or their shortcuts) opens/closes that tab next to the editor rather than switching to an exclusive "view mode" — any combination can be open and arranged at once. The layout persists across restarts; `Window > Save Current Layout…` names and saves the current arrangement, `Window > Layouts` switches back to a saved one, and `Window > Restore Default Layout` resets to the original Binder-left/Editor-right split
 - Markdown text editor with save-on-`Ctrl+S` and save-on-focus-loss
+- `File > Open Document…` (`Ctrl+P`) opens an fzf-style quick-switcher: fuzzy-filters every document in the project by its relative path as you type (subsequence matching via `nucleo-matcher`, the engine behind the Helix editor's picker — not the plain prefix/substring match the command prompt's own `:open` completion uses), Enter or click opens the highlighted result directly. `File > Close Document` (`Ctrl+W`) saves if dirty and clears the editor back to its empty placeholder
+- Focus Mode (`View > Focus Mode` / `F9`): maximizes the window and hides the menu bar, status bar, and every other dock tab, leaving just the editor centered in a comfortable column; the paragraph containing the cursor renders at full strength with every other paragraph dimmed ("typewriter" focus). Escape exits, same as toggling it again
 - Right-click context menu in the binder: New File/New Folder/New From Template (folders — see below), Rename, Delete (native confirmation dialog, worded as a Trash move when one's configured — see below), Restore (for a trashed item), Folder Role/Empty Trash (folders) — New File/Folder and Rename each prompt for a name (Enter to confirm), and renaming a document updates any `[[wikilinks]]` to it elsewhere in the project
 - `File > New Project` (native folder picker + name prompt) and `File > Open Project` (native folder picker, offering to adopt a folder tachylite hasn't opened before)
 - Designated Research/Trash/Templates folders (right-click a folder's "Folder Role" submenu), Scrivener-style: at most one folder per role project-wide.
@@ -33,7 +36,7 @@ See [`docs/user-manual.md`](docs/user-manual.md) for a full user-facing guide to
 
 ## Not yet implemented
 
-Menu items present but stubbed: `File > Close Project`, `Help > About`. Also deferred: the Excalidraw-style canvas, multi-tab editing, and template folders/subfolders beyond a flat list (only documents directly inside the Templates folder are offered, not ones nested in a subfolder of it). Export has its own gaps: no per-block styling for verse/dialogue/insets (the markdown IR has no such block kinds), one general-purpose EPUB output rather than retailer-tuned targets, no in-app style editor (styles are `.toml` files you author or drop in, not configured from a panel), and the reported spine width is a rough estimate — confirm against your printer's own calculator before sending a cover to print. A plugin's `on_save` hook only runs on the explicit save actions (`:w`/`Ctrl+S`/`:wq`) — not the focus-loss autosave or the save-before-switching-documents path, both of which stay plugin-agnostic in v1. In the markdown parser itself: raw HTML (blocks and inline) is dropped rather than passed through; table column alignment (`:---:`) is parsed but not yet reflected visually; GFM extras other than strikethrough/tables (task lists, footnotes) aren't enabled; mixing container types (e.g. a list inside a blockquote) doesn't preserve proper nesting; and `![[Note]]` embeds only actually embed when `Note` has an image extension — embedding another note's rendered content (transclusion) isn't implemented, so those fall back to behaving like a plain `[[Note]]` link — see `src/markdown.rs`'s doc comment.
+Menu items present but stubbed: `File > Close Project`. Also deferred: the Excalidraw-style canvas, multi-tab editing, and template folders/subfolders beyond a flat list (only documents directly inside the Templates folder are offered, not ones nested in a subfolder of it). Export has its own gaps: no per-block styling for verse/dialogue/insets (the markdown IR has no such block kinds), one general-purpose EPUB output rather than retailer-tuned targets, no in-app style editor (styles are `.toml` files you author or drop in, not configured from a panel), and the reported spine width is a rough estimate — confirm against your printer's own calculator before sending a cover to print. A plugin's `on_save` hook only runs on the explicit save actions (`:w`/`Ctrl+S`/`:wq`) — not the focus-loss autosave or the save-before-switching-documents path, both of which stay plugin-agnostic in v1. In the markdown parser itself: raw HTML (blocks and inline) is dropped rather than passed through; table column alignment (`:---:`) is parsed but not yet reflected visually; GFM extras other than strikethrough/tables (task lists, footnotes) aren't enabled; mixing container types (e.g. a list inside a blockquote) doesn't preserve proper nesting; and `![[Note]]` embeds only actually embed when `Note` has an image extension — embedding another note's rendered content (transclusion) isn't implemented, so those fall back to behaving like a plain `[[Note]]` link — see `src/markdown.rs`'s doc comment.
 
 ## Running
 
@@ -58,17 +61,19 @@ Pure, unit-tested logic is kept separate from egui rendering code, which is veri
 ```
 src/
   main.rs                 entry point
-  app.rs                  TachyliteApp: panel layout, menu bar, event routing
+  app.rs                  TachyliteApp: dock layout, menu bar, event routing
+  build.rs                (repo root) captures git commit/build date as compile-time env vars for Help > About
   markdown.rs             markdown -> Block/Span parser (pulldown-cmark + wikilinks)
   frontmatter.rs          YAML frontmatter parsing (DocumentMeta) + write-back + stripping for preview
-  autocomplete.rs         wikilink-autocomplete query/filter/completion logic
+  autocomplete.rs         wikilink-autocomplete query/filter/completion logic (plain prefix/substring match)
+  fuzzy.rs                fzf-style subsequence fuzzy matching (nucleo-matcher) for the Open Document quick-switcher
   search.rs               plain-text find/replace across a chosen SearchScope
   git.rs                  thin wrapper over the system `git` binary (init/commit/push/pull)
   plugins.rs              loads/runs .rhai plugins: custom : commands + the on_save hook
   color_theme.rs          built-in + loaded-from-.toml color themes, egui::Visuals application
   shortcuts.rs            ShortcutAction <-> egui::KeyboardShortcut map, load/save, guards against binding a shortcut that would make some character untypable
   settings.rs             app-wide preferences: load/save tachylite.toml
-  editor/mod.rs           EditorState: open document, dirty tracking, save
+  editor/mod.rs           EditorState: open/close document, dirty tracking, save
   export/
     mod.rs                 gather() (binder walk, Trash/Templates-skipping) + shared ExportDoc/BookMeta/ExportError
     style.rs                TypesetStyle: built-in + loaded-from-.toml typesetting styles shared by all 3 formats
@@ -78,14 +83,16 @@ src/
   project/
     model.rs              BinderTree/BinderNode data model
     scan.rs                folder -> BinderTree via ignore::WalkBuilder
-    mod.rs                 Project: load/initialize, metadata, folder roles, trash/restore, create/rename/delete, story cards, backlinks scan
+    mod.rs                 Project: load/initialize, metadata, folder roles, trash/restore, create/rename/delete/reorder, story cards, backlinks scan
   ui/
+    about_panel.rs          Help > About modal: version + build info
     backlinks_panel.rs      backlinks list rendering (dockable tab)
-    binder_panel.rs        binder tree rendering + right-click context menu + drag-and-drop (dockable tab)
-    editor_panel.rs         text editor + wikilink autocomplete popup
-    markdown_preview.rs     glow-style preview rendering
-    corkboard_panel.rs      story-card grid + card editor modal
+    binder_panel.rs        binder tree rendering + right-click context menu + drag-and-drop move/reorder (dockable tab)
+    editor_panel.rs         text editor + wikilink autocomplete popup + Focus Mode's paragraph-dimming layouter (dockable tab)
+    markdown_preview.rs     glow-style preview rendering (dockable tab)
+    corkboard_panel.rs      story-card grid + card editor modal (dockable tab)
     metadata_panel.rs       document-metadata form editor, live-binding (dockable tab)
+    open_document_prompt.rs fzf-style quick-switcher modal for Open Document
     find_replace_panel.rs   find/replace panel rendering
     command_prompt.rs       `:` command parsing, completion, and prompt rendering
     settings_panel.rs       settings window rendering (incl. shortcut remapping)
@@ -93,4 +100,4 @@ src/
     export_panel.rs         export dialog: Title/Author/Style + DOCX/EPUB/Print PDF buttons
 ```
 
-Binder/Backlinks/Metadata dock together via [`egui_dock`](https://github.com/Adanos020/egui_dock), wired up in `app.rs`'s `DockTab`/`AppTabViewer`.
+Binder, Backlinks, Metadata, Editor, Preview, and Corkboard all dock together in one shared area via [`egui_dock`](https://github.com/Adanos020/egui_dock), wired up in `app.rs`'s `DockTab`/`AppTabViewer`.

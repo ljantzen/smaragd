@@ -10,6 +10,7 @@ This manual covers what the app does and how to use it. For internals (source la
 - [Dockable Tool Windows](#dockable-tool-windows)
 - [The Binder](#the-binder)
 - [Writing and the Editor](#writing-and-the-editor)
+- [Focus Mode](#focus-mode)
 - [Markdown Preview](#markdown-preview)
 - [Wikilinks](#wikilinks)
 - [Backlinks](#backlinks)
@@ -38,14 +39,21 @@ A **project** is just a folder on disk containing `.md` files and subfolders, ma
 
 ## Dockable Tool Windows
 
-The **Binder**, **Backlinks**, and **Document Metadata** panels are dockable tool windows, not fixed panels or modals — similar to the Properties window in Visual Basic's IDE. Each shows up as a tab on the left by default, but you can:
+The **Binder**, **Backlinks**, **Document Metadata**, **Editor**, **Preview**, and **Corkboard** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
 
 - **Drag a tab's title** onto empty space to pop it out into its own floating window
 - **Drag a floating window's title back** onto the dock area to re-dock it
 - **Drag one tab onto another** to group them together, switching between them like browser tabs
+- **Drag a tab to an edge** of another tab or the dock area to split the layout and place it side by side
 - **Resize** the dock area, or a floating window, by dragging its edge
 
-Binder is present from the moment a project is open; Backlinks and Metadata start closed. All three can be closed via their tab's × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, or **`Edit > Document Metadata`** (Backlinks and Metadata also have shortcuts — see below).
+Binder and Editor are present from the moment a project is open; Backlinks, Metadata, Preview, and Corkboard start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Preview`**, **`View > Corkboard`**, or **`Edit > Document Metadata`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
+
+The whole arrangement — which tabs are open, how they're split or floated, and window position/size — persists across restarts. **`Window`** menu:
+
+- **Save Current Layout…** — names and saves the current arrangement
+- **Layouts** — lists saved layouts; pick one to switch to it
+- **Restore Default Layout** — resets to the original Binder-left/Editor-right split, with the Editor occupying the majority of the space
 
 ## The Binder
 
@@ -55,7 +63,8 @@ The left-hand panel is the **binder** — a tree view of your project folder, on
   - `Up`/`Down` moves between rows
   - `Left`/`Right` collapses/expands a focused folder
   - `Enter` opens the focused document
-- **Drag and drop** a file or folder onto another folder to move it.
+- **Drag and drop** a file or folder *onto* another folder to move it there. Drag it *onto another document* instead to reorder — dropping it just before that document, within the same folder — without changing which folder it's in.
+- **`F6`** (the remappable "Toggle Binder/Editor Focus" shortcut) jumps keyboard focus back and forth between the binder and the editor/preview, without touching the mouse.
 - **Right-click** a row for a context menu:
   - **New File** / **New Folder** / **New From Template** (folders only — see [Templates](#folder-roles-research-trash-templates)) — each prompts for a name (`Enter` to confirm)
   - **Rename** — also prompts for a name, and updates any `[[wikilinks]]` elsewhere in the project that pointed at the old name
@@ -69,6 +78,14 @@ The main panel is a plain-text Markdown editor.
 
 - **`Ctrl+S`** (or **`Cmd+S`** on macOS) saves explicitly. The document also saves automatically when it loses focus (e.g. you click into the binder or another panel).
 - There's currently no multi-tab editing — opening a document replaces whatever's currently open (saving it first if it has unsaved changes).
+- **`File > Open Document…`** (or **`Ctrl+P`**) opens an fzf-style quick-switcher: type a few letters and it fuzzy-matches against every document's path, best match first — a query doesn't need to be a contiguous substring, so e.g. "ch1sc2" can match "Chapter 1/Scene 2". Use `Up`/`Down` to change the highlighted result, `Enter` or a click to open it, `Escape` to cancel.
+- **`File > Close Document`** (or **`Ctrl+W`**) saves the current document if it has unsaved changes, then closes it — there's no save/discard/cancel prompt, matching the same silent-autosave behavior as opening a different document.
+
+## Focus Mode
+
+**`View > Focus Mode`** (or **`F9`**) is a distraction-free writing mode, similar to Scrivener's Composition Mode: the window maximizes and all chrome — menu bar, binder, other dock tabs — disappears, leaving just the current document centered in the available width. The paragraph your cursor is in stays at full brightness while other paragraphs dim, a typewriter-style aid for keeping your eye on the sentence you're actually writing.
+
+Focus Mode needs an open document to enter — with nothing open there's nothing to focus on. Press `Escape` or `F9` again to exit and return to the normal layout.
 
 ## Markdown Preview
 
@@ -438,6 +455,10 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Push (Git) | `Ctrl+Alt+P` |
 | Document Metadata | `Ctrl+Shift+M` |
 | Activate Wikilink | `Ctrl+Enter` |
+| Toggle Binder/Editor Focus | `F6` |
+| Toggle Focus Mode | `F9` |
+| Open Document | `Ctrl+P` |
+| Close Document | `Ctrl+W` |
 
 Two shortcuts can never overlap — rebinding one to a combo another action already owns automatically un-assigns it from the previous owner. This holds across built-ins and plugin shortcuts alike: if a loaded plugin registered a `:` command with its own shortcut (see [Plugins](#plugins)), it shows up in its own "Plugin Shortcuts" section further down the same window, remappable/unbindable the same way.
 
@@ -454,7 +475,7 @@ If the settings file is missing or its contents can't be parsed, tachylite falls
 
 ## Current Limitations
 
-Menu items present but not yet functional: `File > Close Project`, `Help > About`.
+Menu items present but not yet functional: `File > Close Project`.
 
 Not yet implemented: an Excalidraw-style canvas, multi-tab editing, and template folders/subfolders beyond a flat list (only documents directly inside the Templates folder are offered — not ones nested in a subfolder of it). [Export](#export)'s own gaps are listed at the end of that section.
 
