@@ -74,7 +74,7 @@ The left-hand panel is the **binder** — a tree view of your project folder, on
 
 ## Writing and the Editor
 
-The main panel is a plain-text Markdown editor.
+The main panel is a plain-text Markdown editor, borderless and filling the whole Editor tab — clicking anywhere in it, including below the last line of a short document, places the cursor there.
 
 - **`Ctrl+S`** (or **`Cmd+S`** on macOS) saves explicitly. The document also saves automatically when it loses focus (e.g. you click into the binder or another panel).
 - There's currently no multi-tab editing — opening a document replaces whatever's currently open (saving it first if it has unsaved changes).

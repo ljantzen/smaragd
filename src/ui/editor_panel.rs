@@ -162,35 +162,39 @@ pub fn show(
             ui.fonts_mut(|f| f.layout_job(job))
         };
 
-    // Wrapped in a `ScrollArea`, filling the full available space
-    // (`auto_shrink([false, false])`): `TextEdit`'s own size is purely
-    // content-driven (it sizes to however many rows/columns of text it
-    // actually holds, floored at `desired_rows`'s default of 4 — `min_size`'s
-    // height component, despite its name, is silently ignored by egui, only
-    // ever folding into desired *width*), so without a `ScrollArea` a short
-    // document leaves the rest of the container looking broken/empty (exactly
-    // what made Focus Mode's fullscreen so glaring — the previous unscrolled
-    // `TextEdit` alone just rendered a small box) and a long one has no way to
-    // scroll to see past whatever first fit in the visible area at all.
+    // `TextEdit`'s allocated (and thus *interactive* — this isn't just cosmetic)
+    // height is `desired_rows` rows at minimum, regardless of how much content it
+    // actually holds — unlike `min_size`'s height component, which despite its
+    // name is silently ignored by egui. A short document left at the default of
+    // 4 rows would visually fill the `ScrollArea` below (background color, no
+    // border) but not actually respond to clicks past its last real line, since
+    // the widget's own hit-test rect stops at content height — so clicking lower
+    // in what looks like the editor does nothing. Sizing `desired_rows` to the
+    // tab's currently available height (computed before entering the
+    // `ScrollArea`, whose own inner `Ui` reports a much larger "available"
+    // height to allow scrolling past it) makes the widget's real interactive
+    // area match what it looks like it covers; a longer document still grows
+    // and scrolls past that minimum exactly as before.
+    let available_height = ui.available_height();
+    let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+    let desired_rows = ((available_height / row_height).floor() as usize).max(1);
+
     let output = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            // No border: `TextEdit`'s own frame only ever wraps its *content*
+            // height (a few short paragraphs, say), never the full `ScrollArea`
+            // around it — with the frame left on, a short document renders as a
+            // small boxed page sitting in a lot of otherwise-dead-looking empty
+            // space below it, rather than one editable area that fills the tab.
             let mut text_edit = egui::TextEdit::multiline(&mut editor.buffer)
                 .desired_width(f32::INFINITY)
+                .desired_rows(desired_rows)
                 .code_editor()
+                .frame(egui::Frame::NONE)
                 .id(text_edit_id);
             if focus_mode {
-                // No border: `TextEdit`'s own frame only ever wraps its
-                // *content* height (a few short paragraphs, say), never the
-                // full `ScrollArea` around it — with the frame left on, a
-                // short document still looks like a small boxed page sitting
-                // in a lot of empty space, which is exactly what wasn't
-                // supposed to happen. Real distraction-free views (Scrivener's
-                // Composition Mode included) don't box the text at all; it
-                // just sits on the background.
-                text_edit = text_edit
-                    .frame(egui::Frame::NONE)
-                    .layouter(&mut focus_mode_layouter);
+                text_edit = text_edit.layouter(&mut focus_mode_layouter);
             }
             text_edit.show(ui)
         })
@@ -374,7 +378,48 @@ pub fn move_cursor_to(ctx: &egui::Context, id: Id, text: &str, byte_offset: usiz
 
 #[cfg(test)]
 mod tests {
-    use super::paragraph_byte_range;
+    use super::{editor_text_edit_id, paragraph_byte_range, show};
+    use crate::editor::EditorState;
+
+    /// Reproduces the reported bug: a short document's actual *interactive* area
+    /// (what you can click to focus/place the cursor) used to stop at content
+    /// height — a handful of lines — even once the visible background had
+    /// already been made to fill the whole tab, leaving a large dead zone below
+    /// the last line that looked editable but wasn't. Drives `show` inside a
+    /// fixed-size viewport and checks the `TextEdit`'s own allocated rect (read
+    /// back via `Context::read_response`, since `show`'s return value doesn't
+    /// expose it) actually reaches down close to the bottom of that viewport.
+    #[test]
+    fn a_short_document_s_editable_area_fills_the_available_height() {
+        let ctx = egui::Context::default();
+        let mut editor = EditorState {
+            open_path: Some(std::path::PathBuf::from("scene.md")),
+            buffer: "One short line.".to_string(),
+            ..Default::default()
+        };
+        let viewport_height = 600.0;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, viewport_height),
+            )),
+            ..Default::default()
+        };
+
+        let _ = ctx.run_ui(input, |ui| {
+            show(ui, &mut editor, &[], None, false);
+        });
+
+        let response = ctx
+            .read_response(editor_text_edit_id())
+            .expect("TextEdit renders once a document is open");
+        assert!(
+            response.rect.height() > viewport_height * 0.8,
+            "expected the editable area to fill most of a {viewport_height}px-tall \
+             viewport for a one-line document, got {}px",
+            response.rect.height()
+        );
+    }
 
     #[test]
     fn single_paragraph_covers_the_whole_buffer() {
