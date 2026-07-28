@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::editor::EditorState;
 use crate::frontmatter::DocumentMeta;
 use crate::project::{BacklinkEntry, LoadError, Project, RestoreError};
@@ -75,25 +77,101 @@ struct ExportState {
     style_id: String,
 }
 
-/// Which of the three mutually exclusive ways of looking at the project is currently
-/// shown in the `CentralPanel`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ViewMode {
+/// A dockable tab in `dock_state`. Binder/Backlinks/Metadata used to be
+/// (respectively) a fixed left panel or a blocking modal; Editor/Preview/
+/// Corkboard used to be the three mutually-exclusive `ViewMode`s of a separate
+/// `CentralPanel`, entirely outside the dock. All six now live in one shared
+/// `egui_dock::DockState`, so any of them can be freely dragged, split, and
+/// resized against any other — see `AppTabViewer` and the single
+/// `DockArea::show_inside` call in `eframe::App::ui`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum DockTab {
+    Binder,
+    Backlinks,
+    Metadata,
     Editor,
     Preview,
     Corkboard,
 }
 
-/// A dockable tool window in `dock_state` — Binder, Backlinks, and Metadata, each of
-/// which used to be (respectively) a fixed left panel or a blocking modal, now all
-/// float/dock/tab together like Visual Basic's Properties window. Deliberately
-/// separate from `ViewMode`: these are auxiliary tool windows that coexist with
-/// whichever central view is showing, not another central view themselves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DockTab {
-    Binder,
-    Backlinks,
-    Metadata,
+/// The initial dock layout for a fresh install (no persisted `dock_layout.json`
+/// yet), and the "Restore Default Layout" View-menu action: a narrow Binder
+/// column on the left, Editor filling the rest — the same visual arrangement
+/// this app always had back when Binder's dock and the editor were two
+/// separate, non-`egui_dock` layout systems (a fixed-width side `Panel` and a
+/// `CentralPanel`, respectively).
+fn default_dock_state() -> egui_dock::DockState<DockTab> {
+    let mut state = egui_dock::DockState::new(vec![DockTab::Editor]);
+    state
+        .main_surface_mut()
+        .split_left(egui_dock::NodeIndex::root(), 0.78, vec![DockTab::Binder]);
+    state
+}
+
+/// Guards against a layout that deserializes fine but has no `Editor` tab
+/// anywhere — e.g. one persisted by a build from before the editor became a
+/// dock tab, or a hand-edited file — which would otherwise leave no way to
+/// edit any document at all. A no-op if `Editor` is already present.
+fn ensure_editor_tab_present(state: &mut egui_dock::DockState<DockTab>) {
+    if state
+        .iter_all_tabs()
+        .all(|(_, tab)| *tab != DockTab::Editor)
+    {
+        state.push_to_focused_leaf(DockTab::Editor);
+    }
+}
+
+/// The `egui::Id` `egui_dock` renders a floating surface's `egui::Window` under —
+/// duplicated here (rather than exposed by the crate) because nothing public
+/// exposes it; see `capture_floating_window_positions`'s doc comment for why this
+/// is needed at all. Matches `show_window_surface`'s own `id` exactly (egui_dock
+/// 0.20.1, `src/widgets/dock_area/show/window_surface.rs`): `format!("window
+/// {surf_index:?}").into()`, i.e. `Id::new` of that same formatted string.
+fn floating_window_id(surface: egui_dock::SurfaceIndex) -> egui::Id {
+    egui::Id::new(format!("window {surface:?}"))
+}
+
+/// `DockState`'s tree structure (tabs, splits, which surface each lives on)
+/// round-trips through our JSON persistence just fine, but a floating surface's
+/// on-screen *position* isn't actually part of that tree at all: `WindowState`
+/// (the part of `DockState` that records it) only ever gets its `next_position`/
+/// `next_size` populated once, right when a tab is first dragged out live (see
+/// `DockState::detach_tab`) — `egui_dock` 0.20.1 never writes back to those
+/// fields afterward (nor to `WindowState`'s `screen_rect`, which is otherwise
+/// dead code in this version). The window's actual current position instead
+/// lives only in egui's own per-session `Memory` (keyed by `floating_window_id`),
+/// which starts out empty on every fresh launch — so a restored floating panel
+/// would otherwise land wherever egui's built-in cascade default is, rather than
+/// where it was left (exactly the bug reported: tabs reopened correctly, but
+/// stacked at the top-left instead of docked to the right edge).
+///
+/// Called right before persisting (see `persist_dock_layout`), with the live
+/// `ctx` still available: reads each floating surface's actual current rect out
+/// of egui's `Memory` and writes it into that surface's `next_position`/
+/// `next_size` — fields that *do* round-trip through our JSON serialization, and
+/// that `WindowState::create_window` picks up automatically (exactly as it would
+/// for a freshly-detached tab) the very first time this restored layout is shown.
+fn capture_floating_window_positions<Tab>(
+    state: &mut egui_dock::DockState<Tab>,
+    ctx: &egui::Context,
+) {
+    let floating_surfaces: Vec<egui_dock::SurfaceIndex> = state
+        .iter_surfaces_indexed()
+        .filter(|(_, surface)| matches!(surface, egui_dock::Surface::Window(..)))
+        .map(|(index, _)| index)
+        .collect();
+    for index in floating_surfaces {
+        let Some(rect) = ctx.memory(|mem| mem.area_rect(floating_window_id(index))) else {
+            continue;
+        };
+        if !rect.is_finite() {
+            continue;
+        }
+        if let Some(window_state) = state.get_window_state_mut(index) {
+            window_state.set_position(rect.min);
+            window_state.set_size(rect.size());
+        }
+    }
 }
 
 pub struct TachyliteApp {
@@ -101,7 +179,6 @@ pub struct TachyliteApp {
     editor: EditorState,
     selected_path: Option<PathBuf>,
     status_message: Option<String>,
-    view_mode: ViewMode,
     settings: Settings,
     show_settings: bool,
     prompt: Option<PendingPrompt>,
@@ -208,7 +285,6 @@ impl TachyliteApp {
             editor: EditorState::default(),
             selected_path: None,
             status_message: None,
-            view_mode: ViewMode::Editor,
             settings,
             show_settings: false,
             prompt: None,
@@ -221,7 +297,7 @@ impl TachyliteApp {
             metadata_last_applied: DocumentMeta::default(),
             backlinks: Vec::new(),
             backlinks_computed_for: None,
-            dock_state: egui_dock::DockState::new(vec![DockTab::Binder]),
+            dock_state: Self::load_dock_state(),
             pending_git: None,
             plugin_engine: crate::plugins::PluginEngine::default(),
             plugin_shortcuts: Vec::new(),
@@ -640,6 +716,44 @@ impl TachyliteApp {
         }
     }
 
+    /// Load the dock layout persisted by a previous run (see `persist_dock_layout`),
+    /// falling back to `default_dock_state()` if there's nothing on disk yet or it
+    /// fails to parse. Never a hard error: a missing/corrupt layout file shouldn't
+    /// prevent the app from starting.
+    ///
+    /// Also guards against a layout that deserializes fine but has no `Editor` tab
+    /// anywhere — e.g. one persisted by a build from before the editor became a
+    /// dock tab, or a hand-edited file — which would otherwise leave no way to
+    /// edit any document at all.
+    fn load_dock_state() -> egui_dock::DockState<DockTab> {
+        let mut state = crate::settings::dock_layout_file_path()
+            .and_then(|path| fs::read_to_string(path).ok())
+            .and_then(|contents| serde_json::from_str(&contents).ok())
+            .unwrap_or_else(default_dock_state);
+        ensure_editor_tab_present(&mut state);
+        state
+    }
+
+    /// Save which dock tabs are open and how they're split/floated, so the layout
+    /// is exactly as the user left it next launch. Called once, when a window
+    /// close is first requested (see the `close_requested` check in `ui`) — that's
+    /// the one point that both still has a live `ctx` (needed by
+    /// `capture_floating_window_positions`) and is guaranteed to see the final
+    /// state; layout changes (dragging, splitting, closing a tab) happen far less
+    /// often than every-frame writes would justify.
+    fn persist_dock_layout(&mut self, ctx: &egui::Context) {
+        capture_floating_window_positions(&mut self.dock_state, ctx);
+        let Some(path) = crate::settings::dock_layout_file_path() else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(contents) = serde_json::to_string_pretty(&self.dock_state) {
+            let _ = fs::write(path, contents);
+        }
+    }
+
     /// Open `path` as a project in response to an explicit user action (the "Open
     /// Project" menu item). If `path` has never been opened by tachylite before (no
     /// `.tachylite/project.json`), offers via a native Yes/No dialog to set it up in
@@ -799,15 +913,36 @@ impl TachyliteApp {
         self.backlinks_computed_for = self.editor.open_path.clone();
     }
 
-    /// Open or close a dock tab, mirroring how `ShortcutAction::TogglePreview`/
-    /// `ToggleCorkboard` toggle `view_mode` — just backed by dock-tab presence
-    /// instead of a bool, since `Backlinks`/`Metadata` aren't a `ViewMode` variant
-    /// (see `DockTab`'s doc comment).
+    /// Open or close a dock tab: present → removed, absent → opened in whichever
+    /// leaf currently has focus.
     fn toggle_dock_tab(&mut self, tab: DockTab) {
         if let Some(path) = self.dock_state.find_tab(&tab) {
             self.dock_state.remove_tab(path);
         } else {
             self.dock_state.push_to_focused_leaf(tab);
+        }
+    }
+
+    /// Opens `tab` as a new tab in the same dock node as `anchor` — e.g. next to
+    /// the editor — rather than wherever `push_to_focused_leaf` would land it
+    /// (whichever leaf last had focus, which could be Binder's or anything else).
+    /// Falls back to `push_to_focused_leaf` if `anchor` isn't currently open.
+    fn open_tab_next_to(&mut self, tab: DockTab, anchor: DockTab) {
+        match self.dock_state.find_tab(&anchor) {
+            Some(path) => self.dock_state[path.surface][path.node].append_tab(tab),
+            None => self.dock_state.push_to_focused_leaf(tab),
+        }
+    }
+
+    /// Like `toggle_dock_tab`, but opens `tab` next to `anchor` (see
+    /// `open_tab_next_to`) instead of wherever's focused — for tabs that
+    /// conceptually pair with the editor (Preview, Corkboard), so toggling them
+    /// doesn't land somewhere surprising depending on what the user last clicked.
+    fn toggle_dock_tab_near(&mut self, tab: DockTab, anchor: DockTab) {
+        if let Some(path) = self.dock_state.find_tab(&tab) {
+            self.dock_state.remove_tab(path);
+        } else {
+            self.open_tab_next_to(tab, anchor);
         }
     }
 
@@ -1103,7 +1238,12 @@ impl TachyliteApp {
             }
             CorkboardEvent::OpenLinkedDocument(path) => {
                 self.open_document(&path);
-                self.view_mode = ViewMode::Editor;
+                match self.dock_state.find_tab(&DockTab::Editor) {
+                    Some(tab_path) => {
+                        let _ = self.dock_state.set_active_tab(tab_path);
+                    }
+                    None => self.open_tab_next_to(DockTab::Editor, DockTab::Corkboard),
+                }
             }
             CorkboardEvent::SetProtagonistDesire(desire) => {
                 if let Some(project) = &mut self.project
@@ -1259,16 +1399,10 @@ impl TachyliteApp {
             ShortcutAction::OpenSettings => self.show_settings = true,
             ShortcutAction::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             ShortcutAction::TogglePreview => {
-                self.view_mode = match self.view_mode {
-                    ViewMode::Preview => ViewMode::Editor,
-                    _ => ViewMode::Preview,
-                };
+                self.toggle_dock_tab_near(DockTab::Preview, DockTab::Editor)
             }
             ShortcutAction::ToggleCorkboard => {
-                self.view_mode = match self.view_mode {
-                    ViewMode::Corkboard => ViewMode::Editor,
-                    _ => ViewMode::Corkboard,
-                };
+                self.toggle_dock_tab_near(DockTab::Corkboard, DockTab::Editor)
             }
             ShortcutAction::Save => {
                 if let Err(err) = self.save_editor() {
@@ -1343,6 +1477,12 @@ impl TachyliteApp {
                     }
                     self.focus_binder_requested = true;
                 } else {
+                    // Bring the Editor tab to the front in case it's currently
+                    // buried behind Preview/Corkboard in the same dock node (or
+                    // closed outright) — same reasoning as the Binder side above.
+                    if let Some(path) = self.dock_state.find_tab(&DockTab::Editor) {
+                        let _ = self.dock_state.set_active_tab(path);
+                    }
                     ctx.memory_mut(|m| m.request_focus(editor_id));
                 }
             }
@@ -1824,19 +1964,31 @@ enum DockAction {
     OpenDocument(PathBuf),
     Binder(BinderEvent),
     RefreshBacklinks,
+    EditorSaveError(String),
+    Wikilink(WikilinkActivation),
+    Corkboard(CorkboardEvent),
 }
 
 /// A short-lived `egui_dock::TabViewer` impl, constructed fresh each frame right
 /// before `DockArea::show_inside` and drained right after (see `DockAction`).
-/// Borrows exactly what each tab's content needs to render; `metadata_draft` is the
-/// one `&mut` since the Metadata tab mutates it directly (live editing, no event
-/// needed — see `apply_metadata_edits_if_changed`).
+/// Borrows exactly what each tab's content needs to render; `metadata_draft` and
+/// `editor` are the two `&mut` fields since the Metadata and Editor tabs mutate
+/// them directly (live editing, no event needed for Metadata — see
+/// `apply_metadata_edits_if_changed` — while Editor's own internal edits don't
+/// need to round-trip through a `DockAction` either, only its save/wikilink
+/// outcomes do).
 struct AppTabViewer<'a> {
     project: Option<&'a Project>,
     selected_path: Option<&'a Path>,
-    open_path: Option<&'a Path>,
+    /// Owned (not `&'a Path`) because `editor` below is a `&'a mut EditorState`
+    /// borrowed at the same time — an `&'a Path` still pointing into
+    /// `editor.open_path` would alias it.
+    open_path: Option<PathBuf>,
     backlinks: &'a [BacklinkEntry],
     metadata_draft: &'a mut MetadataDraft,
+    editor: &'a mut EditorState,
+    settings: &'a Settings,
+    color_themes: &'a [crate::color_theme::ColorTheme],
     actions: Vec<DockAction>,
     /// See `TachyliteApp::focus_binder_requested`.
     focus_binder_requested: bool,
@@ -1850,7 +2002,19 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::Binder => "Binder".into(),
             DockTab::Backlinks => "Backlinks".into(),
             DockTab::Metadata => "Metadata".into(),
+            DockTab::Editor => "Editor".into(),
+            DockTab::Preview => "Preview".into(),
+            DockTab::Corkboard => "Corkboard".into(),
         }
+    }
+
+    /// The Editor tab can't be closed: unlike every other tab here, closing it
+    /// would stop `editor_panel::show` from rendering that frame, which means its
+    /// "save on lost-focus" path never runs — a silent way to lose unsaved edits
+    /// that has no precedent before this tab existed (the editor was never
+    /// closeable at all).
+    fn closeable(&mut self, tab: &mut DockTab) -> bool {
+        !matches!(tab, DockTab::Editor)
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut DockTab) {
@@ -1871,7 +2035,9 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                 }
             },
             DockTab::Backlinks => {
-                if let Some(event) = ui::backlinks_panel::show(ui, self.open_path, self.backlinks) {
+                if let Some(event) =
+                    ui::backlinks_panel::show(ui, self.open_path.as_deref(), self.backlinks)
+                {
                     match event {
                         BacklinksEvent::OpenDocument(path) => {
                             self.actions.push(DockAction::OpenDocument(path));
@@ -1881,8 +2047,64 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                 }
             }
             DockTab::Metadata => {
-                ui::metadata_panel::show(ui, self.open_path, self.metadata_draft);
+                ui::metadata_panel::show(ui, self.open_path.as_deref(), self.metadata_draft);
             }
+            DockTab::Editor => {
+                let note_titles = self
+                    .project
+                    .map(|project| project.tree.document_names())
+                    .unwrap_or_default();
+                let activate_wikilink_shortcut = self
+                    .settings
+                    .shortcuts
+                    .get(ShortcutAction::ActivateWikilink);
+                match ui::editor_panel::show(
+                    ui,
+                    self.editor,
+                    &note_titles,
+                    activate_wikilink_shortcut,
+                ) {
+                    Some(EditorEvent::SaveError(err)) => {
+                        self.actions.push(DockAction::EditorSaveError(err));
+                    }
+                    Some(EditorEvent::Wikilink(activation)) => {
+                        self.actions.push(DockAction::Wikilink(activation));
+                    }
+                    None => {}
+                }
+            }
+            DockTab::Preview => {
+                if self.editor.open_path.is_some() {
+                    let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
+                    let project_root = self.project.map(|project| project.root.as_path());
+                    let active_theme = self
+                        .settings
+                        .color_theme
+                        .as_deref()
+                        .and_then(|id| crate::color_theme::find(self.color_themes, id));
+                    if let Some(activation) = ui::markdown_preview::show(
+                        ui,
+                        &self.editor.buffer,
+                        base_dir,
+                        project_root,
+                        active_theme,
+                    ) {
+                        self.actions.push(DockAction::Wikilink(activation));
+                    }
+                } else {
+                    ui.label("Select a file from the binder to preview.");
+                }
+            }
+            DockTab::Corkboard => match self.project {
+                Some(project) => {
+                    if let Some(event) = ui::corkboard_panel::show(ui, project) {
+                        self.actions.push(DockAction::Corkboard(event));
+                    }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
         }
     }
 }
@@ -1890,6 +2112,19 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
 impl eframe::App for TachyliteApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_git_operation();
+
+        // Save the dock layout right as shutdown starts (a window-close click, or
+        // `ShortcutAction::Exit`'s `ViewportCommand::Close`, both surface here)
+        // rather than in `eframe::App::on_exit` — that hook runs after the last
+        // frame and isn't handed a `Context`, but capturing a floating panel's
+        // current on-screen position (see `capture_floating_window_positions`)
+        // needs one. Runs every frame from here until the app actually closes,
+        // which in practice is just the one closing frame or two; re-saving the
+        // same state each of those times is harmless.
+        if ui.ctx().input(|i| i.viewport().close_requested()) {
+            let ctx = ui.ctx().clone();
+            self.persist_dock_layout(&ctx);
+        }
 
         if self.recording_shortcut.is_none() {
             let ctx = ui.ctx().clone();
@@ -2010,15 +2245,25 @@ impl eframe::App for TachyliteApp {
                     }
                 });
                 egui::containers::menu::MenuButton::new("View").ui(ui, |ui| {
-                    ui.radio_value(&mut self.view_mode, ViewMode::Editor, "Editor");
-                    ui.radio_value(&mut self.view_mode, ViewMode::Preview, "Preview");
-                    ui.radio_value(&mut self.view_mode, ViewMode::Corkboard, "Corkboard");
+                    if ui.button("Editor").clicked() {
+                        self.toggle_dock_tab(DockTab::Editor);
+                    }
+                    if ui.button("Preview").clicked() {
+                        self.toggle_dock_tab_near(DockTab::Preview, DockTab::Editor);
+                    }
+                    if ui.button("Corkboard").clicked() {
+                        self.toggle_dock_tab_near(DockTab::Corkboard, DockTab::Editor);
+                    }
                     ui.separator();
                     if ui.button("Binder").clicked() {
                         self.toggle_dock_tab(DockTab::Binder);
                     }
                     if ui.button("Backlinks").clicked() {
                         self.toggle_dock_tab(DockTab::Backlinks);
+                    }
+                    ui.separator();
+                    if ui.button("Restore Default Layout").clicked() {
+                        self.dock_state = default_dock_state();
                     }
                     ui.separator();
                     // `SubMenuButton`, not `MenuButton`: this is nested *inside* the
@@ -2209,88 +2454,35 @@ impl eframe::App for TachyliteApp {
         self.refresh_backlinks_if_needed();
         self.refresh_metadata_if_needed();
 
-        egui::Panel::left("dock_panel")
-            .resizable(true)
-            .default_size(220.0)
-            .show(ui, |ui| {
-                let mut viewer = AppTabViewer {
-                    project: self.project.as_ref(),
-                    selected_path: self.selected_path.as_deref(),
-                    open_path: self.editor.open_path.as_deref(),
-                    backlinks: &self.backlinks,
-                    metadata_draft: &mut self.metadata_draft,
-                    actions: Vec::new(),
-                    focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
-                };
-                egui_dock::DockArea::new(&mut self.dock_state)
-                    .style(egui_dock::Style::from_egui(ui.style().as_ref()))
-                    .show_inside(ui, &mut viewer);
-                for action in viewer.actions {
-                    match action {
-                        DockAction::OpenDocument(path) => self.open_document(&path),
-                        DockAction::Binder(event) => self.handle_binder_event(event),
-                        DockAction::RefreshBacklinks => self.recompute_backlinks(),
-                    }
+        egui::CentralPanel::default().show(ui, |ui| {
+            let mut viewer = AppTabViewer {
+                project: self.project.as_ref(),
+                selected_path: self.selected_path.as_deref(),
+                open_path: self.editor.open_path.clone(),
+                backlinks: &self.backlinks,
+                metadata_draft: &mut self.metadata_draft,
+                editor: &mut self.editor,
+                settings: &self.settings,
+                color_themes: &self.color_themes,
+                actions: Vec::new(),
+                focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
+            };
+            egui_dock::DockArea::new(&mut self.dock_state)
+                .style(egui_dock::Style::from_egui(ui.style().as_ref()))
+                .show_inside(ui, &mut viewer);
+            for action in viewer.actions {
+                match action {
+                    DockAction::OpenDocument(path) => self.open_document(&path),
+                    DockAction::Binder(event) => self.handle_binder_event(event),
+                    DockAction::RefreshBacklinks => self.recompute_backlinks(),
+                    DockAction::EditorSaveError(err) => self.status_message = Some(err),
+                    DockAction::Wikilink(activation) => self.activate_wikilink(activation),
+                    DockAction::Corkboard(event) => self.handle_corkboard_event(event),
                 }
-            });
+            }
+        });
 
         self.apply_metadata_edits_if_changed();
-
-        egui::CentralPanel::default().show(ui, |ui| match self.view_mode {
-            ViewMode::Preview => {
-                if self.editor.open_path.is_some() {
-                    let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
-                    let project_root = self.project.as_ref().map(|project| project.root.as_path());
-                    let active_theme = self
-                        .settings
-                        .color_theme
-                        .as_deref()
-                        .and_then(|id| crate::color_theme::find(&self.color_themes, id));
-                    if let Some(activation) = ui::markdown_preview::show(
-                        ui,
-                        &self.editor.buffer,
-                        base_dir,
-                        project_root,
-                        active_theme,
-                    ) {
-                        self.activate_wikilink(activation);
-                    }
-                } else {
-                    ui.label("Select a file from the binder to preview.");
-                }
-            }
-            ViewMode::Editor => {
-                let note_titles = self
-                    .project
-                    .as_ref()
-                    .map(|project| project.tree.document_names())
-                    .unwrap_or_default();
-                let activate_wikilink_shortcut = self
-                    .settings
-                    .shortcuts
-                    .get(ShortcutAction::ActivateWikilink);
-                match ui::editor_panel::show(
-                    ui,
-                    &mut self.editor,
-                    &note_titles,
-                    activate_wikilink_shortcut,
-                ) {
-                    Some(EditorEvent::SaveError(err)) => self.status_message = Some(err),
-                    Some(EditorEvent::Wikilink(activation)) => self.activate_wikilink(activation),
-                    None => {}
-                }
-            }
-            ViewMode::Corkboard => match &self.project {
-                Some(project) => {
-                    if let Some(event) = ui::corkboard_panel::show(ui, project) {
-                        self.handle_corkboard_event(event);
-                    }
-                }
-                None => {
-                    ui.label("Open a project folder to get started.");
-                }
-            },
-        });
 
         if let Some(draft) = &mut self.card_draft {
             // Only walk the document tree for titles while the card editor (and its
@@ -2319,5 +2511,159 @@ impl eframe::App for TachyliteApp {
                 self.finish_export(action);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod dock_layout_persistence_tests {
+    use super::DockTab;
+
+    /// `egui_dock::DockState` only derives `Clone`/`Debug`, not `PartialEq` — so
+    /// round-tripping is checked by comparing the set of open tabs (and, since
+    /// `iter_all_tabs` walks every surface/node, this also exercises a split
+    /// layout's extra surface, not just the default single-surface case).
+    fn tab_set(state: &egui_dock::DockState<DockTab>) -> Vec<DockTab> {
+        let mut tabs: Vec<DockTab> = state.iter_all_tabs().map(|(_, tab)| *tab).collect();
+        tabs.sort_by_key(|tab| format!("{tab:?}"));
+        tabs
+    }
+
+    struct NoopViewer;
+
+    impl egui_dock::TabViewer for NoopViewer {
+        type Tab = DockTab;
+
+        fn title(&mut self, tab: &mut DockTab) -> egui::WidgetText {
+            format!("{tab:?}").into()
+        }
+
+        fn ui(&mut self, ui: &mut egui::Ui, _tab: &mut DockTab) {
+            ui.label("test");
+        }
+    }
+
+    /// Actually renders `state` through a real `DockArea` for one frame before
+    /// handing it back — every `Node`'s `rect` starts out as `Rect::NOTHING`
+    /// (`{+inf, +inf} .. {-inf, -inf}`, see `egui_dock`'s `LeafNode::new`), which
+    /// JSON can't represent (`serde_json` silently emits `null` for an infinite
+    /// f32, then fails to deserialize that `null` back into a plain, non-`Option`
+    /// f32 field) — a real freshly-*un-rendered* `DockState` would hit this same
+    /// trap, but `persist_dock_layout` only ever runs once the dock has already
+    /// been shown every frame the app was open, so its rects are always concrete
+    /// real numbers. Rendering once here first is what makes these tests
+    /// representative of that, rather than of a state no code path actually ever
+    /// tries to persist.
+    fn rendered(mut state: egui_dock::DockState<DockTab>) -> egui_dock::DockState<DockTab> {
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui_dock::DockArea::new(&mut state).show_inside(ui, &mut NoopViewer);
+        });
+        state
+    }
+
+    #[test]
+    fn default_single_tab_layout_round_trips_through_json() {
+        let state = rendered(egui_dock::DockState::new(vec![DockTab::Binder]));
+
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: egui_dock::DockState<DockTab> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(tab_set(&restored), vec![DockTab::Binder]);
+    }
+
+    #[test]
+    fn a_split_layout_with_multiple_tabs_round_trips_through_json() {
+        let mut state = egui_dock::DockState::new(vec![DockTab::Binder]);
+        state.push_to_focused_leaf(DockTab::Backlinks);
+        state.push_to_focused_leaf(DockTab::Metadata);
+        let state = rendered(state);
+
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: egui_dock::DockState<DockTab> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            tab_set(&restored),
+            vec![DockTab::Backlinks, DockTab::Binder, DockTab::Metadata]
+        );
+    }
+
+    /// The exact scenario from the bug report: a tab dragged out into its own
+    /// floating window (here simulated with `detach_tab` rather than an actual
+    /// drag) reopens with the right tabs, but at the wrong on-screen position.
+    #[test]
+    fn a_floating_windows_position_survives_a_save_and_reload_round_trip() {
+        let mut state = egui_dock::DockState::new(vec![DockTab::Binder]);
+        let detach_rect =
+            egui::Rect::from_min_size(egui::pos2(400.0, 50.0), egui::vec2(200.0, 300.0));
+        let window_index = state.detach_tab(
+            egui_dock::TabPath::new(
+                egui_dock::SurfaceIndex::main(),
+                egui_dock::NodeIndex::root(),
+                egui_dock::TabIndex(0),
+            ),
+            detach_rect,
+        );
+
+        // Render with one persistent `Context` (unlike `rendered` above, which
+        // uses a fresh throwaway one per call) so the floating window's actual
+        // placement lands in egui's own Area memory, the same way it would
+        // across real frames in one running session.
+        let live_ctx = egui::Context::default();
+        let _ = live_ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui_dock::DockArea::new(&mut state).show_inside(ui, &mut NoopViewer);
+        });
+
+        super::capture_floating_window_positions(&mut state, &live_ctx);
+
+        // Round-trip through JSON exactly like `persist_dock_layout`/`load_dock_state`.
+        let json = serde_json::to_string(&state).unwrap();
+        let mut restored: egui_dock::DockState<DockTab> = serde_json::from_str(&json).unwrap();
+
+        // A brand-new `Context` — no memory of the previous session's Area
+        // positions at all — mirrors an actual app restart.
+        let fresh_ctx = egui::Context::default();
+        let _ = fresh_ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui_dock::DockArea::new(&mut restored).show_inside(ui, &mut NoopViewer);
+        });
+        let restored_rect = fresh_ctx
+            .memory(|mem| mem.area_rect(super::floating_window_id(window_index)))
+            .expect("the floating window should have rendered at some rect");
+
+        assert!(
+            (restored_rect.min - detach_rect.min).length() < 1.0,
+            "expected the floating window to reopen near {:?}, but it reopened at {:?}",
+            detach_rect.min,
+            restored_rect.min
+        );
+    }
+
+    #[test]
+    fn default_dock_state_has_exactly_binder_and_editor() {
+        let state = super::default_dock_state();
+
+        assert_eq!(tab_set(&state), vec![DockTab::Binder, DockTab::Editor]);
+    }
+
+    #[test]
+    fn ensure_editor_tab_present_adds_editor_when_missing() {
+        // Simulates a `dock_layout.json` persisted before the editor became a dock
+        // tab (or a hand-edited file) — deserializes fine, but has no Editor tab.
+        let mut state = egui_dock::DockState::new(vec![DockTab::Binder]);
+
+        super::ensure_editor_tab_present(&mut state);
+
+        assert!(
+            tab_set(&state).contains(&DockTab::Editor),
+            "expected an Editor tab to be added when one wasn't already present"
+        );
+    }
+
+    #[test]
+    fn ensure_editor_tab_present_is_a_no_op_when_editor_already_exists() {
+        let mut state = super::default_dock_state();
+
+        super::ensure_editor_tab_present(&mut state);
+
+        assert_eq!(tab_set(&state), vec![DockTab::Binder, DockTab::Editor]);
     }
 }

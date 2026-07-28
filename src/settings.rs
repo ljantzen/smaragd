@@ -65,6 +65,18 @@ pub fn config_file_path() -> Option<PathBuf> {
         .map(|dirs| dirs.config_dir().join("tachylite.toml"))
 }
 
+/// The full path to the persisted dock layout (which tabs are open, and how
+/// they're split/floated), e.g. `~/.config/tachylite/dock_layout.json` on Linux.
+/// Kept in its own file rather than as a field on `Settings`: `egui_dock::DockState`
+/// is a recursive tree of nodes, which doesn't round-trip through TOML (its
+/// derived `Serialize` impl emits constructs — like a sequence of tables mixed with
+/// non-table values — that TOML's format can't represent), but does through JSON.
+/// `None` if the platform's config directory can't be determined.
+pub fn dock_layout_file_path() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "tachylite")
+        .map(|dirs| dirs.config_dir().join("dock_layout.json"))
+}
+
 impl Settings {
     /// Load settings from `path`, falling back to defaults if the file is missing or
     /// its contents can't be parsed — a first launch or a hand-edited file should
