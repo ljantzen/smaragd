@@ -259,6 +259,12 @@ pub struct TachyliteApp {
     /// `AppTabViewer` only borrows `&mut self` fields it's handed, not `self`
     /// itself, so it can't read a shortcut result directly.
     focus_binder_requested: bool,
+    /// Distraction-free writing mode (View > Focus Mode / `ShortcutAction::
+    /// ToggleFocusMode`): full screen, editor only (no Binder/Backlinks/
+    /// Metadata/Preview/Corkboard/menu bar/status bar), with the current
+    /// paragraph highlighted and everything else dimmed — see
+    /// `set_focus_mode` and the `focus_mode` branch in `ui()`.
+    focus_mode: bool,
 }
 
 /// Which of the two network-bound git actions a `pending_git` background thread is
@@ -321,6 +327,7 @@ impl TachyliteApp {
             export: None,
             typeset_styles: Vec::new(),
             focus_binder_requested: false,
+            focus_mode: false,
         };
         app.reload_typeset_styles();
 
@@ -1009,6 +1016,29 @@ impl TachyliteApp {
         }
     }
 
+    /// Enable/disable Focus Mode, keeping the OS window maximized in lock-step
+    /// with it — Scrivener's Composition Mode works the same way (entering
+    /// always goes fullscreen, leaving always leaves it), so there's no
+    /// separate "was already maximized" state to track. Refuses to *enter*
+    /// with no document open — there'd be nothing to show and no Binder to
+    /// pick one from, since Focus Mode hides everything else.
+    ///
+    /// Uses `Maximized`, not `Fullscreen`: on Wayland compositors with patchy
+    /// `xdg-shell` fullscreen support (e.g. niri, a scrollable-tiling
+    /// compositor where "fullscreen" is a less-trodden path than the
+    /// tiling-native "maximize") `Fullscreen` can report a viewport size that
+    /// doesn't match what's actually visible — a real winit/niri interaction
+    /// bug, not something fixable from egui's side of the layout. `Maximized`
+    /// is what a tiling compositor already handles constantly and reliably.
+    fn set_focus_mode(&mut self, ctx: &egui::Context, enabled: bool) {
+        if enabled && self.editor.open_path.is_none() {
+            self.status_message = Some("Open a document before entering Focus Mode.".to_string());
+            return;
+        }
+        self.focus_mode = enabled;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(enabled));
+    }
+
     /// Resolve a `[[wikilink]]` activated (clicked in the preview, or Ctrl+Enter in
     /// the editor) to a document in the current project (matched by filename,
     /// case-insensitively) and open it. If it doesn't exist and `force_create` was
@@ -1548,6 +1578,7 @@ impl TachyliteApp {
                 let is_fullscreen = ctx.input(|i| i.viewport().fullscreen).unwrap_or(false);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
             }
+            ShortcutAction::ToggleFocusMode => self.set_focus_mode(ctx, !self.focus_mode),
             ShortcutAction::FindReplace => self.find_replace.request_open(),
             ShortcutAction::CommandPrompt => self.command_prompt.request_open(),
             ShortcutAction::GitCommit => self.prompt_git_commit(false),
@@ -2153,6 +2184,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     self.editor,
                     &note_titles,
                     activate_wikilink_shortcut,
+                    false,
                 ) {
                     Some(EditorEvent::SaveError(err)) => {
                         self.actions.push(DockAction::EditorSaveError(err));
@@ -2249,239 +2281,273 @@ impl eframe::App for TachyliteApp {
             }
         }
 
-        egui::Panel::top("menu_bar").show(ui, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
-                egui::containers::menu::MenuButton::new("File").ui(ui, |ui| {
-                    let new_project_shortcut =
-                        self.settings.shortcuts.get(ShortcutAction::NewProject);
-                    let open_project_shortcut =
-                        self.settings.shortcuts.get(ShortcutAction::OpenProject);
-                    let open_settings_shortcut =
-                        self.settings.shortcuts.get(ShortcutAction::OpenSettings);
-                    let exit_shortcut = self.settings.shortcuts.get(ShortcutAction::Exit);
+        // Escape exits Focus Mode — the first top-level Escape consumption in
+        // this file; every other Escape handler (name-prompt, command prompt,
+        // wikilink-autocomplete popup, shortcut-recording) lives inside its own
+        // modal's `show`, scoped to just that modal. Gated on no modal being
+        // open so a single Escape press doesn't also exit Focus Mode while
+        // dismissing one of those, mirroring `self.recording_shortcut.is_none()`
+        // guarding the shortcut-dispatch pass above.
+        if self.focus_mode
+            && self.prompt.is_none()
+            && !self.show_settings
+            && !self.find_replace.open
+            && !self.command_prompt.open
+            && self.card_draft.is_none()
+            && self.export.is_none()
+            && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))
+        {
+            let ctx = ui.ctx().clone();
+            self.set_focus_mode(&ctx, false);
+        }
 
-                    if menu_button_with_shortcut(ui, "New Project", new_project_shortcut).clicked()
-                    {
-                        self.start_new_project();
-                    }
-                    if menu_button_with_shortcut(ui, "Open Project", open_project_shortcut)
-                        .clicked()
-                    {
-                        self.browse_for_project();
-                    }
-                    ui.add_enabled(false, egui::Button::new("Close Project"));
-                    if menu_button_with_shortcut(ui, "Settings", open_settings_shortcut).clicked() {
-                        self.show_settings = true;
-                    }
-                    ui.separator();
-                    if menu_button_with_shortcut(ui, "Exit", exit_shortcut).clicked() {
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
-                egui::containers::menu::MenuButton::new("Edit").ui(ui, |ui| {
-                    if menu_button_with_shortcut(
-                        ui,
-                        "Cut",
-                        Some(egui::KeyboardShortcut::new(
-                            egui::Modifiers::COMMAND,
-                            egui::Key::X,
-                        )),
-                    )
-                    .clicked()
-                    {
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::RequestCut);
-                    }
-                    if menu_button_with_shortcut(
-                        ui,
-                        "Copy",
-                        Some(egui::KeyboardShortcut::new(
-                            egui::Modifiers::COMMAND,
-                            egui::Key::C,
-                        )),
-                    )
-                    .clicked()
-                    {
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::RequestCopy);
-                    }
-                    if menu_button_with_shortcut(
-                        ui,
-                        "Paste",
-                        Some(egui::KeyboardShortcut::new(
-                            egui::Modifiers::COMMAND,
-                            egui::Key::V,
-                        )),
-                    )
-                    .clicked()
-                    {
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
-                    }
-                    ui.separator();
-                    let find_replace_shortcut =
-                        self.settings.shortcuts.get(ShortcutAction::FindReplace);
-                    if menu_button_with_shortcut(ui, "Find and Replace", find_replace_shortcut)
-                        .clicked()
-                    {
-                        self.find_replace.request_open();
-                    }
-                    let metadata_shortcut =
-                        self.settings.shortcuts.get(ShortcutAction::EditMetadata);
-                    if menu_button_with_shortcut(ui, "Document Metadata", metadata_shortcut)
-                        .clicked()
-                    {
-                        self.toggle_dock_tab(DockTab::Metadata);
-                    }
-                });
-                egui::containers::menu::MenuButton::new("View").ui(ui, |ui| {
-                    if ui.button("Editor").clicked() {
-                        self.toggle_dock_tab(DockTab::Editor);
-                    }
-                    if ui.button("Preview").clicked() {
-                        self.toggle_dock_tab_near(DockTab::Preview, DockTab::Editor);
-                    }
-                    if ui.button("Corkboard").clicked() {
-                        self.toggle_dock_tab_near(DockTab::Corkboard, DockTab::Editor);
-                    }
-                    ui.separator();
-                    if ui.button("Binder").clicked() {
-                        self.toggle_dock_tab(DockTab::Binder);
-                    }
-                    if ui.button("Backlinks").clicked() {
-                        self.toggle_dock_tab(DockTab::Backlinks);
-                    }
-                    ui.separator();
-                    // `SubMenuButton`, not `MenuButton`: this is nested *inside* the
-                    // View menu, and `MenuButton` is for top-level, click-to-open menu
-                    // bar buttons. Using it here meant clicking "Theme" behaved like
-                    // opening a second, independent top-level menu rather than a
-                    // proper submenu — items inside never got a chance to run, since
-                    // the parent popup's own close-on-click handling collapsed it out
-                    // from under `SubMenuButton`'s (hover-to-open, keeps parents open)
-                    // dedicated handling for exactly this case.
-                    egui::containers::menu::SubMenuButton::new("Theme").ui(ui, |ui| {
-                        if ui.button("Reload Custom Themes").clicked() {
-                            let ctx = ui.ctx().clone();
-                            self.reload_color_themes(&ctx);
+        if !self.focus_mode {
+            egui::Panel::top("menu_bar").show(ui, |ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
+                    egui::containers::menu::MenuButton::new("File").ui(ui, |ui| {
+                        let new_project_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::NewProject);
+                        let open_project_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::OpenProject);
+                        let open_settings_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::OpenSettings);
+                        let exit_shortcut = self.settings.shortcuts.get(ShortcutAction::Exit);
+
+                        if menu_button_with_shortcut(ui, "New Project", new_project_shortcut)
+                            .clicked()
+                        {
+                            self.start_new_project();
+                        }
+                        if menu_button_with_shortcut(ui, "Open Project", open_project_shortcut)
+                            .clicked()
+                        {
+                            self.browse_for_project();
+                        }
+                        ui.add_enabled(false, egui::Button::new("Close Project"));
+                        if menu_button_with_shortcut(ui, "Settings", open_settings_shortcut)
+                            .clicked()
+                        {
+                            self.show_settings = true;
                         }
                         ui.separator();
-                        // Cloned rather than borrowed: `set_color_theme` below needs
-                        // `&mut self`, which a live borrow of `self.settings`/
-                        // `self.color_themes` here would conflict with across loop
-                        // iterations.
-                        let current = self.settings.color_theme.clone();
-                        let themes = self.color_themes.clone();
-                        if ui.radio(current.is_none(), "Default").clicked() {
-                            self.set_color_theme(ui.ctx(), None);
-                        }
-                        for theme in &themes {
-                            if ui
-                                .radio(current.as_deref() == Some(theme.id.as_str()), &theme.label)
-                                .clicked()
-                            {
-                                self.set_color_theme(ui.ctx(), Some(&theme.id));
-                            }
+                        if menu_button_with_shortcut(ui, "Exit", exit_shortcut).clicked() {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     });
-                });
-                egui::containers::menu::MenuButton::new("Tools").ui(ui, |ui| {
-                    let command_prompt_shortcut =
-                        self.settings.shortcuts.get(ShortcutAction::CommandPrompt);
-                    if menu_button_with_shortcut(ui, "Command Prompt", command_prompt_shortcut)
+                    egui::containers::menu::MenuButton::new("Edit").ui(ui, |ui| {
+                        if menu_button_with_shortcut(
+                            ui,
+                            "Cut",
+                            Some(egui::KeyboardShortcut::new(
+                                egui::Modifiers::COMMAND,
+                                egui::Key::X,
+                            )),
+                        )
                         .clicked()
-                    {
-                        self.command_prompt.request_open();
-                    }
-                    ui.separator();
-                    if ui.button("Reload Plugins").clicked() {
-                        self.reload_plugins();
-                    }
-                    let project_plugins_enabled = self
-                        .project
-                        .as_ref()
-                        .is_some_and(|project| project.meta.plugins_enabled);
-                    if self.project.is_some()
-                        && !project_plugins_enabled
-                        && ui.button("Enable Project Plugins").clicked()
-                    {
-                        if let Some(project) = &mut self.project
-                            && let Err(err) = project.set_plugins_enabled(true)
                         {
-                            self.status_message =
-                                Some(format!("Couldn't enable project plugins: {err}"));
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::RequestCut);
                         }
-                        self.reload_plugins();
-                    }
-                });
-                egui::containers::menu::MenuButton::new("Versions").ui(ui, |ui| {
-                    let git_enabled = self
-                        .project
-                        .as_ref()
-                        .is_some_and(|project| project.meta.git_enabled);
-                    if !git_enabled {
-                        if ui.button("Enable Git Support").clicked() {
-                            self.enable_git_support_manually();
+                        if menu_button_with_shortcut(
+                            ui,
+                            "Copy",
+                            Some(egui::KeyboardShortcut::new(
+                                egui::Modifiers::COMMAND,
+                                egui::Key::C,
+                            )),
+                        )
+                        .clicked()
+                        {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::RequestCopy);
                         }
-                    } else {
-                        let commit_shortcut =
-                            self.settings.shortcuts.get(ShortcutAction::GitCommit);
-                        if menu_button_with_shortcut(ui, "Commit", commit_shortcut).clicked() {
-                            self.prompt_git_commit(false);
+                        if menu_button_with_shortcut(
+                            ui,
+                            "Paste",
+                            Some(egui::KeyboardShortcut::new(
+                                egui::Modifiers::COMMAND,
+                                egui::Key::V,
+                            )),
+                        )
+                        .clicked()
+                        {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
                         }
-                        // Push/pull run on a background thread (see `spawn_git_operation`);
-                        // disabled while one is already in flight rather than letting a
-                        // second click queue up or race it.
-                        let git_busy = self.pending_git.is_some();
-                        ui.add_enabled_ui(!git_busy, |ui| {
-                            if ui.button("Commit and Push").clicked() {
-                                self.prompt_git_commit(true);
+                        ui.separator();
+                        let find_replace_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::FindReplace);
+                        if menu_button_with_shortcut(ui, "Find and Replace", find_replace_shortcut)
+                            .clicked()
+                        {
+                            self.find_replace.request_open();
+                        }
+                        let metadata_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::EditMetadata);
+                        if menu_button_with_shortcut(ui, "Document Metadata", metadata_shortcut)
+                            .clicked()
+                        {
+                            self.toggle_dock_tab(DockTab::Metadata);
+                        }
+                    });
+                    egui::containers::menu::MenuButton::new("View").ui(ui, |ui| {
+                        if ui.button("Focus Mode").clicked() {
+                            let ctx = ui.ctx().clone();
+                            self.set_focus_mode(&ctx, !self.focus_mode);
+                        }
+                        ui.separator();
+                        if ui.button("Editor").clicked() {
+                            self.toggle_dock_tab(DockTab::Editor);
+                        }
+                        if ui.button("Preview").clicked() {
+                            self.toggle_dock_tab_near(DockTab::Preview, DockTab::Editor);
+                        }
+                        if ui.button("Corkboard").clicked() {
+                            self.toggle_dock_tab_near(DockTab::Corkboard, DockTab::Editor);
+                        }
+                        ui.separator();
+                        if ui.button("Binder").clicked() {
+                            self.toggle_dock_tab(DockTab::Binder);
+                        }
+                        if ui.button("Backlinks").clicked() {
+                            self.toggle_dock_tab(DockTab::Backlinks);
+                        }
+                        ui.separator();
+                        // `SubMenuButton`, not `MenuButton`: this is nested *inside* the
+                        // View menu, and `MenuButton` is for top-level, click-to-open menu
+                        // bar buttons. Using it here meant clicking "Theme" behaved like
+                        // opening a second, independent top-level menu rather than a
+                        // proper submenu — items inside never got a chance to run, since
+                        // the parent popup's own close-on-click handling collapsed it out
+                        // from under `SubMenuButton`'s (hover-to-open, keeps parents open)
+                        // dedicated handling for exactly this case.
+                        egui::containers::menu::SubMenuButton::new("Theme").ui(ui, |ui| {
+                            if ui.button("Reload Custom Themes").clicked() {
+                                let ctx = ui.ctx().clone();
+                                self.reload_color_themes(&ctx);
                             }
-                            let push_shortcut =
-                                self.settings.shortcuts.get(ShortcutAction::GitPush);
-                            if menu_button_with_shortcut(ui, "Push", push_shortcut).clicked() {
-                                self.run_git_push(ui.ctx());
+                            ui.separator();
+                            // Cloned rather than borrowed: `set_color_theme` below needs
+                            // `&mut self`, which a live borrow of `self.settings`/
+                            // `self.color_themes` here would conflict with across loop
+                            // iterations.
+                            let current = self.settings.color_theme.clone();
+                            let themes = self.color_themes.clone();
+                            if ui.radio(current.is_none(), "Default").clicked() {
+                                self.set_color_theme(ui.ctx(), None);
                             }
-                            if ui.button("Pull").clicked() {
-                                self.run_git_pull(ui.ctx());
-                            }
-                        });
-                    }
-                });
-                egui::containers::menu::MenuButton::new("Window").ui(ui, |ui| {
-                    if ui.button("Save Current Layout…").clicked() {
-                        self.prompt_save_layout();
-                    }
-                    // `SubMenuButton`, not `MenuButton` — see the matching comment on
-                    // View's "Theme" submenu for why.
-                    egui::containers::menu::SubMenuButton::new("Layouts").ui(ui, |ui| {
-                        if self.saved_layouts.is_empty() {
-                            ui.add_enabled(false, egui::Button::new("No saved layouts"));
-                        } else {
-                            // Collected up front rather than iterating
-                            // `self.saved_layouts` directly: clicking an entry needs
-                            // `&mut self.dock_state`, which an active immutable borrow
-                            // of `self.saved_layouts` (the loop) would conflict with.
-                            let names: Vec<String> = self.saved_layouts.keys().cloned().collect();
-                            for name in names {
-                                if ui.button(&name).clicked()
-                                    && let Some(layout) = self.saved_layouts.get(&name)
+                            for theme in &themes {
+                                if ui
+                                    .radio(
+                                        current.as_deref() == Some(theme.id.as_str()),
+                                        &theme.label,
+                                    )
+                                    .clicked()
                                 {
-                                    self.dock_state = layout.clone();
+                                    self.set_color_theme(ui.ctx(), Some(&theme.id));
                                 }
                             }
+                        });
+                    });
+                    egui::containers::menu::MenuButton::new("Tools").ui(ui, |ui| {
+                        let command_prompt_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::CommandPrompt);
+                        if menu_button_with_shortcut(ui, "Command Prompt", command_prompt_shortcut)
+                            .clicked()
+                        {
+                            self.command_prompt.request_open();
+                        }
+                        ui.separator();
+                        if ui.button("Reload Plugins").clicked() {
+                            self.reload_plugins();
+                        }
+                        let project_plugins_enabled = self
+                            .project
+                            .as_ref()
+                            .is_some_and(|project| project.meta.plugins_enabled);
+                        if self.project.is_some()
+                            && !project_plugins_enabled
+                            && ui.button("Enable Project Plugins").clicked()
+                        {
+                            if let Some(project) = &mut self.project
+                                && let Err(err) = project.set_plugins_enabled(true)
+                            {
+                                self.status_message =
+                                    Some(format!("Couldn't enable project plugins: {err}"));
+                            }
+                            self.reload_plugins();
                         }
                     });
-                    ui.separator();
-                    if ui.button("Restore Default Layout").clicked() {
-                        self.dock_state = default_dock_state();
-                    }
-                });
-                egui::containers::menu::MenuButton::new("Help").ui(ui, |ui| {
-                    ui.add_enabled(false, egui::Button::new("About"));
+                    egui::containers::menu::MenuButton::new("Versions").ui(ui, |ui| {
+                        let git_enabled = self
+                            .project
+                            .as_ref()
+                            .is_some_and(|project| project.meta.git_enabled);
+                        if !git_enabled {
+                            if ui.button("Enable Git Support").clicked() {
+                                self.enable_git_support_manually();
+                            }
+                        } else {
+                            let commit_shortcut =
+                                self.settings.shortcuts.get(ShortcutAction::GitCommit);
+                            if menu_button_with_shortcut(ui, "Commit", commit_shortcut).clicked() {
+                                self.prompt_git_commit(false);
+                            }
+                            // Push/pull run on a background thread (see `spawn_git_operation`);
+                            // disabled while one is already in flight rather than letting a
+                            // second click queue up or race it.
+                            let git_busy = self.pending_git.is_some();
+                            ui.add_enabled_ui(!git_busy, |ui| {
+                                if ui.button("Commit and Push").clicked() {
+                                    self.prompt_git_commit(true);
+                                }
+                                let push_shortcut =
+                                    self.settings.shortcuts.get(ShortcutAction::GitPush);
+                                if menu_button_with_shortcut(ui, "Push", push_shortcut).clicked() {
+                                    self.run_git_push(ui.ctx());
+                                }
+                                if ui.button("Pull").clicked() {
+                                    self.run_git_pull(ui.ctx());
+                                }
+                            });
+                        }
+                    });
+                    egui::containers::menu::MenuButton::new("Window").ui(ui, |ui| {
+                        if ui.button("Save Current Layout…").clicked() {
+                            self.prompt_save_layout();
+                        }
+                        // `SubMenuButton`, not `MenuButton` — see the matching comment on
+                        // View's "Theme" submenu for why.
+                        egui::containers::menu::SubMenuButton::new("Layouts").ui(ui, |ui| {
+                            if self.saved_layouts.is_empty() {
+                                ui.add_enabled(false, egui::Button::new("No saved layouts"));
+                            } else {
+                                // Collected up front rather than iterating
+                                // `self.saved_layouts` directly: clicking an entry needs
+                                // `&mut self.dock_state`, which an active immutable borrow
+                                // of `self.saved_layouts` (the loop) would conflict with.
+                                let names: Vec<String> =
+                                    self.saved_layouts.keys().cloned().collect();
+                                for name in names {
+                                    if ui.button(&name).clicked()
+                                        && let Some(layout) = self.saved_layouts.get(&name)
+                                    {
+                                        self.dock_state = layout.clone();
+                                    }
+                                }
+                            }
+                        });
+                        ui.separator();
+                        if ui.button("Restore Default Layout").clicked() {
+                            self.dock_state = default_dock_state();
+                        }
+                    });
+                    egui::containers::menu::MenuButton::new("Help").ui(ui, |ui| {
+                        ui.add_enabled(false, egui::Button::new("About"));
+                    });
                 });
             });
-        });
+        }
 
         let plugin_shortcut_rows: Vec<(String, Option<egui::KeyboardShortcut>)> = self
             .plugin_engine
@@ -2551,51 +2617,106 @@ impl eframe::App for TachyliteApp {
             }
         }
 
-        egui::Panel::bottom("status_bar").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if let Some(path) = &self.editor.open_path {
-                    ui.label(path.display().to_string());
-                    if self.editor.dirty {
-                        ui.label("*");
+        if !self.focus_mode {
+            egui::Panel::bottom("status_bar").show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if let Some(path) = &self.editor.open_path {
+                        ui.label(path.display().to_string());
+                        if self.editor.dirty {
+                            ui.label("*");
+                        }
                     }
-                }
-                if let Some(msg) = &self.status_message {
-                    ui.separator();
-                    ui.colored_label(egui::Color32::from_rgb(200, 60, 60), msg);
-                }
+                    if let Some(msg) = &self.status_message {
+                        ui.separator();
+                        ui.colored_label(egui::Color32::from_rgb(200, 60, 60), msg);
+                    }
+                });
             });
-        });
+        }
 
         self.refresh_backlinks_if_needed();
         self.refresh_metadata_if_needed();
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            let mut viewer = AppTabViewer {
-                project: self.project.as_ref(),
-                selected_path: self.selected_path.as_deref(),
-                open_path: self.editor.open_path.clone(),
-                backlinks: &self.backlinks,
-                metadata_draft: &mut self.metadata_draft,
-                editor: &mut self.editor,
-                settings: &self.settings,
-                color_themes: &self.color_themes,
-                actions: Vec::new(),
-                focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
-            };
-            egui_dock::DockArea::new(&mut self.dock_state)
-                .style(egui_dock::Style::from_egui(ui.style().as_ref()))
-                .show_inside(ui, &mut viewer);
-            for action in viewer.actions {
-                match action {
-                    DockAction::OpenDocument(path) => self.open_document(&path),
-                    DockAction::Binder(event) => self.handle_binder_event(event),
-                    DockAction::RefreshBacklinks => self.recompute_backlinks(),
-                    DockAction::EditorSaveError(err) => self.status_message = Some(err),
-                    DockAction::Wikilink(activation) => self.activate_wikilink(activation),
-                    DockAction::Corkboard(event) => self.handle_corkboard_event(event),
+        if self.focus_mode {
+            egui::CentralPanel::default().show(ui, |ui| {
+                // A comfortable-width column, centered — Scrivener's Composition
+                // Mode does the same rather than stretching text edge-to-edge
+                // across a (likely now fullscreen) window. Proportional (70% of
+                // the available width, clamped to a sane range) rather than a
+                // fixed point value: a fixed width like 900.0 looked fine on
+                // paper but left next to no margin in practice, since egui's
+                // "points" shrink relative to the screen under any real
+                // fractional display-scaling factor above ~1x — a fixed number
+                // has no way to account for that, a proportion of whatever
+                // space is actually available does.
+                //
+                // Built as an explicit child `Ui` over a manually computed
+                // `Rect` (`new_child`), rather than `ui.horizontal(|ui|
+                // { ui.add_space(margin); ui.vertical(...) })`: that nested-
+                // container approach only ever centers the *width* — the
+                // vertical child auto-shrinks to its content's height instead
+                // of inheriting the panel's full height, so the editor ended
+                // up a short box hugging the top-left corner instead of
+                // filling the screen. An explicit `Rect` with both dimensions
+                // set up front sidesteps that entirely.
+                let available = ui.available_size();
+                let column_width = (available.x * 0.7).clamp(400.0, 1000.0).min(available.x);
+                let margin_x = ((available.x - column_width) / 2.0).max(0.0);
+                let rect = egui::Rect::from_min_size(
+                    ui.min_rect().min + egui::vec2(margin_x, 0.0),
+                    egui::vec2(column_width, available.y),
+                );
+                let mut column_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                let note_titles = self
+                    .project
+                    .as_ref()
+                    .map(|project| project.tree.document_names())
+                    .unwrap_or_default();
+                let activate_wikilink_shortcut = self
+                    .settings
+                    .shortcuts
+                    .get(ShortcutAction::ActivateWikilink);
+                match ui::editor_panel::show(
+                    &mut column_ui,
+                    &mut self.editor,
+                    &note_titles,
+                    activate_wikilink_shortcut,
+                    true,
+                ) {
+                    Some(EditorEvent::SaveError(err)) => self.status_message = Some(err),
+                    Some(EditorEvent::Wikilink(activation)) => self.activate_wikilink(activation),
+                    None => {}
                 }
-            }
-        });
+            });
+        } else {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let mut viewer = AppTabViewer {
+                    project: self.project.as_ref(),
+                    selected_path: self.selected_path.as_deref(),
+                    open_path: self.editor.open_path.clone(),
+                    backlinks: &self.backlinks,
+                    metadata_draft: &mut self.metadata_draft,
+                    editor: &mut self.editor,
+                    settings: &self.settings,
+                    color_themes: &self.color_themes,
+                    actions: Vec::new(),
+                    focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
+                };
+                egui_dock::DockArea::new(&mut self.dock_state)
+                    .style(egui_dock::Style::from_egui(ui.style().as_ref()))
+                    .show_inside(ui, &mut viewer);
+                for action in viewer.actions {
+                    match action {
+                        DockAction::OpenDocument(path) => self.open_document(&path),
+                        DockAction::Binder(event) => self.handle_binder_event(event),
+                        DockAction::RefreshBacklinks => self.recompute_backlinks(),
+                        DockAction::EditorSaveError(err) => self.status_message = Some(err),
+                        DockAction::Wikilink(activation) => self.activate_wikilink(activation),
+                        DockAction::Corkboard(event) => self.handle_corkboard_event(event),
+                    }
+                }
+            });
+        }
 
         self.apply_metadata_edits_if_changed();
 

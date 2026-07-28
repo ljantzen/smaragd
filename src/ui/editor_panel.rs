@@ -56,11 +56,17 @@ pub fn editor_text_edit_id() -> Id {
 /// (the remappable `ShortcutAction::ActivateWikilink`, `Ctrl+Enter`/`Cmd+Enter` by
 /// default — `None` if the user unbound it) on a wikilink to follow it — the caller
 /// decides what to do with either.
+///
+/// `focus_mode` enables Focus Mode's "typewriter" effect: the paragraph
+/// containing the cursor renders at full strength, every other paragraph
+/// dimmed — see `paragraph_byte_range`. `false` (normal dock-tab editing)
+/// renders exactly as before, with no custom layouter at all.
 pub fn show(
     ui: &mut egui::Ui,
     editor: &mut EditorState,
     note_titles: &[String],
     activate_wikilink_shortcut: Option<KeyboardShortcut>,
+    focus_mode: bool,
 ) -> Option<EditorEvent> {
     if editor.open_path.is_none() {
         ui.label("Select a file from the binder to start editing.");
@@ -83,12 +89,112 @@ pub fn show(
     let activate_wikilink_requested = activate_wikilink_shortcut
         .is_some_and(|shortcut| ui.ctx().input_mut(|i| i.consume_shortcut(&shortcut)));
 
-    let output = egui::TextEdit::multiline(&mut editor.buffer)
-        .desired_width(f32::INFINITY)
-        .min_size(ui.available_size())
-        .code_editor()
-        .id(text_edit_id)
-        .show(ui);
+    // Cursor position as of the *previous* frame (read from egui's own persisted
+    // `TextEdit` state, the same mechanism `move_cursor_to` below uses) — the
+    // layouter runs as part of building this frame's output, so it has no way to
+    // see this frame's own cursor position; a one-frame lag here is standard
+    // practice and imperceptible.
+    let focus_mode_cursor_byte = focus_mode
+        .then(|| {
+            egui::TextEdit::load_state(ui.ctx(), text_edit_id)
+                .and_then(|state| state.cursor.char_range())
+                .map(|range| char_offset_to_byte(&editor.buffer, range.primary.index.0))
+        })
+        .flatten();
+    let mut focus_mode_layouter =
+        move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+            let text = buf.as_str();
+            let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+            let mut job = egui::text::LayoutJob {
+                wrap: egui::text::TextWrapping {
+                    max_width: wrap_width,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let normal = ui.visuals().text_color();
+            match focus_mode_cursor_byte.map(|b| b.min(text.len())) {
+                Some(cursor_byte) => {
+                    let range = paragraph_byte_range(text, cursor_byte);
+                    let dim = ui.visuals().weak_text_color();
+                    if range.start > 0 {
+                        job.append(
+                            &text[..range.start],
+                            0.0,
+                            egui::TextFormat {
+                                font_id: font_id.clone(),
+                                color: dim,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    job.append(
+                        &text[range.start..range.end],
+                        0.0,
+                        egui::TextFormat {
+                            font_id: font_id.clone(),
+                            color: normal,
+                            ..Default::default()
+                        },
+                    );
+                    if range.end < text.len() {
+                        job.append(
+                            &text[range.end..],
+                            0.0,
+                            egui::TextFormat {
+                                font_id,
+                                color: dim,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
+                None => job.append(
+                    text,
+                    0.0,
+                    egui::TextFormat {
+                        font_id,
+                        color: normal,
+                        ..Default::default()
+                    },
+                ),
+            }
+            ui.fonts_mut(|f| f.layout_job(job))
+        };
+
+    // Wrapped in a `ScrollArea`, filling the full available space
+    // (`auto_shrink([false, false])`): `TextEdit`'s own size is purely
+    // content-driven (it sizes to however many rows/columns of text it
+    // actually holds, floored at `desired_rows`'s default of 4 — `min_size`'s
+    // height component, despite its name, is silently ignored by egui, only
+    // ever folding into desired *width*), so without a `ScrollArea` a short
+    // document leaves the rest of the container looking broken/empty (exactly
+    // what made Focus Mode's fullscreen so glaring — the previous unscrolled
+    // `TextEdit` alone just rendered a small box) and a long one has no way to
+    // scroll to see past whatever first fit in the visible area at all.
+    let output = egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let mut text_edit = egui::TextEdit::multiline(&mut editor.buffer)
+                .desired_width(f32::INFINITY)
+                .code_editor()
+                .id(text_edit_id);
+            if focus_mode {
+                // No border: `TextEdit`'s own frame only ever wraps its
+                // *content* height (a few short paragraphs, say), never the
+                // full `ScrollArea` around it — with the frame left on, a
+                // short document still looks like a small boxed page sitting
+                // in a lot of empty space, which is exactly what wasn't
+                // supposed to happen. Real distraction-free views (Scrivener's
+                // Composition Mode included) don't box the text at all; it
+                // just sits on the background.
+                text_edit = text_edit
+                    .frame(egui::Frame::NONE)
+                    .layouter(&mut focus_mode_layouter);
+            }
+            text_edit.show(ui)
+        })
+        .inner;
 
     if output.response.changed() {
         editor.mark_dirty();
@@ -190,6 +296,18 @@ pub fn show(
     None
 }
 
+/// The byte range `[start, end)` of the paragraph (a run of text between blank
+/// lines, or the start/end of the buffer) containing `cursor_byte` — used by
+/// Focus Mode's typewriter dimming to decide which paragraph stays at full
+/// strength. `cursor_byte` must be `<= text.len()`.
+fn paragraph_byte_range(text: &str, cursor_byte: usize) -> std::ops::Range<usize> {
+    let start = text[..cursor_byte].rfind("\n\n").map_or(0, |i| i + 2);
+    let end = text[cursor_byte..]
+        .find("\n\n")
+        .map_or(text.len(), |i| cursor_byte + i);
+    start..end
+}
+
 /// Consume (and act on) a keypress meant for the autocomplete popup, so the `TextEdit`
 /// underneath never sees it — otherwise Enter would insert a newline and the arrow
 /// keys would move the text cursor instead of the popup's selection.
@@ -251,5 +369,59 @@ pub fn move_cursor_to(ctx: &egui::Context, id: Id, text: &str, byte_offset: usiz
             .set_char_range(Some(CCursorRange::one(CCursor::new(char_offset))));
         egui::TextEdit::store_state(ctx, id, state);
         ctx.memory_mut(|m| m.request_focus(id));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::paragraph_byte_range;
+
+    #[test]
+    fn single_paragraph_covers_the_whole_buffer() {
+        let text = "Just one paragraph, no blank lines anywhere in it.";
+        assert_eq!(paragraph_byte_range(text, 5), 0..text.len());
+    }
+
+    #[test]
+    fn cursor_in_the_first_of_several_paragraphs() {
+        let text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
+        let first_end = text.find("\n\n").unwrap();
+        assert_eq!(paragraph_byte_range(text, 3), 0..first_end);
+    }
+
+    #[test]
+    fn cursor_in_the_middle_of_several_paragraphs() {
+        let text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
+        let second_start = text.find("\n\n").unwrap() + 2;
+        let second_end = text.rfind("\n\n").unwrap();
+        let cursor = second_start + 3;
+        assert_eq!(paragraph_byte_range(text, cursor), second_start..second_end);
+    }
+
+    #[test]
+    fn cursor_in_the_last_of_several_paragraphs() {
+        let text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
+        let third_start = text.rfind("\n\n").unwrap() + 2;
+        assert_eq!(
+            paragraph_byte_range(text, text.len() - 2),
+            third_start..text.len()
+        );
+    }
+
+    #[test]
+    fn cursor_at_the_very_start_of_the_buffer() {
+        let text = "First paragraph.\n\nSecond paragraph.";
+        let first_end = text.find("\n\n").unwrap();
+        assert_eq!(paragraph_byte_range(text, 0), 0..first_end);
+    }
+
+    #[test]
+    fn cursor_at_the_very_end_of_the_buffer() {
+        let text = "First paragraph.\n\nSecond paragraph.";
+        let second_start = text.find("\n\n").unwrap() + 2;
+        assert_eq!(
+            paragraph_byte_range(text, text.len()),
+            second_start..text.len()
+        );
     }
 }
