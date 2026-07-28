@@ -95,6 +95,7 @@ enum DockTab {
     Editor,
     Preview,
     Corkboard,
+    Pomodoro,
 }
 
 /// The initial dock layout for a fresh install (no persisted `dock_layout.json`
@@ -255,6 +256,10 @@ pub struct TachyliteApp {
     /// `*.toml` files are in `export::style::global_styles_dir()`. Rebuilt by
     /// `reload_typeset_styles`.
     typeset_styles: Vec<crate::export::style::TypesetStyle>,
+    /// Work/break interval state — ticked once per frame regardless of whether
+    /// the Pomodoro dock tab is open (see `tick_pomodoro`), so it keeps
+    /// running while closed.
+    pomodoro: crate::pomodoro::PomodoroState,
     /// One-shot flag set by `ShortcutAction::ToggleBinderFocus` and consumed (via
     /// `std::mem::take`) the same frame it's rendered — `binder_panel::show` needs
     /// it to know whether to grab keyboard focus this frame, but the dock's
@@ -295,6 +300,7 @@ impl TachyliteApp {
             .map(|path| Settings::load_from_path(&path))
             .unwrap_or_default();
         cc.egui_ctx.set_theme(settings.theme_preference);
+        let initial_pomodoro_durations = crate::pomodoro::resolve_durations(&settings);
         // Match the editor's background to the surrounding chrome instead of egui's
         // default `extreme_bg_color`, which renders TextEdit widgets noticeably darker
         // (dark mode) than the panels around them.
@@ -331,6 +337,7 @@ impl TachyliteApp {
             color_themes: Vec::new(),
             export: None,
             typeset_styles: Vec::new(),
+            pomodoro: crate::pomodoro::PomodoroState::new(&initial_pomodoro_durations),
             focus_binder_requested: false,
             focus_mode: false,
         };
@@ -1394,6 +1401,32 @@ impl TachyliteApp {
         }
     }
 
+    fn handle_pomodoro_event(&mut self, event: ui::pomodoro_panel::PomodoroEvent) {
+        let durations = crate::pomodoro::resolve_durations(&self.settings);
+        match event {
+            ui::pomodoro_panel::PomodoroEvent::Start => {
+                self.pomodoro.start(std::time::Instant::now());
+            }
+            ui::pomodoro_panel::PomodoroEvent::Pause => self.pomodoro.pause(),
+            ui::pomodoro_panel::PomodoroEvent::Reset => self.pomodoro.reset(&durations),
+            ui::pomodoro_panel::PomodoroEvent::Skip => self.pomodoro.skip(&durations),
+        }
+    }
+
+    /// Advances the Pomodoro timer by however much wall-clock time passed since
+    /// the last frame, regardless of whether its dock tab is currently open —
+    /// its state (and the status bar's countdown segment) needs to keep moving
+    /// even while the tab is closed. Schedules another repaint a second out
+    /// while running, since egui's default reactive mode otherwise only
+    /// repaints on input/events and the countdown would freeze on screen.
+    fn tick_pomodoro(&mut self, ctx: &egui::Context) {
+        let durations = crate::pomodoro::resolve_durations(&self.settings);
+        self.pomodoro.tick(std::time::Instant::now(), &durations);
+        if self.pomodoro.is_running() {
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        }
+    }
+
     /// Handle the card-editor modal closing this frame, whether by Save, Delete, or
     /// Cancel — always clears `card_draft` either way, since the modal is done either
     /// way once an outcome is produced.
@@ -1615,6 +1648,7 @@ impl TachyliteApp {
             // `editor_panel::show` instead — never actually reached, but the match
             // above has to stay exhaustive over `ShortcutAction`.
             ShortcutAction::ActivateWikilink => {}
+            ShortcutAction::TogglePomodoro => self.toggle_dock_tab(DockTab::Pomodoro),
         }
     }
 
@@ -2121,6 +2155,7 @@ enum DockAction {
     EditorSaveError(String),
     Wikilink(WikilinkActivation),
     Corkboard(CorkboardEvent),
+    Pomodoro(crate::ui::pomodoro_panel::PomodoroEvent),
 }
 
 /// A short-lived `egui_dock::TabViewer` impl, constructed fresh each frame right
@@ -2143,6 +2178,8 @@ struct AppTabViewer<'a> {
     editor: &'a mut EditorState,
     settings: &'a Settings,
     color_themes: &'a [crate::color_theme::ColorTheme],
+    pomodoro: &'a crate::pomodoro::PomodoroState,
+    pomodoro_durations: crate::pomodoro::PomodoroDurations,
     actions: Vec<DockAction>,
     /// See `TachyliteApp::focus_binder_requested`.
     focus_binder_requested: bool,
@@ -2159,6 +2196,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::Editor => "Editor".into(),
             DockTab::Preview => "Preview".into(),
             DockTab::Corkboard => "Corkboard".into(),
+            DockTab::Pomodoro => "Pomodoro".into(),
         }
     }
 
@@ -2264,6 +2302,13 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     ui.label("Open a project folder to get started.");
                 }
             },
+            DockTab::Pomodoro => {
+                if let Some(event) =
+                    ui::pomodoro_panel::show(ui, self.pomodoro, &self.pomodoro_durations)
+                {
+                    self.actions.push(DockAction::Pomodoro(event));
+                }
+            }
         }
     }
 }
@@ -2271,6 +2316,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
 impl eframe::App for TachyliteApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_git_operation();
+        self.tick_pomodoro(ui.ctx());
 
         // Save the dock layout right as shutdown starts (a window-close click, or
         // `ShortcutAction::Exit`'s `ViewportCommand::Close`, both surface here)
@@ -2515,6 +2561,13 @@ impl eframe::App for TachyliteApp {
                         {
                             self.command_prompt.request_open();
                         }
+                        let pomodoro_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::TogglePomodoro);
+                        if menu_button_with_shortcut(ui, "Pomodoro Timer", pomodoro_shortcut)
+                            .clicked()
+                        {
+                            self.toggle_dock_tab(DockTab::Pomodoro);
+                        }
                         ui.separator();
                         if ui.button("Reload Plugins").clicked() {
                             self.reload_plugins();
@@ -2724,6 +2777,23 @@ impl eframe::App for TachyliteApp {
                         ui.separator();
                         ui.colored_label(egui::Color32::from_rgb(200, 60, 60), msg);
                     }
+                    // Independent of `status_message` above (which ~40 other call
+                    // sites overwrite freely) — a running/paused-mid-session
+                    // Pomodoro timer needs a segment of its own that survives
+                    // those, so it's genuinely visible at a glance regardless of
+                    // whether its dock tab is open (see `tick_pomodoro`). Not
+                    // shown once nothing's ever been started this session.
+                    if self.pomodoro.has_started() {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let remaining = self.pomodoro.remaining().as_secs();
+                            ui.label(format!(
+                                "⏱ {} {:02}:{:02}",
+                                self.pomodoro.phase().label(),
+                                remaining / 60,
+                                remaining % 60
+                            ));
+                        });
+                    }
                 });
             });
         }
@@ -2795,6 +2865,8 @@ impl eframe::App for TachyliteApp {
                     editor: &mut self.editor,
                     settings: &self.settings,
                     color_themes: &self.color_themes,
+                    pomodoro: &self.pomodoro,
+                    pomodoro_durations: crate::pomodoro::resolve_durations(&self.settings),
                     actions: Vec::new(),
                     focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
                 };
@@ -2809,6 +2881,7 @@ impl eframe::App for TachyliteApp {
                         DockAction::EditorSaveError(err) => self.status_message = Some(err),
                         DockAction::Wikilink(activation) => self.activate_wikilink(activation),
                         DockAction::Corkboard(event) => self.handle_corkboard_event(event),
+                        DockAction::Pomodoro(event) => self.handle_pomodoro_event(event),
                     }
                 }
             });

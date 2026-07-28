@@ -45,6 +45,7 @@ pub enum ShortcutAction {
     /// filtered out of that pass rather than dispatched through
     /// `dispatch_shortcut_action` — see both call sites.
     ActivateWikilink,
+    TogglePomodoro,
 }
 
 impl ShortcutAction {
@@ -74,6 +75,7 @@ impl ShortcutAction {
         Self::OpenDocument,
         Self::CloseDocument,
         Self::ActivateWikilink,
+        Self::TogglePomodoro,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -104,6 +106,7 @@ impl ShortcutAction {
             Self::OpenDocument => "Open Document",
             Self::CloseDocument => "Close Document",
             Self::ActivateWikilink => "Activate Wikilink",
+            Self::TogglePomodoro => "Toggle Pomodoro Timer",
         }
     }
 
@@ -136,6 +139,7 @@ impl ShortcutAction {
             Self::OpenDocument => "open_document",
             Self::CloseDocument => "close_document",
             Self::ActivateWikilink => "activate_wikilink",
+            Self::TogglePomodoro => "toggle_pomodoro",
         }
     }
 
@@ -168,7 +172,7 @@ impl ShortcutAction {
             | Self::ToggleBinderFocus
             | Self::ToggleFocusMode => ShortcutCategory::View,
             Self::GitCommit | Self::GitPush => ShortcutCategory::Git,
-            Self::CommandPrompt => ShortcutCategory::Tools,
+            Self::CommandPrompt | Self::TogglePomodoro => ShortcutCategory::Tools,
         }
     }
 
@@ -221,6 +225,9 @@ impl ShortcutAction {
             Self::OpenDocument => KeyboardShortcut::new(Modifiers::COMMAND, Key::P),
             Self::CloseDocument => KeyboardShortcut::new(Modifiers::COMMAND, Key::W),
             Self::ActivateWikilink => KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter),
+            Self::TogglePomodoro => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::T)
+            }
         }
     }
 }

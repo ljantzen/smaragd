@@ -9,6 +9,7 @@ pub mod fuzzy;
 pub mod git;
 pub mod markdown;
 pub mod plugins;
+pub mod pomodoro;
 pub mod project;
 pub mod search;
 pub mod settings;

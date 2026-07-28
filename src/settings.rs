@@ -74,6 +74,14 @@ pub struct Settings {
     /// impl, the same blank-means-unset convention `template_date_format` above
     /// already uses.
     pub editor_font_size: f32,
+    /// Pomodoro timer durations (minutes) and long-break cadence. `0` means
+    /// "not yet configured," resolved to a real default at the point of use
+    /// (`pomodoro::resolve_durations`) — same blank-means-unset convention as
+    /// `editor_font_size` above.
+    pub pomodoro_work_minutes: u32,
+    pub pomodoro_short_break_minutes: u32,
+    pub pomodoro_long_break_minutes: u32,
+    pub pomodoro_cycles_before_long_break: u32,
 }
 
 /// The full path to the settings file, e.g. `~/.config/tachylite/tachylite.toml` on
@@ -247,6 +255,10 @@ mod tests {
             template_date_format: "%d %B %Y".to_string(),
             editor_font: EditorFont::LibertinusSerif,
             editor_font_size: 16.0,
+            pomodoro_work_minutes: 50,
+            pomodoro_short_break_minutes: 10,
+            pomodoro_long_break_minutes: 30,
+            pomodoro_cycles_before_long_break: 3,
         };
 
         settings.save_to_path(&path).unwrap();

@@ -95,6 +95,55 @@ pub fn show(
             ));
 
             ui.separator();
+            ui.heading("Pomodoro");
+            let mut duration_row =
+                |ui: &mut egui::Ui, label: &str, value: &mut u32, default: u32| {
+                    ui.horizontal(|ui| {
+                        ui.label(label);
+                        let mut minutes = if *value > 0 { *value } else { default };
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut minutes)
+                                    .range(1..=180)
+                                    .suffix(" min"),
+                            )
+                            .changed()
+                        {
+                            *value = minutes;
+                            changed = true;
+                        }
+                    });
+                };
+            duration_row(ui, "Work session:", &mut settings.pomodoro_work_minutes, 25);
+            duration_row(
+                ui,
+                "Short break:",
+                &mut settings.pomodoro_short_break_minutes,
+                5,
+            );
+            duration_row(
+                ui,
+                "Long break:",
+                &mut settings.pomodoro_long_break_minutes,
+                15,
+            );
+            ui.horizontal(|ui| {
+                ui.label("Work sessions before a long break:");
+                let mut cycles = if settings.pomodoro_cycles_before_long_break > 0 {
+                    settings.pomodoro_cycles_before_long_break
+                } else {
+                    4
+                };
+                if ui
+                    .add(egui::DragValue::new(&mut cycles).range(1..=12))
+                    .changed()
+                {
+                    settings.pomodoro_cycles_before_long_break = cycles;
+                    changed = true;
+                }
+            });
+
+            ui.separator();
             ui.heading("Keyboard Shortcuts");
             // A scroll area of its own, not the whole window: with `ShortcutAction::ALL`
             // now well past a dozen entries, letting it grow the window unbounded made
