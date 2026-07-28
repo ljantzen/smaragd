@@ -20,6 +20,7 @@ This manual covers what the app does and how to use it. For internals (source la
 - [Story Cards (Corkboard)](#story-cards-corkboard)
 - [Find and Replace](#find-and-replace)
 - [The Command Prompt](#the-command-prompt)
+- [Pomodoro Timer](#pomodoro-timer)
 - [Plugins](#plugins)
 - [Git Integration](#git-integration)
 - [Themes and Appearance](#themes-and-appearance)
@@ -39,7 +40,7 @@ A **project** is just a folder on disk containing `.md` files and subfolders, ma
 
 ## Dockable Tool Windows
 
-The **Binder**, **Backlinks**, **Document Metadata**, **Editor**, **Preview**, and **Corkboard** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
+The **Binder**, **Backlinks**, **Document Metadata**, **Editor**, **Preview**, **Corkboard**, and **Pomodoro** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
 
 - **Drag a tab's title** onto empty space to pop it out into its own floating window
 - **Drag a floating window's title back** onto the dock area to re-dock it
@@ -47,7 +48,7 @@ The **Binder**, **Backlinks**, **Document Metadata**, **Editor**, **Preview**, a
 - **Drag a tab to an edge** of another tab or the dock area to split the layout and place it side by side
 - **Resize** the dock area, or a floating window, by dragging its edge
 
-Binder and Editor are present from the moment a project is open; Backlinks, Metadata, Preview, and Corkboard start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Preview`**, **`View > Corkboard`**, or **`Edit > Document Metadata`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
+Binder and Editor are present from the moment a project is open; Backlinks, Metadata, Preview, Corkboard, and Pomodoro start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Preview`**, **`View > Corkboard`**, **`Edit > Document Metadata`**, or (for Pomodoro specifically) **`Tools > Pomodoro Timer`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
 
 The whole arrangement — which tabs are open, how they're split or floated, and window position/size — persists across restarts. **`Window`** menu:
 
@@ -327,6 +328,18 @@ Supports replace-one and replace-all.
 
 Any `:` command a loaded plugin has registered also works here (see below) — plugin commands can never override a built-in name.
 
+## Pomodoro Timer
+
+**`Tools > Pomodoro Timer`** (or the remappable shortcut, `Ctrl+Alt+T` by default) opens a Pomodoro dock tab — the classic interval-timer technique for focused writing sessions, alternating fixed blocks of work and rest.
+
+- **Start** / **Pause** / **Skip** / **Reset** control the current phase. Skip jumps to the next phase immediately, whatever's left on the clock; Reset returns to a fresh Work phase (it keeps your completed-session count for the day, it just stops the clock and rewinds the current phase).
+- When a phase's time runs out, tachylite automatically switches to the next one — Work leads to a Short Break, except every *n*th Work session (configurable, default every 4th) leads to a Long Break instead — **and pauses**, rather than continuing to run unattended. Starting the next phase is always a deliberate action, not something that happens silently while you're away from the keyboard.
+- There's no sound or OS notification when a phase ends — purely visual for now.
+
+The timer keeps running whether or not its dock tab is open or visible (it's part of the app's state, not something tied to a window being shown), and a compact countdown — `⏱ Work 12:34` — shows in the status bar at the bottom of the window any time a session has been started, so it's visible at a glance without needing to switch tabs. It doesn't appear during [Focus Mode](#focus-mode), which hides the whole status bar; the dock tab itself is unaffected and still works there.
+
+Durations default to the traditional 25 minutes of work, a 5-minute short break, and a 15-minute long break every 4 sessions — all four are adjustable in [Settings](#settings).
+
 ## Plugins
 
 Tachylite can be extended with small scripts written in [Rhai](https://rhai.rs), an embedded scripting language. A plugin script can:
@@ -510,6 +523,7 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Toggle Focus Mode | `F9` |
 | Open Document | `Ctrl+P` |
 | Close Document | `Ctrl+W` |
+| Toggle Pomodoro Timer | `Ctrl+Alt+T` |
 
 Two shortcuts can never overlap — rebinding one to a combo another action already owns automatically un-assigns it from the previous owner. This holds across built-ins and plugin shortcuts alike: if a loaded plugin registered a `:` command with its own shortcut (see [Plugins](#plugins)), it shows up in its own "Plugin Shortcuts" section further down the same window, remappable/unbindable the same way.
 
@@ -522,6 +536,7 @@ Settings are stored as `tachylite.toml` in the platform's config directory (the 
 - **Appearance** (Dark/Light/System) and **Color Theme** — see [Themes](#themes-and-appearance)
 - **Editor and Preview font** (and size) — see [Editor and Preview Font](#editor-and-preview-font)
 - **Date format for `${{date}}`** — see [Template Variables](#template-variables)
+- **Pomodoro durations** (work/short break/long break minutes, and sessions before a long break) — see [Pomodoro Timer](#pomodoro-timer)
 - **Keyboard shortcuts** — remap or unbind any action, including a fullscreen toggle
 
 If the settings file is missing or its contents can't be parsed, tachylite falls back to defaults rather than failing to start.
