@@ -133,6 +133,13 @@ pub fn show(
             }
         });
 
+    // Gated on no recording in progress: `show_recording_modal` below also reads
+    // Escape (to cancel just the recording, not the whole window) — checking here
+    // unconditionally would close Settings out from under it on the same keypress.
+    if *open && recording_shortcut.is_none() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        *open = false;
+    }
+
     if let Some(target) = recording_shortcut.clone() {
         changed |= show_recording_modal(
             ctx,
@@ -252,4 +259,82 @@ fn is_bare_modifier_key(key: egui::Key) -> bool {
             | egui::Key::SuperLeft
             | egui::Key::SuperRight
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn escape_event() -> egui::Event {
+        egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn frame(
+        ctx: &egui::Context,
+        open: &mut bool,
+        settings: &mut Settings,
+        recording_shortcut: &mut Option<ShortcutTarget>,
+        events: Vec<egui::Event>,
+    ) {
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            show(ui.ctx(), open, settings, recording_shortcut, &[]);
+        });
+    }
+
+    #[test]
+    fn escape_closes_the_window_when_nothing_is_being_recorded() {
+        let ctx = egui::Context::default();
+        let mut settings = Settings::default();
+        let mut open = true;
+        let mut recording_shortcut = None;
+
+        frame(
+            &ctx,
+            &mut open,
+            &mut settings,
+            &mut recording_shortcut,
+            vec![],
+        );
+        assert!(open, "window should still be open before Escape");
+
+        frame(
+            &ctx,
+            &mut open,
+            &mut settings,
+            &mut recording_shortcut,
+            vec![escape_event()],
+        );
+        assert!(!open, "Escape should close the Settings window");
+    }
+
+    #[test]
+    fn escape_cancels_recording_instead_of_closing_the_window() {
+        let ctx = egui::Context::default();
+        let mut settings = Settings::default();
+        let mut open = true;
+        let mut recording_shortcut = Some(ShortcutTarget::BuiltIn(ShortcutAction::Save));
+
+        frame(
+            &ctx,
+            &mut open,
+            &mut settings,
+            &mut recording_shortcut,
+            vec![escape_event()],
+        );
+        assert!(
+            open,
+            "Escape while recording a shortcut should cancel the recording, not close Settings"
+        );
+        assert!(recording_shortcut.is_none());
+    }
 }
