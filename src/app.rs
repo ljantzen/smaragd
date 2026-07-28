@@ -193,6 +193,7 @@ pub struct TachyliteApp {
     show_about: bool,
     prompt: Option<PendingPrompt>,
     recording_shortcut: Option<ShortcutTarget>,
+    settings_category: ui::settings_panel::SettingsCategory,
     find_replace: FindReplaceState,
     card_draft: Option<CardDraft>,
     command_prompt: CommandPromptState,
@@ -320,6 +321,7 @@ impl TachyliteApp {
             show_about: false,
             prompt: None,
             recording_shortcut: None,
+            settings_category: ui::settings_panel::SettingsCategory::General,
             find_replace: FindReplaceState::default(),
             card_draft: None,
             command_prompt: CommandPromptState::default(),
@@ -2679,6 +2681,7 @@ impl eframe::App for TachyliteApp {
             ui.ctx(),
             &mut self.show_settings,
             &mut self.settings,
+            &mut self.settings_category,
             &mut self.recording_shortcut,
             &plugin_shortcut_rows,
         ) {
