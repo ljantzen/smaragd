@@ -12,12 +12,13 @@
 //! Scripts talk to the app through flat, `tachylite_`-prefixed host functions
 //! (deliberately not Rhai's module-namespacing system, which would add API
 //! surface with no benefit here): `tachylite_status(msg)`,
-//! `tachylite_document_text()`, `tachylite_set_document_text(text)`, and
-//! `tachylite_run_command(cmd, args)`, which shells out to an arbitrary program on
-//! `PATH`. That last one means a loaded plugin has the same reach as anything else
-//! run under the user's own account — the trust boundary is loading the plugin at
-//! all (see [`load`]'s docs on the global vs. project directories), not anything
-//! enforced per call.
+//! `tachylite_document_text()`, `tachylite_document_basename()`,
+//! `tachylite_document_filename()`, `tachylite_set_document_text(text)`, and
+//! `tachylite_run_command(cmd, args)`, which shells out to an arbitrary program
+//! on `PATH`. That last one means a loaded plugin has the same reach as anything
+//! else run under the user's own account — the trust boundary is loading the
+//! plugin at all (see [`load`]'s docs on the global vs. project directories), not
+//! anything enforced per call.
 //!
 //! A registered `:` command can also ask for a default keyboard shortcut via
 //! `register_shortcut(name, key_spec)` (e.g. `"ctrl+shift+k"` — see
@@ -53,6 +54,20 @@ pub fn global_plugins_dir() -> Option<PathBuf> {
 #[derive(Default)]
 struct PluginIo {
     document_text: Option<String>,
+    /// The open document's file name, stripped of its `.md` extension (`None` if
+    /// none is open) — backs `tachylite_document_basename()`. Deliberately just
+    /// the name, not a full path: a plugin has no way to interpret an absolute
+    /// path meaningfully anyway (it can't do path arithmetic — Rhai has no path
+    /// library registered), and the name is what a user-facing use like a log
+    /// entry actually wants.
+    document_basename: Option<String>,
+    /// The open document's path relative to the project root, `.md` extension
+    /// included (`None` if none is open) — backs `tachylite_document_filename()`.
+    /// Relative to the *project*, not the filesystem root, for the same reason
+    /// `document_basename` isn't a full absolute path: it's the only form of
+    /// "full name" a plugin could meaningfully do anything with (log it, compare
+    /// it against another project-relative path, etc.).
+    document_filename: Option<String>,
     status_message: Option<String>,
     set_document_text: Option<String>,
 }
@@ -120,15 +135,21 @@ impl PluginEngine {
 
     /// Run the plugin command registered as `name` with argument `arg`, giving it
     /// `document_text` (the open document's live buffer, if any) to read via
-    /// `tachylite_document_text()`. Returns the effects the call produced (status
-    /// message / a new document text) plus `Err` if the call itself failed —
-    /// callers should show that as a status message and otherwise ignore it: a
-    /// broken plugin command must never corrupt app state.
+    /// `tachylite_document_text()`, `document_basename` (that document's file
+    /// name minus its `.md` extension) via `tachylite_document_basename()`, and
+    /// `document_filename` (its path relative to the project root, `.md`
+    /// included) via `tachylite_document_filename()`. Returns the effects the
+    /// call produced (status message / a new document text) plus `Err` if the
+    /// call itself failed — callers should show that as a status message and
+    /// otherwise ignore it: a broken plugin command must never corrupt app
+    /// state.
     pub fn run_command(
         &self,
         name: &str,
         arg: &str,
         document_text: Option<&str>,
+        document_basename: Option<&str>,
+        document_filename: Option<&str>,
     ) -> (PluginEffects, Result<(), String>) {
         let Some(plugin) = self
             .plugins
@@ -144,6 +165,8 @@ impl PluginEngine {
 
         *self.io.borrow_mut() = PluginIo {
             document_text: document_text.map(str::to_string),
+            document_basename: document_basename.map(str::to_string),
+            document_filename: document_filename.map(str::to_string),
             ..Default::default()
         };
 
@@ -216,6 +239,24 @@ fn new_engine(
         io_for_read
             .borrow()
             .document_text
+            .clone()
+            .unwrap_or_default()
+    });
+
+    let io_for_basename = Rc::clone(io);
+    engine.register_fn("tachylite_document_basename", move || -> String {
+        io_for_basename
+            .borrow()
+            .document_basename
+            .clone()
+            .unwrap_or_default()
+    });
+
+    let io_for_filename = Rc::clone(io);
+    engine.register_fn("tachylite_document_filename", move || -> String {
+        io_for_filename
+            .borrow()
+            .document_filename
             .clone()
             .unwrap_or_default()
     });
@@ -500,7 +541,7 @@ mod tests {
         assert!(errors.is_empty(), "unexpected load errors: {errors:?}");
         assert_eq!(engine.command_names().collect::<Vec<_>>(), vec!["hello"]);
 
-        let (effects, result) = engine.run_command("hello", "world", None);
+        let (effects, result) = engine.run_command("hello", "world", None, None, None);
         assert!(result.is_ok());
         assert_eq!(effects.status_message.as_deref(), Some("Hello, world!"));
     }
@@ -520,15 +561,64 @@ mod tests {
         );
 
         let (engine, _) = load(&[dir.path()], None);
-        let (effects, result) = engine.run_command("shout", "", Some("hello there"));
+        let (effects, result) = engine.run_command("shout", "", Some("hello there"), None, None);
         assert!(result.is_ok());
         assert_eq!(effects.set_document_text.as_deref(), Some("HELLO THERE"));
     }
 
     #[test]
+    fn a_command_can_read_the_document_basename_and_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        write_plugin(
+            dir.path(),
+            "whoami",
+            r#"
+                fn whoami(arg) {
+                    tachylite_status(tachylite_document_basename() + "|" + tachylite_document_filename());
+                }
+                register_command("whoami", "whoami");
+            "#,
+        );
+
+        let (engine, _) = load(&[dir.path()], None);
+        let (effects, result) = engine.run_command(
+            "whoami",
+            "",
+            None,
+            Some("Scene 5"),
+            Some("Part 1/Scene 5.md"),
+        );
+        assert!(result.is_ok());
+        assert_eq!(
+            effects.status_message.as_deref(),
+            Some("Scene 5|Part 1/Scene 5.md")
+        );
+    }
+
+    #[test]
+    fn the_document_basename_and_filename_are_empty_when_no_document_is_open() {
+        let dir = tempfile::tempdir().unwrap();
+        write_plugin(
+            dir.path(),
+            "whoami",
+            r#"
+                fn whoami(arg) {
+                    tachylite_status(tachylite_document_basename() + "|" + tachylite_document_filename());
+                }
+                register_command("whoami", "whoami");
+            "#,
+        );
+
+        let (engine, _) = load(&[dir.path()], None);
+        let (effects, result) = engine.run_command("whoami", "", None, None, None);
+        assert!(result.is_ok());
+        assert_eq!(effects.status_message.as_deref(), Some("|"));
+    }
+
+    #[test]
     fn running_an_unregistered_command_is_an_error() {
         let (engine, _) = load(&[], None);
-        let (_, result) = engine.run_command("nope", "", None);
+        let (_, result) = engine.run_command("nope", "", None, None, None);
         assert!(result.is_err());
     }
 
@@ -555,7 +645,7 @@ mod tests {
         let (engine, errors) = load(&[dir.path()], None);
         assert!(errors.iter().any(|e| e.contains("already registered")));
 
-        let (effects, result) = engine.run_command("dup", "", None);
+        let (effects, result) = engine.run_command("dup", "", None, None, None);
         assert!(result.is_ok());
         assert_eq!(effects.status_message.as_deref(), Some("first"));
     }
@@ -670,7 +760,7 @@ mod tests {
         let (engine, errors) = load(&[dir.path()], None);
         assert!(errors.is_empty(), "unexpected load errors: {errors:?}");
 
-        let (effects, result) = engine.run_command("shell", "world", None);
+        let (effects, result) = engine.run_command("shell", "world", None, None, None);
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(effects.status_message.as_deref(), Some("hello world"));
     }
@@ -691,7 +781,7 @@ mod tests {
         );
 
         let (engine, _) = load(&[dir.path()], None);
-        let (effects, result) = engine.run_command("shell", "", None);
+        let (effects, result) = engine.run_command("shell", "", None, None, None);
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(
             effects.status_message.as_deref(),
@@ -714,7 +804,7 @@ mod tests {
         );
 
         let (engine, _) = load(&[dir.path()], None);
-        let (_, result) = engine.run_command("shell", "", None);
+        let (_, result) = engine.run_command("shell", "", None, None, None);
         assert!(result.is_err());
     }
 
@@ -736,7 +826,7 @@ mod tests {
         );
 
         let (engine, _) = load(&[dir.path()], Some(dir.path()));
-        let (effects, result) = engine.run_command("shell", "", None);
+        let (effects, result) = engine.run_command("shell", "", None, None, None);
         assert!(result.is_ok(), "{result:?}");
         // Canonicalize both sides: on macOS `pwd` reports a `/private/...`-resolved
         // path for a tempdir under a symlinked `/tmp`.
@@ -827,7 +917,7 @@ mod tests {
         assert!(errors.iter().any(|e| e.contains("Ctrl, Alt, or Shift")));
         assert_eq!(engine.shortcut_defaults().count(), 0);
 
-        let (_, result) = engine.run_command("run_it", "", None);
+        let (_, result) = engine.run_command("run_it", "", None, None, None);
         assert!(result.is_ok());
     }
 

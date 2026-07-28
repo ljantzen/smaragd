@@ -1709,14 +1709,37 @@ impl TachyliteApp {
     }
 
     /// Run a plugin-registered `:` command, giving it the open document's live
-    /// buffer to read via `tachylite_document_text()` and applying whatever
-    /// effects it produced (a status message, and/or a new buffer if it called
-    /// `tachylite_set_document_text`) back onto real app state. Never saves —
-    /// like any other edit, the user's own save action does that.
+    /// buffer to read via `tachylite_document_text()`, its file name (minus
+    /// `.md`) via `tachylite_document_basename()`, and its path relative to the
+    /// project root (`.md` included) via `tachylite_document_filename()`, and
+    /// applying whatever effects it produced (a status message, and/or a new
+    /// buffer if it called `tachylite_set_document_text`) back onto real app
+    /// state. Never saves — like any other edit, the user's own save action does
+    /// that.
     fn run_plugin_command(&mut self, name: &str, arg: &str) {
         let document_open = self.editor.open_path.is_some();
         let document_text = document_open.then_some(self.editor.buffer.as_str());
-        let (effects, result) = self.plugin_engine.run_command(name, arg, document_text);
+        let document_basename = self
+            .editor
+            .open_path
+            .as_deref()
+            .and_then(Path::file_stem)
+            .and_then(|s| s.to_str());
+        let document_filename = self.editor.open_path.as_deref().and_then(|path| {
+            let relative: &Path = self
+                .project
+                .as_ref()
+                .and_then(|project| path.strip_prefix(&project.root).ok())
+                .unwrap_or(path);
+            relative.to_str()
+        });
+        let (effects, result) = self.plugin_engine.run_command(
+            name,
+            arg,
+            document_text,
+            document_basename,
+            document_filename,
+        );
         if let Err(err) = result {
             self.status_message = Some(err);
             return;
