@@ -189,6 +189,7 @@ pub struct TachyliteApp {
     status_message: Option<String>,
     settings: Settings,
     show_settings: bool,
+    show_about: bool,
     prompt: Option<PendingPrompt>,
     recording_shortcut: Option<ShortcutTarget>,
     find_replace: FindReplaceState,
@@ -309,6 +310,7 @@ impl TachyliteApp {
             status_message: None,
             settings,
             show_settings: false,
+            show_about: false,
             prompt: None,
             recording_shortcut: None,
             find_replace: FindReplaceState::default(),
@@ -2590,7 +2592,9 @@ impl eframe::App for TachyliteApp {
                         }
                     });
                     egui::containers::menu::MenuButton::new("Help").ui(ui, |ui| {
-                        ui.add_enabled(false, egui::Button::new("About"));
+                        if ui.button("About").clicked() {
+                            self.show_about = true;
+                        }
                     });
                 });
             });
@@ -2692,6 +2696,10 @@ impl eframe::App for TachyliteApp {
             ) {
                 self.open_document(&path);
             }
+        }
+
+        if self.show_about && ui::about_panel::show(ui.ctx()) {
+            self.show_about = false;
         }
 
         if !self.focus_mode {
