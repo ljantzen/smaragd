@@ -11,6 +11,7 @@ pub mod markdown;
 pub mod plugins;
 pub mod pomodoro;
 pub mod project;
+pub mod project_template;
 pub mod search;
 pub mod settings;
 pub mod shortcuts;

@@ -423,8 +423,10 @@ impl Project {
         self.set_folder_role(&path, Some(role))
     }
 
-    /// The absolute path of the project's designated Trash folder, if any.
-    fn trash_path(&self) -> Option<PathBuf> {
+    /// The absolute path of the project's designated Trash folder, if any. Visible
+    /// within the crate (not just this module) so `project_template::save_from_project`
+    /// can exclude Trash's contents when saving a project's structure as a template.
+    pub(crate) fn trash_path(&self) -> Option<PathBuf> {
         self.meta
             .folder_roles
             .iter()
@@ -565,6 +567,21 @@ impl Project {
         let name = filename.strip_suffix(".md").unwrap_or(filename);
         let contents = crate::templates::substitute(&contents, name, date_format);
         self.write_new_document(parent, filename, &contents)
+    }
+
+    /// Create a new document under `parent` with `contents` written verbatim — no
+    /// `${{name}}`/`${{date}}` substitution, unlike `create_document_from_template`
+    /// (that's for *stationery*-style "New From Template"). This is the write path
+    /// `project_template::ProjectTemplate::apply` uses to stamp a project-scaffolding
+    /// template's literal starter content onto a freshly initialized project. Same
+    /// name-validation/collision-refusal path as `create_document`.
+    pub fn create_document_with_content(
+        &mut self,
+        parent: &Path,
+        filename: &str,
+        contents: &str,
+    ) -> io::Result<PathBuf> {
+        self.write_new_document(parent, filename, contents)
     }
 
     fn write_new_document(
@@ -2261,6 +2278,21 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!dir.path().parent().unwrap().join("escaped.md").exists());
+    }
+
+    #[test]
+    fn create_document_with_content_writes_verbatim_with_no_substitution() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        let path = project
+            .create_document_with_content(dir.path(), "Aria", "# ${{name}}\n\n${{date}}\n")
+            .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "# ${{name}}\n\n${{date}}\n"
+        );
     }
 
     #[test]

@@ -9,6 +9,7 @@ pub mod find_replace_panel;
 pub mod markdown_preview;
 pub mod metadata_panel;
 pub mod name_prompt;
+pub mod new_project_template_prompt;
 pub mod open_document_prompt;
 pub mod pomodoro_panel;
 pub mod settings_panel;

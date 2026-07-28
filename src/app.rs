@@ -54,6 +54,7 @@ enum PromptAction {
     },
     NewProject {
         location: PathBuf,
+        template_id: String,
     },
     /// Commit with the (editable) message the prompt was confirmed with; `push_after`
     /// carries through whether this was "Commit" or "Commit and Push".
@@ -63,6 +64,9 @@ enum PromptAction {
     /// Save the current dock layout under the confirmed name (see
     /// `save_named_layout`).
     SaveLayout,
+    /// Save the current project's structure as a new custom template under the
+    /// confirmed name (see `save_project_as_template`).
+    SaveProjectAsTemplate,
 }
 
 struct PendingPrompt {
@@ -198,6 +202,7 @@ pub struct TachyliteApp {
     card_draft: Option<CardDraft>,
     command_prompt: CommandPromptState,
     open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState,
+    new_project_template_prompt: ui::new_project_template_prompt::NewProjectTemplatePromptState,
     /// Live editing buffers for the open document's frontmatter, always kept in sync
     /// with whichever document is open (see `refresh_metadata_if_needed`) — there's
     /// no "closed" state to represent here, since the Metadata dock tab's own
@@ -251,6 +256,10 @@ pub struct TachyliteApp {
     /// Every selectable color theme: the 15 built-ins plus whatever `*.toml` files
     /// are in `color_theme::global_themes_dir()`. Rebuilt by `reload_color_themes`.
     color_themes: Vec<crate::color_theme::ColorTheme>,
+    /// Every selectable project template: the 4 built-ins plus whatever custom
+    /// templates are in `project_template::global_project_templates_dir()`.
+    /// Rebuilt by `reload_project_templates`.
+    project_templates: Vec<crate::project_template::ProjectTemplate>,
     /// The open Export dialog, if any — see `ExportState`.
     export: Option<ExportState>,
     /// Every selectable typesetting style: the 2 built-ins plus whatever
@@ -327,6 +336,8 @@ impl TachyliteApp {
             card_draft: None,
             command_prompt: CommandPromptState::default(),
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
+            new_project_template_prompt:
+                ui::new_project_template_prompt::NewProjectTemplatePromptState::default(),
             metadata_draft: MetadataDraft::from_meta(&DocumentMeta::default()),
             metadata_computed_for: None,
             metadata_last_applied: DocumentMeta::default(),
@@ -338,6 +349,7 @@ impl TachyliteApp {
             plugin_engine: crate::plugins::PluginEngine::default(),
             plugin_shortcuts: Vec::new(),
             color_themes: Vec::new(),
+            project_templates: Vec::new(),
             export: None,
             typeset_styles: Vec::new(),
             pomodoro: crate::pomodoro::PomodoroState::new(&initial_pomodoro_durations),
@@ -345,6 +357,7 @@ impl TachyliteApp {
             focus_mode: false,
         };
         app.reload_typeset_styles();
+        app.reload_project_templates();
 
         // Before applying the persisted theme below, which needs `color_themes`
         // populated to find it by id.
@@ -421,6 +434,20 @@ impl TachyliteApp {
             crate::color_theme::reset(ctx);
             self.settings.color_theme = None;
             self.persist_settings();
+        }
+    }
+
+    /// Rebuild `project_templates` from the 4 built-ins plus whatever custom
+    /// templates are currently in `project_template::global_project_templates_dir()`
+    /// — called on startup, and after `save_project_as_template` succeeds so a
+    /// newly saved template is immediately selectable without restarting.
+    fn reload_project_templates(&mut self) {
+        let templates_dir = crate::project_template::global_project_templates_dir();
+        let dirs: Vec<&Path> = templates_dir.as_deref().into_iter().collect();
+        let (templates, errors) = crate::project_template::load(&dirs);
+        self.project_templates = templates;
+        if !errors.is_empty() {
+            self.status_message = Some(errors.join("; "));
         }
     }
 
@@ -876,20 +903,30 @@ impl TachyliteApp {
         }
     }
 
-    /// Start the "New Project" flow: pick a parent folder via the native folder
-    /// picker, then prompt for the new project's name via the existing name-prompt
-    /// modal.
+    /// Start the "New Project" flow: first the template-choice modal (see
+    /// `start_new_project_with_template` for the rest of the flow, once a template's
+    /// been chosen).
     fn start_new_project(&mut self) {
+        self.new_project_template_prompt.request_open();
+    }
+
+    /// Continue "New Project" once `template_id` has been chosen: pick a parent
+    /// folder via the native folder picker, then prompt for the new project's name
+    /// via the existing name-prompt modal.
+    fn start_new_project_with_template(&mut self, template_id: String) {
         let Some(location) = rfd::FileDialog::new().pick_folder() else {
             return;
         };
         self.prompt = Some(PendingPrompt {
-            action: PromptAction::NewProject { location },
+            action: PromptAction::NewProject {
+                location,
+                template_id,
+            },
             state: NamePromptState::new("New Project", "Create", ""),
         });
     }
 
-    fn create_project(&mut self, location: &Path, name: &str) {
+    fn create_project(&mut self, location: &Path, name: &str, template_id: &str) {
         let root = location.join(name);
         if root.exists() {
             // Unlike the adopt flow, "New Project" should only ever create a fresh
@@ -899,9 +936,50 @@ impl TachyliteApp {
             return;
         }
         match Project::initialize(&root) {
-            Ok(project) => self.set_project(project, &root),
+            Ok(mut project) => {
+                // An id that no longer resolves (e.g. a custom template deleted
+                // between picker and confirm) is treated as "no scaffolding" rather
+                // than a hard error — the same fallback Blank itself produces.
+                let template_error =
+                    crate::project_template::find(&self.project_templates, template_id)
+                        .and_then(|template| template.apply(&mut project).err());
+                // `set_project` unconditionally clears `status_message`, so a
+                // template-apply error must be recorded after it runs, not before.
+                self.set_project(project, &root);
+                if let Some(err) = template_error {
+                    self.status_message = Some(format!("Couldn't apply template: {err}"));
+                }
+            }
             Err(err) => {
                 self.status_message = Some(format!("Couldn't create project: {err}"));
+            }
+        }
+    }
+
+    /// Open the "Save Project as Template" name-prompt modal.
+    fn prompt_save_project_as_template(&mut self) {
+        self.prompt = Some(PendingPrompt {
+            action: PromptAction::SaveProjectAsTemplate,
+            state: NamePromptState::new("Save Project as Template", "Save", ""),
+        });
+    }
+
+    fn save_project_as_template(&mut self, name: &str) {
+        let Some(project) = &self.project else {
+            self.status_message = Some("No project open".to_string());
+            return;
+        };
+        let Some(dir) = crate::project_template::global_project_templates_dir() else {
+            self.status_message = Some("Couldn't determine templates directory".to_string());
+            return;
+        };
+        match crate::project_template::save_from_project(&dir, name, project) {
+            Ok(_) => {
+                self.status_message = Some(format!("Saved template \"{name}\""));
+                self.reload_project_templates();
+            }
+            Err(err) => {
+                self.status_message = Some(format!("Couldn't save template: {err}"));
             }
         }
     }
@@ -2016,9 +2094,13 @@ impl TachyliteApp {
                 template_path,
             } => self.create_document_from_template(&parent, name, &template_path),
             PromptAction::Rename { path } => self.rename_node(&path, name),
-            PromptAction::NewProject { location } => self.create_project(&location, name),
+            PromptAction::NewProject {
+                location,
+                template_id,
+            } => self.create_project(&location, name, &template_id),
             PromptAction::GitCommit { push_after } => self.run_git_commit(ctx, name, push_after),
             PromptAction::SaveLayout => self.save_named_layout(ctx, name),
+            PromptAction::SaveProjectAsTemplate => self.save_project_as_template(name),
         }
     }
 
@@ -2430,6 +2512,15 @@ impl eframe::App for TachyliteApp {
                             let ctx = ui.ctx().clone();
                             self.close_document(&ctx);
                         }
+                        if menu_button_with_shortcut(ui, "Save Project as Template…", None)
+                            .clicked()
+                        {
+                            if self.project.is_some() {
+                                self.prompt_save_project_as_template();
+                            } else {
+                                self.status_message = Some("No project open".to_string());
+                            }
+                        }
                         ui.separator();
                         if menu_button_with_shortcut(ui, "Settings", open_settings_shortcut)
                             .clicked()
@@ -2762,6 +2853,16 @@ impl eframe::App for TachyliteApp {
             ) {
                 self.open_document(&path);
             }
+        }
+
+        if self.new_project_template_prompt.open
+            && let Some(template_id) = ui::new_project_template_prompt::show(
+                ui.ctx(),
+                &mut self.new_project_template_prompt,
+                &self.project_templates,
+            )
+        {
+            self.start_new_project_with_template(template_id);
         }
 
         if self.show_about && ui::about_panel::show(ui.ctx()) {
