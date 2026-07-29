@@ -100,6 +100,16 @@ pub fn strip(contents: &str) -> &str {
     }
 }
 
+/// A document's word count for display in the Metadata panel: whitespace-separated
+/// tokens in the body, after stripping frontmatter (so the YAML block's own keys/
+/// values never inflate the count). Deliberately doesn't strip markdown syntax
+/// (`#`, `**`, `[[...]]`, etc.) — those characters stay attached to the word they're
+/// next to, so this is a token count of the raw text, the same simple definition
+/// most plain-text word counters use, not a rendered-prose word count.
+pub fn count_words(contents: &str) -> usize {
+    strip(contents).split_whitespace().count()
+}
+
 /// Rewrite `contents`' leading frontmatter block — or add one, if it didn't have one
 /// and `meta` isn't entirely empty — to reflect `meta`, leaving the body untouched.
 ///
@@ -275,6 +285,27 @@ mod tests {
     #[test]
     fn strip_handles_frontmatter_with_no_body_after_it() {
         assert_eq!(strip("---\ntype: Scene\n---\n"), "");
+    }
+
+    #[test]
+    fn count_words_counts_whitespace_separated_tokens_in_the_body() {
+        assert_eq!(count_words("# Heading\n\nThree word body.\n"), 5);
+    }
+
+    #[test]
+    fn count_words_excludes_the_frontmatter_block() {
+        let contents = "---\ntype: Scene\nstatus: draft\n---\nTwo words.\n";
+        assert_eq!(count_words(contents), 2);
+    }
+
+    #[test]
+    fn count_words_is_zero_for_an_empty_document() {
+        assert_eq!(count_words(""), 0);
+    }
+
+    #[test]
+    fn count_words_is_zero_for_a_frontmatter_only_document_with_no_body() {
+        assert_eq!(count_words("---\ntype: Scene\n---\n"), 0);
     }
 
     #[test]

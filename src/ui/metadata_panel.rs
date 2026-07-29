@@ -84,11 +84,17 @@ pub struct MetadataPicklists<'a> {
 /// dropdown. The dropdown never clobbers an existing value that isn't one of the
 /// options (e.g. typed before a folder was assigned, or since renamed away): it's
 /// shown as-is via `selected_text` until the user actually picks a different entry.
+///
+/// `word_count` is `frontmatter::count_words` run over the open document's *live*
+/// buffer (not necessarily saved yet), recomputed by the caller every frame — so it's
+/// a read-only label, not another `draft` buffer, and stays current as the user types
+/// with no extra plumbing beyond this whole panel already re-rendering each frame.
 pub fn show(
     ui: &mut egui::Ui,
     open_path: Option<&std::path::Path>,
     draft: &mut MetadataDraft,
     picklists: &MetadataPicklists,
+    word_count: usize,
 ) {
     ui.heading("Metadata");
     ui.separator();
@@ -122,6 +128,10 @@ pub fn show(
                 &mut draft.pov,
                 picklists.povs,
             );
+
+            ui.label("Word count:");
+            ui.label(word_count.to_string());
+            ui.end_row();
 
             ui.label("Word count target:");
             ui.text_edit_singleline(&mut draft.word_count_target_text);

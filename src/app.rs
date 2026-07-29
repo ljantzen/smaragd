@@ -2356,11 +2356,13 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     statuses: &statuses,
                     povs: &povs,
                 };
+                let word_count = crate::frontmatter::count_words(&self.editor.buffer);
                 ui::metadata_panel::show(
                     ui,
                     self.open_path.as_deref(),
                     self.metadata_draft,
                     &picklists,
+                    word_count,
                 );
             }
             DockTab::Editor => {
