@@ -23,3 +23,7 @@ pull request, and the bot will mark it signed:
 1. Fork the repository and create a branch for your change.
 2. Keep pull requests focused — one logical change per PR.
 3. Open a pull request against `main` describing what changed and why.
+
+## Reporting issues
+
+Please use GitHub Issues for bug reports and feature requests.
