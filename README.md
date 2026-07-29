@@ -122,3 +122,7 @@ Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, and Pomodoro all 
 ## License
 
 Smaragd is licensed under the [GNU GPL-3.0-or-later](LICENSE). Contributions require agreeing to the [Contributor License Agreement](CLA.md) — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## The name
+
+Smaragd is the germanic name for Emerald. A small play on Obsidian.  A working name for a long time was Tachylite, but i think Smaragd works better.
