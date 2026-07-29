@@ -1064,6 +1064,15 @@ impl TachyliteApp {
         self.metadata_draft = MetadataDraft::from_meta(&meta);
         self.metadata_last_applied = meta;
         self.metadata_computed_for = self.editor.open_path.clone();
+        // Only set — never clear — the status message here: most document switches
+        // have nothing wrong with their frontmatter, and blanking whatever the
+        // status bar was already showing (e.g. a just-completed git operation) on
+        // every single switch would be far noisier than useful.
+        if self.editor.open_path.is_some()
+            && let Some(err) = crate::frontmatter::validate(&self.editor.buffer)
+        {
+            self.status_message = Some(err.to_string());
+        }
     }
 
     /// Notice a live edit to `metadata_draft` (typed into the Metadata dock tab this
@@ -1801,7 +1810,10 @@ impl TachyliteApp {
     /// save actions (`:w`/`Ctrl+S`, `:wq`) only; the focus-loss autosave in
     /// `editor_panel.rs` and the save-before-switching-documents path inside
     /// `EditorState::open` both stay plugin-agnostic (see `plugins.rs`'s v1 scope
-    /// note) rather than threading plugin awareness into those lower layers.
+    /// note) rather than threading plugin awareness into those lower layers. Also
+    /// flags (never blocks on) a frontmatter block that fails to parse as YAML
+    /// after the save — catches a hand-edit that just broke it, complementing
+    /// `refresh_metadata_if_needed`'s equivalent check on opening a document.
     fn save_editor(&mut self) -> std::io::Result<()> {
         let (transformed, errors) = self.plugin_engine.run_on_save(&self.editor.buffer);
         if !errors.is_empty() {
@@ -1811,7 +1823,18 @@ impl TachyliteApp {
             self.editor.buffer = transformed;
             self.editor.mark_dirty();
         }
-        self.editor.save()
+        let result = self.editor.save();
+        // Only report a frontmatter problem if nothing else already claimed the
+        // status message this save (a plugin error above, or an I/O failure below)
+        // — a fresh hand-edit that broke the YAML block is worth flagging, but not
+        // at the cost of hiding a more pressing failure.
+        if errors.is_empty()
+            && result.is_ok()
+            && let Some(err) = crate::frontmatter::validate(&self.editor.buffer)
+        {
+            self.status_message = Some(err.to_string());
+        }
+        result
     }
 
     /// Run a command parsed from the `:` command prompt.

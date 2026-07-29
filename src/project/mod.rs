@@ -3317,10 +3317,7 @@ mod tests {
 
         let matches = project.documents_with_tag("foo");
 
-        assert_eq!(
-            matches,
-            vec![(a, "A".to_string()), (b, "B".to_string())]
-        );
+        assert_eq!(matches, vec![(a, "A".to_string()), (b, "B".to_string())]);
     }
 
     #[test]

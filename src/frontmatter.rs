@@ -40,20 +40,26 @@ struct Frontmatter<'a> {
 }
 
 /// Find a leading `---`-delimited frontmatter block in `contents`, if any. The
-/// opening delimiter must be exactly `---` (only a trailing `\r` tolerated, for CRLF
-/// files) as the very first line; the same exact match closes it. No leading/trailing
-/// whitespace tolerance, no YAML `...` end marker — matching the vast majority of
-/// real frontmatter producers (Jekyll/Hugo/Obsidian all use exactly this).
+/// opening delimiter must be `---` (trailing whitespace — a trailing `\r` for CRLF
+/// files, or stray trailing spaces/tabs a template or editor left behind — tolerated
+/// and ignored) as the very first line; the same tolerant match closes it. No leading
+/// whitespace tolerance, no YAML `...` end marker — matching the vast majority of real
+/// frontmatter producers (Jekyll/Hugo/Obsidian all use exactly this). Trailing
+/// whitespace specifically *is* tolerated, unlike leading, because it's invisible in
+/// most editors and easy to introduce by accident (e.g. a template file saved with a
+/// trailing space on its `---` line) — treating a delimiter line as "no frontmatter
+/// at all" over that would silently drop every field, far worse than just ignoring
+/// whitespace nobody meant to be significant.
 fn extract_block(contents: &str) -> Option<Frontmatter<'_>> {
     let first_line_end = contents.find('\n').map(|i| i + 1).unwrap_or(contents.len());
-    let first_line = contents[..first_line_end].trim_end_matches(['\n', '\r']);
+    let first_line = contents[..first_line_end].trim_end();
     if first_line != "---" || first_line_end == contents.len() {
         return None;
     }
 
     let mut cursor = first_line_end;
     for line in contents[cursor..].split_inclusive('\n') {
-        let trimmed = line.trim_end_matches(['\n', '\r']);
+        let trimmed = line.trim_end();
         if trimmed == "---" {
             return Some(Frontmatter {
                 yaml: &contents[first_line_end..cursor],
@@ -87,6 +93,63 @@ pub fn parse(contents: &str) -> DocumentMeta {
     extract_block(contents)
         .map(|fm| parse_yaml_block(fm.yaml))
         .unwrap_or_default()
+}
+
+/// A diagnostic for a frontmatter block whose YAML content failed to parse — the
+/// `---`-delimited block exists, but `serde_norway` couldn't read it as a mapping
+/// `parse` can use (so it silently fell back to `DocumentMeta::default()` instead).
+/// Surfaced as a status-bar warning rather than blocking anything, matching this
+/// codebase's tolerant-load philosophy — a bad block never stops a document from
+/// opening or saving, it just gets flagged.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrontmatterError {
+    /// `serde_norway`'s own diagnostic text, verbatim — already human-readable, and
+    /// for most errors already ends with its own "at line N column M", but that
+    /// position is relative to the frontmatter block's own content (`line`/`column`
+    /// below give the corrected position within the whole document instead).
+    pub message: String,
+    /// 1-indexed line within the *whole document* (not just the YAML block) that
+    /// `serde_norway` pointed at, when it reported a position at all. Frontmatter's
+    /// opening `---` always occupies exactly the document's first line (see
+    /// `extract_block`), so this is always the block-relative line `serde_norway`
+    /// reported, plus one.
+    pub line: Option<usize>,
+    /// 1-indexed column within that line — unaffected by the line correction above,
+    /// since re-basing which line something's on doesn't change how far into that
+    /// line it is.
+    pub column: Option<usize>,
+}
+
+impl std::fmt::Display for FrontmatterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (self.line, self.column) {
+            (Some(line), Some(column)) => write!(
+                f,
+                "Frontmatter YAML error at line {line}, column {column}: {}",
+                self.message
+            ),
+            _ => write!(f, "Frontmatter YAML error: {}", self.message),
+        }
+    }
+}
+
+/// Check whether `contents`' leading frontmatter block, if any, fails to parse as
+/// YAML — for surfacing a warning, since `parse` itself never errors (see its doc
+/// comment) and would otherwise silently fall back to `DocumentMeta::default()`.
+/// Returns `None` when there's no frontmatter block at all (nothing to validate),
+/// the block is empty, or it parses successfully.
+pub fn validate(contents: &str) -> Option<FrontmatterError> {
+    let fm = extract_block(contents)?;
+    if fm.yaml.trim().is_empty() {
+        return None;
+    }
+    let err = serde_norway::from_str::<DocumentMeta>(fm.yaml).err()?;
+    let location = err.location();
+    Some(FrontmatterError {
+        message: err.to_string(),
+        line: location.as_ref().map(|loc| loc.line() + 1),
+        column: location.as_ref().map(|loc| loc.column()),
+    })
 }
 
 /// Strip a leading YAML frontmatter block from `contents`, returning just the
@@ -243,6 +306,49 @@ mod tests {
     }
 
     #[test]
+    fn validate_is_none_when_there_is_no_frontmatter_block() {
+        assert_eq!(validate("# Just a heading\n\nSome text."), None);
+    }
+
+    #[test]
+    fn validate_is_none_when_the_block_is_empty() {
+        assert_eq!(validate("---\n---\nBody.\n"), None);
+    }
+
+    #[test]
+    fn validate_is_none_for_a_well_formed_block() {
+        assert_eq!(validate("---\nstatus: draft\n---\nBody.\n"), None);
+    }
+
+    #[test]
+    fn validate_reports_an_error_for_yaml_that_is_not_a_mapping() {
+        let err = validate("---\n- a\n- b\n---\nBody.\n").unwrap();
+        assert!(err.message.contains("invalid type"), "{err:?}");
+    }
+
+    #[test]
+    fn validate_reports_a_document_relative_line_and_column() {
+        // The bad key starts on the YAML block's own line 2 (serde_norway reports
+        // that as-is), which is the whole document's line 3 (line 1 is the opening
+        // "---", line 2 is "status: draft").
+        let contents = "---\nstatus: draft\n  bad_indent: true\nfoo\n---\nBody.\n";
+        let err = validate(contents).unwrap();
+        assert_eq!(err.line, Some(3));
+        assert!(err.column.is_some(), "{err:?}");
+    }
+
+    #[test]
+    fn validate_error_display_includes_the_position_when_available() {
+        let contents = "---\nstatus: draft\n  bad_indent: true\nfoo\n---\nBody.\n";
+        let err = validate(contents).unwrap();
+        let rendered = err.to_string();
+        assert!(
+            rendered.starts_with("Frontmatter YAML error at line 3, column"),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
     fn parse_ignores_unknown_keys_without_erroring() {
         let contents = "---\ncustom_field: something\nstatus: draft\n---\nBody.\n";
         assert_eq!(parse(contents).status, Some("draft".to_string()));
@@ -254,6 +360,48 @@ mod tests {
             parse("--- not frontmatter\ntype: Scene\n---\n"),
             DocumentMeta::default()
         );
+    }
+
+    #[test]
+    fn parse_tolerates_trailing_whitespace_on_the_opening_delimiter_line() {
+        assert_eq!(
+            parse("--- \nstatus: draft\n---\nBody.\n").status,
+            Some("draft".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_tolerates_trailing_whitespace_on_the_closing_delimiter_line() {
+        assert_eq!(
+            parse("---\nstatus: draft\n--- \nBody.\n").status,
+            Some("draft".to_string())
+        );
+    }
+
+    #[test]
+    fn strip_removes_a_block_whose_delimiters_have_trailing_whitespace() {
+        let contents = "--- \ntype: Scene \n--- \n# Heading\n\nBody text.\n";
+        assert_eq!(strip(contents), "# Heading\n\nBody text.\n");
+    }
+
+    #[test]
+    fn count_words_excludes_a_frontmatter_block_whose_delimiters_have_trailing_whitespace() {
+        let contents = "--- \ntype: Scene \n--- \nTwo words.\n";
+        assert_eq!(count_words(contents), 2);
+    }
+
+    /// Regression test for a real "New From Template"-produced document whose
+    /// template had trailing spaces on both `---` lines and indented YAML keys
+    /// (`  type: Character `, `  created : 2026-07-29`) — before the trailing-
+    /// whitespace tolerance fix, `extract_block` missed the delimiters entirely,
+    /// so `type` never made it into `DocumentMeta` and the whole raw block
+    /// (delimiters included) was counted as body text.
+    #[test]
+    fn parse_and_count_words_handle_a_real_indented_trailing_space_template_document() {
+        let contents =
+            "--- \n  type: Character \n  created : 2026-07-29\n--- \n\n# Crash test dummy";
+        assert_eq!(parse(contents).section_type, Some("Character".to_string()));
+        assert_eq!(count_words(contents), 4);
     }
 
     #[test]
