@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smaragd — a native desktop authoring tool for writers</title>
+<meta name="description" content="Smaragd is a native, Electron-free desktop authoring tool for writers, built in Rust with egui. Plain markdown files, a fully dockable workspace, Scrivener-style structure, and real typeset DOCX/EPUB/PDF export.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgdmlld0JveD0iMCAwIDUxMiA1MTIiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImJnIiB4MT0iMCUiIHkxPSIwJSIgeDI9IjEwMCUiIHkyPSIxMDAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3RvcC1jb2xvcj0iIzBBM0EyQSIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMwMjE0MEUiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9Im91dGVyIiB4MT0iMCUiIHkxPSIwJSIgeDI9IjEwMCUiIHkyPSIxMDAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3RvcC1jb2xvcj0iIzE2NkI0QSIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMwNDI0MUEiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9Im1pZCIgeDE9IjAlIiB5MT0iMCUiIHgyPSIxMDAlIiB5Mj0iMTAwJSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMyMkEwNkIiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMEIzRTJDIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJ0YWJsZSIgeDE9IjAlIiB5MT0iMCUiIHgyPSIxMDAlIiB5Mj0iMTAwJSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiM1QkVGQTAiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMTU5QTYyIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGNsaXBQYXRoIGlkPSJnZW1DbGlwIj4KICAgICAgPHBvbHlnb24gcG9pbnRzPSIxNzQsMTA2IDMzOCwxMDYgMzc0LDE0MiAzNzQsMzcwIDMzOCw0MDYgMTc0LDQwNiAxMzgsMzcwIDEzOCwxNDIiLz4KICAgIDwvY2xpcFBhdGg+CiAgICA8Y2xpcFBhdGggaWQ9ImZyYW1lQ2xpcCI+CiAgICAgIDxyZWN0IHg9IjAiIHk9IjAiIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiByeD0iMTEyIiByeT0iMTEyIi8+CiAgICA8L2NsaXBQYXRoPgogIDwvZGVmcz4KCiAgPGcgY2xpcC1wYXRoPSJ1cmwoI2ZyYW1lQ2xpcCkiPgogICAgPHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIGZpbGw9InVybCgjYmcpIi8+CgogICAgPCEtLSBlbWVyYWxkLWN1dCBnZW06IG91dGVyIGdpcmRsZSwgc3RlcCBmYWNldCwgdGFibGUgLS0+CiAgICA8cG9seWdvbiBwb2ludHM9IjE3NCwxMDYgMzM4LDEwNiAzNzQsMTQyIDM3NCwzNzAgMzM4LDQwNiAxNzQsNDA2IDEzOCwzNzAgMTM4LDE0MiIKICAgICAgICAgICAgIGZpbGw9InVybCgjb3V0ZXIpIiBzdHJva2U9IiMwMzE1MEYiIHN0cm9rZS13aWR0aD0iMiIvPgogICAgPHBvbHlnb24gcG9pbnRzPSIxOTYsMTQ0IDMxNiwxNDQgMzQyLDE3MCAzNDIsMzQyIDMxNiwzNjggMTk2LDM2OCAxNzAsMzQyIDE3MCwxNzAiCiAgICAgICAgICAgICBmaWxsPSJ1cmwoI21pZCkiIHN0cm9rZT0iIzAzMTUwRiIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgICA8cG9seWdvbiBwb2ludHM9IjIyMCwxODAgMjkyLDE4MCAzMDgsMTk2IDMwOCwzMTYgMjkyLDMzMiAyMjAsMzMyIDIwNCwzMTYgMjA0LDE5NiIKICAgICAgICAgICAgIGZpbGw9InVybCgjdGFibGUpIiBzdHJva2U9IiMwMzE1MEYiIHN0cm9rZS13aWR0aD0iMiIvPgoKICAgIDwhLS0gY2F0Y2gtbGlnaHQgZ2xpbnQgb24gdGhlIHRhYmxlIC0tPgogICAgPHBvbHlnb24gcG9pbnRzPSIyMjgsMTg4IDI2MiwxODggMjQ0LDIxMCIgZmlsbD0iI0VBRkJGMSIgb3BhY2l0eT0iMC40NSIvPgoKICAgIDwhLS0gc29mdCBkaWFnb25hbCBzaGluZSBzd2VlcGluZyBhY3Jvc3MgdGhlIHdob2xlIHN0b25lIC0tPgogICAgPGcgY2xpcC1wYXRoPSJ1cmwoI2dlbUNsaXApIj4KICAgICAgPHBvbHlnb24gcG9pbnRzPSIxMTgsMTUwIDE3MCwxMTggMjYyLDQyMiAyMTAsNDUyIiBmaWxsPSIjRkZGRkZGIiBvcGFjaXR5PSIwLjA3Ii8+CiAgICA8L2c+CgogICAgPCEtLSBmYWludCBpbm5lciBib3JkZXIgZm9yIGEgdG91Y2ggb2YgcG9saXNoIC0tPgogICAgPHJlY3QgeD0iNiIgeT0iNiIgd2lkdGg9IjUwMCIgaGVpZ2h0PSI1MDAiIHJ4PSIxMDYiIHJ5PSIxMDYiCiAgICAgICAgICBmaWxsPSJub25lIiBzdHJva2U9IiNGRkZGRkYiIHN0cm9rZS1vcGFjaXR5PSIwLjA1IiBzdHJva2Utd2lkdGg9IjIiLz4KICA8L2c+Cjwvc3ZnPgo=">
+<style>
+  :root {
+    --bg: #04140e;
+    --bg-elev: #0a2019;
+    --border: #163d2c;
+    --fg: #e8f5ee;
+    --fg-dim: #9fc2ae;
+    --accent: #22a06b;
+    --accent-bright: #5befa0;
+    --code-bg: #051813;
+    --max-width: 1040px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+  }
+  body {
+    background-image:
+      radial-gradient(ellipse 900px 500px at 15% -10%, rgba(34, 160, 107, 0.16), transparent 60%),
+      radial-gradient(ellipse 700px 500px at 100% 0%, rgba(91, 239, 160, 0.08), transparent 60%);
+    background-repeat: no-repeat;
+  }
+  a { color: var(--accent-bright); }
+  code, pre {
+    font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  code { padding: 0.1em 0.4em; font-size: 0.9em; }
+
+  .wrap { max-width: var(--max-width); margin: 0 auto; padding: 0 24px; }
+
+  header.top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 0;
+  }
+  header.top .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  header.top .brand svg { width: 28px; height: 28px; border-radius: 6px; }
+  header.top nav a {
+    color: var(--fg-dim);
+    text-decoration: none;
+    margin-left: 22px;
+    font-size: 0.95em;
+  }
+  header.top nav a:hover { color: var(--fg); }
+
+  .hero {
+    text-align: center;
+    padding: 64px 0 56px;
+  }
+  .hero .logo { width: 96px; height: 96px; border-radius: 20px; margin-bottom: 24px; box-shadow: 0 12px 40px rgba(34, 160, 107, 0.25); }
+  .hero h1 {
+    font-size: clamp(2rem, 5vw, 3rem);
+    margin: 0 0 14px;
+    letter-spacing: -0.01em;
+  }
+  .hero p.tagline {
+    color: var(--fg-dim);
+    font-size: 1.15em;
+    max-width: 640px;
+    margin: 0 auto 32px;
+  }
+  .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block;
+    padding: 12px 22px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.98em;
+    border: 1px solid transparent;
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn.primary { background: linear-gradient(135deg, var(--accent-bright), var(--accent)); color: #04140e; }
+  .btn.secondary { background: transparent; border-color: var(--border); color: var(--fg); }
+  .btn.secondary:hover { border-color: var(--accent); }
+
+  section { padding: 48px 0; border-top: 1px solid var(--border); }
+  section h2 {
+    font-size: 1.5em;
+    margin: 0 0 8px;
+  }
+  section .lede { color: var(--fg-dim); margin: 0 0 32px; max-width: 680px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 20px;
+  }
+  .card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 1.05em; }
+  .card p { margin: 0; color: var(--fg-dim); font-size: 0.95em; }
+
+  .platforms { display: flex; gap: 16px; flex-wrap: wrap; }
+  .platform {
+    flex: 1 1 220px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+  }
+  .platform h3 { margin: 0 0 6px; }
+  .platform p { color: var(--fg-dim); font-size: 0.9em; margin: 0 0 14px; }
+  .platform a { font-size: 0.9em; font-weight: 600; }
+
+  .license-box {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 26px;
+  }
+  .license-box p { color: var(--fg-dim); margin: 0 0 12px; }
+  .license-box p:last-child { margin-bottom: 0; }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 32px 0 56px;
+    color: var(--fg-dim);
+    font-size: 0.9em;
+  }
+  footer .links a { margin-right: 18px; }
+  footer .copyright { margin-top: 16px; opacity: 0.7; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="bg2" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#0A3A2A"/><stop offset="100%" stop-color="#02140E"/>
+            </linearGradient>
+            <linearGradient id="outer2" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#166B4A"/><stop offset="100%" stop-color="#04241A"/>
+            </linearGradient>
+            <linearGradient id="mid2" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#22A06B"/><stop offset="100%" stop-color="#0B3E2C"/>
+            </linearGradient>
+            <linearGradient id="table2" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#5BEFA0"/><stop offset="100%" stop-color="#159A62"/>
+            </linearGradient>
+          </defs>
+          <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#bg2)"/>
+          <polygon points="174,106 338,106 374,142 374,370 338,406 174,406 138,370 138,142" fill="url(#outer2)"/>
+          <polygon points="196,144 316,144 342,170 342,342 316,368 196,368 170,342 170,170" fill="url(#mid2)"/>
+          <polygon points="220,180 292,180 308,196 308,316 292,332 220,332 204,316 204,196" fill="url(#table2)"/>
+        </svg>
+        Smaragd
+      </div>
+      <nav>
+        <a href="https://github.com/ljantzen/smaragd">GitHub</a>
+        <a href="https://github.com/ljantzen/smaragd/blob/main/docs/user-manual.md">User Manual</a>
+        <a href="https://github.com/ljantzen/smaragd/releases/latest">Releases</a>
+      </nav>
+    </header>
+
+    <div class="hero">
+      <svg class="logo" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="bg3" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#0A3A2A"/><stop offset="100%" stop-color="#02140E"/>
+          </linearGradient>
+          <linearGradient id="outer3" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#166B4A"/><stop offset="100%" stop-color="#04241A"/>
+          </linearGradient>
+          <linearGradient id="mid3" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#22A06B"/><stop offset="100%" stop-color="#0B3E2C"/>
+          </linearGradient>
+          <linearGradient id="table3" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#5BEFA0"/><stop offset="100%" stop-color="#159A62"/>
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#bg3)"/>
+        <polygon points="174,106 338,106 374,142 374,370 338,406 174,406 138,370 138,142" fill="url(#outer3)"/>
+        <polygon points="196,144 316,144 342,170 342,342 316,368 196,368 170,342 170,170" fill="url(#mid3)"/>
+        <polygon points="220,180 292,180 308,196 308,316 292,332 220,332 204,316 204,196" fill="url(#table3)"/>
+      </svg>
+      <h1>A native desktop authoring tool for writers</h1>
+      <p class="tagline">
+        Built in Rust with egui — no Electron, no Chromium. Your manuscript stays plain markdown
+        files in plain folders; Smaragd adds the binder, the metadata, and the typesetting on top.
+      </p>
+      <div class="cta-row">
+        <a class="btn primary" href="https://github.com/ljantzen/smaragd/releases/latest">Download latest release</a>
+        <a class="btn secondary" href="https://github.com/ljantzen/smaragd">View on GitHub</a>
+      </div>
+    </div>
+
+    <section id="features">
+      <h2>Everything a manuscript needs, one dockable workspace</h2>
+      <p class="lede">Binder, editor, preview, corkboard, metadata, backlinks, and tags are all tabs in one shared layout — drag, split, float, or dock any of them, and it persists across restarts.</p>
+      <div class="grid">
+        <div class="card">
+          <h3>Plain files, no lock-in</h3>
+          <p>A project is just a folder of <code>.md</code> files. A small <code>.smaragd/project.json</code> stores ordering and folder roles — delete it and it's still a perfectly readable folder of markdown.</p>
+        </div>
+        <div class="card">
+          <h3>Scrivener-style structure</h3>
+          <p>Research/Trash/Templates folder roles, built-in Blank/Novel/Nonfiction/Screenplay templates, and Story Genius–style corkboard cards with Alpha Point, Cause, Effect, and Why It Matters.</p>
+        </div>
+        <div class="card">
+          <h3>Wikilinks, backlinks &amp; tags</h3>
+          <p>Obsidian-style <code>[[links]]</code> with autocomplete, a full backlinks panel, and frontmatter + inline <code>#tags</code> — all resolved live across the project.</p>
+        </div>
+        <div class="card">
+          <h3>Real typeset export</h3>
+          <p>DOCX, EPUB, and print-ready PDF from one shared Style. PDF is genuine typesetting via the embedded <a href="https://typst.app">Typst</a> compiler — running headers, drop caps, widow/orphan control, no LaTeX install, no network.</p>
+        </div>
+        <div class="card">
+          <h3>Focus Mode</h3>
+          <p>Maximizes the window, hides every other tab, and dims every paragraph but the one you're writing — a typewriter, distraction-free view one keypress away (<code>F9</code>).</p>
+        </div>
+        <div class="card">
+          <h3>15 themes, fully custom</h3>
+          <p>Gruvbox, Dracula, Nord, Catppuccin, Tokyo Night, and more built in — or drop a <code>.toml</code> file into the config directory for your own theme, style, or template.</p>
+        </div>
+        <div class="card">
+          <h3>Scriptable with Rhai</h3>
+          <p>Plugins in the embedded <a href="https://rhai.rs">Rhai</a> language add custom <code>:</code> commands, keyboard shortcuts, and save-time text transforms — project-local plugins stay opt-in.</p>
+        </div>
+        <div class="card">
+          <h3>Git-aware</h3>
+          <p>Commit, push, and pull from the Versions menu, modeled on the Obsidian Git plugin — network operations run in the background so the UI never freezes.</p>
+        </div>
+        <div class="card">
+          <h3>Built-in Pomodoro timer</h3>
+          <p>Work/break cadence with a status-bar countdown that keeps ticking whether or not its tab is open — configurable durations and session count.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="platforms">
+      <h2>Download</h2>
+      <p class="lede">Native builds for Linux, Windows, and macOS — see the <a href="https://github.com/ljantzen/smaragd/releases/latest">latest release</a> for exact filenames.</p>
+      <div class="platforms">
+        <div class="platform">
+          <h3>Linux</h3>
+          <p>x86_64 AppImage — runs on most distributions without installation.</p>
+          <a href="https://github.com/ljantzen/smaragd/releases/latest">Get the AppImage →</a>
+        </div>
+        <div class="platform">
+          <h3>Windows</h3>
+          <p>x86_64 zip containing the executable.</p>
+          <a href="https://github.com/ljantzen/smaragd/releases/latest">Get the Windows build →</a>
+        </div>
+        <div class="platform">
+          <h3>macOS</h3>
+          <p>Universal binary (Apple Silicon + Intel), ad-hoc signed <code>Smaragd.app</code>.</p>
+          <a href="https://github.com/ljantzen/smaragd/releases/latest">Get the macOS build →</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="license">
+      <h2>Open source</h2>
+      <div class="license-box">
+        <p>Smaragd is licensed under the <a href="https://github.com/ljantzen/smaragd/blob/main/LICENSE">GNU GPL-3.0-or-later</a> — free to use, study, modify, and redistribute.</p>
+        <p>Contributions are welcome and go through a short <a href="https://github.com/ljantzen/smaragd/blob/main/CLA.md">Contributor License Agreement</a> — see <a href="https://github.com/ljantzen/smaragd/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> for how to get started. You keep copyright over what you write.</p>
+        </div>
+    </section>
+  </div>
+
+  <footer>
+    <div class="wrap">
+      <div class="links">
+        <a href="https://github.com/ljantzen/smaragd">Repository</a>
+        <a href="https://github.com/ljantzen/smaragd/blob/main/docs/user-manual.md">User Manual</a>
+        <a href="https://github.com/ljantzen/smaragd/blob/main/LICENSE">License</a>
+        <a href="https://github.com/ljantzen/smaragd/blob/main/CONTRIBUTING.md">Contributing</a>
+        <a href="https://github.com/ljantzen/smaragd/issues">Issues</a>
+      </div>
+      <div class="copyright">Smaragd is licensed under the GNU GPL-3.0-or-later.</div>
+    </div>
+  </footer>
+</body>
+</html>
