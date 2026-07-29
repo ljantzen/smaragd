@@ -58,6 +58,16 @@ fn non_empty(s: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+/// The three fields' picklist options, bundled so `show` doesn't need a separate
+/// parameter per field — each is a project's `PicklistField`-assigned folder's
+/// document titles (see `Project::picklist_documents`), or empty if that field has
+/// no folder assigned. Built fresh by the caller (`app.rs`) every frame.
+pub struct MetadataPicklists<'a> {
+    pub types: &'a [String],
+    pub statuses: &'a [String],
+    pub povs: &'a [String],
+}
+
 /// Renders the metadata form directly into `ui` (a dock tab's content area, not a
 /// modal overlay). `open_path` is only used to show an empty-state message when no
 /// document is open — `draft` itself is kept in sync with whatever document is open
@@ -65,7 +75,21 @@ fn non_empty(s: &str) -> Option<String> {
 /// `draft`'s buffers via the `text_edit_singleline` calls below; there's no Save/
 /// Cancel here, since `apply_metadata_edits_if_changed` picks up any change after
 /// this renders each frame.
-pub fn show(ui: &mut egui::Ui, open_path: Option<&std::path::Path>, draft: &mut MetadataDraft) {
+///
+/// `picklists` holds each field's assigned picklist folder's document titles (see
+/// `Project::picklist_documents`/`PicklistField`), computed fresh by the caller each
+/// frame. A field whose list is empty (no folder assigned to it, or the assigned
+/// folder holds no documents yet) keeps that field exactly as free text, unchanged
+/// from before this mechanism existed — only a non-empty list switches it to a
+/// dropdown. The dropdown never clobbers an existing value that isn't one of the
+/// options (e.g. typed before a folder was assigned, or since renamed away): it's
+/// shown as-is via `selected_text` until the user actually picks a different entry.
+pub fn show(
+    ui: &mut egui::Ui,
+    open_path: Option<&std::path::Path>,
+    draft: &mut MetadataDraft,
+    picklists: &MetadataPicklists,
+) {
     ui.heading("Metadata");
     ui.separator();
 
@@ -77,17 +101,27 @@ pub fn show(ui: &mut egui::Ui, open_path: Option<&std::path::Path>, draft: &mut 
     egui::Grid::new("document_metadata_grid")
         .num_columns(2)
         .show(ui, |ui| {
-            ui.label("Type:");
-            ui.text_edit_singleline(&mut draft.section_type);
-            ui.end_row();
-
-            ui.label("Status:");
-            ui.text_edit_singleline(&mut draft.status);
-            ui.end_row();
-
-            ui.label("POV:");
-            ui.text_edit_singleline(&mut draft.pov);
-            ui.end_row();
+            picklist_or_text_row(
+                ui,
+                "Type:",
+                "metadata_type_combo",
+                &mut draft.section_type,
+                picklists.types,
+            );
+            picklist_or_text_row(
+                ui,
+                "Status:",
+                "metadata_status_combo",
+                &mut draft.status,
+                picklists.statuses,
+            );
+            picklist_or_text_row(
+                ui,
+                "POV:",
+                "metadata_pov_combo",
+                &mut draft.pov,
+                picklists.povs,
+            );
 
             ui.label("Word count target:");
             ui.text_edit_singleline(&mut draft.word_count_target_text);
@@ -97,6 +131,38 @@ pub fn show(ui: &mut egui::Ui, open_path: Option<&std::path::Path>, draft: &mut 
             ui.text_edit_singleline(&mut draft.tags_text);
             ui.end_row();
         });
+}
+
+/// One `Type:`/`Status:`/`POV:`-style grid row: a free-text field when `options` is
+/// empty, or a dropdown offering `options` plus a `"(none)"` clearing entry
+/// otherwise. `combo_id` must be unique across the whole UI (egui's `ComboBox` id
+/// requirement) — the three call sites above each pass their own literal.
+fn picklist_or_text_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    combo_id: &str,
+    value: &mut String,
+    options: &[String],
+) {
+    ui.label(label);
+    if options.is_empty() {
+        ui.text_edit_singleline(value);
+    } else {
+        let selected_text = if value.is_empty() {
+            "(none)"
+        } else {
+            value.as_str()
+        };
+        egui::ComboBox::new(combo_id, "")
+            .selected_text(selected_text)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(value, String::new(), "(none)");
+                for option in options {
+                    ui.selectable_value(value, option.clone(), option);
+                }
+            });
+    }
+    ui.end_row();
 }
 
 #[cfg(test)]

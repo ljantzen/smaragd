@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::project::model::{BinderNode, BinderNodeKind};
-use crate::project::{FolderRole, Project};
+use crate::project::{FolderRole, PicklistField, Project};
 
 /// Outcomes of user interaction with the binder tree, handled by the caller (`app.rs`)
 /// rather than mutated here — keeps this module a pure rendering layer over `&Project`.
@@ -46,6 +46,13 @@ pub enum BinderEvent {
     SetFolderRole {
         path: PathBuf,
         role: Option<FolderRole>,
+    },
+    /// `path`'s "Dropdown Source" checkbox for `field` was toggled: `Some(path)`
+    /// assigns `path` as `field`'s picklist folder, `None` clears it (only
+    /// meaningful when `path` was the one currently assigned).
+    SetPicklistFolder {
+        field: PicklistField,
+        path: Option<PathBuf>,
     },
     EmptyTrash {
         path: PathBuf,
@@ -402,6 +409,27 @@ fn show_node(
                                 role: None,
                             });
                             ui.close();
+                        }
+                    });
+                    // Independent of "Folder Role" above: a folder can be a picklist
+                    // source for any combination of Type/POV/Status regardless of
+                    // whatever role (or none) it also holds — e.g. a Research folder
+                    // of character bios can double as the POV source without
+                    // becoming exempt from export the way Trash/Templates are.
+                    ui.menu_button("Dropdown Source", |ui| {
+                        for (field, label) in [
+                            (PicklistField::Type, "Type"),
+                            (PicklistField::Pov, "POV"),
+                            (PicklistField::Status, "Status"),
+                        ] {
+                            let mut checked = project.is_picklist_folder(field, &node.path);
+                            if ui.checkbox(&mut checked, label).changed() {
+                                *event = Some(BinderEvent::SetPicklistFolder {
+                                    field,
+                                    path: checked.then(|| node.path.clone()),
+                                });
+                                ui.close();
+                            }
                         }
                     });
                     if role == Some(FolderRole::Trash) && ui.button("Empty Trash").clicked() {

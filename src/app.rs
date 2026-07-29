@@ -1198,6 +1198,7 @@ impl TachyliteApp {
             BinderEvent::Delete { path } => self.delete_node(&path),
             BinderEvent::Restore { path } => self.restore_node(&path),
             BinderEvent::SetFolderRole { path, role } => self.set_folder_role(&path, role),
+            BinderEvent::SetPicklistFolder { field, path } => self.set_picklist_folder(field, path),
             BinderEvent::EmptyTrash { path } => self.empty_trash_folder(&path),
             BinderEvent::MoveItem { path, new_parent } => self.move_item(&path, &new_parent),
             BinderEvent::MoveItemBefore { path, before } => self.move_item_before(&path, &before),
@@ -2045,6 +2046,15 @@ impl TachyliteApp {
         }
     }
 
+    fn set_picklist_folder(&mut self, field: crate::project::PicklistField, path: Option<PathBuf>) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        if let Err(err) = project.set_picklist_folder(field, path.as_deref()) {
+            self.status_message = Some(format!("Couldn't set dropdown source: {err}"));
+        }
+    }
+
     /// Ask for confirmation, then permanently delete everything inside the
     /// designated Trash folder at `path`.
     fn empty_trash_folder(&mut self, path: &Path) {
@@ -2324,7 +2334,34 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                 }
             }
             DockTab::Metadata => {
-                ui::metadata_panel::show(ui, self.open_path.as_deref(), self.metadata_draft);
+                let project = self.project;
+                let picklist_titles = |field: crate::project::PicklistField| -> Vec<String> {
+                    project
+                        .map(|project| {
+                            project
+                                .picklist_documents(field)
+                                .iter()
+                                .map(|node| {
+                                    ui::binder_panel::document_label(&node.name).to_string()
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
+                let types = picklist_titles(crate::project::PicklistField::Type);
+                let statuses = picklist_titles(crate::project::PicklistField::Status);
+                let povs = picklist_titles(crate::project::PicklistField::Pov);
+                let picklists = ui::metadata_panel::MetadataPicklists {
+                    types: &types,
+                    statuses: &statuses,
+                    povs: &povs,
+                };
+                ui::metadata_panel::show(
+                    ui,
+                    self.open_path.as_deref(),
+                    self.metadata_draft,
+                    &picklists,
+                );
             }
             DockTab::Editor => {
                 let note_titles = self
