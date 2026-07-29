@@ -29,7 +29,6 @@ jobs:
           path-to-signatures: signatures/version1/cla.json
           path-to-document: https://github.com/ljantzen/smaragd/blob/main/CLA.md
           branch: cla-signatures
-          allowlist: ljantzen
           custom-pr-sign-comment: I have read and agree to the Smaragd CLA (CLA.md).
           custom-notsigned-prcomment: |
             Thank you for your contribution! Before this pull request can be merged,
