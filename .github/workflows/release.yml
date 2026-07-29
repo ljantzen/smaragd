@@ -93,7 +93,141 @@ jobs:
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum * > SHA256SUMS
+        run: sha256sum * > SHA256SUMS-x86_64-linux
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          generate_release_notes: true
+
+  release-windows:
+    name: Build and release (Windows x86_64)
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Determine version from tag
+        id: version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package executable
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          cp target/release/smaragd.exe smaragd.exe
+          7z a "dist/smaragd-${VERSION}-x86_64-windows.zip" smaragd.exe
+
+      - name: Generate checksums
+        shell: bash
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS-x86_64-windows
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          generate_release_notes: true
+
+  release-macos:
+    name: Build and release (macOS universal)
+    needs: release
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Determine version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release binaries (arm64 + x86_64)
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: Combine into universal binary
+        run: |
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create \
+            target/aarch64-apple-darwin/release/smaragd \
+            target/x86_64-apple-darwin/release/smaragd \
+            -output target/universal-apple-darwin/release/smaragd
+
+      - name: Install icon tooling
+        run: brew install librsvg
+
+      - name: Render app icon (.icns)
+        run: |
+          set -euo pipefail
+          mkdir -p AppIcon.iconset
+          for size in 16 32 128 256 512; do
+            rsvg-convert -w "$size" -h "$size" assets/smaragd-icon.svg -o "AppIcon.iconset/icon_${size}x${size}.png"
+            double=$((size * 2))
+            rsvg-convert -w "$double" -h "$double" assets/smaragd-icon.svg -o "AppIcon.iconset/icon_${size}x${size}@2x.png"
+          done
+          iconutil -c icns AppIcon.iconset -o AppIcon.icns
+
+      - name: Assemble Smaragd.app
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          APP="Smaragd.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp target/universal-apple-darwin/release/smaragd "$APP/Contents/MacOS/smaragd"
+          cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+          sed "s/__VERSION__/$VERSION/g" packaging/macos/Info.plist.template > "$APP/Contents/Info.plist"
+
+      - name: Sign app bundle (ad-hoc)
+        run: codesign --force --deep --sign - Smaragd.app
+
+      - name: Package app bundle
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent Smaragd.app "dist/smaragd-${VERSION}-universal-macos.zip"
+
+      - name: Generate checksums
+        working-directory: dist
+        run: shasum -a 256 * > SHA256SUMS-universal-macos
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
