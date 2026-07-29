@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+      - "[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Lets linuxdeploy (and any AppImage plugins it spawns) run without FUSE,
+  # which isn't available on GitHub-hosted runners.
+  APPIMAGE_EXTRACT_AND_RUN: "1"
+
+jobs:
+  release:
+    name: Build and release (Linux x86_64)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libx11-dev \
+            libxi-dev \
+            libxrandr-dev \
+            libxcursor-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libgl1-mesa-dev \
+            libssl-dev \
+            libspeechd-dev \
+            librsvg2-bin
+
+      - name: Determine version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package executable
+        run: |
+          mkdir -p dist
+          tar -czf "dist/smaragd-${{ steps.version.outputs.version }}-x86_64-linux.tar.gz" \
+            -C target/release smaragd
+
+      - name: Render application icon
+        run: rsvg-convert -w 512 -h 512 assets/smaragd-icon.svg -o smaragd.png
+
+      - name: Download linuxdeploy
+        run: |
+          curl -fsSL -o linuxdeploy-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+
+      - name: Build AppImage
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            -e target/release/smaragd \
+            -d packaging/smaragd.desktop \
+            -i smaragd.png \
+            --output appimage
+
+          appimage_file=$(find . -maxdepth 1 -name '*.AppImage' ! -name 'linuxdeploy*')
+          mv "$appimage_file" "dist/smaragd-${VERSION}-x86_64.AppImage"
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          generate_release_notes: true

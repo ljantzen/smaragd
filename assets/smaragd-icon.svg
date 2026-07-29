@@ -1,0 +1,50 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A3A2A"/>
+      <stop offset="100%" stop-color="#02140E"/>
+    </linearGradient>
+    <linearGradient id="outer" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#166B4A"/>
+      <stop offset="100%" stop-color="#04241A"/>
+    </linearGradient>
+    <linearGradient id="mid" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22A06B"/>
+      <stop offset="100%" stop-color="#0B3E2C"/>
+    </linearGradient>
+    <linearGradient id="table" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5BEFA0"/>
+      <stop offset="100%" stop-color="#159A62"/>
+    </linearGradient>
+    <clipPath id="gemClip">
+      <polygon points="174,106 338,106 374,142 374,370 338,406 174,406 138,370 138,142"/>
+    </clipPath>
+    <clipPath id="frameClip">
+      <rect x="0" y="0" width="512" height="512" rx="112" ry="112"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frameClip)">
+    <rect x="0" y="0" width="512" height="512" fill="url(#bg)"/>
+
+    <!-- emerald-cut gem: outer girdle, step facet, table -->
+    <polygon points="174,106 338,106 374,142 374,370 338,406 174,406 138,370 138,142"
+             fill="url(#outer)" stroke="#03150F" stroke-width="2"/>
+    <polygon points="196,144 316,144 342,170 342,342 316,368 196,368 170,342 170,170"
+             fill="url(#mid)" stroke="#03150F" stroke-width="2"/>
+    <polygon points="220,180 292,180 308,196 308,316 292,332 220,332 204,316 204,196"
+             fill="url(#table)" stroke="#03150F" stroke-width="2"/>
+
+    <!-- catch-light glint on the table -->
+    <polygon points="228,188 262,188 244,210" fill="#EAFBF1" opacity="0.45"/>
+
+    <!-- soft diagonal shine sweeping across the whole stone -->
+    <g clip-path="url(#gemClip)">
+      <polygon points="118,150 170,118 262,422 210,452" fill="#FFFFFF" opacity="0.07"/>
+    </g>
+
+    <!-- faint inner border for a touch of polish -->
+    <rect x="6" y="6" width="500" height="500" rx="106" ry="106"
+          fill="none" stroke="#FFFFFF" stroke-opacity="0.05" stroke-width="2"/>
+  </g>
+</svg>

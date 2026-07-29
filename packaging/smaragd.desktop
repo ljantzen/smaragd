@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Smaragd
+GenericName=Writing Tool
+Comment=A native desktop authoring tool for writers
+Exec=smaragd
+Icon=smaragd
+Terminal=false
+Categories=Office;WordProcessor;

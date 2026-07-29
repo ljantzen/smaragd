@@ -60,6 +60,10 @@ cargo fmt                                     # must be applied before committin
 
 Version control uses [jj (Jujutsu)](https://github.com/jj-vcs/jj) with the git backend (colocated).
 
+## Releases
+
+Pushing a semantic-version tag (`v1.2.3` or `1.2.3`, prerelease suffixes like `-rc.1` allowed) triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds a Linux x86_64 release binary and an AppImage (via `linuxdeploy`, using [`packaging/smaragd.desktop`](packaging/smaragd.desktop) and the app icon — see below) and publishes both, plus a `SHA256SUMS` file, to a GitHub release.
+
 ## Project layout
 
 Pure, unit-tested logic is kept separate from egui rendering code, which is verified manually rather than with automated tests:
@@ -68,7 +72,7 @@ Pure, unit-tested logic is kept separate from egui rendering code, which is veri
 src/
   main.rs                 entry point
   app.rs                  SmaragdApp: dock layout, menu bar, event routing
-  build.rs                (repo root) captures git commit/build date as compile-time env vars for Help > About
+  build.rs                (repo root) captures git commit/build date as compile-time env vars for Help > About, and rasterizes assets/smaragd-icon.svg into the compiled-in window icon
   markdown.rs             markdown -> Block/Span parser (pulldown-cmark + wikilinks + inline #tag scanning)
   frontmatter.rs          YAML frontmatter parsing (DocumentMeta) + write-back + stripping for preview
   autocomplete.rs         wikilink-autocomplete query/filter/completion logic (plain prefix/substring match)

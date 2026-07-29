@@ -25,6 +25,11 @@ typst-as-lib = { version = "0.16.0", features = ["typst-kit-fonts", "typst-kit-e
 typst-pdf = "0.15.1"
 uuid = { version = "1.24", features = ["v4", "serde"] }
 
+[build-dependencies]
+resvg = "0.47"
+tiny-skia = "0.12"
+usvg = "0.47"
+
 [dev-dependencies]
 tempfile = "3"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
