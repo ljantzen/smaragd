@@ -13,6 +13,7 @@ pub mod new_project_template_prompt;
 pub mod open_document_prompt;
 pub mod pomodoro_panel;
 pub mod settings_panel;
+pub mod tags_panel;
 
 /// A user request to navigate to a `[[wikilink]]` target, raised by a click in the
 /// preview or a keyboard shortcut in the editor. `force_create` is set when the user

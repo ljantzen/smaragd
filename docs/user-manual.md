@@ -16,6 +16,7 @@ This manual covers what the app does and how to use it. For internals (source la
 - [Wikilinks](#wikilinks)
 - [Backlinks](#backlinks)
 - [Document Metadata (Frontmatter)](#document-metadata-frontmatter)
+- [Tags](#tags)
 - [Folder Roles: Research, Trash, Templates](#folder-roles-research-trash-templates)
 - [Export](#export)
 - [Story Cards (Corkboard)](#story-cards-corkboard)
@@ -64,7 +65,7 @@ Each is a subfolder containing a `template.toml` (label, description) and a `con
 
 ## Dockable Tool Windows
 
-The **Binder**, **Backlinks**, **Document Metadata**, **Editor**, **Preview**, **Corkboard**, and **Pomodoro** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
+The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Preview**, **Corkboard**, and **Pomodoro** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
 
 - **Drag a tab's title** onto empty space to pop it out into its own floating window
 - **Drag a floating window's title back** onto the dock area to re-dock it
@@ -72,7 +73,7 @@ The **Binder**, **Backlinks**, **Document Metadata**, **Editor**, **Preview**, *
 - **Drag a tab to an edge** of another tab or the dock area to split the layout and place it side by side
 - **Resize** the dock area, or a floating window, by dragging its edge
 
-Binder and Editor are present from the moment a project is open; Backlinks, Metadata, Preview, Corkboard, and Pomodoro start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Preview`**, **`View > Corkboard`**, **`Edit > Document Metadata`**, or (for Pomodoro specifically) **`Tools > Pomodoro Timer`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
+Binder and Editor are present from the moment a project is open; Backlinks, Tags, Metadata, Preview, Corkboard, and Pomodoro start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Tags`**, **`View > Preview`**, **`View > Corkboard`**, **`Edit > Document Metadata`**, or (for Pomodoro specifically) **`Tools > Pomodoro Timer`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
 
 The whole arrangement — which tabs are open, how they're split or floated, and window position/size — persists across restarts. **`Window`** menu:
 
@@ -173,7 +174,7 @@ Open **`Edit > Document Metadata`** (or **`Ctrl+Shift+M`**) to edit these fields
 | `status` | Free-form drafting status — "draft", "revised", "final", or anything you want. |
 | `pov` | Point-of-view character, free text. |
 | `word_count_target` | A target word count for this document. |
-| `tags` | A list of free-form tags. |
+| `tags` | A list of free-form tags — see [Tags](#tags) for combining these with inline `#tag` mentions and searching by tag. |
 
 Any other YAML key you've hand-added to the block (or that some other tool wrote) is left alone — Tachylite never round-trips the whole block through its own data model, so unrelated keys survive a save untouched. The frontmatter block is stripped from the Markdown preview so it doesn't render as a garbled paragraph.
 
@@ -189,6 +190,16 @@ A few things worth knowing:
 - **Never destroys an existing value.** If a document's `pov: Alice` was typed before you ever assigned a POV folder — or Alice's document has since been renamed or removed from that folder — the field still shows "Alice" as-is; it just isn't one of the clickable options until you pick something else from the dropdown.
 - **"(none)"** is always the first dropdown entry, for clearing the field.
 - Not recursive: only documents placed directly inside the assigned folder count, the same limitation [Templates](#folder-roles-research-trash-templates) has.
+
+## Tags
+
+Beyond the `tags:` list in [Document Metadata](#document-metadata-frontmatter), you can tag a document by writing `#tag` directly in its body — e.g. "Alice discovers the #mystery behind her mother's disappearance." A tag needs at least one letter (so `#42`, a footnote- or issue-style reference, is never mistaken for one), can include digits/`_`/`-`/`/` after the first letter, and ends at the first character outside that set — `/` lets you nest tags, e.g. `#projects/tachylite`.
+
+**`View > Tags`** (or **`Ctrl+Shift+T`**) opens a dockable tool window (see [Dockable Tool Windows](#dockable-tool-windows)) showing the *combined* tags — frontmatter `tags:` plus every inline `#tag` mention — of whichever document is currently open. Each tag is listed with every other document in the project that also carries it; click a document's title to jump to it. A tag with no other matching document yet is still shown, so you can confirm what's actually on the open document. A **Refresh** button re-scans on demand, the same as [Backlinks](#backlinks)' own.
+
+Click a tag heading itself, or type into the panel's own **Search** box, to switch from "tags on this document" to a project-wide list of every document carrying that tag, regardless of what's currently open — a **Clear** button empties the search box and returns to the current document's own tags. Tag matching is case-insensitive throughout (`#Mystery` and `#mystery` are the same tag), though whichever casing a given document actually used is what's displayed.
+
+The **`:tag <name>`** [command prompt](#the-command-prompt) command opens the Tags window pre-filled with a project-wide search for `<name>`, without needing to open the window or type into its search box first.
 
 ## Folder Roles: Research, Trash, Templates
 
@@ -370,6 +381,7 @@ Supports replace-one and replace-all.
 | `:dmode <dark\|light\|system>` | Set the dark/light/system appearance |
 | `:theme <id>` | Apply a color theme (see [Themes](#themes-and-appearance)) — no argument clears back to plain dark/light |
 | `:find <text>` | Open Find and Replace pre-filled with `<text>` |
+| `:tag <name>` | Open [Tags](#tags) pre-filtered to documents carrying `<name>` |
 | `:git enable` | Turn on git support for this project |
 | `:git commit [message]` | Commit; prompts for a message if omitted |
 | `:git push` | Push |
@@ -564,6 +576,7 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Find and Replace | `Ctrl+F` |
 | Toggle Corkboard | `Ctrl+Shift+K` |
 | Toggle Backlinks | `Ctrl+Shift+B` |
+| Toggle Tags | `Ctrl+Shift+T` |
 | Command Prompt | `Ctrl+:` |
 | Commit (Git) | `Ctrl+Alt+C` |
 | Push (Git) | `Ctrl+Alt+P` |
@@ -595,5 +608,7 @@ If the settings file is missing or its contents can't be parsed, tachylite falls
 Menu items present but not yet functional: `File > Close Project`.
 
 Not yet implemented: an Excalidraw-style canvas, multi-tab editing, and template/dropdown-source folders/subfolders beyond a flat list (only documents directly inside the Templates folder, or a [Dropdown Source](#dropdown-source-folders) folder, are offered — not ones nested in a subfolder of it). A hand-dropped or hand-edited [custom project template](#project-templates) only appears in the New Project picker after restarting the app — unlike custom themes/styles/plugins, there's no manual reload button for it yet. [Export](#export)'s own gaps are listed at the end of that section.
+
+[Tags](#tags): an inline `#tag` mention isn't rendered specially (as a clickable, styled element) in [Markdown Preview](#markdown-preview), the way `[[wikilinks]]` are, and typing `#` in the editor gets no autocomplete against tags already used elsewhere, unlike `[[`. The frontmatter `tags:` field in [Document Metadata](#document-metadata-frontmatter) is still a plain comma-separated text box, not a chip-style or autocompleting editor. There's no "rename this tag everywhere in the project" action — renaming means editing each document's frontmatter and/or inline `#tag` mentions by hand. Nested tags (`#projects/tachylite`) aren't grouped hierarchically in the Tags window; every tag is a flat, independent entry.
 
 In the Markdown preview specifically: raw HTML is dropped rather than rendered; table column alignment (`:---:`) is parsed but not yet reflected visually; GFM task lists and footnotes aren't enabled; mixing container types (e.g. a list inside a blockquote) doesn't preserve proper nesting; and `![[Note]]` only actually embeds when `Note` has an image extension — embedding another note's rendered content (transclusion) falls back to behaving like a plain `[[Note]]` link.

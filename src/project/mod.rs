@@ -292,6 +292,27 @@ pub struct BacklinkEntry {
     pub snippet: String,
 }
 
+/// One document in the project together with its tags — found by
+/// [`Project::tag_index`], the shared scan behind [`Project::related_by_tag`]
+/// and [`Project::documents_with_tag`].
+#[derive(Debug, Clone, PartialEq)]
+struct TaggedDocument {
+    path: PathBuf,
+    title: String,
+    tags: Vec<String>,
+}
+
+/// One tag on a queried document, together with every *other* document in the
+/// project that also carries it — found by [`Project::related_by_tag`]. Kept
+/// even when `documents` is empty, so a caller (the Tags dock) can still show
+/// "this document has this tag, but nothing else does yet" rather than
+/// silently omitting it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TagGroup {
+    pub tag: String,
+    pub documents: Vec<(PathBuf, String)>,
+}
+
 pub struct Project {
     pub root: PathBuf,
     pub tree: BinderTree,
@@ -389,6 +410,85 @@ impl Project {
             }
         }
         entries
+    }
+
+    /// Every document in the project, together with its tags — frontmatter
+    /// `tags:` plus inline `#tag` mentions in the body, case-insensitively
+    /// deduplicated (frontmatter's casing wins over an inline mention's, since
+    /// it's the more deliberately authored form). The shared full-vault scan
+    /// behind [`Project::related_by_tag`] and [`Project::documents_with_tag`];
+    /// recomputed fresh from disk on every call, like `backlinks` — a document
+    /// that can't be read is skipped rather than failing the whole scan.
+    fn tag_index(&self) -> Vec<TaggedDocument> {
+        let mut index = Vec::new();
+        for doc_path in self.tree.document_paths() {
+            let Ok(contents) = fs::read_to_string(&doc_path) else {
+                continue;
+            };
+            let Some(title) = doc_path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            let meta = crate::frontmatter::parse(&contents);
+            let body = crate::frontmatter::strip(&contents);
+            let mut tags = meta.tags.clone();
+            for inline_tag in crate::markdown::inline_tags(body) {
+                if !tags.iter().any(|tag| tag.eq_ignore_ascii_case(&inline_tag)) {
+                    tags.push(inline_tag);
+                }
+            }
+            index.push(TaggedDocument {
+                path: doc_path.clone(),
+                title: title.to_string(),
+                tags,
+            });
+        }
+        index
+    }
+
+    /// Every tag on the document at `target_path`, each paired with every
+    /// *other* document in the project that also carries it (case-insensitive
+    /// match), sorted alphabetically by tag. Populates the Tags dock for
+    /// whatever document is currently open. Empty if `target_path` isn't a
+    /// document in the project, or carries no tags of its own.
+    pub fn related_by_tag(&self, target_path: &Path) -> Vec<TagGroup> {
+        let index = self.tag_index();
+        let Some(target) = index.iter().find(|doc| doc.path == target_path) else {
+            return Vec::new();
+        };
+
+        let mut groups: Vec<TagGroup> = target
+            .tags
+            .iter()
+            .map(|tag| {
+                let documents = index
+                    .iter()
+                    .filter(|doc| doc.path != target_path)
+                    .filter(|doc| doc.tags.iter().any(|other| other.eq_ignore_ascii_case(tag)))
+                    .map(|doc| (doc.path.clone(), doc.title.clone()))
+                    .collect();
+                TagGroup {
+                    tag: tag.clone(),
+                    documents,
+                }
+            })
+            .collect();
+        groups.sort_by_key(|group| group.tag.to_lowercase());
+        groups
+    }
+
+    /// Every document in the project carrying `tag` (case-insensitive match
+    /// against both frontmatter and inline tags), sorted by title —
+    /// vault-wide tag search, independent of whatever document (if any) is
+    /// currently open.
+    pub fn documents_with_tag(&self, tag: &str) -> Vec<(PathBuf, String)> {
+        let mut matches: Vec<(PathBuf, String)> = self
+            .tag_index()
+            .into_iter()
+            .filter(|doc| doc.tags.iter().any(|other| other.eq_ignore_ascii_case(tag)))
+            .map(|doc| (doc.path, doc.title))
+            .collect();
+        matches.sort_by_key(|(_, title)| title.to_lowercase());
+        matches
     }
 
     /// The role assigned to the folder at `path`, if any.
@@ -3120,5 +3220,116 @@ mod tests {
         fs::write(&referrer, "```\n[[Target]]\n```\n").unwrap();
 
         assert!(project.backlinks(&target).is_empty());
+    }
+
+    #[test]
+    fn related_by_tag_finds_a_document_sharing_a_frontmatter_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Target").unwrap();
+        let other = project.create_document(dir.path(), "Other").unwrap();
+        fs::write(&target, "---\ntags: [foo]\n---\nBody.").unwrap();
+        fs::write(&other, "---\ntags: [foo]\n---\nBody.").unwrap();
+
+        let groups = project.related_by_tag(&target);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].tag, "foo");
+        assert_eq!(groups[0].documents, vec![(other, "Other".to_string())]);
+    }
+
+    #[test]
+    fn related_by_tag_finds_a_document_sharing_an_inline_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Target").unwrap();
+        let other = project.create_document(dir.path(), "Other").unwrap();
+        fs::write(&target, "Body with #foo mentioned.").unwrap();
+        fs::write(&other, "Also #foo here.").unwrap();
+
+        let groups = project.related_by_tag(&target);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].tag, "foo");
+        assert_eq!(groups[0].documents, vec![(other, "Other".to_string())]);
+    }
+
+    #[test]
+    fn related_by_tag_merges_frontmatter_and_inline_tags_case_insensitively() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Target").unwrap();
+        fs::write(&target, "---\ntags: [Foo]\n---\nAlso #foo inline.").unwrap();
+
+        let groups = project.related_by_tag(&target);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].tag, "Foo");
+    }
+
+    #[test]
+    fn related_by_tag_keeps_a_tag_with_no_other_matching_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Target").unwrap();
+        fs::write(&target, "---\ntags: [lonely]\n---\nBody.").unwrap();
+
+        let groups = project.related_by_tag(&target);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].tag, "lonely");
+        assert!(groups[0].documents.is_empty());
+    }
+
+    #[test]
+    fn related_by_tag_is_empty_for_a_document_with_no_tags() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Target").unwrap();
+        fs::write(&target, "Body with no tags.").unwrap();
+
+        assert!(project.related_by_tag(&target).is_empty());
+    }
+
+    #[test]
+    fn related_by_tag_excludes_the_target_document_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Target").unwrap();
+        fs::write(&target, "---\ntags: [foo]\n---\nBody.").unwrap();
+
+        let groups = project.related_by_tag(&target);
+
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].documents.is_empty());
+    }
+
+    #[test]
+    fn documents_with_tag_matches_case_insensitively_across_the_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let a = project.create_document(dir.path(), "A").unwrap();
+        let b = project.create_document(dir.path(), "B").unwrap();
+        let c = project.create_document(dir.path(), "C").unwrap();
+        fs::write(&a, "---\ntags: [Foo]\n---\nBody.").unwrap();
+        fs::write(&b, "Inline #FOO tag.").unwrap();
+        fs::write(&c, "No tags here.").unwrap();
+
+        let matches = project.documents_with_tag("foo");
+
+        assert_eq!(
+            matches,
+            vec![(a, "A".to_string()), (b, "B".to_string())]
+        );
+    }
+
+    #[test]
+    fn documents_with_tag_is_empty_when_nothing_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc").unwrap();
+        fs::write(&doc, "No tags here.").unwrap();
+
+        assert!(project.documents_with_tag("foo").is_empty());
     }
 }

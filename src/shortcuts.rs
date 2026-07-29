@@ -30,6 +30,7 @@ pub enum ShortcutAction {
     FindReplace,
     ToggleCorkboard,
     ToggleBacklinks,
+    ToggleTags,
     CommandPrompt,
     GitCommit,
     GitPush,
@@ -66,6 +67,7 @@ impl ShortcutAction {
         Self::FindReplace,
         Self::ToggleCorkboard,
         Self::ToggleBacklinks,
+        Self::ToggleTags,
         Self::CommandPrompt,
         Self::GitCommit,
         Self::GitPush,
@@ -97,6 +99,7 @@ impl ShortcutAction {
             Self::FindReplace => "Find and Replace",
             Self::ToggleCorkboard => "Toggle Corkboard",
             Self::ToggleBacklinks => "Toggle Backlinks",
+            Self::ToggleTags => "Toggle Tags",
             Self::CommandPrompt => "Command Prompt",
             Self::GitCommit => "Commit (Git)",
             Self::GitPush => "Push (Git)",
@@ -130,6 +133,7 @@ impl ShortcutAction {
             Self::FindReplace => "find_replace",
             Self::ToggleCorkboard => "toggle_corkboard",
             Self::ToggleBacklinks => "toggle_backlinks",
+            Self::ToggleTags => "toggle_tags",
             Self::CommandPrompt => "command_prompt",
             Self::GitCommit => "git_commit",
             Self::GitPush => "git_push",
@@ -167,6 +171,7 @@ impl ShortcutAction {
             Self::TogglePreview
             | Self::ToggleCorkboard
             | Self::ToggleBacklinks
+            | Self::ToggleTags
             | Self::ToggleDarkMode
             | Self::ToggleFullscreen
             | Self::ToggleBinderFocus
@@ -211,6 +216,9 @@ impl ShortcutAction {
             }
             Self::ToggleBacklinks => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::B)
+            }
+            Self::ToggleTags => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::T)
             }
             Self::CommandPrompt => KeyboardShortcut::new(Modifiers::COMMAND, Key::Colon),
             Self::GitCommit => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::C),

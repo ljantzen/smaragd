@@ -51,6 +51,9 @@ pub enum Command {
     ColorTheme(Option<String>),
     Git(GitCommand),
     Find(String),
+    /// Open the Tags dock filtered to documents carrying the given tag (empty
+    /// string just opens the dock without changing its current filter).
+    Tag(String),
     /// A `:` command a loaded plugin registered (name, argument) — `app.rs` looks
     /// up which plugin owns `name` and runs it.
     Plugin(String, String),
@@ -83,7 +86,7 @@ pub enum CommandPromptEvent {
 /// point of completion is discoverability; short aliases like `w`/`q`/`x` still work
 /// when typed in full, they just aren't themselves completion targets.
 const COMMAND_NAMES: &[&str] = &[
-    "write", "quit", "wq", "open", "new", "dmode", "theme", "git", "find",
+    "write", "quit", "wq", "open", "new", "dmode", "theme", "git", "find", "tag",
 ];
 const DARK_MODE_CHOICES: &[&str] = &["dark", "light", "system"];
 const GIT_SUBCOMMANDS: &[&str] = &["enable", "commit", "push", "pull", "backup"];
@@ -122,6 +125,7 @@ fn parse_command(input: &str, plugin_commands: &[String]) -> Result<Command, Str
         "git" if !rest.is_empty() => parse_git_subcommand(rest),
         "git" => Err("Usage: :git enable|commit|push|pull|backup [message]".to_string()),
         "find" => Ok(Command::Find(rest.to_string())),
+        "tag" => Ok(Command::Tag(rest.to_string())),
         other if plugin_commands.iter().any(|c| c == other) => {
             Ok(Command::Plugin(other.to_string(), rest.to_string()))
         }
@@ -533,6 +537,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_tag_with_and_without_a_query() {
+        match parse_command("tag foo", &[]) {
+            Ok(Command::Tag(tag)) => assert_eq!(tag, "foo"),
+            other => panic!("expected Command::Tag, got {}", describe(&other)),
+        }
+        assert!(matches!(parse_command("tag", &[]), Ok(Command::Tag(tag)) if tag.is_empty()));
+    }
+
+    #[test]
     fn a_leading_colon_is_tolerated() {
         assert!(matches!(parse_command(":w", &[]), Ok(Command::Save)));
     }
@@ -671,6 +684,7 @@ mod tests {
         let titles = vec!["Opening Scene".to_string()];
         assert!(completions("new Open", &titles, &[], &[]).is_empty());
         assert!(completions("find Open", &titles, &[], &[]).is_empty());
+        assert!(completions("tag Open", &titles, &[], &[]).is_empty());
     }
 
     #[test]

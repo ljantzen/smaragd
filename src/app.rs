@@ -95,6 +95,7 @@ struct ExportState {
 enum DockTab {
     Binder,
     Backlinks,
+    Tags,
     Metadata,
     Editor,
     Preview,
@@ -222,6 +223,23 @@ pub struct TachyliteApp {
     backlinks: Vec<BacklinkEntry>,
     /// Which document `backlinks` was last computed for.
     backlinks_computed_for: Option<PathBuf>,
+    /// The open document's tags (frontmatter `tags:` merged with inline
+    /// `#tag` mentions), each paired with the other project documents sharing
+    /// it, kept in sync with whichever document is open (see
+    /// `refresh_tags_if_needed`).
+    tags: Vec<crate::project::TagGroup>,
+    /// Which document `tags` was last computed for.
+    tags_computed_for: Option<PathBuf>,
+    /// Live text of the Tags dock's search box — typing here (or clicking one
+    /// of `tags`' tag headings, which fills it in) requests a vault-wide
+    /// lookup of every document carrying that tag.
+    tags_search_text: String,
+    /// Vault-wide search results for `tags_search_text` (see
+    /// `Project::documents_with_tag`), recomputed only when it changes (see
+    /// `refresh_tag_search_if_needed`).
+    tag_search_results: Vec<(PathBuf, String)>,
+    /// Which `tags_search_text` value `tag_search_results` was last computed for.
+    tag_search_computed_for: String,
     /// The current dock layout — which tabs are open, and whether they're docked
     /// together, split, or floating in their own window. Persisted across
     /// restarts (see `persist_dock_layout`); defaults to `default_dock_state()`.
@@ -343,6 +361,11 @@ impl TachyliteApp {
             metadata_last_applied: DocumentMeta::default(),
             backlinks: Vec::new(),
             backlinks_computed_for: None,
+            tags: Vec::new(),
+            tags_computed_for: None,
+            tags_search_text: String::new(),
+            tag_search_results: Vec::new(),
+            tag_search_computed_for: String::new(),
             dock_state: Self::load_dock_state(),
             saved_layouts: Self::load_saved_layouts(),
             pending_git: None,
@@ -1084,6 +1107,42 @@ impl TachyliteApp {
         self.backlinks_computed_for = self.editor.open_path.clone();
     }
 
+    /// Refresh `tags` from the project whenever the open document has changed
+    /// since the last scan — a no-op most frames. Called before the dock
+    /// renders each frame, alongside `refresh_backlinks_if_needed`.
+    fn refresh_tags_if_needed(&mut self) {
+        if self.editor.open_path == self.tags_computed_for {
+            return;
+        }
+        self.recompute_tags();
+    }
+
+    fn recompute_tags(&mut self) {
+        self.tags = match (&self.project, &self.editor.open_path) {
+            (Some(project), Some(path)) => project.related_by_tag(path),
+            _ => Vec::new(),
+        };
+        self.tags_computed_for = self.editor.open_path.clone();
+    }
+
+    /// Refresh `tag_search_results` whenever `tags_search_text` has changed
+    /// since the last scan — a no-op most frames. Called *after* the dock
+    /// renders each frame (unlike `refresh_tags_if_needed`), since the search
+    /// box is a live text field the user may have just edited that same
+    /// frame — same reasoning as why `apply_metadata_edits_if_changed` runs
+    /// after rendering rather than before.
+    fn refresh_tag_search_if_needed(&mut self) {
+        if self.tags_search_text == self.tag_search_computed_for {
+            return;
+        }
+        let query = self.tags_search_text.trim();
+        self.tag_search_results = match (&self.project, query.is_empty()) {
+            (Some(project), false) => project.documents_with_tag(query),
+            _ => Vec::new(),
+        };
+        self.tag_search_computed_for = self.tags_search_text.clone();
+    }
+
     /// Open or close a dock tab: present → removed, absent → opened in whichever
     /// leaf currently has focus.
     fn toggle_dock_tab(&mut self, tab: DockTab) {
@@ -1704,6 +1763,7 @@ impl TachyliteApp {
             ShortcutAction::GitCommit => self.prompt_git_commit(false),
             ShortcutAction::GitPush => self.run_git_push(ctx),
             ShortcutAction::ToggleBacklinks => self.toggle_dock_tab(DockTab::Backlinks),
+            ShortcutAction::ToggleTags => self.toggle_dock_tab(DockTab::Tags),
             ShortcutAction::EditMetadata => self.toggle_dock_tab(DockTab::Metadata),
             ShortcutAction::ToggleBinderFocus => {
                 let editor_id = ui::editor_panel::editor_text_edit_id();
@@ -1820,6 +1880,14 @@ impl TachyliteApp {
                     self.find_replace.query = query;
                 }
                 self.find_replace.request_open();
+            }
+            Command::Tag(query) => {
+                if !query.is_empty() {
+                    self.tags_search_text = query;
+                }
+                if self.dock_state.find_tab(&DockTab::Tags).is_none() {
+                    self.dock_state.push_to_focused_leaf(DockTab::Tags);
+                }
             }
             Command::Plugin(name, arg) => self.run_plugin_command(&name, &arg),
         }
@@ -2247,6 +2315,7 @@ enum DockAction {
     OpenDocument(PathBuf),
     Binder(BinderEvent),
     RefreshBacklinks,
+    RefreshTags,
     EditorSaveError(String),
     Wikilink(WikilinkActivation),
     Corkboard(CorkboardEvent),
@@ -2269,6 +2338,9 @@ struct AppTabViewer<'a> {
     /// `editor.open_path` would alias it.
     open_path: Option<PathBuf>,
     backlinks: &'a [BacklinkEntry],
+    tags: &'a [crate::project::TagGroup],
+    tags_search_text: &'a mut String,
+    tag_search_results: &'a [(PathBuf, String)],
     metadata_draft: &'a mut MetadataDraft,
     editor: &'a mut EditorState,
     settings: &'a Settings,
@@ -2287,6 +2359,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
         match tab {
             DockTab::Binder => "Binder".into(),
             DockTab::Backlinks => "Backlinks".into(),
+            DockTab::Tags => "Tags".into(),
             DockTab::Metadata => "Metadata".into(),
             DockTab::Editor => "Editor".into(),
             DockTab::Preview => "Preview".into(),
@@ -2330,6 +2403,24 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             self.actions.push(DockAction::OpenDocument(path));
                         }
                         BacklinksEvent::Refresh => self.actions.push(DockAction::RefreshBacklinks),
+                    }
+                }
+            }
+            DockTab::Tags => {
+                if let Some(event) = ui::tags_panel::show(
+                    ui,
+                    self.open_path.as_deref(),
+                    self.tags,
+                    self.tags_search_text,
+                    self.tag_search_results,
+                ) {
+                    match event {
+                        ui::tags_panel::TagsEvent::OpenDocument(path) => {
+                            self.actions.push(DockAction::OpenDocument(path));
+                        }
+                        ui::tags_panel::TagsEvent::Refresh => {
+                            self.actions.push(DockAction::RefreshTags)
+                        }
                     }
                 }
             }
@@ -2650,6 +2741,9 @@ impl eframe::App for TachyliteApp {
                         if ui.button("Backlinks").clicked() {
                             self.toggle_dock_tab(DockTab::Backlinks);
                         }
+                        if ui.button("Tags").clicked() {
+                            self.toggle_dock_tab(DockTab::Tags);
+                        }
                         ui.separator();
                         // `SubMenuButton`, not `MenuButton`: this is nested *inside* the
                         // View menu, and `MenuButton` is for top-level, click-to-open menu
@@ -2944,6 +3038,7 @@ impl eframe::App for TachyliteApp {
         }
 
         self.refresh_backlinks_if_needed();
+        self.refresh_tags_if_needed();
         self.refresh_metadata_if_needed();
 
         if self.focus_mode {
@@ -3006,6 +3101,9 @@ impl eframe::App for TachyliteApp {
                     selected_path: self.selected_path.as_deref(),
                     open_path: self.editor.open_path.clone(),
                     backlinks: &self.backlinks,
+                    tags: &self.tags,
+                    tags_search_text: &mut self.tags_search_text,
+                    tag_search_results: &self.tag_search_results,
                     metadata_draft: &mut self.metadata_draft,
                     editor: &mut self.editor,
                     settings: &self.settings,
@@ -3023,6 +3121,7 @@ impl eframe::App for TachyliteApp {
                         DockAction::OpenDocument(path) => self.open_document(&path),
                         DockAction::Binder(event) => self.handle_binder_event(event),
                         DockAction::RefreshBacklinks => self.recompute_backlinks(),
+                        DockAction::RefreshTags => self.recompute_tags(),
                         DockAction::EditorSaveError(err) => self.status_message = Some(err),
                         DockAction::Wikilink(activation) => self.activate_wikilink(activation),
                         DockAction::Corkboard(event) => self.handle_corkboard_event(event),
@@ -3033,6 +3132,7 @@ impl eframe::App for TachyliteApp {
         }
 
         self.apply_metadata_edits_if_changed();
+        self.refresh_tag_search_if_needed();
 
         if let Some(draft) = &mut self.card_draft {
             // Only walk the document tree for titles while the card editor (and its

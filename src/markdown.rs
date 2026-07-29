@@ -747,6 +747,69 @@ fn char_index_to_byte(s: &str, total_chars: usize, char_index: usize) -> usize {
         .map_or(s.len(), |(byte, _)| byte)
 }
 
+/// A `#tag` marker's allowed characters after the leading `#`: ASCII letters,
+/// digits, `_`, `-`, and `/` (the last for Obsidian-style nested tags like
+/// `#projects/tachylite`).
+fn is_tag_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '/')
+}
+
+/// Every `#tag` marker in `markdown`'s raw source (byte range including the
+/// `#`, plus the tag text itself), skipping fenced code blocks the same way
+/// `extract_wikilinks`/`wikilink_spans` do. A `#` only starts a tag when the
+/// character immediately before it (if any) isn't itself alphanumeric — so
+/// `foo#bar` mid-word doesn't match, but `(#tag)`, a leading `#tag`, and
+/// `-#tag` do — and the run of `is_tag_char` characters after it must contain
+/// at least one ASCII letter or it's left as plain text: this rejects
+/// `#42`/`#1`-style numeric references (issue numbers, footnote markers),
+/// common in prose and never meant as tags, and also means an ATX heading's
+/// `#`/`##`/etc. (always followed by a space or end of line) never matches,
+/// with no separate heading-detection logic needed.
+pub(crate) fn inline_tag_spans(markdown: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    let mut spans = Vec::new();
+    let mut in_fence = false;
+    let mut line_start = 0usize;
+    for line in markdown.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+        } else if !in_fence {
+            let mut cursor = 0usize;
+            while let Some(offset) = line[cursor..].find('#') {
+                let hash_pos = cursor + offset;
+                let preceded_by_word_char = line[..hash_pos]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric());
+                let tag_start = hash_pos + 1;
+                let tag_end = line[tag_start..]
+                    .find(|c: char| !is_tag_char(c))
+                    .map_or(line.len(), |end| tag_start + end);
+                let tag = &line[tag_start..tag_end];
+                if !preceded_by_word_char && tag.chars().any(|c| c.is_ascii_alphabetic()) {
+                    spans.push((line_start + hash_pos..line_start + tag_end, tag.to_string()));
+                }
+                cursor = tag_end.max(hash_pos + 1);
+            }
+        }
+        line_start += line.len();
+    }
+    spans
+}
+
+/// Every distinct `#tag` in `markdown`, case-insensitively deduplicated
+/// (first-seen casing kept) — what a document's inline tags actually are, as
+/// opposed to `inline_tag_spans`' raw per-occurrence list with byte ranges.
+pub(crate) fn inline_tags(markdown: &str) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    for (_, tag) in inline_tag_spans(markdown) {
+        if !tags.iter().any(|seen| seen.eq_ignore_ascii_case(&tag)) {
+            tags.push(tag);
+        }
+    }
+    tags
+}
+
 /// Rewrite straight typewriter punctuation (`"`, `'`, `--`, `...`) into curly
 /// quotes, an em dash, and an ellipsis, in place, across every block's spans —
 /// an optional finishing pass over the same IR both the preview and export
@@ -1232,6 +1295,67 @@ mod tests {
         let text = "```\n[[Topic]]\n```\n";
         let inside = text.find("Topic").unwrap();
         assert_eq!(wikilink_target_at(text, inside), None);
+    }
+
+    #[test]
+    fn inline_tag_spans_finds_a_simple_tag() {
+        let spans = inline_tag_spans("Some #foo text.");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].1, "foo");
+        assert_eq!(&"Some #foo text."[spans[0].0.clone()], "#foo");
+    }
+
+    #[test]
+    fn inline_tag_spans_supports_nested_slash_tags() {
+        let spans = inline_tag_spans("#projects/tachylite");
+        assert_eq!(spans[0].1, "projects/tachylite");
+    }
+
+    #[test]
+    fn inline_tag_spans_rejects_purely_numeric_tags() {
+        assert_eq!(inline_tag_spans("See issue #42 for details."), Vec::new());
+    }
+
+    #[test]
+    fn inline_tag_spans_rejects_a_hash_mid_word() {
+        assert_eq!(inline_tag_spans("foo#bar"), Vec::new());
+    }
+
+    #[test]
+    fn inline_tag_spans_does_not_match_atx_headings() {
+        assert_eq!(inline_tag_spans("# Heading\n## Another"), Vec::new());
+    }
+
+    #[test]
+    fn inline_tag_spans_matches_a_tag_at_the_very_start_of_a_line() {
+        let spans = inline_tag_spans("#foo bar");
+        assert_eq!(spans[0].1, "foo");
+    }
+
+    #[test]
+    fn inline_tag_spans_matches_a_tag_after_punctuation() {
+        let spans = inline_tag_spans("(#foo)");
+        assert_eq!(spans[0].1, "foo");
+    }
+
+    #[test]
+    fn inline_tag_spans_skips_fenced_code_blocks() {
+        assert_eq!(inline_tag_spans("```\n#foo\n```\n"), Vec::new());
+    }
+
+    #[test]
+    fn inline_tag_spans_finds_multiple_tags_on_one_line() {
+        let spans = inline_tag_spans("#foo and #bar");
+        let tags: Vec<&str> = spans.iter().map(|(_, tag)| tag.as_str()).collect();
+        assert_eq!(tags, vec!["foo", "bar"]);
+    }
+
+    #[test]
+    fn inline_tags_dedups_case_insensitively_keeping_first_seen_casing() {
+        assert_eq!(
+            inline_tags("#Foo and #foo and #FOO"),
+            vec!["Foo".to_string()]
+        );
     }
 
     fn only_span(markdown: &str) -> std::ops::Range<usize> {
