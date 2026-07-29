@@ -118,3 +118,7 @@ src/
 ```
 
 Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, and Pomodoro all dock together in one shared area via [`egui_dock`](https://github.com/Adanos020/egui_dock), wired up in `app.rs`'s `DockTab`/`AppTabViewer`.
+
+## License
+
+Smaragd is licensed under the [GNU GPL-3.0-or-later](LICENSE). Contributions require agreeing to the [Contributor License Agreement](CLA.md) — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
