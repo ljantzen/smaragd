@@ -149,6 +149,44 @@ pub fn show(
                             "Ensure Research and Trash folders exist in every project",
                         )
                         .changed();
+                    ui.add_space(12.0);
+                    ui.heading("Notifications");
+                    ui.add_space(12.0);
+                    let mut seconds_row =
+                        |ui: &mut egui::Ui, label: &str, value: &mut u32, default: u32| {
+                            ui.horizontal(|ui| {
+                                ui.label(label);
+                                let mut seconds = if *value > 0 { *value } else { default };
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut seconds)
+                                            .range(1..=60)
+                                            .suffix(" sec"),
+                                    )
+                                    .changed()
+                                {
+                                    *value = seconds;
+                                    changed = true;
+                                }
+                            });
+                        };
+                    // Defaults here must match `app::DEFAULT_TOAST_DURATION`/
+                    // `DEFAULT_STATUS_MESSAGE_DURATION` — shown as the starting
+                    // value for an unconfigured (`0`) setting, same
+                    // blank-means-unset convention as the Pomodoro durations
+                    // below.
+                    seconds_row(
+                        ui,
+                        "Error toast duration:",
+                        &mut settings.toast_duration_secs,
+                        6,
+                    );
+                    seconds_row(
+                        ui,
+                        "Status bar message duration:",
+                        &mut settings.status_message_duration_secs,
+                        8,
+                    );
                 }
                 SettingsCategory::Appearance => {
                     ui.heading("Theme");

@@ -27,6 +27,7 @@ This manual covers what the app does and how to use it. For internals (source la
 - [Git Integration](#git-integration)
 - [Themes and Appearance](#themes-and-appearance)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
+- [Notifications](#notifications)
 - [Settings](#settings)
 - [Current Limitations](#current-limitations)
 
@@ -590,11 +591,20 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 
 Two shortcuts can never overlap — rebinding one to a combo another action already owns automatically un-assigns it from the previous owner. This holds across built-ins and plugin shortcuts alike: if a loaded plugin registered a `:` command with its own shortcut (see [Plugins](#plugins)), it shows up in its own "Plugin Shortcuts" section further down the same window, remappable/unbindable the same way.
 
+## Notifications
+
+Tachylite tells you about things two different ways, depending on how much attention they need:
+
+- **Toasts** — a stack of boxes in the top-right corner of the window, each with its own **×** to dismiss early, that fade away on their own after a few seconds otherwise. Used for anything that represents an actual problem: a failed save, export, or git operation; invalid frontmatter YAML (see [Document Metadata](#document-metadata-frontmatter)); a plugin error; and so on. Several can stack up at once if more than one thing goes wrong in quick succession.
+- **The status bar**, at the bottom of the window — a single line for routine confirmations that don't need to grab your attention: "Committed", "Exported to ...", "Replaced 3 occurrence(s)", and the like. It now clears itself automatically after a few seconds, rather than sitting there until the next unrelated status update happens to overwrite it.
+
+Both durations are configurable — see **Notifications** under [Settings](#settings) below.
+
 ## Settings
 
 **`File > Settings`** (or **`Ctrl+,`**) is a two-pane dialog, IntelliJ-style: a category list on the left (General, Appearance, Editor, Templates, Pomodoro, Shortcuts), `Up`/`Down` to move between categories, and that category's controls on the right. Settings are stored as `tachylite.toml` in the platform's config directory (the same base path as the global plugins, custom-themes, custom-styles, and custom-project-templates folders — see [Plugins](#plugins), [Custom themes](#custom-themes), [Typesetting styles](#typesetting-styles), and [Project Templates](#project-templates)).
 
-- **General**: **Reopen project on launch** (off by default), and **Ensure Research and Trash folders exist in every project** (off by default; see [Projects](#projects))
+- **General**: **Reopen project on launch** (off by default), **Ensure Research and Trash folders exist in every project** (off by default; see [Projects](#projects)), and a **Notifications** section with **Error toast duration** and **Status bar message duration** (1–60 seconds each, defaulting to 6 and 8 respectively — see [Notifications](#notifications) above)
 - **Appearance**: Dark/Light/System and Color Theme — see [Themes](#themes-and-appearance)
 - **Editor**: font + size (see [Editor and Preview Font](#editor-and-preview-font)) and **Typewriter quotes in Preview and export** (off by default; see [Typewriter Quotes](#typewriter-quotes))
 - **Templates**: date format for `${{date}}` — see [Template Variables](#template-variables)

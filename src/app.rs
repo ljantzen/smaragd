@@ -74,6 +74,45 @@ struct PendingPrompt {
     state: NamePromptState,
 }
 
+/// An error-severity notification, shown as a floating, auto-dismissing box
+/// stacked in the corner of the window rather than as status-bar text — see
+/// `TachyliteApp::push_error_toast`/`show_toasts`.
+struct Toast {
+    message: String,
+    shown_at: std::time::Instant,
+}
+
+/// Built-in toast duration used when `Settings::toast_duration_secs` is
+/// unconfigured (`0`) — long enough to read a short sentence without having to
+/// rush, short enough that several errors in a row don't pile up into a
+/// permanent wall of boxes.
+const DEFAULT_TOAST_DURATION: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// Built-in status-bar auto-clear duration used when
+/// `Settings::status_message_duration_secs` is unconfigured (`0`) — a little
+/// more generous than the toast default, since a routine confirmation has no
+/// manual dismiss button of its own to cut that wait short.
+const DEFAULT_STATUS_MESSAGE_DURATION: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Resolve `Settings::toast_duration_secs`'s blank-means-unset (`0`) convention
+/// to an actual `Duration` — same shape as `editor_font::resolve_size`/
+/// `pomodoro::resolve_durations`.
+fn resolve_toast_duration(settings: &Settings) -> std::time::Duration {
+    match settings.toast_duration_secs {
+        0 => DEFAULT_TOAST_DURATION,
+        secs => std::time::Duration::from_secs(secs as u64),
+    }
+}
+
+/// Resolve `Settings::status_message_duration_secs`'s blank-means-unset (`0`)
+/// convention to an actual `Duration`.
+fn resolve_status_message_duration(settings: &Settings) -> std::time::Duration {
+    match settings.status_message_duration_secs {
+        0 => DEFAULT_STATUS_MESSAGE_DURATION,
+        secs => std::time::Duration::from_secs(secs as u64),
+    }
+}
+
 /// State for the open Export dialog (`ui::export_panel`), from the binder's
 /// "Export…" context-menu entry — which folder to compile and the book
 /// title/author fields being edited live.
@@ -192,7 +231,25 @@ pub struct TachyliteApp {
     project: Option<Project>,
     editor: EditorState,
     selected_path: Option<PathBuf>,
+    /// A quiet, routine status-bar confirmation — "Committed", "Exported to
+    /// ...", and the like. Overwritten freely by dozens of call sites, and
+    /// replaced (not queued) by whichever ran most recently, since these are
+    /// meant to be glanced at, not necessarily read in full before the next
+    /// one lands. For anything that represents an actual problem, use
+    /// `push_error_toast` instead (see `Toast`) — status-bar text is easy to
+    /// miss entirely (bottom of the window, gone the instant something else
+    /// happens to overwrite it), which is fine for "FYI, that worked" but not
+    /// for something the user actually needs to notice. Set/cleared only via
+    /// `set_status_message`/`clear_status_message` — never assigned directly —
+    /// so `status_message_set_at` below always stays in sync with it.
     status_message: Option<String>,
+    /// When `status_message` was last set, so `clear_status_message_if_expired`
+    /// knows when `Settings::status_message_duration_secs` has elapsed. `None`
+    /// exactly when `status_message` is `None`.
+    status_message_set_at: Option<std::time::Instant>,
+    /// Error-severity notifications currently on screen — see `Toast` and
+    /// `push_error_toast`/`show_toasts`.
+    toasts: Vec<Toast>,
     settings: Settings,
     show_settings: bool,
     show_about: bool,
@@ -344,6 +401,8 @@ impl TachyliteApp {
             editor: EditorState::default(),
             selected_path: None,
             status_message: None,
+            status_message_set_at: None,
+            toasts: Vec::new(),
             settings,
             show_settings: false,
             show_about: false,
@@ -432,7 +491,7 @@ impl TachyliteApp {
         self.plugin_engine = engine;
         self.plugin_shortcuts = self.compute_effective_plugin_shortcuts();
         if !errors.is_empty() {
-            self.status_message = Some(errors.join("; "));
+            self.push_error_toast(errors.join("; "));
         }
     }
 
@@ -449,7 +508,7 @@ impl TachyliteApp {
         let (themes, errors) = crate::color_theme::load(&dirs);
         self.color_themes = themes;
         if !errors.is_empty() {
-            self.status_message = Some(errors.join("; "));
+            self.push_error_toast(errors.join("; "));
         }
         if let Some(id) = self.settings.color_theme.clone()
             && crate::color_theme::find(&self.color_themes, &id).is_none()
@@ -470,7 +529,7 @@ impl TachyliteApp {
         let (templates, errors) = crate::project_template::load(&dirs);
         self.project_templates = templates;
         if !errors.is_empty() {
-            self.status_message = Some(errors.join("; "));
+            self.push_error_toast(errors.join("; "));
         }
     }
 
@@ -483,7 +542,7 @@ impl TachyliteApp {
         let (styles, errors) = crate::export::style::load(&dirs);
         self.typeset_styles = styles;
         if !errors.is_empty() {
-            self.status_message = Some(errors.join("; "));
+            self.push_error_toast(errors.join("; "));
         }
     }
 
@@ -534,7 +593,7 @@ impl TachyliteApp {
         match Project::load_from_folder(path) {
             Ok(project) => self.set_project(project, path),
             Err(err) => {
-                self.status_message = Some(format!("Couldn't open {}: {err}", path.display()));
+                self.push_error_toast(format!("Couldn't open {}: {err}", path.display()));
             }
         }
     }
@@ -546,14 +605,14 @@ impl TachyliteApp {
         self.project = Some(project);
         self.editor = EditorState::default();
         self.selected_path = None;
-        self.status_message = None;
+        self.clear_status_message();
         self.settings.last_project_path = Some(path.to_path_buf());
         self.persist_settings();
         self.maybe_offer_git_support();
         if let Some(project) = &self.project
             && let Err(err) = Self::ensure_git_repo(project)
         {
-            self.status_message = Some(format!("Couldn't initialize git: {err}"));
+            self.push_error_toast(format!("Couldn't initialize git: {err}"));
         }
         self.reload_plugins();
     }
@@ -603,14 +662,14 @@ impl TachyliteApp {
         };
         if enable == rfd::MessageDialogResult::Yes {
             if let Err(err) = Self::init_repo_if_needed(&project.root) {
-                self.status_message = Some(format!("Couldn't initialize git: {err}"));
+                self.push_error_toast(format!("Couldn't initialize git: {err}"));
                 return;
             }
             if let Err(err) = project.enable_git_support() {
-                self.status_message = Some(format!("Couldn't save settings: {err}"));
+                self.push_error_toast(format!("Couldn't save settings: {err}"));
             }
         } else if let Err(err) = project.decline_git_support() {
-            self.status_message = Some(format!("Couldn't save settings: {err}"));
+            self.push_error_toast(format!("Couldn't save settings: {err}"));
         }
     }
 
@@ -631,15 +690,15 @@ impl TachyliteApp {
     /// dialog turns it on later).
     fn enable_git_support_manually(&mut self) {
         let Some(project) = &self.project else {
-            self.status_message = Some("No project open".to_string());
+            self.push_error_toast("No project open");
             return;
         };
         if !crate::git::is_available() {
-            self.status_message = Some("git was not found on this system".to_string());
+            self.push_error_toast("git was not found on this system");
             return;
         }
         if let Err(err) = Self::init_repo_if_needed(&project.root) {
-            self.status_message = Some(format!("Couldn't initialize git: {err}"));
+            self.push_error_toast(format!("Couldn't initialize git: {err}"));
             return;
         }
 
@@ -647,8 +706,8 @@ impl TachyliteApp {
             return;
         };
         match project.enable_git_support() {
-            Ok(()) => self.status_message = Some("Git support enabled".to_string()),
-            Err(err) => self.status_message = Some(format!("Couldn't save settings: {err}")),
+            Ok(()) => self.set_status_message("Git support enabled"),
+            Err(err) => self.push_error_toast(format!("Couldn't save settings: {err}")),
         }
     }
 
@@ -657,11 +716,11 @@ impl TachyliteApp {
     /// `GitCommit` shortcut, and `:git commit`/`:git backup` with no inline message.
     fn prompt_git_commit(&mut self, push_after: bool) {
         let Some(project) = &self.project else {
-            self.status_message = Some("No project open".to_string());
+            self.push_error_toast("No project open");
             return;
         };
         if !project.meta.git_enabled {
-            self.status_message = Some("Git support isn't enabled for this project".to_string());
+            self.push_error_toast("Git support isn't enabled for this project");
             return;
         }
         self.prompt = Some(PendingPrompt {
@@ -680,38 +739,38 @@ impl TachyliteApp {
 
     fn run_git_commit(&mut self, ctx: &egui::Context, message: &str, push_after: bool) {
         let Some(project) = &self.project else {
-            self.status_message = Some("No project open".to_string());
+            self.push_error_toast("No project open");
             return;
         };
         if !project.meta.git_enabled {
-            self.status_message = Some("Git support isn't enabled for this project".to_string());
+            self.push_error_toast("Git support isn't enabled for this project");
             return;
         }
         if let Err(err) = Self::ensure_git_repo(project) {
-            self.status_message = Some(format!("Couldn't initialize git: {err}"));
+            self.push_error_toast(format!("Couldn't initialize git: {err}"));
             return;
         }
         match crate::git::commit_all(&project.root, message) {
             Ok(()) => {
-                self.status_message = Some("Committed".to_string());
+                self.set_status_message("Committed");
                 if push_after {
                     self.run_git_push(ctx);
                 }
             }
             Err(crate::git::GitError::NothingToCommit) => {
-                self.status_message = Some("Nothing to commit".to_string());
+                self.set_status_message("Nothing to commit");
             }
-            Err(err) => self.status_message = Some(format!("Commit failed: {err}")),
+            Err(err) => self.push_error_toast(format!("Commit failed: {err}")),
         }
     }
 
     fn run_git_push(&mut self, ctx: &egui::Context) {
         let Some(project) = &self.project else {
-            self.status_message = Some("No project open".to_string());
+            self.push_error_toast("No project open");
             return;
         };
         if !project.meta.git_enabled {
-            self.status_message = Some("Git support isn't enabled for this project".to_string());
+            self.push_error_toast("Git support isn't enabled for this project");
             return;
         }
         self.spawn_git_operation(ctx, GitOperation::Push, project.root.clone());
@@ -724,11 +783,11 @@ impl TachyliteApp {
     /// want the pulled version.
     fn run_git_pull(&mut self, ctx: &egui::Context) {
         let Some(project) = &self.project else {
-            self.status_message = Some("No project open".to_string());
+            self.push_error_toast("No project open");
             return;
         };
         if !project.meta.git_enabled {
-            self.status_message = Some("Git support isn't enabled for this project".to_string());
+            self.push_error_toast("Git support isn't enabled for this project");
             return;
         }
         self.spawn_git_operation(ctx, GitOperation::Pull, project.root.clone());
@@ -742,7 +801,7 @@ impl TachyliteApp {
     /// frame) picks it up promptly instead of waiting for unrelated UI activity.
     fn spawn_git_operation(&mut self, ctx: &egui::Context, operation: GitOperation, root: PathBuf) {
         if self.pending_git.is_some() {
-            self.status_message = Some("A git operation is already in progress".to_string());
+            self.push_error_toast("A git operation is already in progress");
             return;
         }
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -755,7 +814,7 @@ impl TachyliteApp {
             let _ = sender.send(result);
             repaint_ctx.request_repaint();
         });
-        self.status_message = Some(format!("{}ing…", operation.label()));
+        self.set_status_message(format!("{}ing…", operation.label()));
         self.pending_git = Some((operation, receiver));
     }
 
@@ -772,7 +831,7 @@ impl TachyliteApp {
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 let (operation, _) = self.pending_git.take().expect("checked above");
-                self.status_message = Some(format!(
+                self.push_error_toast(format!(
                     "{} failed: background thread panicked",
                     operation.label()
                 ));
@@ -787,10 +846,10 @@ impl TachyliteApp {
                 {
                     project.rescan();
                 }
-                self.status_message = Some(format!("{}ed", operation.label()));
+                self.set_status_message(format!("{}ed", operation.label()));
             }
             Err(err) => {
-                self.status_message = Some(format!("{} failed: {err}", operation.label()));
+                self.push_error_toast(format!("{} failed: {err}", operation.label()));
             }
         }
     }
@@ -800,7 +859,7 @@ impl TachyliteApp {
             return;
         };
         if let Err(err) = self.settings.save_to_path(&path) {
-            self.status_message = Some(format!("Couldn't save settings: {err}"));
+            self.push_error_toast(format!("Couldn't save settings: {err}"));
         }
     }
 
@@ -906,14 +965,16 @@ impl TachyliteApp {
                     match Project::initialize(path) {
                         Ok(project) => self.set_project(project, path),
                         Err(err) => {
-                            self.status_message =
-                                Some(format!("Couldn't set up {}: {err}", path.display()));
+                            self.push_error_toast(format!(
+                                "Couldn't set up {}: {err}",
+                                path.display()
+                            ));
                         }
                     }
                 }
             }
             Err(err) => {
-                self.status_message = Some(format!("Couldn't open {}: {err}", path.display()));
+                self.push_error_toast(format!("Couldn't open {}: {err}", path.display()));
             }
         }
     }
@@ -955,7 +1016,7 @@ impl TachyliteApp {
             // Unlike the adopt flow, "New Project" should only ever create a fresh
             // folder — silently folding an unrelated existing folder in as a project
             // would be surprising.
-            self.status_message = Some(format!("{} already exists", root.display()));
+            self.push_error_toast(format!("{} already exists", root.display()));
             return;
         }
         match Project::initialize(&root) {
@@ -970,11 +1031,11 @@ impl TachyliteApp {
                 // template-apply error must be recorded after it runs, not before.
                 self.set_project(project, &root);
                 if let Some(err) = template_error {
-                    self.status_message = Some(format!("Couldn't apply template: {err}"));
+                    self.push_error_toast(format!("Couldn't apply template: {err}"));
                 }
             }
             Err(err) => {
-                self.status_message = Some(format!("Couldn't create project: {err}"));
+                self.push_error_toast(format!("Couldn't create project: {err}"));
             }
         }
     }
@@ -989,20 +1050,20 @@ impl TachyliteApp {
 
     fn save_project_as_template(&mut self, name: &str) {
         let Some(project) = &self.project else {
-            self.status_message = Some("No project open".to_string());
+            self.push_error_toast("No project open");
             return;
         };
         let Some(dir) = crate::project_template::global_project_templates_dir() else {
-            self.status_message = Some("Couldn't determine templates directory".to_string());
+            self.push_error_toast("Couldn't determine templates directory");
             return;
         };
         match crate::project_template::save_from_project(&dir, name, project) {
             Ok(_) => {
-                self.status_message = Some(format!("Saved template \"{name}\""));
+                self.set_status_message(format!("Saved template \"{name}\""));
                 self.reload_project_templates();
             }
             Err(err) => {
-                self.status_message = Some(format!("Couldn't save template: {err}"));
+                self.push_error_toast(format!("Couldn't save template: {err}"));
             }
         }
     }
@@ -1027,7 +1088,7 @@ impl TachyliteApp {
         match self.editor.open(path) {
             Ok(()) => self.selected_path = Some(path.to_path_buf()),
             Err(err) => {
-                self.status_message = Some(format!("Couldn't open {}: {err}", path.display()));
+                self.push_error_toast(format!("Couldn't open {}: {err}", path.display()));
             }
         }
     }
@@ -1036,7 +1097,7 @@ impl TachyliteApp {
     /// convention as `open_document`/`rename_node`, no discard/cancel prompt).
     fn close_document(&mut self, ctx: &egui::Context) {
         if let Err(err) = self.editor.close() {
-            self.status_message = Some(format!("Couldn't save before closing: {err}"));
+            self.push_error_toast(format!("Couldn't save before closing: {err}"));
             return;
         }
         self.selected_path = None;
@@ -1071,7 +1132,7 @@ impl TachyliteApp {
         if self.editor.open_path.is_some()
             && let Some(err) = crate::frontmatter::validate(&self.editor.buffer)
         {
-            self.status_message = Some(err.to_string());
+            self.push_error_toast(err.to_string());
         }
     }
 
@@ -1201,7 +1262,7 @@ impl TachyliteApp {
     /// is what a tiling compositor already handles constantly and reliably.
     fn set_focus_mode(&mut self, ctx: &egui::Context, enabled: bool) {
         if enabled && self.editor.open_path.is_none() {
-            self.status_message = Some("Open a document before entering Focus Mode.".to_string());
+            self.push_error_toast("Open a document before entering Focus Mode.");
             return;
         }
         self.focus_mode = enabled;
@@ -1219,7 +1280,7 @@ impl TachyliteApp {
             force_create,
         } = activation;
         let Some(project) = &self.project else {
-            self.status_message = Some(format!("No project open — can't resolve [[{target}]]"));
+            self.push_error_toast(format!("No project open — can't resolve [[{target}]]"));
             return;
         };
         if let Some(node) = project.tree.find_document_by_stem(&target) {
@@ -1228,7 +1289,7 @@ impl TachyliteApp {
             return;
         }
         if !force_create {
-            self.status_message = Some(format!("No note found for [[{target}]]"));
+            self.push_error_toast(format!("No note found for [[{target}]]"));
             return;
         }
         self.create_wikilink_target(&target);
@@ -1245,7 +1306,7 @@ impl TachyliteApp {
             .and_then(|p| p.parent())
             .map(Path::to_path_buf)
         else {
-            self.status_message = Some(format!(
+            self.push_error_toast(format!(
                 "Couldn't create a note for [[{target}]]: no document is open"
             ));
             return;
@@ -1323,7 +1384,7 @@ impl TachyliteApp {
             && let Err(err) =
                 project.set_book_meta(meta.title.clone(), meta.author.clone(), style_id.clone())
         {
-            self.status_message = Some(format!("Couldn't save settings: {err}"));
+            self.push_error_toast(format!("Couldn't save settings: {err}"));
         }
 
         let Some(style) = crate::export::style::find(&self.typeset_styles, &style_id).cloned()
@@ -1331,7 +1392,7 @@ impl TachyliteApp {
             match action {
                 ui::export_panel::ExportAction::Close => self.export = None,
                 ui::export_panel::ExportAction::ReloadStyles => self.reload_typeset_styles(),
-                _ => self.status_message = Some("No typesetting style selected".to_string()),
+                _ => self.push_error_toast("No typesetting style selected"),
             }
             return;
         };
@@ -1389,10 +1450,10 @@ impl TachyliteApp {
         let docs = crate::export::gather(project, folder, self.settings.typewriter_quotes);
         match crate::export::docx::export_docx(&docs, meta, style, &project.root, out_path) {
             Ok(()) => {
-                self.status_message = Some(format!("Exported to {}", out_path.display()));
+                self.set_status_message(format!("Exported to {}", out_path.display()));
             }
             Err(err) => {
-                self.status_message = Some(format!("Export failed: {err}"));
+                self.push_error_toast(format!("Export failed: {err}"));
             }
         }
     }
@@ -1413,10 +1474,10 @@ impl TachyliteApp {
         let docs = crate::export::gather(project, folder, self.settings.typewriter_quotes);
         match crate::export::epub::export_epub(&docs, meta, style, &project.root, out_path) {
             Ok(()) => {
-                self.status_message = Some(format!("Exported to {}", out_path.display()));
+                self.set_status_message(format!("Exported to {}", out_path.display()));
             }
             Err(err) => {
-                self.status_message = Some(format!("Export failed: {err}"));
+                self.push_error_toast(format!("Export failed: {err}"));
             }
         }
     }
@@ -1437,13 +1498,13 @@ impl TachyliteApp {
         let docs = crate::export::gather(project, folder, self.settings.typewriter_quotes);
         match crate::export::pdf::export_pdf(&docs, meta, style, &project.root, out_path) {
             Ok(spine_width_in) => {
-                self.status_message = Some(format!(
+                self.set_status_message(format!(
                     "Exported to {} — estimated spine width: {spine_width_in:.2}in",
                     out_path.display()
                 ));
             }
             Err(err) => {
-                self.status_message = Some(format!("Export failed: {err}"));
+                self.push_error_toast(format!("Export failed: {err}"));
             }
         }
     }
@@ -1471,7 +1532,7 @@ impl TachyliteApp {
                 }
             }
             Err(err) => {
-                self.status_message = Some(format!("Couldn't move {}: {err}", path.display()));
+                self.push_error_toast(format!("Couldn't move {}: {err}", path.display()));
             }
         }
     }
@@ -1496,7 +1557,7 @@ impl TachyliteApp {
                 }
             }
             Err(err) => {
-                self.status_message = Some(format!("Couldn't move {}: {err}", path.display()));
+                self.push_error_toast(format!("Couldn't move {}: {err}", path.display()));
             }
         }
     }
@@ -1515,14 +1576,14 @@ impl TachyliteApp {
                 if let Some(project) = &mut self.project
                     && let Err(err) = project.delete_story_card(id)
                 {
-                    self.status_message = Some(format!("Couldn't delete card: {err}"));
+                    self.push_error_toast(format!("Couldn't delete card: {err}"));
                 }
             }
             CorkboardEvent::MoveCard { id, new_index } => {
                 if let Some(project) = &mut self.project
                     && let Err(err) = project.move_story_card(id, new_index)
                 {
-                    self.status_message = Some(format!("Couldn't reorder card: {err}"));
+                    self.push_error_toast(format!("Couldn't reorder card: {err}"));
                 }
             }
             CorkboardEvent::OpenLinkedDocument(path) => {
@@ -1538,14 +1599,14 @@ impl TachyliteApp {
                 if let Some(project) = &mut self.project
                     && let Err(err) = project.set_protagonist_desire(desire)
                 {
-                    self.status_message = Some(format!("Couldn't save desire: {err}"));
+                    self.push_error_toast(format!("Couldn't save desire: {err}"));
                 }
             }
             CorkboardEvent::SetProtagonistMisbelief(misbelief) => {
                 if let Some(project) = &mut self.project
                     && let Err(err) = project.set_protagonist_misbelief(misbelief)
                 {
-                    self.status_message = Some(format!("Couldn't save misbelief: {err}"));
+                    self.push_error_toast(format!("Couldn't save misbelief: {err}"));
                 }
             }
         }
@@ -1577,6 +1638,98 @@ impl TachyliteApp {
         }
     }
 
+    /// Show `message` as an error-severity toast — see `Toast`'s doc comment for
+    /// when to reach for this instead of `status_message`.
+    fn push_error_toast(&mut self, message: impl Into<String>) {
+        self.toasts.push(Toast {
+            message: message.into(),
+            shown_at: std::time::Instant::now(),
+        });
+    }
+
+    /// Drop any toast that's outlived `Settings::toast_duration_secs` (see
+    /// `resolve_toast_duration`), then render whatever's left stacked down the
+    /// top-right corner of the window (oldest at top,
+    /// each independently dismissible via its own × button) — called every
+    /// frame regardless of Focus Mode or which dock tabs are open, since an
+    /// error is exactly the kind of thing that shouldn't go unnoticed just
+    /// because of what else happens to be on screen. Schedules a short
+    /// repaint interval while any toast is showing so it actually
+    /// disappears on its own once its time is up, the same reasoning as
+    /// `tick_pomodoro`'s own `request_repaint_after`.
+    fn show_toasts(&mut self, ctx: &egui::Context) {
+        let duration = resolve_toast_duration(&self.settings);
+        let now = std::time::Instant::now();
+        self.toasts
+            .retain(|toast| now.duration_since(toast.shown_at) < duration);
+        if self.toasts.is_empty() {
+            return;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+
+        let mut dismiss = None;
+        for (index, toast) in self.toasts.iter().enumerate() {
+            egui::Area::new(egui::Id::new("toast").with(index))
+                .anchor(
+                    egui::Align2::RIGHT_TOP,
+                    egui::vec2(-12.0, 12.0 + index as f32 * 56.0),
+                )
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style())
+                        .fill(egui::Color32::from_rgb(140, 30, 30))
+                        .show(ui, |ui| {
+                            ui.set_max_width(360.0);
+                            ui.horizontal(|ui| {
+                                ui.colored_label(egui::Color32::WHITE, &toast.message);
+                                if ui.small_button("×").clicked() {
+                                    dismiss = Some(index);
+                                }
+                            });
+                        });
+                });
+        }
+        if let Some(index) = dismiss {
+            self.toasts.remove(index);
+        }
+    }
+
+    /// Set the status-bar confirmation (see `status_message`'s doc comment for
+    /// when to use this instead of `push_error_toast`) and record when, so
+    /// `clear_status_message_if_expired` can time it out on its own.
+    fn set_status_message(&mut self, message: impl Into<String>) {
+        self.status_message = Some(message.into());
+        self.status_message_set_at = Some(std::time::Instant::now());
+    }
+
+    /// Clear `status_message` (and its timestamp) immediately, rather than
+    /// waiting for `clear_status_message_if_expired` to time it out on its own
+    /// — for the rare case that wants a clean slate right away (e.g.
+    /// `set_project`, switching to a different project).
+    fn clear_status_message(&mut self) {
+        self.status_message = None;
+        self.status_message_set_at = None;
+    }
+
+    /// Auto-clear `status_message` once it's been showing longer than
+    /// `Settings::status_message_duration_secs` (see
+    /// `resolve_status_message_duration`) — called every frame, mirroring
+    /// `show_toasts`' own expiry check and for the same reason: status-bar
+    /// text that just sits there until the next unrelated update happens to
+    /// overwrite it is easy to mistake for something still current.
+    fn clear_status_message_if_expired(&mut self, ctx: &egui::Context) {
+        let Some(set_at) = self.status_message_set_at else {
+            return;
+        };
+        let duration = resolve_status_message_duration(&self.settings);
+        let elapsed = set_at.elapsed();
+        if elapsed >= duration {
+            self.clear_status_message();
+        } else {
+            ctx.request_repaint_after(duration - elapsed);
+        }
+    }
+
     /// Handle the card-editor modal closing this frame, whether by Save, Delete, or
     /// Cancel — always clears `card_draft` either way, since the modal is done either
     /// way once an outcome is produced.
@@ -1590,12 +1743,12 @@ impl TachyliteApp {
         match outcome {
             CardEditorOutcome::Save => {
                 if let Err(err) = project.upsert_story_card(draft.finalize()) {
-                    self.status_message = Some(format!("Couldn't save card: {err}"));
+                    self.push_error_toast(format!("Couldn't save card: {err}"));
                 }
             }
             CardEditorOutcome::Delete(id) => {
                 if let Err(err) = project.delete_story_card(id) {
-                    self.status_message = Some(format!("Couldn't delete card: {err}"));
+                    self.push_error_toast(format!("Couldn't delete card: {err}"));
                 }
             }
             CardEditorOutcome::Cancel => {}
@@ -1705,7 +1858,7 @@ impl TachyliteApp {
             }
             ShortcutAction::Save => {
                 if let Err(err) = self.save_editor() {
-                    self.status_message = Some(format!("Save failed: {err}"));
+                    self.push_error_toast(format!("Save failed: {err}"));
                 }
             }
             ShortcutAction::NewFile => self.keyboard_new_file(),
@@ -1763,7 +1916,7 @@ impl TachyliteApp {
                 if self.project.is_some() {
                     self.open_document_prompt.request_open();
                 } else {
-                    self.status_message = Some("No project open".to_string());
+                    self.push_error_toast("No project open");
                 }
             }
             ShortcutAction::CloseDocument => self.close_document(ctx),
@@ -1817,7 +1970,7 @@ impl TachyliteApp {
     fn save_editor(&mut self) -> std::io::Result<()> {
         let (transformed, errors) = self.plugin_engine.run_on_save(&self.editor.buffer);
         if !errors.is_empty() {
-            self.status_message = Some(errors.join("; "));
+            self.push_error_toast(errors.join("; "));
         }
         if transformed != self.editor.buffer {
             self.editor.buffer = transformed;
@@ -1832,7 +1985,7 @@ impl TachyliteApp {
             && result.is_ok()
             && let Some(err) = crate::frontmatter::validate(&self.editor.buffer)
         {
-            self.status_message = Some(err.to_string());
+            self.push_error_toast(err.to_string());
         }
         result
     }
@@ -1842,20 +1995,20 @@ impl TachyliteApp {
         match command {
             Command::Save => {
                 if let Err(err) = self.save_editor() {
-                    self.status_message = Some(format!("Save failed: {err}"));
+                    self.push_error_toast(format!("Save failed: {err}"));
                 }
             }
             Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Command::SaveAndQuit => {
                 if let Err(err) = self.save_editor() {
-                    self.status_message = Some(format!("Save failed: {err}"));
+                    self.push_error_toast(format!("Save failed: {err}"));
                     return;
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Command::Open(title) => {
                 let Some(project) = &self.project else {
-                    self.status_message = Some("No project open".to_string());
+                    self.push_error_toast("No project open");
                     return;
                 };
                 match project.tree.find_document_by_stem(&title) {
@@ -1863,12 +2016,12 @@ impl TachyliteApp {
                         let path = node.path.clone();
                         self.open_document(&path);
                     }
-                    None => self.status_message = Some(format!("No note found for \"{title}\"")),
+                    None => self.push_error_toast(format!("No note found for \"{title}\"")),
                 }
             }
             Command::New(title) => {
                 let Some(project) = &self.project else {
-                    self.status_message = Some("No project open".to_string());
+                    self.push_error_toast("No project open");
                     return;
                 };
                 let parent = self
@@ -1949,7 +2102,7 @@ impl TachyliteApp {
             document_filename,
         );
         if let Err(err) = result {
-            self.status_message = Some(err);
+            self.push_error_toast(err);
             return;
         }
         // Only meaningful with a document open — a plugin can't fabricate one.
@@ -1958,7 +2111,7 @@ impl TachyliteApp {
             self.editor.mark_dirty();
         }
         if let Some(message) = effects.status_message {
-            self.status_message = Some(message);
+            self.set_status_message(message);
         }
     }
 
@@ -1971,7 +2124,7 @@ impl TachyliteApp {
         match id {
             Some(id) => {
                 let Some(theme) = crate::color_theme::find(&self.color_themes, id) else {
-                    self.status_message = Some(format!("Unknown theme: {id}"));
+                    self.push_error_toast(format!("Unknown theme: {id}"));
                     return;
                 };
                 crate::color_theme::apply(ctx, theme);
@@ -2071,10 +2224,10 @@ impl TachyliteApp {
                 self.editor.buffer = new_content;
                 self.editor.mark_dirty();
             } else if let Err(err) = fs::write(&path, &new_content) {
-                self.status_message = Some(format!("Couldn't update {}: {err}", path.display()));
+                self.push_error_toast(format!("Couldn't update {}: {err}", path.display()));
             }
         }
-        self.status_message = Some(format!("Replaced {total} occurrence(s)"));
+        self.set_status_message(format!("Replaced {total} occurrence(s)"));
         self.run_search();
     }
 
@@ -2121,10 +2274,10 @@ impl TachyliteApp {
                     && let Some(project) = &mut self.project
                     && let Err(err) = project.restore_from_trash(path, true)
                 {
-                    self.status_message = Some(format!("Couldn't restore: {err}"));
+                    self.push_error_toast(format!("Couldn't restore: {err}"));
                 }
             }
-            Err(err) => self.status_message = Some(format!("Couldn't restore: {err}")),
+            Err(err) => self.push_error_toast(format!("Couldn't restore: {err}")),
         }
     }
 
@@ -2133,7 +2286,7 @@ impl TachyliteApp {
             return;
         };
         if let Err(err) = project.set_folder_role(path, role) {
-            self.status_message = Some(format!("Couldn't set folder role: {err}"));
+            self.push_error_toast(format!("Couldn't set folder role: {err}"));
         }
     }
 
@@ -2142,7 +2295,7 @@ impl TachyliteApp {
             return;
         };
         if let Err(err) = project.set_picklist_folder(field, path.as_deref()) {
-            self.status_message = Some(format!("Couldn't set dropdown source: {err}"));
+            self.push_error_toast(format!("Couldn't set dropdown source: {err}"));
         }
     }
 
@@ -2163,7 +2316,7 @@ impl TachyliteApp {
             return;
         };
         if let Err(err) = project.empty_trash() {
-            self.status_message = Some(format!("Couldn't empty Trash: {err}"));
+            self.push_error_toast(format!("Couldn't empty Trash: {err}"));
             return;
         }
         if self
@@ -2218,7 +2371,7 @@ impl TachyliteApp {
             && self.editor.dirty
             && let Err(err) = self.editor.save()
         {
-            self.status_message = Some(format!("Couldn't save before renaming: {err}"));
+            self.push_error_toast(format!("Couldn't save before renaming: {err}"));
             return;
         }
 
@@ -2239,7 +2392,7 @@ impl TachyliteApp {
                 }
             }
             Err(err) => {
-                self.status_message = Some(format!("Couldn't rename: {err}"));
+                self.push_error_toast(format!("Couldn't rename: {err}"));
             }
         }
     }
@@ -2290,7 +2443,7 @@ impl TachyliteApp {
                 }
             }
             Err(err) => {
-                self.status_message = Some(format!("Couldn't delete {}: {err}", path.display()));
+                self.push_error_toast(format!("Couldn't delete {}: {err}", path.display()));
             }
         }
     }
@@ -2301,7 +2454,7 @@ impl TachyliteApp {
         };
         match project.create_document(parent, name) {
             Ok(path) => self.open_document(&path),
-            Err(err) => self.status_message = Some(format!("Couldn't create file: {err}")),
+            Err(err) => self.push_error_toast(format!("Couldn't create file: {err}")),
         }
     }
 
@@ -2310,7 +2463,7 @@ impl TachyliteApp {
             return;
         };
         if let Err(err) = project.create_folder(parent, name) {
-            self.status_message = Some(format!("Couldn't create folder: {err}"));
+            self.push_error_toast(format!("Couldn't create folder: {err}"));
         }
     }
 
@@ -2325,7 +2478,7 @@ impl TachyliteApp {
             &self.settings.template_date_format,
         ) {
             Ok(path) => self.open_document(&path),
-            Err(err) => self.status_message = Some(format!("Couldn't create file: {err}")),
+            Err(err) => self.push_error_toast(format!("Couldn't create file: {err}")),
         }
     }
 }
@@ -2556,6 +2709,8 @@ impl eframe::App for TachyliteApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_git_operation();
         self.tick_pomodoro(ui.ctx());
+        self.show_toasts(ui.ctx());
+        self.clear_status_message_if_expired(ui.ctx());
 
         // Save the dock layout right as shutdown starts (a window-close click, or
         // `ShortcutAction::Exit`'s `ViewportCommand::Close`, both surface here)
@@ -2657,7 +2812,7 @@ impl eframe::App for TachyliteApp {
                             if self.project.is_some() {
                                 self.open_document_prompt.request_open();
                             } else {
-                                self.status_message = Some("No project open".to_string());
+                                self.push_error_toast("No project open");
                             }
                         }
                         if menu_button_with_shortcut(ui, "Close Document", close_document_shortcut)
@@ -2672,7 +2827,7 @@ impl eframe::App for TachyliteApp {
                             if self.project.is_some() {
                                 self.prompt_save_project_as_template();
                             } else {
-                                self.status_message = Some("No project open".to_string());
+                                self.push_error_toast("No project open");
                             }
                         }
                         ui.separator();
@@ -2834,8 +2989,9 @@ impl eframe::App for TachyliteApp {
                             if let Some(project) = &mut self.project
                                 && let Err(err) = project.set_plugins_enabled(true)
                             {
-                                self.status_message =
-                                    Some(format!("Couldn't enable project plugins: {err}"));
+                                self.push_error_toast(format!(
+                                    "Couldn't enable project plugins: {err}"
+                                ));
                             }
                             self.reload_plugins();
                         }
@@ -2977,7 +3133,7 @@ impl eframe::App for TachyliteApp {
                 let ctx = ui.ctx().clone();
                 match event {
                     CommandPromptEvent::Run(command) => self.execute_command(&ctx, command),
-                    CommandPromptEvent::Error(err) => self.status_message = Some(err),
+                    CommandPromptEvent::Error(err) => self.push_error_toast(err),
                 }
             }
         }
@@ -3037,7 +3193,13 @@ impl eframe::App for TachyliteApp {
                     }
                     if let Some(msg) = &self.status_message {
                         ui.separator();
-                        ui.colored_label(egui::Color32::from_rgb(200, 60, 60), msg);
+                        // No special color: now that error-severity messages go
+                        // through `push_error_toast` instead (see its doc
+                        // comment), everything left here is a routine
+                        // confirmation, not a problem — coloring it red the way
+                        // this label used to unconditionally do would misread as
+                        // an error for messages like "Committed".
+                        ui.label(msg);
                     }
                     // Independent of `status_message` above (which ~40 other call
                     // sites overwrite freely) — a running/paused-mid-session
@@ -3112,7 +3274,7 @@ impl eframe::App for TachyliteApp {
                     self.settings.editor_font,
                     crate::editor_font::resolve_size(self.settings.editor_font_size),
                 ) {
-                    Some(EditorEvent::SaveError(err)) => self.status_message = Some(err),
+                    Some(EditorEvent::SaveError(err)) => self.push_error_toast(err),
                     Some(EditorEvent::Wikilink(activation)) => self.activate_wikilink(activation),
                     None => {}
                 }
@@ -3145,7 +3307,7 @@ impl eframe::App for TachyliteApp {
                         DockAction::Binder(event) => self.handle_binder_event(event),
                         DockAction::RefreshBacklinks => self.recompute_backlinks(),
                         DockAction::RefreshTags => self.recompute_tags(),
-                        DockAction::EditorSaveError(err) => self.status_message = Some(err),
+                        DockAction::EditorSaveError(err) => self.push_error_toast(err),
                         DockAction::Wikilink(activation) => self.activate_wikilink(activation),
                         DockAction::Corkboard(event) => self.handle_corkboard_event(event),
                         DockAction::Pomodoro(event) => self.handle_pomodoro_event(event),
@@ -3184,6 +3346,60 @@ impl eframe::App for TachyliteApp {
                 self.finish_export(action);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod duration_resolution_tests {
+    use super::{
+        DEFAULT_STATUS_MESSAGE_DURATION, DEFAULT_TOAST_DURATION, resolve_status_message_duration,
+        resolve_toast_duration,
+    };
+    use crate::settings::Settings;
+
+    #[test]
+    fn resolve_toast_duration_falls_back_to_the_default_when_unconfigured() {
+        let settings = Settings {
+            toast_duration_secs: 0,
+            ..Default::default()
+        };
+        assert_eq!(resolve_toast_duration(&settings), DEFAULT_TOAST_DURATION);
+    }
+
+    #[test]
+    fn resolve_toast_duration_uses_the_configured_value() {
+        let settings = Settings {
+            toast_duration_secs: 20,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_toast_duration(&settings),
+            std::time::Duration::from_secs(20)
+        );
+    }
+
+    #[test]
+    fn resolve_status_message_duration_falls_back_to_the_default_when_unconfigured() {
+        let settings = Settings {
+            status_message_duration_secs: 0,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_status_message_duration(&settings),
+            DEFAULT_STATUS_MESSAGE_DURATION
+        );
+    }
+
+    #[test]
+    fn resolve_status_message_duration_uses_the_configured_value() {
+        let settings = Settings {
+            status_message_duration_secs: 30,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_status_message_duration(&settings),
+            std::time::Duration::from_secs(30)
+        );
     }
 }
 

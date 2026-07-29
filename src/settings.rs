@@ -90,6 +90,17 @@ pub struct Settings {
     /// transforms the parsed `Block`/`Span` tree handed to a renderer, never the
     /// file on disk.
     pub typewriter_quotes: bool,
+    /// How long an error-severity toast notification (`app::Toast`) stays on
+    /// screen before auto-dismissing, in seconds. `0` means "not yet
+    /// configured," resolved to a real default at the point of use
+    /// (`app::resolve_toast_duration`) — same blank-means-unset convention as
+    /// `editor_font_size`/the Pomodoro durations above.
+    pub toast_duration_secs: u32,
+    /// How long a routine status-bar confirmation ("Committed", "Exported to
+    /// ...") stays visible before clearing itself, in seconds. Same
+    /// blank-means-unset convention as `toast_duration_secs`
+    /// (`app::resolve_status_message_duration`).
+    pub status_message_duration_secs: u32,
 }
 
 /// The full path to the settings file, e.g. `~/.config/tachylite/tachylite.toml` on
@@ -202,6 +213,13 @@ mod tests {
     }
 
     #[test]
+    fn toast_and_status_message_durations_default_to_unconfigured() {
+        let settings = Settings::default();
+        assert_eq!(settings.toast_duration_secs, 0);
+        assert_eq!(settings.status_message_duration_secs, 0);
+    }
+
+    #[test]
     fn defaults_to_following_the_system_theme() {
         assert_eq!(
             Settings::default().theme_preference,
@@ -268,6 +286,8 @@ mod tests {
             pomodoro_long_break_minutes: 30,
             pomodoro_cycles_before_long_break: 3,
             typewriter_quotes: true,
+            toast_duration_secs: 10,
+            status_message_duration_secs: 12,
         };
 
         settings.save_to_path(&path).unwrap();
