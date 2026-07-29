@@ -7,6 +7,7 @@ This manual covers what the app does and how to use it. For internals (source la
 ## Contents
 
 - [Projects](#projects)
+- [Project Templates](#project-templates)
 - [Dockable Tool Windows](#dockable-tool-windows)
 - [The Binder](#the-binder)
 - [Writing and the Editor](#writing-and-the-editor)
@@ -32,11 +33,34 @@ This manual covers what the app does and how to use it. For internals (source la
 
 A **project** is just a folder on disk containing `.md` files and subfolders, marked with a `.tachylite/project.json` file. There's no proprietary bundle format — you can open the folder in any other editor, sync it with any tool, and everything still works.
 
-- **`File > New Project`** opens a native folder picker and asks for a name; it creates the folder and marks it as a project.
+- **`File > New Project`** opens a [template picker](#project-templates), then a native folder picker and name prompt; it creates the folder, marks it as a project, and scaffolds in whatever the chosen template provides.
 - **`File > Open Project`** opens a native folder picker. If you point it at a folder tachylite hasn't used before, it offers to adopt the folder in place (writing the `.tachylite` marker) rather than refusing.
 - `.tachylite/project.json` stores things the filesystem can't express on its own — manuscript ordering, folder roles, whether plugins/git are enabled for this project. If that file's *contents* ever get corrupted, tachylite falls back to defaults rather than erroring; only a missing marker means "this isn't a project yet."
 
 `File > Settings` has a **"Reopen project on launch"** option, and a separate **"Ensure Research and Trash folders exist in every project"** option (off by default) that creates those two role folders automatically whenever you open a project, recreating them at their original path if they were deleted since.
+
+## Project Templates
+
+**`File > New Project`** shows a template picker before the usual folder/name prompt — pick a starting scaffold, then name and locate the new project as before. Four templates ship built-in:
+
+| Template | What it scaffolds |
+|---|---|
+| **Blank** (default) | Nothing — an empty project, exactly like `File > New Project` behaved before templates existed |
+| **Novel** | A `Manuscript` folder with two starter chapters, a `Characters` folder with a Protagonist document (Desire/Misbelief/Arc headings), plus Research and Trash folders (roles already assigned) |
+| **Nonfiction** | A `Manuscript` folder with an Introduction and a "Part One" subfolder containing a first chapter, plus Research and Trash |
+| **Screenplay** | A `Screenplay` folder with Act One/Two/Three starter documents, plus Research and Trash. Tachylite's editor is plain Markdown, not Fountain — this reproduces a screenplay draft's *look* with headings, not a real screenplay-format pipeline |
+
+**`File > Save Project as Template…`** turns your *current* project's own folder/document structure into a reusable custom template, prompting for a name. It excludes:
+- Whatever's currently inside the project's Trash folder (if one's configured)
+- Narrative state that belongs to one specific project, not a reusable shape: story cards, the protagonist Desire/Misbelief pair, and book/export/git metadata
+
+Custom templates are stored in `tachylite/project_templates/` in the platform config directory (the same base path as custom themes/styles/plugins — see [Plugins](#plugins)):
+
+- Linux: `~/.config/tachylite/project_templates`
+- macOS: `~/Library/Application Support/tachylite/project_templates`
+- Windows: `%APPDATA%\tachylite\config\project_templates`
+
+Each is a subfolder containing a `template.toml` (label, description) and a `content/` folder mirroring the structure to stamp out. Unlike custom themes/styles, there's no "Reload Custom Templates" button — a hand-dropped or hand-edited template only shows up in the picker after restarting the app (saving one via **Save Project as Template…** refreshes the list immediately, since the app already knows it just wrote it).
 
 ## Dockable Tool Windows
 
@@ -71,7 +95,7 @@ The left-hand panel is the **binder** — a tree view of your project folder, on
   - **Rename** — also prompts for a name, and updates any `[[wikilinks]]` elsewhere in the project that pointed at the old name
   - **Delete** — shows a native confirmation dialog; if a Trash folder is configured, it's worded as a move to Trash rather than a permanent delete
   - **Restore** (on a trashed item) — moves it back to its original folder, offering to recreate that folder if it's gone since
-  - **Folder Role** / **Empty Trash** (folders only) — see below
+  - **Folder Role** / **Dropdown Source** / **Empty Trash** (folders only) — see [Folder Roles](#folder-roles-research-trash-templates) and [Dropdown Source Folders](#dropdown-source-folders)
 
 ## Writing and the Editor
 
@@ -97,6 +121,19 @@ Images work two ways:
 - Obsidian-style embeds: `![[image.png]]`
 
 Relative image paths resolve against the open document's own folder, and must stay inside the project (a path that tries to escape the project root — via `..` or a symlink — is refused). Remote `http(s)://` images are never fetched.
+
+### Typewriter Quotes
+
+**`File > Settings > Editor`** has a **"Typewriter quotes in Preview and export"** checkbox, off by default. When it's on, straight typewriter punctuation is rewritten wherever markdown gets rendered *from* — the Preview pane here, and every [Export](#export) format:
+
+| Typed | Rendered |
+|---|---|
+| `"straight double quotes"` | "curly double quotes" |
+| `'straight single quotes'` | 'curly single quotes' |
+| `--` | — (em dash) |
+| `...` | … (ellipsis) |
+
+Your `.md` file on disk is never touched — the source text you type stays exactly as typed, straight quotes and all. Only the rendered *view* of it (Preview, or a compiled DOCX/EPUB/PDF) changes, so switching the setting off later shows your original punctuation again, nothing was lost. Quote direction (opening vs. closing) is inferred from context, the same simple heuristic most word processors use — it isn't guaranteed correct in every edge case (e.g. deeply nested quotes), but handles ordinary dialogue and contractions correctly.
 
 ## Wikilinks
 
@@ -139,6 +176,19 @@ Open **`Edit > Document Metadata`** (or **`Ctrl+Shift+M`**) to edit these fields
 | `tags` | A list of free-form tags. |
 
 Any other YAML key you've hand-added to the block (or that some other tool wrote) is left alone — Tachylite never round-trips the whole block through its own data model, so unrelated keys survive a save untouched. The frontmatter block is stripped from the Markdown preview so it doesn't render as a garbled paragraph.
+
+The Metadata panel also shows a **Word count** — a live, read-only count of the open document's body (frontmatter excluded), recomputed continuously from whatever's currently in the editor, not just what was last saved.
+
+### Dropdown Source Folders
+
+By default, `type`/`status`/`pov` are free text — nothing stops "Scene" and "scene" and "seen" from all being typed for the same field across a project. To turn one of them into a closed dropdown instead, right-click any folder and check it under **Dropdown Source** for **Type**, **Status**, or **POV**. That folder's direct child documents' titles (not documents in a subfolder of it) become the dropdown's options for that field; the Metadata panel's `Type:`/`Status:`/`POV:` row switches from a text box to a dropdown automatically as soon as a field has at least one folder assigned and one document in it.
+
+A few things worth knowing:
+
+- **Independent per field, and independent of Folder Role.** Type, Status, and POV each have their own separate folder assignment — the same folder can drive more than one field, or each can point somewhere different. Checking a folder here doesn't touch whatever [Folder Role](#folder-roles-research-trash-templates) it already has (or lack of one), and doesn't exclude it from [Export](#export) — so an existing Research folder of character bios can double as the POV dropdown's source without anything else about it changing.
+- **Never destroys an existing value.** If a document's `pov: Alice` was typed before you ever assigned a POV folder — or Alice's document has since been renamed or removed from that folder — the field still shows "Alice" as-is; it just isn't one of the clickable options until you pick something else from the dropdown.
+- **"(none)"** is always the first dropdown entry, for clearing the field.
+- Not recursive: only documents placed directly inside the assigned folder count, the same limitation [Templates](#folder-roles-research-trash-templates) has.
 
 ## Folder Roles: Research, Trash, Templates
 
@@ -186,7 +236,7 @@ A format that isn't a valid strftime pattern falls back to `%Y-%m-%d` automatica
 
 ## Export
 
-Right-click any folder in the binder and choose **Export…** to compile it — and everything nested inside it, in the same top-to-bottom order shown in the binder — into a single DOCX, EPUB, or print-ready PDF file. A nested folder whose role is **Trash** or **Templates** is skipped automatically, so deleted or template content never accidentally ends up in a compiled manuscript.
+Right-click any folder in the binder and choose **Export…** to compile it — and everything nested inside it, in the same top-to-bottom order shown in the binder — into a single DOCX, EPUB, or print-ready PDF file. A nested folder whose role is **Trash** or **Templates** is skipped automatically, so deleted or template content never accidentally ends up in a compiled manuscript. If [Typewriter Quotes](#typewriter-quotes) is turned on, the exported file gets curly quotes/em dashes/ellipses too, same as the Preview pane.
 
 The export dialog has:
 
@@ -529,15 +579,14 @@ Two shortcuts can never overlap — rebinding one to a combo another action alre
 
 ## Settings
 
-Settings are stored as `tachylite.toml` in the platform's config directory (the same base path as the global plugins, custom-themes, and custom-styles folders — see [Plugins](#plugins), [Custom themes](#custom-themes), and [Typesetting styles](#typesetting-styles)). Available in **`File > Settings`**:
+**`File > Settings`** (or **`Ctrl+,`**) is a two-pane dialog, IntelliJ-style: a category list on the left (General, Appearance, Editor, Templates, Pomodoro, Shortcuts), `Up`/`Down` to move between categories, and that category's controls on the right. Settings are stored as `tachylite.toml` in the platform's config directory (the same base path as the global plugins, custom-themes, custom-styles, and custom-project-templates folders — see [Plugins](#plugins), [Custom themes](#custom-themes), [Typesetting styles](#typesetting-styles), and [Project Templates](#project-templates)).
 
-- **Reopen project on launch** — automatically reopens the last project you had open (off by default)
-- **Ensure Research and Trash folders exist in every project** — off by default; see [Projects](#projects)
-- **Appearance** (Dark/Light/System) and **Color Theme** — see [Themes](#themes-and-appearance)
-- **Editor and Preview font** (and size) — see [Editor and Preview Font](#editor-and-preview-font)
-- **Date format for `${{date}}`** — see [Template Variables](#template-variables)
-- **Pomodoro durations** (work/short break/long break minutes, and sessions before a long break) — see [Pomodoro Timer](#pomodoro-timer)
-- **Keyboard shortcuts** — remap or unbind any action, including a fullscreen toggle
+- **General**: **Reopen project on launch** (off by default), and **Ensure Research and Trash folders exist in every project** (off by default; see [Projects](#projects))
+- **Appearance**: Dark/Light/System and Color Theme — see [Themes](#themes-and-appearance)
+- **Editor**: font + size (see [Editor and Preview Font](#editor-and-preview-font)) and **Typewriter quotes in Preview and export** (off by default; see [Typewriter Quotes](#typewriter-quotes))
+- **Templates**: date format for `${{date}}` — see [Template Variables](#template-variables)
+- **Pomodoro**: durations (work/short break/long break minutes, and sessions before a long break) — see [Pomodoro Timer](#pomodoro-timer)
+- **Shortcuts**: remap or unbind any action, including a fullscreen toggle
 
 If the settings file is missing or its contents can't be parsed, tachylite falls back to defaults rather than failing to start.
 
@@ -545,6 +594,6 @@ If the settings file is missing or its contents can't be parsed, tachylite falls
 
 Menu items present but not yet functional: `File > Close Project`.
 
-Not yet implemented: an Excalidraw-style canvas, multi-tab editing, and template folders/subfolders beyond a flat list (only documents directly inside the Templates folder are offered — not ones nested in a subfolder of it). [Export](#export)'s own gaps are listed at the end of that section.
+Not yet implemented: an Excalidraw-style canvas, multi-tab editing, and template/dropdown-source folders/subfolders beyond a flat list (only documents directly inside the Templates folder, or a [Dropdown Source](#dropdown-source-folders) folder, are offered — not ones nested in a subfolder of it). A hand-dropped or hand-edited [custom project template](#project-templates) only appears in the New Project picker after restarting the app — unlike custom themes/styles/plugins, there's no manual reload button for it yet. [Export](#export)'s own gaps are listed at the end of that section.
 
 In the Markdown preview specifically: raw HTML is dropped rather than rendered; table column alignment (`:---:`) is parsed but not yet reflected visually; GFM task lists and footnotes aren't enabled; mixing container types (e.g. a list inside a blockquote) doesn't preserve proper nesting; and `![[Note]]` only actually embeds when `Note` has an image extension — embedding another note's rendered content (transclusion) falls back to behaving like a plain `[[Note]]` link.
