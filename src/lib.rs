@@ -18,4 +18,4 @@ pub mod shortcuts;
 pub mod templates;
 pub mod ui;
 
-pub use app::TachyliteApp;
+pub use app::SmaragdApp;

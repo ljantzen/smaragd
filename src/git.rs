@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn git_is_available_in_the_test_environment() {
-        // Not a statement about every machine tachylite might run on — just a sanity
+        // Not a statement about every machine smaragd might run on — just a sanity
         // check that the environment these tests run in actually has git, since
         // every other test below depends on that.
         assert!(is_available());
@@ -137,7 +137,7 @@ mod tests {
             .unwrap();
         Command::new("git")
             .current_dir(root)
-            .args(["config", "--local", "user.name", "Tachylite Tests"])
+            .args(["config", "--local", "user.name", "Smaragd Tests"])
             .output()
             .unwrap();
     }

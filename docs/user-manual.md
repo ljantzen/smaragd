@@ -1,6 +1,6 @@
-# Tachylite User Manual
+# Smaragd User Manual
 
-Tachylite is a desktop writing tool for long-form fiction and other manuscripts organized as a folder of Markdown files. It borrows ideas from Scrivener (binder, folder roles, templates), Longform/Obsidian (frontmatter metadata, wikilinks), Lisa Cron's *Story Genius* (structured story cards), and Helix (color themes, `:` command prompt).
+Smaragd is a desktop writing tool for long-form fiction and other manuscripts organized as a folder of Markdown files. It borrows ideas from Scrivener (binder, folder roles, templates), Longform/Obsidian (frontmatter metadata, wikilinks), Lisa Cron's *Story Genius* (structured story cards), and Helix (color themes, `:` command prompt).
 
 This manual covers what the app does and how to use it. For internals (source layout, build/test commands), see the main [README](../README.md).
 
@@ -33,11 +33,11 @@ This manual covers what the app does and how to use it. For internals (source la
 
 ## Projects
 
-A **project** is just a folder on disk containing `.md` files and subfolders, marked with a `.tachylite/project.json` file. There's no proprietary bundle format — you can open the folder in any other editor, sync it with any tool, and everything still works.
+A **project** is just a folder on disk containing `.md` files and subfolders, marked with a `.smaragd/project.json` file. There's no proprietary bundle format — you can open the folder in any other editor, sync it with any tool, and everything still works.
 
 - **`File > New Project`** opens a [template picker](#project-templates), then a native folder picker and name prompt; it creates the folder, marks it as a project, and scaffolds in whatever the chosen template provides.
-- **`File > Open Project`** opens a native folder picker. If you point it at a folder tachylite hasn't used before, it offers to adopt the folder in place (writing the `.tachylite` marker) rather than refusing.
-- `.tachylite/project.json` stores things the filesystem can't express on its own — manuscript ordering, folder roles, whether plugins/git are enabled for this project. If that file's *contents* ever get corrupted, tachylite falls back to defaults rather than erroring; only a missing marker means "this isn't a project yet."
+- **`File > Open Project`** opens a native folder picker. If you point it at a folder smaragd hasn't used before, it offers to adopt the folder in place (writing the `.smaragd` marker) rather than refusing.
+- `.smaragd/project.json` stores things the filesystem can't express on its own — manuscript ordering, folder roles, whether plugins/git are enabled for this project. If that file's *contents* ever get corrupted, smaragd falls back to defaults rather than erroring; only a missing marker means "this isn't a project yet."
 
 `File > Settings` has a **"Reopen project on launch"** option, and a separate **"Ensure Research and Trash folders exist in every project"** option (off by default) that creates those two role folders automatically whenever you open a project, recreating them at their original path if they were deleted since.
 
@@ -50,17 +50,17 @@ A **project** is just a folder on disk containing `.md` files and subfolders, ma
 | **Blank** (default) | Nothing — an empty project, exactly like `File > New Project` behaved before templates existed |
 | **Novel** | A `Manuscript` folder with two starter chapters, a `Characters` folder with a Protagonist document (Desire/Misbelief/Arc headings), plus Research and Trash folders (roles already assigned) |
 | **Nonfiction** | A `Manuscript` folder with an Introduction and a "Part One" subfolder containing a first chapter, plus Research and Trash |
-| **Screenplay** | A `Screenplay` folder with Act One/Two/Three starter documents, plus Research and Trash. Tachylite's editor is plain Markdown, not Fountain — this reproduces a screenplay draft's *look* with headings, not a real screenplay-format pipeline |
+| **Screenplay** | A `Screenplay` folder with Act One/Two/Three starter documents, plus Research and Trash. Smaragd's editor is plain Markdown, not Fountain — this reproduces a screenplay draft's *look* with headings, not a real screenplay-format pipeline |
 
 **`File > Save Project as Template…`** turns your *current* project's own folder/document structure into a reusable custom template, prompting for a name. It excludes:
 - Whatever's currently inside the project's Trash folder (if one's configured)
 - Narrative state that belongs to one specific project, not a reusable shape: story cards, the protagonist Desire/Misbelief pair, and book/export/git metadata
 
-Custom templates are stored in `tachylite/project_templates/` in the platform config directory (the same base path as custom themes/styles/plugins — see [Plugins](#plugins)):
+Custom templates are stored in `smaragd/project_templates/` in the platform config directory (the same base path as custom themes/styles/plugins — see [Plugins](#plugins)):
 
-- Linux: `~/.config/tachylite/project_templates`
-- macOS: `~/Library/Application Support/tachylite/project_templates`
-- Windows: `%APPDATA%\tachylite\config\project_templates`
+- Linux: `~/.config/smaragd/project_templates`
+- macOS: `~/Library/Application Support/smaragd/project_templates`
+- Windows: `%APPDATA%\smaragd\config\project_templates`
 
 Each is a subfolder containing a `template.toml` (label, description) and a `content/` folder mirroring the structure to stamp out. Unlike custom themes/styles, there's no "Reload Custom Templates" button — a hand-dropped or hand-edited template only shows up in the picker after restarting the app (saving one via **Save Project as Template…** refreshes the list immediately, since the app already knows it just wrote it).
 
@@ -167,7 +167,7 @@ tags: [action, chapter-3]
 ---
 ```
 
-Open **`Edit > Document Metadata`** (or **`Ctrl+Shift+M`**) to edit these fields through a dockable form (see [Dockable Tool Windows](#dockable-tool-windows)) instead of hand-editing YAML. Unlike a typical dialog, there's no Save/Cancel step — edits apply as you type, the same way typing in the main editor does. Tachylite only ever reads/writes these five keys:
+Open **`Edit > Document Metadata`** (or **`Ctrl+Shift+M`**) to edit these fields through a dockable form (see [Dockable Tool Windows](#dockable-tool-windows)) instead of hand-editing YAML. Unlike a typical dialog, there's no Save/Cancel step — edits apply as you type, the same way typing in the main editor does. Smaragd only ever reads/writes these five keys:
 
 | Field | Meaning |
 |---|---|
@@ -177,7 +177,7 @@ Open **`Edit > Document Metadata`** (or **`Ctrl+Shift+M`**) to edit these fields
 | `word_count_target` | A target word count for this document. |
 | `tags` | A list of free-form tags — see [Tags](#tags) for combining these with inline `#tag` mentions and searching by tag. |
 
-Any other YAML key you've hand-added to the block (or that some other tool wrote) is left alone — Tachylite never round-trips the whole block through its own data model, so unrelated keys survive a save untouched. The frontmatter block is stripped from the Markdown preview so it doesn't render as a garbled paragraph.
+Any other YAML key you've hand-added to the block (or that some other tool wrote) is left alone — Smaragd never round-trips the whole block through its own data model, so unrelated keys survive a save untouched. The frontmatter block is stripped from the Markdown preview so it doesn't render as a garbled paragraph.
 
 The Metadata panel also shows a **Word count** — a live, read-only count of the open document's body (frontmatter excluded), recomputed continuously from whatever's currently in the editor, not just what was last saved.
 
@@ -194,7 +194,7 @@ A few things worth knowing:
 
 ## Tags
 
-Beyond the `tags:` list in [Document Metadata](#document-metadata-frontmatter), you can tag a document by writing `#tag` directly in its body — e.g. "Alice discovers the #mystery behind her mother's disappearance." A tag needs at least one letter (so `#42`, a footnote- or issue-style reference, is never mistaken for one), can include digits/`_`/`-`/`/` after the first letter, and ends at the first character outside that set — `/` lets you nest tags, e.g. `#projects/tachylite`.
+Beyond the `tags:` list in [Document Metadata](#document-metadata-frontmatter), you can tag a document by writing `#tag` directly in its body — e.g. "Alice discovers the #mystery behind her mother's disappearance." A tag needs at least one letter (so `#42`, a footnote- or issue-style reference, is never mistaken for one), can include digits/`_`/`-`/`/` after the first letter, and ends at the first character outside that set — `/` lets you nest tags, e.g. `#projects/smaragd`.
 
 **`View > Tags`** (or **`Ctrl+Shift+T`**) opens a dockable tool window (see [Dockable Tool Windows](#dockable-tool-windows)) showing the *combined* tags — frontmatter `tags:` plus every inline `#tag` mention — of whichever document is currently open. Each tag is listed with every other document in the project that also carries it; click a document's title to jump to it. A tag with no other matching document yet is still shown, so you can confirm what's actually on the open document. A **Refresh** button re-scans on demand, the same as [Backlinks](#backlinks)' own.
 
@@ -260,18 +260,18 @@ All three formats read from the *same* style, so switching styles changes DOCX, 
 
 ### Typesetting styles
 
-Two built-in styles ship with tachylite:
+Two built-in styles ship with smaragd:
 
 | id | Label | What it looks like |
 |---|---|---|
 | `manuscript` | Manuscript | Plain submission format: US Letter, 1in margins, double-spaced, ragged-right (not justified), no running header or drop cap |
 | `trade_paperback` | Trade Paperback | 6×9in trim, justified body text, a running header (author's name / current chapter), and a drop cap on each chapter's first paragraph |
 
-Like [color themes](#custom-themes) and plugins, custom styles are `.toml` files you author or drop into `tachylite/styles/` inside tachylite's config directory (no in-app style editor):
+Like [color themes](#custom-themes) and plugins, custom styles are `.toml` files you author or drop into `smaragd/styles/` inside smaragd's config directory (no in-app style editor):
 
-- Linux: `~/.config/tachylite/styles`
-- macOS: `~/Library/Application Support/tachylite/styles`
-- Windows: `%APPDATA%\tachylite\config\styles`
+- Linux: `~/.config/smaragd/styles`
+- macOS: `~/Library/Application Support/smaragd/styles`
+- Windows: `%APPDATA%\smaragd\config\styles`
 
 A minimal custom style:
 
@@ -317,15 +317,15 @@ right = "{chapter}"
 
 `{title}`/`{author}` are substituted with whatever's typed into the export dialog; `{chapter}` (supported as a whole side's content, not mixed with other text) shows the current chapter on the print PDF specifically — DOCX and EPUB don't have a per-page "current chapter" concept, so a `{chapter}` token is just left blank there.
 
-**"Libertinus Serif" and "DejaVu Sans Mono"** (the built-in styles' fonts) aren't arbitrary choices — they're guaranteed available to the PDF renderer specifically, bundled with tachylite itself rather than depending on what's installed on your system. A custom style naming some other font still works for DOCX/EPUB (which just reference a font by name, the same way any other document does — Word/an e-reader substitutes if it's not installed), and for PDF too if that font happens to be installed locally; if not, the PDF falls back to *some* available font rather than failing the export.
+**"Libertinus Serif" and "DejaVu Sans Mono"** (the built-in styles' fonts) aren't arbitrary choices — they're guaranteed available to the PDF renderer specifically, bundled with smaragd itself rather than depending on what's installed on your system. A custom style naming some other font still works for DOCX/EPUB (which just reference a font by name, the same way any other document does — Word/an e-reader substitutes if it's not installed), and for PDF too if that font happens to be installed locally; if not, the PDF falls back to *some* available font rather than failing the export.
 
 Use **Reload Custom Styles** in the export dialog to pick up a new or edited `.toml` file without restarting. A style file that fails to parse, or whose `id` collides with an already-loaded style (built-in or another custom one — whichever loaded first wins), is skipped with an error message rather than stopping other styles from loading.
 
 ### The print PDF specifically
 
-Unlike DOCX/EPUB (which place text on the page or in an XHTML flow), the PDF target is real typesetting: tachylite embeds the [Typst](https://typst.app) compiler directly (no separate install, no network access) and generates a Typst document from your manuscript and the chosen style, then lets Typst do the actual page layout — the same category of tool as LaTeX or InDesign, not a "print to PDF" of a web page.
+Unlike DOCX/EPUB (which place text on the page or in an XHTML flow), the PDF target is real typesetting: smaragd embeds the [Typst](https://typst.app) compiler directly (no separate install, no network access) and generates a Typst document from your manuscript and the chosen style, then lets Typst do the actual page layout — the same category of tool as LaTeX or InDesign, not a "print to PDF" of a web page.
 
-That gets you, for free or close to it: automatic widow/orphan avoidance (Typst's default), a running header that tracks which chapter you're actually on per page, and a drop cap rendered as an oversized inline initial letter (a *raised* cap — it doesn't wrap subsequent lines around it the way a true sunk drop cap does; that needs either a Typst package fetched over the network, which tachylite deliberately avoids, or more elaborate manual layout math than a v1 warrants).
+That gets you, for free or close to it: automatic widow/orphan avoidance (Typst's default), a running header that tracks which chapter you're actually on per page, and a drop cap rendered as an oversized inline initial letter (a *raised* cap — it doesn't wrap subsequent lines around it the way a true sunk drop cap does; that needs either a Typst package fetched over the network, which smaragd deliberately avoids, or more elaborate manual layout math than a v1 warrants).
 
 After a successful PDF export, the status bar reports an estimated spine width for the resulting page count — useful for sizing a paperback cover, but a rough estimate based on a standard white-paper thickness constant, not a print-broker-grade figure. Confirm against your printer's own spine-width calculator (e.g. KDP's) before sending a cover to print.
 
@@ -396,7 +396,7 @@ Any `:` command a loaded plugin has registered also works here (see below) — p
 **`Tools > Pomodoro Timer`** (or the remappable shortcut, `Ctrl+Alt+T` by default) opens a Pomodoro dock tab — the classic interval-timer technique for focused writing sessions, alternating fixed blocks of work and rest.
 
 - **Start** / **Pause** / **Skip** / **Reset** control the current phase. Skip jumps to the next phase immediately, whatever's left on the clock; Reset returns to a fresh Work phase (it keeps your completed-session count for the day, it just stops the clock and rewinds the current phase).
-- When a phase's time runs out, tachylite automatically switches to the next one — Work leads to a Short Break, except every *n*th Work session (configurable, default every 4th) leads to a Long Break instead — **and pauses**, rather than continuing to run unattended. Starting the next phase is always a deliberate action, not something that happens silently while you're away from the keyboard.
+- When a phase's time runs out, smaragd automatically switches to the next one — Work leads to a Short Break, except every *n*th Work session (configurable, default every 4th) leads to a Long Break instead — **and pauses**, rather than continuing to run unattended. Starting the next phase is always a deliberate action, not something that happens silently while you're away from the keyboard.
 - There's no sound or OS notification when a phase ends — purely visual for now.
 
 The timer keeps running whether or not its dock tab is open or visible (it's part of the app's state, not something tied to a window being shown), and a compact countdown — `⏱ Work 12:34` — shows in the status bar at the bottom of the window any time a session has been started, so it's visible at a glance without needing to switch tabs. It doesn't appear during [Focus Mode](#focus-mode), which hides the whole status bar; the dock tab itself is unaffected and still works there.
@@ -405,18 +405,18 @@ Durations default to the traditional 25 minutes of work, a 5-minute short break,
 
 ## Plugins
 
-Tachylite can be extended with small scripts written in [Rhai](https://rhai.rs), an embedded scripting language. A plugin script can:
+Smaragd can be extended with small scripts written in [Rhai](https://rhai.rs), an embedded scripting language. A plugin script can:
 
 1. Register a custom `:` command
 2. Define an `on_save(text)` hook that transforms a document's text right before an explicit save
 
 ### Where plugins live
 
-- **Global**, always loaded: `plugins/` inside tachylite's config directory
-  - Linux: `~/.config/tachylite/plugins`
-  - macOS: `~/Library/Application Support/tachylite/plugins`
-  - Windows: `%APPDATA%\tachylite\config\plugins`
-- **Per-project**: `.tachylite/plugins/` inside the project folder. This only loads once you explicitly turn it on for that project via **`Tools > Enable Project Plugins`** — a project folder shared or pulled from somewhere else could otherwise run unreviewed code the moment you open it.
+- **Global**, always loaded: `plugins/` inside smaragd's config directory
+  - Linux: `~/.config/smaragd/plugins`
+  - macOS: `~/Library/Application Support/smaragd/plugins`
+  - Windows: `%APPDATA%\smaragd\config\plugins`
+- **Per-project**: `.smaragd/plugins/` inside the project folder. This only loads once you explicitly turn it on for that project via **`Tools > Enable Project Plugins`** — a project folder shared or pulled from somewhere else could otherwise run unreviewed code the moment you open it.
 
 Use **`Tools > Reload Plugins`** to pick up new or edited scripts without restarting the app. A script that fails to compile or run, or that tries to register a `:` command another plugin already owns, is skipped with an error message — it never stops other plugins from loading.
 
@@ -426,12 +426,12 @@ A loaded plugin can shell out to any program on your system, with the same acces
 
 ### Host functions available to a script
 
-- `tachylite_status(msg)` — show `msg` in the status bar
-- `tachylite_document_text()` — returns the open document's current text
-- `tachylite_document_basename()` — returns the open document's file name (without its `.md` extension), or an empty string if nothing's open
-- `tachylite_document_filename()` — returns the open document's path relative to the project root, `.md` extension included (e.g. `Part 1/Scene 5.md`), or an empty string if nothing's open
-- `tachylite_set_document_text(text)` — replaces the open document's text
-- `tachylite_run_command(cmd, args)` — runs `cmd` (an array of string `args`) as a subprocess, waits for it to finish, and returns a map with `stdout`, `stderr`, `exit_code`, and `success`. Runs in the open project's root, and blocks the app's UI until the process exits — avoid anything long-running.
+- `smaragd_status(msg)` — show `msg` in the status bar
+- `smaragd_document_text()` — returns the open document's current text
+- `smaragd_document_basename()` — returns the open document's file name (without its `.md` extension), or an empty string if nothing's open
+- `smaragd_document_filename()` — returns the open document's path relative to the project root, `.md` extension included (e.g. `Part 1/Scene 5.md`), or an empty string if nothing's open
+- `smaragd_set_document_text(text)` — replaces the open document's text
+- `smaragd_run_command(cmd, args)` — runs `cmd` (an array of string `args`) as a subprocess, waits for it to finish, and returns a map with `stdout`, `stderr`, `exit_code`, and `success`. Runs in the open project's root, and blocks the app's UI until the process exits — avoid anything long-running.
 - `register_command(name, fn_name)` — called once at script load time to expose a `:` command
 - `register_shortcut(name, key_spec)` — called at script load time to give a registered `:` command a default keyboard shortcut, e.g. `register_shortcut("hello", "ctrl+shift+h")`. `key_spec` is `+`-separated modifiers (`ctrl`/`cmd`/`command`, `shift`, `alt`/`option` — case-insensitive) followed by a key name (`k`, `F2`, `Enter`, `Colon`, ...). A bare key with no modifier is rejected unless it's a function key or Escape, same rule as built-in shortcuts.
 
@@ -439,7 +439,7 @@ A loaded plugin can shell out to any program on your system, with the same acces
 
 ```rhai
 fn say_hello(arg) {
-    tachylite_status("Hello, " + arg + "!");
+    smaragd_status("Hello, " + arg + "!");
 }
 register_command("hello", "say_hello");
 register_shortcut("hello", "ctrl+shift+h");
@@ -453,8 +453,8 @@ Whatever shortcut a script asks for is just a *default*: **`File > Settings`** l
 
 ```rhai
 fn wordcount(arg) {
-    let result = tachylite_run_command("wc", ["-w"]);
-    tachylite_status("Words: " + result.stdout);
+    let result = smaragd_run_command("wc", ["-w"]);
+    smaragd_status("Words: " + result.stdout);
 }
 register_command("wordcount", "wordcount");
 ```
@@ -510,11 +510,11 @@ Since the editor is a single plain-text field with no syntax-highlighting pipeli
 
 ### Custom themes
 
-You can add your own themes as `.toml` files — no in-app editor, the same "drop a file in a folder" model as [Plugins](#plugins). Custom themes live in `tachylite/themes/` inside tachylite's config directory (the same base path as the global plugins folder):
+You can add your own themes as `.toml` files — no in-app editor, the same "drop a file in a folder" model as [Plugins](#plugins). Custom themes live in `smaragd/themes/` inside smaragd's config directory (the same base path as the global plugins folder):
 
-- Linux: `~/.config/tachylite/themes`
-- macOS: `~/Library/Application Support/tachylite/themes`
-- Windows: `%APPDATA%\tachylite\config\themes`
+- Linux: `~/.config/smaragd/themes`
+- macOS: `~/Library/Application Support/smaragd/themes`
+- Windows: `%APPDATA%\smaragd\config\themes`
 
 A minimal custom theme:
 
@@ -540,7 +540,7 @@ quote_bar = "#6c7086"
 
 `heading` needs all six colors (one per heading level, `h1`–`h6`); `wikilink` and `quote_bar` are independent of each other and of `heading` — include only the ones you want to override.
 
-Use **`View > Theme > Reload Custom Themes`** to pick up a new or edited file without restarting the app. A theme file that fails to parse, has an invalid color, or whose `id` collides with an already-loaded theme (built-in or another custom one — whichever loaded first wins) is skipped with an error message rather than stopping other themes from loading. If the theme you currently have active stops resolving after a reload (for instance, you just introduced a mistake into the file you're editing), tachylite falls back to the default appearance rather than leaving a stale palette applied with nothing in the menu showing as selected.
+Use **`View > Theme > Reload Custom Themes`** to pick up a new or edited file without restarting the app. A theme file that fails to parse, has an invalid color, or whose `id` collides with an already-loaded theme (built-in or another custom one — whichever loaded first wins) is skipped with an error message rather than stopping other themes from loading. If the theme you currently have active stops resolving after a reload (for instance, you just introduced a mistake into the file you're editing), smaragd falls back to the default appearance rather than leaving a stale palette applied with nothing in the menu showing as selected.
 
 ### Editor and Preview Font
 
@@ -593,7 +593,7 @@ Two shortcuts can never overlap — rebinding one to a combo another action alre
 
 ## Notifications
 
-Tachylite tells you about things two different ways, depending on how much attention they need:
+Smaragd tells you about things two different ways, depending on how much attention they need:
 
 - **Toasts** — a stack of boxes in the top-right corner of the window, each with its own **×** to dismiss early, that fade away on their own after a few seconds otherwise. Used for anything that represents an actual problem: a failed save, export, or git operation; invalid frontmatter YAML (see [Document Metadata](#document-metadata-frontmatter)); a plugin error; and so on. Several can stack up at once if more than one thing goes wrong in quick succession.
 - **The status bar**, at the bottom of the window — a single line for routine confirmations that don't need to grab your attention: "Committed", "Exported to ...", "Replaced 3 occurrence(s)", and the like. It now clears itself automatically after a few seconds, rather than sitting there until the next unrelated status update happens to overwrite it.
@@ -602,7 +602,7 @@ Both durations are configurable — see **Notifications** under [Settings](#sett
 
 ## Settings
 
-**`File > Settings`** (or **`Ctrl+,`**) is a two-pane dialog, IntelliJ-style: a category list on the left (General, Appearance, Editor, Templates, Pomodoro, Shortcuts), `Up`/`Down` to move between categories, and that category's controls on the right. Settings are stored as `tachylite.toml` in the platform's config directory (the same base path as the global plugins, custom-themes, custom-styles, and custom-project-templates folders — see [Plugins](#plugins), [Custom themes](#custom-themes), [Typesetting styles](#typesetting-styles), and [Project Templates](#project-templates)).
+**`File > Settings`** (or **`Ctrl+,`**) is a two-pane dialog, IntelliJ-style: a category list on the left (General, Appearance, Editor, Templates, Pomodoro, Shortcuts), `Up`/`Down` to move between categories, and that category's controls on the right. Settings are stored as `smaragd.toml` in the platform's config directory (the same base path as the global plugins, custom-themes, custom-styles, and custom-project-templates folders — see [Plugins](#plugins), [Custom themes](#custom-themes), [Typesetting styles](#typesetting-styles), and [Project Templates](#project-templates)).
 
 - **General**: **Reopen project on launch** (off by default), **Ensure Research and Trash folders exist in every project** (off by default; see [Projects](#projects)), and a **Notifications** section with **Error toast duration** and **Status bar message duration** (1–60 seconds each, defaulting to 6 and 8 respectively — see [Notifications](#notifications) above)
 - **Appearance**: Dark/Light/System and Color Theme — see [Themes](#themes-and-appearance)
@@ -611,7 +611,7 @@ Both durations are configurable — see **Notifications** under [Settings](#sett
 - **Pomodoro**: durations (work/short break/long break minutes, and sessions before a long break) — see [Pomodoro Timer](#pomodoro-timer)
 - **Shortcuts**: remap or unbind any action, including a fullscreen toggle
 
-If the settings file is missing or its contents can't be parsed, tachylite falls back to defaults rather than failing to start.
+If the settings file is missing or its contents can't be parsed, smaragd falls back to defaults rather than failing to start.
 
 ## Current Limitations
 
@@ -619,6 +619,6 @@ Menu items present but not yet functional: `File > Close Project`.
 
 Not yet implemented: an Excalidraw-style canvas, multi-tab editing, and template/dropdown-source folders/subfolders beyond a flat list (only documents directly inside the Templates folder, or a [Dropdown Source](#dropdown-source-folders) folder, are offered — not ones nested in a subfolder of it). A hand-dropped or hand-edited [custom project template](#project-templates) only appears in the New Project picker after restarting the app — unlike custom themes/styles/plugins, there's no manual reload button for it yet. [Export](#export)'s own gaps are listed at the end of that section.
 
-[Tags](#tags): an inline `#tag` mention isn't rendered specially (as a clickable, styled element) in [Markdown Preview](#markdown-preview), the way `[[wikilinks]]` are, and typing `#` in the editor gets no autocomplete against tags already used elsewhere, unlike `[[`. The frontmatter `tags:` field in [Document Metadata](#document-metadata-frontmatter) is still a plain comma-separated text box, not a chip-style or autocompleting editor. There's no "rename this tag everywhere in the project" action — renaming means editing each document's frontmatter and/or inline `#tag` mentions by hand. Nested tags (`#projects/tachylite`) aren't grouped hierarchically in the Tags window; every tag is a flat, independent entry.
+[Tags](#tags): an inline `#tag` mention isn't rendered specially (as a clickable, styled element) in [Markdown Preview](#markdown-preview), the way `[[wikilinks]]` are, and typing `#` in the editor gets no autocomplete against tags already used elsewhere, unlike `[[`. The frontmatter `tags:` field in [Document Metadata](#document-metadata-frontmatter) is still a plain comma-separated text box, not a chip-style or autocompleting editor. There's no "rename this tag everywhere in the project" action — renaming means editing each document's frontmatter and/or inline `#tag` mentions by hand. Nested tags (`#projects/smaragd`) aren't grouped hierarchically in the Tags window; every tag is a flat, independent entry.
 
 In the Markdown preview specifically: raw HTML is dropped rather than rendered; table column alignment (`:---:`) is parsed but not yet reflected visually; GFM task lists and footnotes aren't enabled; mixing container types (e.g. a list inside a blockquote) doesn't preserve proper nesting; and `![[Note]]` only actually embeds when `Note` has an image extension — embedding another note's rendered content (transclusion) falls back to behaving like a plain `[[Note]]` link.

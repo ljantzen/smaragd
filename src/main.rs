@@ -1,8 +1,8 @@
 fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions::default();
     eframe::run_native(
-        "Tachylite",
+        "Smaragd",
         native_options,
-        Box::new(|cc| Ok(Box::new(tachylite::TachyliteApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(smaragd::SmaragdApp::new(cc)))),
     )
 }

@@ -12,7 +12,7 @@ enum EntryKind {
 }
 
 /// Scan `root` into a `BinderTree`. Only directories and `.md` files are included.
-/// Hidden entries (dotfiles, including our own `.tachylite/` metadata dir) and anything
+/// Hidden entries (dotfiles, including our own `.smaragd/` metadata dir) and anything
 /// matched by a `.gitignore`/`.ignore` file are skipped.
 ///
 /// `require_git(false)` is set deliberately: the `ignore` crate only honors `.gitignore`
@@ -204,8 +204,8 @@ mod tests {
     #[test]
     fn hidden_metadata_directory_is_excluded() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join(".tachylite")).unwrap();
-        fs::write(dir.path().join(".tachylite/project.json"), "{}").unwrap();
+        fs::create_dir_all(dir.path().join(".smaragd")).unwrap();
+        fs::write(dir.path().join(".smaragd/project.json"), "{}").unwrap();
         fs::write(dir.path().join("chapter.md"), "").unwrap();
 
         let tree = scan_project(dir.path());

@@ -1,4 +1,4 @@
-//! A vim/Helix-style `:` command prompt. Tachylite's editor has no modal
+//! A vim/Helix-style `:` command prompt. Smaragd's editor has no modal
 //! normal/insert distinction — a literal `:` keypress just types a colon — so the
 //! prompt is opened by a dedicated keyboard shortcut instead, but behaves like the
 //! command line once open: type a command name (optionally with an argument), Enter

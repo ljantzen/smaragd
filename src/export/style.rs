@@ -169,11 +169,11 @@ pub fn built_in_styles() -> Vec<TypesetStyle> {
     vec![manuscript(), trade_paperback()]
 }
 
-/// The always-loaded custom-style directory: `<config_dir>/tachylite/styles`,
+/// The always-loaded custom-style directory: `<config_dir>/smaragd/styles`,
 /// the same base path `color_theme::global_themes_dir`/
 /// `plugins::global_plugins_dir` use for their own subdirectories.
 pub fn global_styles_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "tachylite").map(|dirs| dirs.config_dir().join("styles"))
+    directories::ProjectDirs::from("", "", "smaragd").map(|dirs| dirs.config_dir().join("styles"))
 }
 
 #[derive(Deserialize)]

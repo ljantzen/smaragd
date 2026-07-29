@@ -502,7 +502,7 @@ fn resolve_image_uri(src: &str, base_dir: ImageContext<'_>) -> String {
         }
     };
     if !is_within_project(&resolved, base_dir.project_root) {
-        return "tachylite-blocked:outside-project".to_string();
+        return "smaragd-blocked:outside-project".to_string();
     }
     format!("file://{}", resolved.display())
 }
@@ -680,7 +680,7 @@ mod tests {
             },
         );
 
-        assert_eq!(uri, "tachylite-blocked:outside-project");
+        assert_eq!(uri, "smaragd-blocked:outside-project");
     }
 
     #[test]
@@ -698,7 +698,7 @@ mod tests {
             },
         );
 
-        assert_eq!(uri, "tachylite-blocked:outside-project");
+        assert_eq!(uri, "smaragd-blocked:outside-project");
     }
 
     #[cfg(unix)]
@@ -718,7 +718,7 @@ mod tests {
             },
         );
 
-        assert_eq!(uri, "tachylite-blocked:outside-project");
+        assert_eq!(uri, "smaragd-blocked:outside-project");
     }
 
     #[test]

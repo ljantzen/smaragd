@@ -3,7 +3,7 @@
 //! reasoning as color themes. Deliberately a small, bundled set rather than a
 //! live system-font picker: no filesystem/OS font-search dependency, and the
 //! exact same choice on every platform. `LibertinusSerif`/`DejaVuSansMono` reuse
-//! the exact same font files already embedded in tachylite for print-PDF export
+//! the exact same font files already embedded in smaragd for print-PDF export
 //! (see `export::style`) — see `assets/fonts/NOTICE` for their licenses.
 
 use std::sync::Arc;
@@ -83,7 +83,7 @@ const LIBERTINUS_SERIF: &[u8] = include_bytes!("../assets/fonts/LibertinusSerif-
 const DEJAVU_SANS_MONO: &[u8] = include_bytes!("../assets/fonts/DejaVuSansMono.ttf");
 
 /// Registers the two bundled custom font families with `ctx`'s font system —
-/// call once at startup (`TachyliteApp::new`), before anything renders.
+/// call once at startup (`SmaragdApp::new`), before anything renders.
 pub fn install(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(

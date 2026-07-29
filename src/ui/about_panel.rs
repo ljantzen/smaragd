@@ -10,7 +10,7 @@ pub fn show(ctx: &egui::Context) -> bool {
     let mut close = false;
     egui::Modal::new(egui::Id::new("about_modal")).show(ctx, |ui| {
         ui.set_min_width(280.0);
-        ui.heading("Tachylite");
+        ui.heading("Smaragd");
         ui.add_space(8.0);
 
         egui::Grid::new("about_grid").num_columns(2).show(ui, |ui| {
@@ -19,14 +19,11 @@ pub fn show(ctx: &egui::Context) -> bool {
             ui.end_row();
 
             ui.label("Commit:");
-            ui.label(concat!(
-                env!("TACHYLITE_GIT_HASH"),
-                env!("TACHYLITE_GIT_DIRTY")
-            ));
+            ui.label(concat!(env!("SMARAGD_GIT_HASH"), env!("SMARAGD_GIT_DIRTY")));
             ui.end_row();
 
             ui.label("Built:");
-            ui.label(env!("TACHYLITE_BUILD_DATE"));
+            ui.label(env!("SMARAGD_BUILD_DATE"));
             ui.end_row();
         });
 

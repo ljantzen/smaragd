@@ -749,7 +749,7 @@ fn char_index_to_byte(s: &str, total_chars: usize, char_index: usize) -> usize {
 
 /// A `#tag` marker's allowed characters after the leading `#`: ASCII letters,
 /// digits, `_`, `-`, and `/` (the last for Obsidian-style nested tags like
-/// `#projects/tachylite`).
+/// `#projects/smaragd`).
 fn is_tag_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '/')
 }
@@ -1307,8 +1307,8 @@ mod tests {
 
     #[test]
     fn inline_tag_spans_supports_nested_slash_tags() {
-        let spans = inline_tag_spans("#projects/tachylite");
-        assert_eq!(spans[0].1, "projects/tachylite");
+        let spans = inline_tag_spans("#projects/smaragd");
+        assert_eq!(spans[0].1, "projects/smaragd");
     }
 
     #[test]

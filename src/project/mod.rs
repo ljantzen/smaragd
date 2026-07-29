@@ -13,7 +13,7 @@ use uuid::Uuid;
 use model::{BinderNode, BinderNodeKind, BinderTree};
 use scan::scan_project;
 
-const METADATA_DIR: &str = ".tachylite";
+const METADATA_DIR: &str = ".smaragd";
 const METADATA_FILE: &str = "project.json";
 
 /// Failure to load a project from a folder.
@@ -21,8 +21,8 @@ const METADATA_FILE: &str = "project.json";
 pub enum LoadError {
     /// `root` doesn't exist or isn't a directory.
     NotADirectory(PathBuf),
-    /// `root` is a plain folder tachylite has never opened before — no
-    /// `.tachylite/project.json` marker is present. Distinguished from other IO
+    /// `root` is a plain folder smaragd has never opened before — no
+    /// `.smaragd/project.json` marker is present. Distinguished from other IO
     /// failures so callers can offer to adopt/initialize the folder instead of just
     /// reporting failure.
     NotInitialized(PathBuf),
@@ -37,7 +37,7 @@ impl fmt::Display for LoadError {
             LoadError::NotInitialized(path) => {
                 write!(
                     f,
-                    "{} has not been set up as a tachylite project",
+                    "{} has not been set up as a smaragd project",
                     path.display()
                 )
             }
@@ -181,7 +181,7 @@ pub struct ProjectMeta {
     /// block a later manual "Enable Git Support" from the Versions menu.
     #[serde(default)]
     pub git_prompted: bool,
-    /// Whether this project's own `.tachylite/plugins/*.rhai` scripts are loaded,
+    /// Whether this project's own `.smaragd/plugins/*.rhai` scripts are loaded,
     /// in addition to the always-loaded global plugin directory. Off by default and
     /// requires an explicit action to turn on (see `Project::set_plugins_enabled`)
     /// — unlike a global plugin (which the user deliberately placed themselves), a
@@ -320,8 +320,8 @@ pub struct Project {
 }
 
 impl Project {
-    /// Load a project from `root`. `root` must already be a tachylite project (i.e.
-    /// have a `.tachylite/project.json` marker) — use [`Project::initialize`] to
+    /// Load a project from `root`. `root` must already be a smaragd project (i.e.
+    /// have a `.smaragd/project.json` marker) — use [`Project::initialize`] to
     /// create one first. A *corrupt* (as opposed to absent) marker file is still not
     /// an error, falling back to default metadata.
     pub fn load_from_folder(root: &Path) -> Result<Project, LoadError> {
@@ -343,8 +343,8 @@ impl Project {
         })
     }
 
-    /// Ensure `root` exists and is marked as a tachylite project — creating it and/or
-    /// writing a fresh `.tachylite/project.json` with default metadata if one isn't
+    /// Ensure `root` exists and is marked as a smaragd project — creating it and/or
+    /// writing a fresh `.smaragd/project.json` with default metadata if one isn't
     /// already there — then load it. Never overwrites existing metadata, so calling
     /// this on an already-initialized project is a no-op beyond a normal
     /// `load_from_folder`. Backs both "New Project" (a path that doesn't exist yet)
@@ -605,7 +605,7 @@ impl Project {
         self.save_metadata()
     }
 
-    /// Turn this project's own `.tachylite/plugins/*.rhai` on or off (the global
+    /// Turn this project's own `.smaragd/plugins/*.rhai` on or off (the global
     /// plugin directory always loads regardless — see `plugins_enabled`'s doc
     /// comment). No "prompted" flag to go with it, unlike git support: there's no
     /// auto-detection to avoid re-asking about, just an explicit menu action.
@@ -1371,7 +1371,7 @@ fn relative_key(root: &Path, path: &Path) -> String {
 
 /// Reorder each folder's children to match any recorded order for that folder,
 /// appending children with no recorded position (e.g. newly discovered files never
-/// created through tachylite) at the end in their existing (alphabetical) order.
+/// created through smaragd) at the end in their existing (alphabetical) order.
 fn apply_order(node: &mut BinderNode, root: &Path, order: &HashMap<String, Vec<String>>) {
     if let BinderNodeKind::Folder { children } = &mut node.kind {
         if let Some(order_list) = order.get(&relative_key(root, &node.path)) {

@@ -1,5 +1,5 @@
 Fonts bundled in this directory are the same ones already embedded in
-tachylite via typst-kit's `embedded-fonts` feature (used for print-PDF
+smaragd via typst-kit's `embedded-fonts` feature (used for print-PDF
 export — see `export::style`), copied here as standalone files so they can
 also be registered directly with egui for on-screen use in the Editor and
 Preview (see `src/editor_font.rs`). No additional license terms apply

@@ -10,7 +10,7 @@
 //! layered as an `egui::Visuals` override on top of whichever base (`Dark`/`Light`)
 //! the theme itself calls for.
 //!
-//! Tachylite's editor is a single plain-text `TextEdit` with no tokenizing/syntax
+//! Smaragd's editor is a single plain-text `TextEdit` with no tokenizing/syntax
 //! highlighting pipeline (unlike Helix itself), so these themes reproduce each
 //! palette's overall look — background, body text, and one signature accent color
 //! used for selection/links — not full per-token syntax highlighting. A theme can
@@ -200,11 +200,11 @@ pub fn built_in_themes() -> Vec<ColorTheme> {
         .collect()
 }
 
-/// The always-loaded custom-theme directory: `<config_dir>/tachylite/themes`, the
+/// The always-loaded custom-theme directory: `<config_dir>/smaragd/themes`, the
 /// same base path `plugins::global_plugins_dir` uses for its own `plugins`
 /// subdirectory. `None` if the platform's config directory can't be determined.
 pub fn global_themes_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "tachylite").map(|dirs| dirs.config_dir().join("themes"))
+    directories::ProjectDirs::from("", "", "smaragd").map(|dirs| dirs.config_dir().join("themes"))
 }
 
 /// Parse a `"#RRGGBB"` (or `"RRGGBB"`, the `#` is optional) hex color.

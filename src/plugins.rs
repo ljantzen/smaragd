@@ -9,12 +9,12 @@
 //! replaces the saved text, returning anything else (typically unit `()`) leaves
 //! it unchanged.
 //!
-//! Scripts talk to the app through flat, `tachylite_`-prefixed host functions
+//! Scripts talk to the app through flat, `smaragd_`-prefixed host functions
 //! (deliberately not Rhai's module-namespacing system, which would add API
-//! surface with no benefit here): `tachylite_status(msg)`,
-//! `tachylite_document_text()`, `tachylite_document_basename()`,
-//! `tachylite_document_filename()`, `tachylite_set_document_text(text)`, and
-//! `tachylite_run_command(cmd, args)`, which shells out to an arbitrary program
+//! surface with no benefit here): `smaragd_status(msg)`,
+//! `smaragd_document_text()`, `smaragd_document_basename()`,
+//! `smaragd_document_filename()`, `smaragd_set_document_text(text)`, and
+//! `smaragd_run_command(cmd, args)`, which shells out to an arbitrary program
 //! on `PATH`. That last one means a loaded plugin has the same reach as anything
 //! else run under the user's own account — the trust boundary is loading the
 //! plugin at all (see [`load`]'s docs on the global vs. project directories), not
@@ -38,12 +38,11 @@ use rhai::{AST, Array, Dynamic, Engine, EvalAltResult, Map, Scope};
 
 use crate::shortcuts::is_safe_binding;
 
-/// The global, always-loaded plugin directory: `<config_dir>/tachylite/plugins`,
-/// the same base path `settings::config_file_path` uses for `tachylite.toml`.
+/// The global, always-loaded plugin directory: `<config_dir>/smaragd/plugins`,
+/// the same base path `settings::config_file_path` uses for `smaragd.toml`.
 /// `None` if the platform's config directory can't be determined.
 pub fn global_plugins_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "tachylite")
-        .map(|dirs| dirs.config_dir().join("plugins"))
+    directories::ProjectDirs::from("", "", "smaragd").map(|dirs| dirs.config_dir().join("plugins"))
 }
 
 /// The live values a running plugin function reads/writes, shared with the
@@ -55,14 +54,14 @@ pub fn global_plugins_dir() -> Option<PathBuf> {
 struct PluginIo {
     document_text: Option<String>,
     /// The open document's file name, stripped of its `.md` extension (`None` if
-    /// none is open) — backs `tachylite_document_basename()`. Deliberately just
+    /// none is open) — backs `smaragd_document_basename()`. Deliberately just
     /// the name, not a full path: a plugin has no way to interpret an absolute
     /// path meaningfully anyway (it can't do path arithmetic — Rhai has no path
     /// library registered), and the name is what a user-facing use like a log
     /// entry actually wants.
     document_basename: Option<String>,
     /// The open document's path relative to the project root, `.md` extension
-    /// included (`None` if none is open) — backs `tachylite_document_filename()`.
+    /// included (`None` if none is open) — backs `smaragd_document_filename()`.
     /// Relative to the *project*, not the filesystem root, for the same reason
     /// `document_basename` isn't a full absolute path: it's the only form of
     /// "full name" a plugin could meaningfully do anything with (log it, compare
@@ -101,7 +100,7 @@ pub struct PluginEngine {
 }
 
 impl Default for PluginEngine {
-    /// An engine with no plugins loaded — `TachyliteApp::new` needs an initial
+    /// An engine with no plugins loaded — `SmaragdApp::new` needs an initial
     /// value to construct itself with before it knows which directories to load
     /// from; `reload_plugins` replaces this immediately after.
     fn default() -> Self {
@@ -135,10 +134,10 @@ impl PluginEngine {
 
     /// Run the plugin command registered as `name` with argument `arg`, giving it
     /// `document_text` (the open document's live buffer, if any) to read via
-    /// `tachylite_document_text()`, `document_basename` (that document's file
-    /// name minus its `.md` extension) via `tachylite_document_basename()`, and
+    /// `smaragd_document_text()`, `document_basename` (that document's file
+    /// name minus its `.md` extension) via `smaragd_document_basename()`, and
     /// `document_filename` (its path relative to the project root, `.md`
-    /// included) via `tachylite_document_filename()`. Returns the effects the
+    /// included) via `smaragd_document_filename()`. Returns the effects the
     /// call produced (status message / a new document text) plus `Err` if the
     /// call itself failed — callers should show that as a status message and
     /// otherwise ignore it: a broken plugin command must never corrupt app
@@ -230,12 +229,12 @@ fn new_engine(
     let mut engine = Engine::new();
 
     let io_for_status = Rc::clone(io);
-    engine.register_fn("tachylite_status", move |msg: &str| {
+    engine.register_fn("smaragd_status", move |msg: &str| {
         io_for_status.borrow_mut().status_message = Some(msg.to_string());
     });
 
     let io_for_read = Rc::clone(io);
-    engine.register_fn("tachylite_document_text", move || -> String {
+    engine.register_fn("smaragd_document_text", move || -> String {
         io_for_read
             .borrow()
             .document_text
@@ -244,7 +243,7 @@ fn new_engine(
     });
 
     let io_for_basename = Rc::clone(io);
-    engine.register_fn("tachylite_document_basename", move || -> String {
+    engine.register_fn("smaragd_document_basename", move || -> String {
         io_for_basename
             .borrow()
             .document_basename
@@ -253,7 +252,7 @@ fn new_engine(
     });
 
     let io_for_filename = Rc::clone(io);
-    engine.register_fn("tachylite_document_filename", move || -> String {
+    engine.register_fn("smaragd_document_filename", move || -> String {
         io_for_filename
             .borrow()
             .document_filename
@@ -262,7 +261,7 @@ fn new_engine(
     });
 
     let io_for_write = Rc::clone(io);
-    engine.register_fn("tachylite_set_document_text", move |text: &str| {
+    engine.register_fn("smaragd_set_document_text", move |text: &str| {
         io_for_write.borrow_mut().set_document_text = Some(text.to_string());
     });
 
@@ -281,7 +280,7 @@ fn new_engine(
     });
 
     engine.register_fn(
-        "tachylite_run_command",
+        "smaragd_run_command",
         move |cmd: &str, args: Array| -> Result<Map, Box<EvalAltResult>> {
             run_command(cmd, args, working_dir.as_deref())
         },
@@ -290,7 +289,7 @@ fn new_engine(
     engine
 }
 
-/// Backs the `tachylite_run_command(cmd, args)` host function: runs `cmd` with
+/// Backs the `smaragd_run_command(cmd, args)` host function: runs `cmd` with
 /// `args` (each coerced to a string; a non-string element is a script bug, so that
 /// errors out like any other type mismatch) in `working_dir` (the open project's
 /// root, if any — `None` inherits the app's own working directory), waiting for it
@@ -385,7 +384,7 @@ fn parse_shortcut_spec(spec: &str) -> Result<KeyboardShortcut, String> {
 /// message describing why appended to the returned list, rather than the whole
 /// load failing.
 ///
-/// `working_dir` is where `tachylite_run_command` runs a plugin's shell commands
+/// `working_dir` is where `smaragd_run_command` runs a plugin's shell commands
 /// (the open project's root, or `None` to inherit the app's own working
 /// directory) — it doesn't affect where `.rhai` files themselves are read from,
 /// that's `dirs`.
@@ -531,7 +530,7 @@ mod tests {
             "greet",
             r#"
                 fn say_hello(arg) {
-                    tachylite_status("Hello, " + arg + "!");
+                    smaragd_status("Hello, " + arg + "!");
                 }
                 register_command("hello", "say_hello");
             "#,
@@ -554,7 +553,7 @@ mod tests {
             "shout",
             r#"
                 fn shout(arg) {
-                    tachylite_set_document_text(tachylite_document_text().to_upper());
+                    smaragd_set_document_text(smaragd_document_text().to_upper());
                 }
                 register_command("shout", "shout");
             "#,
@@ -574,7 +573,7 @@ mod tests {
             "whoami",
             r#"
                 fn whoami(arg) {
-                    tachylite_status(tachylite_document_basename() + "|" + tachylite_document_filename());
+                    smaragd_status(smaragd_document_basename() + "|" + smaragd_document_filename());
                 }
                 register_command("whoami", "whoami");
             "#,
@@ -603,7 +602,7 @@ mod tests {
             "whoami",
             r#"
                 fn whoami(arg) {
-                    tachylite_status(tachylite_document_basename() + "|" + tachylite_document_filename());
+                    smaragd_status(smaragd_document_basename() + "|" + smaragd_document_filename());
                 }
                 register_command("whoami", "whoami");
             "#,
@@ -629,7 +628,7 @@ mod tests {
             dir.path(),
             "a_first",
             r#"
-                fn one(arg) { tachylite_status("first"); }
+                fn one(arg) { smaragd_status("first"); }
                 register_command("dup", "one");
             "#,
         );
@@ -637,7 +636,7 @@ mod tests {
             dir.path(),
             "b_second",
             r#"
-                fn two(arg) { tachylite_status("second"); }
+                fn two(arg) { smaragd_status("second"); }
                 register_command("dup", "two");
             "#,
         );
@@ -658,7 +657,7 @@ mod tests {
             dir.path(),
             "fine",
             r#"
-                fn ok_fn(arg) { tachylite_status("ok"); }
+                fn ok_fn(arg) { smaragd_status("ok"); }
                 register_command("ok", "ok_fn");
             "#,
         );
@@ -697,7 +696,7 @@ mod tests {
             "noop",
             r#"
                 fn on_save(text) {
-                    tachylite_status("saved");
+                    smaragd_status("saved");
                 }
             "#,
         );
@@ -750,8 +749,8 @@ mod tests {
             "shell",
             r#"
                 fn run(arg) {
-                    let result = tachylite_run_command("printf", ["hello %s", arg]);
-                    tachylite_status(result.stdout);
+                    let result = smaragd_run_command("printf", ["hello %s", arg]);
+                    smaragd_status(result.stdout);
                 }
                 register_command("shell", "run");
             "#,
@@ -773,8 +772,8 @@ mod tests {
             "shell",
             r#"
                 fn run(arg) {
-                    let result = tachylite_run_command("false", []);
-                    tachylite_status(`exit=${result.exit_code} success=${result.success}`);
+                    let result = smaragd_run_command("false", []);
+                    smaragd_status(`exit=${result.exit_code} success=${result.success}`);
                 }
                 register_command("shell", "run");
             "#,
@@ -797,7 +796,7 @@ mod tests {
             "shell",
             r#"
                 fn run(arg) {
-                    tachylite_run_command("definitely-not-a-real-binary", []);
+                    smaragd_run_command("definitely-not-a-real-binary", []);
                 }
                 register_command("shell", "run");
             "#,
@@ -816,10 +815,10 @@ mod tests {
             "shell",
             r#"
                 fn run(arg) {
-                    let result = tachylite_run_command("pwd", []);
+                    let result = smaragd_run_command("pwd", []);
                     let out = result.stdout;
                     out.trim();
-                    tachylite_status(out);
+                    smaragd_status(out);
                 }
                 register_command("shell", "run");
             "#,
@@ -865,7 +864,7 @@ mod tests {
             dir.path(),
             "wordcount",
             r#"
-                fn run(arg) { tachylite_status("ran"); }
+                fn run(arg) { smaragd_status("ran"); }
                 register_command("wordcount", "run");
                 register_shortcut("wordcount", "ctrl+shift+w");
             "#,
@@ -907,7 +906,7 @@ mod tests {
             dir.path(),
             "unsafe_shortcut",
             r#"
-                fn run(arg) { tachylite_status("ran"); }
+                fn run(arg) { smaragd_status("ran"); }
                 register_command("run_it", "run");
                 register_shortcut("run_it", "k");
             "#,

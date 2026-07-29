@@ -20,20 +20,20 @@ fn run(cmd: &str, args: &[&str]) -> Option<String> {
 fn main() {
     let git_hash =
         run("git", &["rev-parse", "--short=8", "HEAD"]).unwrap_or_else(|| "unknown".to_string());
-    println!("cargo:rustc-env=TACHYLITE_GIT_HASH={git_hash}");
+    println!("cargo:rustc-env=SMARAGD_GIT_HASH={git_hash}");
 
     let dirty = run("git", &["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
     println!(
-        "cargo:rustc-env=TACHYLITE_GIT_DIRTY={}",
+        "cargo:rustc-env=SMARAGD_GIT_DIRTY={}",
         if dirty { "-dirty" } else { "" }
     );
 
     let build_date =
         run("date", &["-u", "+%Y-%m-%d %H:%M UTC"]).unwrap_or_else(|| "unknown".to_string());
-    println!("cargo:rustc-env=TACHYLITE_BUILD_DATE={build_date}");
+    println!("cargo:rustc-env=SMARAGD_BUILD_DATE={build_date}");
 
     // Re-run this script (and thus refresh the above) whenever HEAD moves or the
-    // index changes, rather than only when tachylite's own source changes.
+    // index changes, rather than only when smaragd's own source changes.
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/index");
 }

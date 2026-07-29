@@ -48,7 +48,7 @@ enum PopupAction {
 /// host it this frame — lets `app.rs` move its cursor (e.g. jumping to a
 /// find-and-replace result) without needing a `Ui` of its own to derive an id from.
 pub fn editor_text_edit_id() -> Id {
-    Id::new("tachylite_editor_text_edit")
+    Id::new("smaragd_editor_text_edit")
 }
 
 /// Renders the document editor, including an Obsidian-style `[[wikilink]]`

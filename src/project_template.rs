@@ -1,7 +1,7 @@
 //! Scrivener-style project templates: built-in Blank/Novel/Nonfiction/Screenplay
 //! scaffolds, plus user-saved custom templates loaded from a `template.toml` +
 //! `content/` directory pair in [`global_project_templates_dir`] (see [`load`]).
-//! Applied to a freshly-`Project::initialize`d project by `TachyliteApp::
+//! Applied to a freshly-`Project::initialize`d project by `SmaragdApp::
 //! create_project`, before `set_project`/`ensure_starter_folders` run — see
 //! [`ProjectTemplate::apply`].
 //!
@@ -145,7 +145,7 @@ fn screenplay_template() -> ProjectTemplate {
         id: "screenplay".to_string(),
         label: "Screenplay".to_string(),
         description: "Act folders for a screenplay draft, plus Research and Trash.".to_string(),
-        // Tachylite's editor is plain markdown with no Fountain-format support, so
+        // Smaragd's editor is plain markdown with no Fountain-format support, so
         // this starter content reproduces a screenplay draft's *look* in plain
         // markdown headings, not a real Fountain pipeline — the same "look, not
         // the pipeline" caveat `color_theme.rs` documents for its own markdown-
@@ -181,11 +181,11 @@ pub fn built_in_templates() -> Vec<ProjectTemplate> {
     ]
 }
 
-/// The always-loaded custom-template directory: `<config_dir>/tachylite/
+/// The always-loaded custom-template directory: `<config_dir>/smaragd/
 /// project_templates`, the same base path `color_theme::global_themes_dir` uses
 /// for its own `themes` subdirectory.
 pub fn global_project_templates_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "tachylite")
+    directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.config_dir().join("project_templates"))
 }
 
@@ -305,7 +305,7 @@ fn load_content_tree(dir: &Path) -> io::Result<Vec<TemplateEntry>> {
 impl ProjectTemplate {
     /// Stamp this template's folders/documents onto `project` — expected to be a
     /// just-`Project::initialize`d, still-empty project (called from
-    /// `TachyliteApp::create_project`, before `set_project`/`ensure_starter_folders`
+    /// `SmaragdApp::create_project`, before `set_project`/`ensure_starter_folders`
     /// run), so every `create_folder`/`create_document_with_content` call below is
     /// collision-free and every `folder_roles` relative-path key resolves against
     /// a folder this same call just created.

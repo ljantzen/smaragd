@@ -76,7 +76,7 @@ struct PendingPrompt {
 
 /// An error-severity notification, shown as a floating, auto-dismissing box
 /// stacked in the corner of the window rather than as status-bar text — see
-/// `TachyliteApp::push_error_toast`/`show_toasts`.
+/// `SmaragdApp::push_error_toast`/`show_toasts`.
 struct Toast {
     message: String,
     shown_at: std::time::Instant,
@@ -227,7 +227,7 @@ fn capture_floating_window_positions<Tab>(
     }
 }
 
-pub struct TachyliteApp {
+pub struct SmaragdApp {
     project: Option<Project>,
     editor: EditorState,
     selected_path: Option<PathBuf>,
@@ -319,7 +319,7 @@ pub struct TachyliteApp {
         std::sync::mpsc::Receiver<Result<(), crate::git::GitError>>,
     )>,
     /// Loaded `.rhai` plugins — the global directory always, plus the open
-    /// project's own `.tachylite/plugins` if it has opted in (see
+    /// project's own `.smaragd/plugins` if it has opted in (see
     /// `ProjectMeta::plugins_enabled`). Rebuilt by `reload_plugins`.
     plugin_engine: crate::plugins::PluginEngine,
     /// The currently-active shortcut for each plugin command that has one —
@@ -376,7 +376,7 @@ impl GitOperation {
     }
 }
 
-impl TachyliteApp {
+impl SmaragdApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         crate::editor_font::install(&cc.egui_ctx);
@@ -467,13 +467,13 @@ impl TachyliteApp {
     }
 
     /// The plugin directories that currently apply: the global directory always,
-    /// plus the open project's own `.tachylite/plugins` if it has opted in.
+    /// plus the open project's own `.smaragd/plugins` if it has opted in.
     fn plugin_dirs(&self) -> Vec<PathBuf> {
         let mut dirs: Vec<PathBuf> = crate::plugins::global_plugins_dir().into_iter().collect();
         if let Some(project) = &self.project
             && project.meta.plugins_enabled
         {
-            dirs.push(project.root.join(".tachylite").join("plugins"));
+            dirs.push(project.root.join(".smaragd").join("plugins"));
         }
         dirs
     }
@@ -586,7 +586,7 @@ impl TachyliteApp {
     }
 
     /// Open `path` as a project. Used for the automatic "reopen last project" path at
-    /// startup, where a missing `.tachylite` marker must just be reported (not
+    /// startup, where a missing `.smaragd` marker must just be reported (not
     /// interactively resolved) — the user didn't just explicitly ask to open this
     /// folder, so an unprompted modal dialog on launch would be wrong.
     fn open_project(&mut self, path: &Path) {
@@ -646,7 +646,7 @@ impl TachyliteApp {
 
         let already_repo = crate::git::is_repo(&project.root);
         let description = if already_repo {
-            "This project is already a git repository. Enable Tachylite's git integration (commit/push/pull from the Versions menu)?"
+            "This project is already a git repository. Enable Smaragd's git integration (commit/push/pull from the Versions menu)?"
         } else {
             "Git was detected on your system. Initialize a git repository for this project and enable version control from the Versions menu?"
         };
@@ -732,7 +732,7 @@ impl TachyliteApp {
                 } else {
                     "Commit"
                 },
-                "Tachylite backup",
+                "Smaragd backup",
             ),
         });
     }
@@ -945,8 +945,8 @@ impl TachyliteApp {
     }
 
     /// Open `path` as a project in response to an explicit user action (the "Open
-    /// Project" menu item). If `path` has never been opened by tachylite before (no
-    /// `.tachylite/project.json`), offers via a native Yes/No dialog to set it up in
+    /// Project" menu item). If `path` has never been opened by smaragd before (no
+    /// `.smaragd/project.json`), offers via a native Yes/No dialog to set it up in
     /// place, matching `delete_node`'s confirmation pattern.
     fn open_project_or_offer_to_adopt(&mut self, path: &Path) {
         match Project::load_from_folder(path) {
@@ -955,7 +955,7 @@ impl TachyliteApp {
                 let adopt = rfd::MessageDialog::new()
                     .set_title("Set Up Project")
                     .set_description(format!(
-                        "\"{}\" hasn't been opened in tachylite before. Set it up as a tachylite project here?",
+                        "\"{}\" hasn't been opened in smaragd before. Set it up as a smaragd project here?",
                         path.display()
                     ))
                     .set_level(rfd::MessageLevel::Info)
@@ -2070,11 +2070,11 @@ impl TachyliteApp {
     }
 
     /// Run a plugin-registered `:` command, giving it the open document's live
-    /// buffer to read via `tachylite_document_text()`, its file name (minus
-    /// `.md`) via `tachylite_document_basename()`, and its path relative to the
-    /// project root (`.md` included) via `tachylite_document_filename()`, and
+    /// buffer to read via `smaragd_document_text()`, its file name (minus
+    /// `.md`) via `smaragd_document_basename()`, and its path relative to the
+    /// project root (`.md` included) via `smaragd_document_filename()`, and
     /// applying whatever effects it produced (a status message, and/or a new
-    /// buffer if it called `tachylite_set_document_text`) back onto real app
+    /// buffer if it called `smaragd_set_document_text`) back onto real app
     /// state. Never saves — like any other edit, the user's own save action does
     /// that.
     fn run_plugin_command(&mut self, name: &str, arg: &str) {
@@ -2485,7 +2485,7 @@ impl TachyliteApp {
 
 /// Requests raised by `AppTabViewer::ui` for the caller to apply once the dock has
 /// finished rendering for the frame — `egui_dock::TabViewer::ui` only gets `&mut
-/// self` on the *viewer*, not on `TachyliteApp`, so it can't call `&mut self`
+/// self` on the *viewer*, not on `SmaragdApp`, so it can't call `&mut self`
 /// methods like `open_document` directly; it collects what it wants done instead.
 enum DockAction {
     OpenDocument(PathBuf),
@@ -2524,7 +2524,7 @@ struct AppTabViewer<'a> {
     pomodoro: &'a crate::pomodoro::PomodoroState,
     pomodoro_durations: crate::pomodoro::PomodoroDurations,
     actions: Vec<DockAction>,
-    /// See `TachyliteApp::focus_binder_requested`.
+    /// See `SmaragdApp::focus_binder_requested`.
     focus_binder_requested: bool,
 }
 
@@ -2705,7 +2705,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
     }
 }
 
-impl eframe::App for TachyliteApp {
+impl eframe::App for SmaragdApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_git_operation();
         self.tick_pomodoro(ui.ctx());

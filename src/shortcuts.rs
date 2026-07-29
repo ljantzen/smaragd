@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// An app operation that can be triggered by a keyboard shortcut. Split into
 /// operations with a well-defined global scope, and ones that act on whatever
-/// document is currently selected in the binder (`TachyliteApp::selected_path`).
+/// document is currently selected in the binder (`SmaragdApp::selected_path`).
 /// Folder-only operations (Folder Role, Empty Trash) aren't included: the app has no
 /// concept of a "selected folder" today (only right-click targets one directly), and
 /// inventing one just for two rare shortcuts is out of scope here.
@@ -42,7 +42,7 @@ pub enum ShortcutAction {
     /// Follow the `[[wikilink]]` the cursor is on in the editor — unlike every other
     /// action, this one's consumption happens inside `editor_panel::show` itself
     /// (it needs that frame's `TextEdit` cursor position, not available yet at the
-    /// point `TachyliteApp::ui` runs its generic shortcut-consumption pass), so it's
+    /// point `SmaragdApp::ui` runs its generic shortcut-consumption pass), so it's
     /// filtered out of that pass rather than dispatched through
     /// `dispatch_shortcut_action` — see both call sites.
     ActivateWikilink,

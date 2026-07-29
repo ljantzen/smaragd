@@ -1,7 +1,7 @@
 //! Persistent app-wide preferences (as opposed to `project::ProjectMeta`, which is
-//! per-project). Stored as `tachylite.toml` in the platform's standard config
-//! directory — `~/.config/tachylite` on Linux, `~/Library/Application Support/tachylite`
-//! on macOS, `%APPDATA%\tachylite\config` on Windows — via the `directories` crate.
+//! per-project). Stored as `smaragd.toml` in the platform's standard config
+//! directory — `~/.config/smaragd` on Linux, `~/Library/Application Support/smaragd`
+//! on macOS, `%APPDATA%\smaragd\config` on Windows — via the `directories` crate.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -103,34 +103,34 @@ pub struct Settings {
     pub status_message_duration_secs: u32,
 }
 
-/// The full path to the settings file, e.g. `~/.config/tachylite/tachylite.toml` on
+/// The full path to the settings file, e.g. `~/.config/smaragd/smaragd.toml` on
 /// Linux. `None` if the platform's config directory can't be determined.
 pub fn config_file_path() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "tachylite")
-        .map(|dirs| dirs.config_dir().join("tachylite.toml"))
+    directories::ProjectDirs::from("", "", "smaragd")
+        .map(|dirs| dirs.config_dir().join("smaragd.toml"))
 }
 
 /// The full path to the persisted dock layout (which tabs are open, and how
-/// they're split/floated), e.g. `~/.config/tachylite/dock_layout.json` on Linux.
+/// they're split/floated), e.g. `~/.config/smaragd/dock_layout.json` on Linux.
 /// Kept in its own file rather than as a field on `Settings`: `egui_dock::DockState`
 /// is a recursive tree of nodes, which doesn't round-trip through TOML (its
 /// derived `Serialize` impl emits constructs — like a sequence of tables mixed with
 /// non-table values — that TOML's format can't represent), but does through JSON.
 /// `None` if the platform's config directory can't be determined.
 pub fn dock_layout_file_path() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "tachylite")
+    directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.config_dir().join("dock_layout.json"))
 }
 
 /// The full path to the user's named, saved dock layouts (Window > Save Current
-/// Layout…/Layouts), e.g. `~/.config/tachylite/saved_layouts.json` on Linux. Kept
+/// Layout…/Layouts), e.g. `~/.config/smaragd/saved_layouts.json` on Linux. Kept
 /// separate from `dock_layout_file_path` — that one tracks only the single
 /// currently-active layout, persisted on shutdown; this one is a named map,
 /// persisted immediately whenever the user explicitly saves one. Same JSON (not
 /// TOML) reasoning as `dock_layout_file_path`. `None` if the platform's config
 /// directory can't be determined.
 pub fn saved_layouts_file_path() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "tachylite")
+    directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.config_dir().join("saved_layouts.json"))
 }
 
@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn settings_file_without_a_theme_preference_loads_the_system_default() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("tachylite.toml");
+        let path = dir.path().join("smaragd.toml");
         std::fs::write(&path, "reopen_last_project = true\n").unwrap();
 
         let loaded = Settings::load_from_path(&path);
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn settings_file_without_a_color_theme_loads_none() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("tachylite.toml");
+        let path = dir.path().join("smaragd.toml");
         std::fs::write(&path, "reopen_last_project = true\n").unwrap();
 
         let loaded = Settings::load_from_path(&path);
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn settings_round_trip_through_disk() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("tachylite.toml");
+        let path = dir.path().join("smaragd.toml");
         let mut shortcuts = ShortcutMap::default();
         shortcuts.set(
             crate::shortcuts::ShortcutAction::Save,
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn settings_file_without_a_shortcuts_table_loads_default_shortcuts() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("tachylite.toml");
+        let path = dir.path().join("smaragd.toml");
         std::fs::write(&path, "reopen_last_project = true\n").unwrap();
 
         let loaded = Settings::load_from_path(&path);
@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn corrupt_settings_file_falls_back_to_default_instead_of_panicking() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("tachylite.toml");
+        let path = dir.path().join("smaragd.toml");
         std::fs::write(&path, "not valid { toml").unwrap();
 
         assert_eq!(Settings::load_from_path(&path), Settings::default());
@@ -331,7 +331,7 @@ mod tests {
             .path()
             .join("nested")
             .join("config")
-            .join("tachylite.toml");
+            .join("smaragd.toml");
 
         Settings::default().save_to_path(&path).unwrap();
 
