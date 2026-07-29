@@ -6,6 +6,10 @@ A project is a folder of `.md` files and subfolders marked with a `.smaragd/proj
 
 See [`docs/user-manual.md`](docs/user-manual.md) for a full user-facing guide to every feature below.
 
+## Installing
+
+Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https://github.com/ljantzen/smaragd/releases/latest). They aren't signed with a paid code-signing certificate, so Windows and macOS show a first-run warning — expected, not a broken download. See [Installation](docs/user-manual.md#installation) in the user manual for how to get past it on each OS.
+
 ## Features
 
 - Binder tree view of a project folder (gitignore-aware, via the `ignore` crate); documents are shown without their `.md` extension. Drag-and-drop a file or folder onto another folder to move it into that folder (appended at the end); drag one onto another *document* row instead to reorder it to sit immediately before that document, within the same folder or a different one. Keyboard-navigable: click a row (or Tab to it) then Up/Down moves between rows, Left/Right collapses/expands a folder, and Enter opens the focused document. The remappable "Toggle Binder/Editor Focus" shortcut (`F6`) jumps keyboard focus between the binder and the editor and back
