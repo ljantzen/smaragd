@@ -194,6 +194,21 @@ pub fn show(
                             changed = true;
                         }
                     });
+                    ui.add_space(12.0);
+                    ui.heading("Typography");
+                    ui.add_space(12.0);
+                    changed |= ui
+                        .checkbox(
+                            &mut settings.typewriter_quotes,
+                            "Typewriter quotes in Preview and export",
+                        )
+                        .on_hover_text(
+                            "Render \" ' -- ... as curly quotes, an em dash, and an \
+                             ellipsis. Only affects how markdown is rendered here and \
+                             in exported files — the source .md text you type is never \
+                             changed.",
+                        )
+                        .changed();
                 }
                 SettingsCategory::Templates => {
                     ui.heading("Templates");

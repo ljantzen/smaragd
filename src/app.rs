@@ -1317,7 +1317,7 @@ impl TachyliteApp {
         let Some(folder) = project.tree.find_by_path(source) else {
             return;
         };
-        let docs = crate::export::gather(project, folder);
+        let docs = crate::export::gather(project, folder, self.settings.typewriter_quotes);
         match crate::export::docx::export_docx(&docs, meta, style, &project.root, out_path) {
             Ok(()) => {
                 self.status_message = Some(format!("Exported to {}", out_path.display()));
@@ -1341,7 +1341,7 @@ impl TachyliteApp {
         let Some(folder) = project.tree.find_by_path(source) else {
             return;
         };
-        let docs = crate::export::gather(project, folder);
+        let docs = crate::export::gather(project, folder, self.settings.typewriter_quotes);
         match crate::export::epub::export_epub(&docs, meta, style, &project.root, out_path) {
             Ok(()) => {
                 self.status_message = Some(format!("Exported to {}", out_path.display()));
@@ -1365,7 +1365,7 @@ impl TachyliteApp {
         let Some(folder) = project.tree.find_by_path(source) else {
             return;
         };
-        let docs = crate::export::gather(project, folder);
+        let docs = crate::export::gather(project, folder, self.settings.typewriter_quotes);
         match crate::export::pdf::export_pdf(&docs, meta, style, &project.root, out_path) {
             Ok(spine_width_in) => {
                 self.status_message = Some(format!(
@@ -2370,6 +2370,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         active_theme,
                         self.settings.editor_font,
                         crate::editor_font::resolve_size(self.settings.editor_font_size),
+                        self.settings.typewriter_quotes,
                     ) {
                         self.actions.push(DockAction::Wikilink(activation));
                     }

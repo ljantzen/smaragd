@@ -747,6 +747,106 @@ fn char_index_to_byte(s: &str, total_chars: usize, char_index: usize) -> usize {
         .map_or(s.len(), |(byte, _)| byte)
 }
 
+/// Rewrite straight typewriter punctuation (`"`, `'`, `--`, `...`) into curly
+/// quotes, an em dash, and an ellipsis, in place, across every block's spans —
+/// an optional finishing pass over the same IR both the preview and export
+/// renderers consume, so either can opt in without re-parsing. Source `.md`
+/// files are never touched; this only rewrites the parsed `Block`/`Span` tree
+/// handed to a renderer for one frame or one export run.
+///
+/// Skips `Span::code` runs (inline code and code-block content) and images —
+/// literal punctuation in those must survive unchanged — but keeps tracking
+/// quote-open/close context across them, so text resuming after an inline
+/// `` `code` `` span still sees the right preceding character.
+///
+/// `BlockKind::Table` stores its cells outside `Block::spans`, so table cells
+/// are curled independently, each starting its own quote context (a table
+/// cell is never a continuation of prose from a neighboring cell).
+pub fn apply_typewriter_quotes(blocks: &mut [Block]) {
+    for block in blocks.iter_mut() {
+        match &mut block.kind {
+            BlockKind::Table { header, rows, .. } => {
+                for cell in header.iter_mut() {
+                    curl_spans(cell);
+                }
+                for row in rows.iter_mut() {
+                    for cell in row.iter_mut() {
+                        curl_spans(cell);
+                    }
+                }
+            }
+            _ => curl_spans(&mut block.spans),
+        }
+    }
+}
+
+/// True when a `"`/`'` immediately following `prev` should open a quote rather
+/// than close one: at the very start of the tracked text, after whitespace, or
+/// after an opening bracket/dash/another opening quote.
+fn opens_quote(prev: Option<char>) -> bool {
+    match prev {
+        None => true,
+        Some(c) => c.is_whitespace() || matches!(c, '(' | '[' | '{' | '“' | '‘' | '—' | '–'),
+    }
+}
+
+/// True for an apostrophe used mid-word (`don't`, `dogs'`) — always a closing
+/// curl, never an opening quote, regardless of `opens_quote`.
+fn is_word_internal_apostrophe(prev: Option<char>) -> bool {
+    prev.is_some_and(|c| c.is_alphanumeric())
+}
+
+/// True for an elided-digits apostrophe (`'60s`, `'99`) at the start of a
+/// quote-opening context — also a closing curl, since it stands in for
+/// omitted digits rather than opening a quotation.
+fn is_elision_apostrophe(prev: Option<char>, next: Option<char>) -> bool {
+    opens_quote(prev) && next.is_some_and(|c| c.is_ascii_digit())
+}
+
+/// Curl every non-code, non-image span in `spans` in place, threading quote
+/// context (the previous character seen) across span boundaries — formatting
+/// changes (bold/italic/link) split one sentence into several spans, but the
+/// quote logic needs to see the sentence as continuous.
+fn curl_spans(spans: &mut [Span]) {
+    let mut prev_char: Option<char> = None;
+    for span in spans.iter_mut() {
+        if span.code || span.image.is_some() {
+            prev_char = span.text.chars().next_back().or(prev_char);
+            continue;
+        }
+        let replaced = span.text.replace("...", "…").replace("--", "—");
+        let chars: Vec<char> = replaced.chars().collect();
+        let mut out = String::with_capacity(replaced.len());
+        for (i, &c) in chars.iter().enumerate() {
+            let next = chars.get(i + 1).copied();
+            let curled = match c {
+                '"' => {
+                    if opens_quote(prev_char) {
+                        '“'
+                    } else {
+                        '”'
+                    }
+                }
+                '\'' => {
+                    if is_word_internal_apostrophe(prev_char)
+                        || is_elision_apostrophe(prev_char, next)
+                    {
+                        '’'
+                    } else if opens_quote(prev_char) {
+                        '‘'
+                    } else {
+                        '’'
+                    }
+                }
+                other => other,
+            };
+            out.push(curled);
+            prev_char = Some(c);
+        }
+        span.text = out;
+    }
+}
+
 fn heading_level_to_u8(level: HeadingLevel) -> u8 {
     match level {
         HeadingLevel::H1 => 1,
@@ -1460,5 +1560,82 @@ mod tests {
         assert!(!has_image_extension("video.mp4"));
         assert!(!has_image_extension("Some Note"));
         assert!(!has_image_extension("no_extension"));
+    }
+
+    fn joined_text(blocks: &[Block]) -> String {
+        blocks[0].spans.iter().map(|s| s.text.as_str()).collect()
+    }
+
+    #[test]
+    fn typewriter_quotes_curls_a_simple_line_of_dialogue() {
+        let mut blocks = parse(r#""Don't go," she said."#);
+        apply_typewriter_quotes(&mut blocks);
+        assert_eq!(joined_text(&blocks), "“Don’t go,” she said.");
+    }
+
+    #[test]
+    fn typewriter_quotes_handles_nested_single_inside_double() {
+        let mut blocks = parse(r#"She said, "He called it 'nonsense.'""#);
+        apply_typewriter_quotes(&mut blocks);
+        assert_eq!(joined_text(&blocks), "She said, “He called it ‘nonsense.’”");
+    }
+
+    #[test]
+    fn typewriter_quotes_converts_double_dash_to_em_dash() {
+        let mut blocks = parse("Wait--stop.");
+        apply_typewriter_quotes(&mut blocks);
+        assert_eq!(joined_text(&blocks), "Wait—stop.");
+    }
+
+    #[test]
+    fn typewriter_quotes_converts_triple_dot_to_ellipsis() {
+        let mut blocks = parse("I don't know...");
+        apply_typewriter_quotes(&mut blocks);
+        assert_eq!(joined_text(&blocks), "I don’t know…");
+    }
+
+    #[test]
+    fn typewriter_quotes_treats_leading_elision_apostrophe_as_a_closing_curl() {
+        let mut blocks = parse("Back in '99 it was different.");
+        apply_typewriter_quotes(&mut blocks);
+        assert_eq!(joined_text(&blocks), "Back in ’99 it was different.");
+    }
+
+    #[test]
+    fn typewriter_quotes_leaves_inline_code_untouched() {
+        let mut blocks = parse(r#"Run `git "commit"` please."#);
+        apply_typewriter_quotes(&mut blocks);
+        assert_eq!(joined_text(&blocks), r#"Run git "commit" please."#);
+    }
+
+    #[test]
+    fn typewriter_quotes_leaves_fenced_code_blocks_untouched() {
+        let mut blocks = parse("```\nlet s = \"hi\";\n```\n");
+        apply_typewriter_quotes(&mut blocks);
+        assert_eq!(blocks[0].spans[0].text, "let s = \"hi\";\n");
+    }
+
+    #[test]
+    fn typewriter_quotes_curl_a_quote_that_spans_a_bold_run() {
+        // The quote context (open vs. close) must survive a mid-sentence
+        // formatting change into a separate Span, not just a single one.
+        let mut blocks = parse(r#""very **bold** claim""#);
+        apply_typewriter_quotes(&mut blocks);
+        let joined = joined_text(&blocks);
+        assert_eq!(joined, "“very bold claim”");
+        assert!(blocks[0].spans[0].text.starts_with('“'));
+        assert!(blocks[0].spans.last().unwrap().text.ends_with('”'));
+    }
+
+    #[test]
+    fn typewriter_quotes_curls_table_cells_independently() {
+        let mut blocks = parse("| A |\n|---|\n| \"hi\" |\n");
+        apply_typewriter_quotes(&mut blocks);
+        match &blocks[0].kind {
+            BlockKind::Table { rows, .. } => {
+                assert_eq!(rows[0][0][0].text, "“hi”");
+            }
+            other => panic!("expected a table, got {other:?}"),
+        }
     }
 }

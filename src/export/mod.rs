@@ -87,22 +87,37 @@ impl From<epub_builder::Error> for ExportError {
 /// `FolderRole`'s doc comment). A document that can't be read (e.g. removed from
 /// disk since the binder was last scanned) is silently skipped, matching
 /// `Project::backlinks`'s tolerance of unreadable files.
-pub fn gather(project: &Project, folder: &BinderNode) -> Vec<ExportDoc> {
+///
+/// `typewriter_quotes` mirrors `Settings::typewriter_quotes` — when set, every
+/// gathered document's parsed blocks are run through
+/// `markdown::apply_typewriter_quotes` before export, so straight typewriter
+/// punctuation ships as curly quotes/an em dash/an ellipsis without the source
+/// `.md` files themselves ever being rewritten.
+pub fn gather(project: &Project, folder: &BinderNode, typewriter_quotes: bool) -> Vec<ExportDoc> {
     let mut docs = Vec::new();
-    gather_into(project, folder, &mut docs);
+    gather_into(project, folder, typewriter_quotes, &mut docs);
     docs
 }
 
-fn gather_into(project: &Project, node: &BinderNode, out: &mut Vec<ExportDoc>) {
+fn gather_into(
+    project: &Project,
+    node: &BinderNode,
+    typewriter_quotes: bool,
+    out: &mut Vec<ExportDoc>,
+) {
     match &node.kind {
         BinderNodeKind::Document => {
             let Ok(contents) = fs::read_to_string(&node.path) else {
                 return;
             };
             let stripped = frontmatter::strip(&contents);
+            let mut blocks = markdown::parse(stripped);
+            if typewriter_quotes {
+                markdown::apply_typewriter_quotes(&mut blocks);
+            }
             out.push(ExportDoc {
                 title: document_label(&node.name).to_string(),
-                blocks: markdown::parse(stripped),
+                blocks,
                 source_path: node.path.clone(),
             });
         }
@@ -114,7 +129,7 @@ fn gather_into(project: &Project, node: &BinderNode, out: &mut Vec<ExportDoc>) {
                 return;
             }
             for child in children {
-                gather_into(project, child, out);
+                gather_into(project, child, typewriter_quotes, out);
             }
         }
     }
@@ -161,7 +176,7 @@ mod tests {
         let project = Project::load_from_folder(root).unwrap();
 
         let folder = project.tree.find_by_path(&manuscript).unwrap();
-        let docs = gather(&project, folder);
+        let docs = gather(&project, folder, false);
         let titles: Vec<&str> = docs.iter().map(|d| d.title.as_str()).collect();
         assert_eq!(titles, vec!["Intro", "Idea"]);
     }
@@ -173,7 +188,7 @@ mod tests {
         write(root, "B.md", "b");
         write(root, "A.md", "a");
         let project = Project::initialize(root).unwrap();
-        let docs = gather(&project, &project.tree.root);
+        let docs = gather(&project, &project.tree.root, false);
         // scan order, not alphabetical re-sort — see project/scan.rs
         assert_eq!(docs.len(), 2);
     }
@@ -186,6 +201,32 @@ mod tests {
         };
         let mut project = Project::initialize(dir.path()).unwrap();
         project.tree = tree;
-        assert!(gather(&project, &project.tree.root).is_empty());
+        assert!(gather(&project, &project.tree.root, false).is_empty());
+    }
+
+    #[test]
+    fn gather_applies_typewriter_quotes_when_requested() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(root, "Scene.md", r#""Wait--stop," she said."#);
+        let project = Project::initialize(root).unwrap();
+
+        let plain = gather(&project, &project.tree.root, false);
+        let joined: String = plain[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.spans.iter())
+            .map(|s| s.text.as_str())
+            .collect();
+        assert_eq!(joined, r#""Wait--stop," she said."#);
+
+        let curled = gather(&project, &project.tree.root, true);
+        let joined: String = curled[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.spans.iter())
+            .map(|s| s.text.as_str())
+            .collect();
+        assert_eq!(joined, "“Wait—stop,” she said.");
     }
 }

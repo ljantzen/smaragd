@@ -165,6 +165,13 @@ fn emphasize(color: Color32, dark_mode: bool) -> Color32 {
 /// Returns `Some` if the user clicked a `[[wikilink]]` during this frame — the caller
 /// is responsible for finding (and, if `force_create` is set because Ctrl/Cmd was
 /// held, creating) the matching document.
+///
+/// `typewriter_quotes` mirrors `Settings::typewriter_quotes` — when set, the
+/// parsed blocks are run through `markdown::apply_typewriter_quotes` before
+/// rendering, so the preview shows the same curly quotes/em dash/ellipsis an
+/// export with the same setting would produce, without altering `markdown_text`
+/// itself.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
     markdown_text: &str,
@@ -173,12 +180,16 @@ pub fn show(
     active_theme: Option<&crate::color_theme::ColorTheme>,
     body_font: EditorFont,
     body_size: f32,
+    typewriter_quotes: bool,
 ) -> Option<WikilinkActivation> {
     let base_dir = ImageContext {
         dir: base_dir,
         project_root,
     };
-    let blocks = markdown::parse(crate::frontmatter::strip(markdown_text));
+    let mut blocks = markdown::parse(crate::frontmatter::strip(markdown_text));
+    if typewriter_quotes {
+        markdown::apply_typewriter_quotes(&mut blocks);
+    }
     let palette = Palette::new(ui.visuals(), active_theme, body_font, body_size);
     egui::ScrollArea::vertical()
         .id_salt("markdown_preview_scroll")

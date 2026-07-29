@@ -82,6 +82,14 @@ pub struct Settings {
     pub pomodoro_short_break_minutes: u32,
     pub pomodoro_long_break_minutes: u32,
     pub pomodoro_cycles_before_long_break: u32,
+    /// Rewrite straight typewriter punctuation (`"`, `'`, `--`, `...`) into curly
+    /// quotes, an em dash, and an ellipsis wherever markdown is rendered from —
+    /// the Preview pane and every export format (see
+    /// `markdown::apply_typewriter_quotes`). Off by default: source `.md` files
+    /// keep exactly the punctuation the author typed either way, since this only
+    /// transforms the parsed `Block`/`Span` tree handed to a renderer, never the
+    /// file on disk.
+    pub typewriter_quotes: bool,
 }
 
 /// The full path to the settings file, e.g. `~/.config/tachylite/tachylite.toml` on
@@ -259,6 +267,7 @@ mod tests {
             pomodoro_short_break_minutes: 10,
             pomodoro_long_break_minutes: 30,
             pomodoro_cycles_before_long_break: 3,
+            typewriter_quotes: true,
         };
 
         settings.save_to_path(&path).unwrap();
