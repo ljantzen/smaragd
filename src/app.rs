@@ -153,13 +153,40 @@ fn top_menu_button(
 /// Opening with nothing yet focused inside (however it was opened — click, Alt
 /// mnemonic, or a Left/Right switch from a sibling) lands on the first item, so
 /// Down always has a defined starting point.
+///
+/// That auto-focus only fires the first time `nav.items` is non-empty after the
+/// popup opens — tracked via a small per-popup flag in `ctx.data`, cleared
+/// whenever the popup isn't open — rather than on every later frame the
+/// dropdown merely happens to still be nominally open with nothing of its own
+/// focused. That distinction matters because no menu item anywhere in this file
+/// calls `ui.close()` after acting (clicking "Open Document…", say, doesn't
+/// close the File dropdown it lives in) — harmless before this function
+/// existed, since the dropdown just sat there open and inert, but actively
+/// disruptive once this function started auto-focusing: without this guard, a
+/// still-technically-open File menu would re-steal focus from whatever dialog
+/// "Open Document…" just opened, every single frame, before that dialog's own
+/// text field could ever process so much as an Enter press. (A simpler-looking
+/// "was the popup already open last frame" check, via `Context::read_response`,
+/// doesn't work here: egui registers that a frame *before* `nav.items` actually
+/// becomes non-empty — a popup's content only starts rendering the frame after
+/// it's marked open, its own settling delay — so that signal is one frame out
+/// of step with the one this function actually needs.)
 fn handle_dropdown_arrows(ctx: &egui::Context, nav: &MenuNav, popup_id: egui::Id, label: &str) {
-    if !egui::Popup::is_id_open(ctx, popup_id) || nav.items.is_empty() {
+    if !egui::Popup::is_id_open(ctx, popup_id) {
+        ctx.data_mut(|d| d.remove::<bool>(popup_id));
         return;
     }
+    if nav.items.is_empty() {
+        return;
+    }
+    let had_items_last_time = ctx.data(|d| d.get_temp::<bool>(popup_id)).unwrap_or(false);
+    ctx.data_mut(|d| d.insert_temp(popup_id, true));
+
     let focused = ctx.memory(|m| m.focused());
     let Some(current) = focused.and_then(|id| nav.items.iter().position(|i| *i == id)) else {
-        ctx.memory_mut(|m| m.request_focus(nav.items[0]));
+        if !had_items_last_time {
+            ctx.memory_mut(|m| m.request_focus(nav.items[0]));
+        }
         return;
     };
 
@@ -3901,6 +3928,30 @@ mod menu_nav_tests {
         items
     }
 
+    /// Like `frame`, but renders *every* top-level menu (each with the same
+    /// three stand-in items), matching how the real menu bar renders all 7
+    /// every frame regardless of which one is open — needed for any test that
+    /// exercises Left/Right switching to a *different* menu, since
+    /// `handle_dropdown_arrows` only clears its per-popup "had items" bookkeeping
+    /// (see its doc comment) for menus that actually get rendered that frame.
+    /// Rendering only the "currently relevant" one, like `frame` does, would
+    /// leave a just-closed menu's stale bookkeeping around indefinitely.
+    fn frame_all(ctx: &egui::Context, events: Vec<egui::Event>) {
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            for (label, mnemonic) in TOP_MENUS {
+                top_menu_button(ui, label, mnemonic, |ui, nav| {
+                    nav.button(ui, "Alpha");
+                    nav.button(ui, "Beta");
+                    nav.button(ui, "Gamma");
+                });
+            }
+        });
+    }
+
     fn key_event(key: egui::Key) -> egui::Event {
         egui::Event::Key {
             key,
@@ -3952,15 +4003,10 @@ mod menu_nav_tests {
         ctx.all_styles_mut(|style| style.animation_time = 0.0);
         let file_id = top_menu_popup_id("File");
         egui::Popup::open_id(&ctx, file_id);
-        frame(&ctx, "File", egui::Key::F, vec![]); // focus lands on the first item
-        frame(&ctx, "File", egui::Key::F, vec![]); // let focus settle
+        frame_all(&ctx, vec![]); // focus lands on the first item
+        frame_all(&ctx, vec![]); // let focus settle
 
-        frame(
-            &ctx,
-            "File",
-            egui::Key::F,
-            vec![key_event(egui::Key::ArrowRight)],
-        );
+        frame_all(&ctx, vec![key_event(egui::Key::ArrowRight)]);
         let edit_id = top_menu_popup_id("Edit");
         assert!(
             egui::Popup::is_id_open(&ctx, edit_id),
@@ -3970,28 +4016,75 @@ mod menu_nav_tests {
 
         // From Edit, Left should go back to File, and Left again should wrap
         // around to the last menu (Help).
-        frame(&ctx, "Edit", egui::Key::E, vec![]);
-        frame(&ctx, "Edit", egui::Key::E, vec![]);
-        frame(
-            &ctx,
-            "Edit",
-            egui::Key::E,
-            vec![key_event(egui::Key::ArrowLeft)],
-        );
+        frame_all(&ctx, vec![]);
+        frame_all(&ctx, vec![]);
+        frame_all(&ctx, vec![key_event(egui::Key::ArrowLeft)]);
         assert!(egui::Popup::is_id_open(&ctx, file_id));
 
-        frame(&ctx, "File", egui::Key::F, vec![]);
-        frame(&ctx, "File", egui::Key::F, vec![]);
-        frame(
-            &ctx,
-            "File",
-            egui::Key::F,
-            vec![key_event(egui::Key::ArrowLeft)],
-        );
+        frame_all(&ctx, vec![]);
+        frame_all(&ctx, vec![]);
+        frame_all(&ctx, vec![key_event(egui::Key::ArrowLeft)]);
         let help_id = top_menu_popup_id(TOP_MENUS[TOP_MENUS.len() - 1].0);
         assert!(
             egui::Popup::is_id_open(&ctx, help_id),
             "Left from File should wrap around to Help (the last menu in TOP_MENUS)"
+        );
+    }
+
+    /// Regression test for a real bug: a menu item's own click handler doesn't
+    /// call `ui.close()` anywhere in this codebase (clicking "Open Document…",
+    /// say, leaves the File dropdown nominally still "open" in egui's Memory,
+    /// even once the dialog it opened takes over) — which used to be harmless,
+    /// since the dropdown just sat there unfocused and inert. Once
+    /// `handle_dropdown_arrows` started auto-focusing the first item whenever
+    /// nothing in *its own* list has focus, that harmless leftover "still open"
+    /// state became actively disruptive: it kept re-stealing focus back onto
+    /// the dropdown's first item every single frame, away from whatever dialog
+    /// had opened on top of it, on every frame *after* the one where it
+    /// legitimately first opened.
+    #[test]
+    fn does_not_steal_focus_back_once_something_else_has_it() {
+        let ctx = egui::Context::default();
+        ctx.all_styles_mut(|style| style.animation_time = 0.0);
+        let popup_id = top_menu_popup_id("File");
+        egui::Popup::open_id(&ctx, popup_id);
+        frame(&ctx, "File", egui::Key::F, vec![]); // warm-up (see the other tests)
+        frame(&ctx, "File", egui::Key::F, vec![]); // legitimate first-open auto-focus
+
+        // A stand-in for e.g. the Open Document modal's own text field, rendered
+        // (like a real dialog would be) in the same pass as the still-open File
+        // dropdown, and given focus — without the File dropdown ever being
+        // closed. A bare `request_focus` on an id nothing ever renders wouldn't
+        // do: egui drops focus from a widget that isn't shown in a pass, which
+        // would trivially "pass" this test for the wrong reason.
+        let mut other_id = None;
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let other_response = ui.button("Other Dialog");
+            other_id = Some(other_response.id);
+            other_response.request_focus();
+            top_menu_button(ui, "File", egui::Key::F, |ui, nav| {
+                nav.button(ui, "Alpha");
+                nav.button(ui, "Beta");
+                nav.button(ui, "Gamma");
+            });
+        });
+        let other_id = other_id.unwrap();
+        assert_eq!(ctx.memory(|m| m.focused()), Some(other_id));
+
+        // Rendering both again — the still-nominally-open File dropdown must
+        // not claw focus back to its own first item.
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let _ = ui.button("Other Dialog");
+            top_menu_button(ui, "File", egui::Key::F, |ui, nav| {
+                nav.button(ui, "Alpha");
+                nav.button(ui, "Beta");
+                nav.button(ui, "Gamma");
+            });
+        });
+        assert_eq!(
+            ctx.memory(|m| m.focused()),
+            Some(other_id),
+            "File's dropdown re-stole focus even though it didn't just open this frame"
         );
     }
 }

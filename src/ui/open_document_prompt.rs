@@ -142,3 +142,77 @@ pub fn show(
     }
     outcome
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Drives `show` with synthetic input across frames — mirrors
+    /// `name_prompt.rs`'s own test harness for the same reason: confirming
+    /// Enter-to-confirm actually works needs real focus/key-event mechanics, not
+    /// just a call to `show` and a glance at the return value.
+    #[derive(Default)]
+    struct Harness {
+        ctx: egui::Context,
+    }
+
+    impl Harness {
+        fn frame(
+            &self,
+            state: &mut OpenDocumentPromptState,
+            candidates: &[(String, PathBuf)],
+            events: Vec<egui::Event>,
+        ) -> Option<PathBuf> {
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut outcome = None;
+            let _ = self.ctx.run_ui(input, |ui| {
+                outcome = show(ui.ctx(), state, candidates);
+            });
+            outcome
+        }
+
+        fn idle(&self, state: &mut OpenDocumentPromptState, candidates: &[(String, PathBuf)]) {
+            self.frame(state, candidates, vec![]);
+        }
+
+        fn press_enter(
+            &self,
+            state: &mut OpenDocumentPromptState,
+            candidates: &[(String, PathBuf)],
+        ) -> Option<PathBuf> {
+            self.frame(
+                state,
+                candidates,
+                vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            )
+        }
+    }
+
+    #[test]
+    fn enter_opens_the_first_result_once_focus_has_settled() {
+        let harness = Harness::default();
+        let mut state = OpenDocumentPromptState::default();
+        state.request_open();
+        let candidates = vec![
+            ("Alpha".to_string(), PathBuf::from("/tmp/alpha.md")),
+            ("Beta".to_string(), PathBuf::from("/tmp/beta.md")),
+        ];
+
+        // First frame grants focus via `request_focus`; a second (idle) frame
+        // lets that settle before a keypress, same as `name_prompt.rs`'s test.
+        harness.idle(&mut state, &candidates);
+        harness.idle(&mut state, &candidates);
+        let outcome = harness.press_enter(&mut state, &candidates);
+
+        assert_eq!(outcome, Some(PathBuf::from("/tmp/alpha.md")));
+    }
+}
