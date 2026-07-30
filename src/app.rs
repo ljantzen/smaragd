@@ -37,6 +37,68 @@ fn menu_button_with_shortcut(
     ui.add(button)
 }
 
+/// Accumulates the ordered list of keyboard-focusable item `Id`s a top-level
+/// dropdown's content renders this frame, in visual order — the list Up/Down
+/// navigates over (see `handle_dropdown_arrows`). Rebuilt fresh every frame
+/// (immediate mode), mirroring `binder_panel.rs`'s own `visible_rows`
+/// accumulator for its file tree. Disabled rows are simply never pushed
+/// (checked via `ui.is_enabled()`), so a temporarily-disabled group (e.g.
+/// Versions' git actions while a git operation is running, via
+/// `add_enabled_ui`) is transparently skipped without touching that call site;
+/// `ui.separator()` calls are never routed through here at all, so they're
+/// excluded the same way.
+#[derive(Default)]
+struct MenuNav {
+    items: Vec<egui::Id>,
+}
+
+impl MenuNav {
+    fn track(&mut self, ui: &egui::Ui, response: &egui::Response) {
+        if ui.is_enabled() {
+            self.items.push(response.id);
+        }
+    }
+
+    fn button(&mut self, ui: &mut egui::Ui, label: &str) -> egui::Response {
+        let response = ui.button(label);
+        self.track(ui, &response);
+        response
+    }
+
+    fn shortcut_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        label: &str,
+        shortcut: Option<egui::KeyboardShortcut>,
+    ) -> egui::Response {
+        let response = menu_button_with_shortcut(ui, label, shortcut);
+        self.track(ui, &response);
+        response
+    }
+}
+
+/// The 7 top-level menus, in menu-bar order — also the fixed cycle Left/Right
+/// switch through in `handle_dropdown_arrows` (wrapping: Help's Right goes to
+/// File, File's Left goes to Help).
+const TOP_MENUS: [(&str, egui::Key); 7] = [
+    ("File", egui::Key::F),
+    ("Edit", egui::Key::E),
+    ("View", egui::Key::V),
+    ("Tools", egui::Key::T),
+    ("Versions", egui::Key::S),
+    ("Window", egui::Key::W),
+    ("Help", egui::Key::H),
+];
+
+/// A stable popup `Id` derived purely from a top-level menu's label, rather than
+/// `Popup::menu`'s own default (`response.id.with("popup")`, see
+/// `Popup::default_response_id`) — needed so `handle_dropdown_arrows` can address
+/// a *sibling* menu's popup by label alone on a Left/Right press, without having
+/// that sibling's `Response` (it may not have rendered yet this frame).
+fn top_menu_popup_id(label: &str) -> egui::Id {
+    egui::Id::new("top_menu_popup").with(label)
+}
+
 /// A top-level menu-bar button (File/Edit/View/...) that also drops down when
 /// `mnemonic` is pressed with Alt held, in addition to the normal click-to-toggle
 /// behavior — a fixed Alt+letter menu-bar accelerator, matching the classic
@@ -47,27 +109,105 @@ fn menu_button_with_shortcut(
 /// Reimplements `egui::containers::menu::MenuButton::ui` rather than calling it,
 /// since that helper always ties the dropdown's open state to the button's own
 /// click (`Popup::menu`'s built-in toggle) with no hook to force it open from an
-/// unrelated keypress; `Popup::menu(&response).open_memory(open_cmd)` below
-/// reproduces its exact behavior for a plain click; and adds the mnemonic. Safe
-/// to skip `MenuConfig::find`/`MenuBar::config`, which `MenuButton::ui` normally
+/// unrelated keypress or to switch it from a sibling menu (see
+/// `handle_dropdown_arrows`'s Left/Right handling). Open/close is driven
+/// explicitly via `Popup::open_id`/`toggle_id` against a stable, label-derived
+/// popup id (`top_menu_popup_id`) instead — `Popup::open_id`'s own doc comment
+/// ("Open the given popup and close all others") is exactly the mutual-exclusion
+/// this app wants across the 7 top-level menus, and is safe to rely on here
+/// specifically because this simple Memory-backed popup mechanism is never used
+/// for the nested submenus (Theme/Layouts/multi-folder Export Manuscript), which
+/// need independent, simultaneously-open parent+child state instead. Safe to
+/// skip `MenuConfig::find`/`MenuBar::config`, which `MenuButton::ui` normally
 /// consults, since nothing in this app ever calls `MenuBar::config`/
 /// `MenuButton::config` to override the ambient default.
 fn top_menu_button(
     ui: &mut egui::Ui,
     label: &str,
     mnemonic: egui::Key,
-    content: impl FnOnce(&mut egui::Ui),
+    content: impl FnOnce(&mut egui::Ui, &mut MenuNav),
 ) {
-    let pressed = ui.input_mut(|i| i.consume_key(egui::Modifiers::ALT, mnemonic));
+    let popup_id = top_menu_popup_id(label);
+    if ui.input_mut(|i| i.consume_key(egui::Modifiers::ALT, mnemonic)) {
+        egui::Popup::open_id(ui.ctx(), popup_id);
+    }
     let response = ui.button(label);
-    let open_cmd = if pressed {
-        Some(egui::SetOpenCommand::Bool(true))
-    } else {
-        response.clicked().then_some(egui::SetOpenCommand::Toggle)
-    };
+    if response.clicked() {
+        egui::Popup::toggle_id(ui.ctx(), popup_id);
+    }
+    let mut nav = MenuNav::default();
     egui::Popup::menu(&response)
-        .open_memory(open_cmd)
-        .show(content);
+        .id(popup_id)
+        .open_memory(None)
+        .show(|ui| content(ui, &mut nav));
+    handle_dropdown_arrows(ui.ctx(), &nav, popup_id, label);
+}
+
+/// Up/Down/Left/Right handling for whichever top-level dropdown is currently
+/// open, called once per dropdown right after its content has rendered (so
+/// `nav.items` is complete for the frame) — mirrors `binder_panel.rs`'s own
+/// "handle Up/Down once, after the whole list is built" structure.
+///
+/// Up/Down move the highlighted item within `nav.items`, wrapping at the ends.
+/// Left/Right switch to the previous/next of `TOP_MENUS`, wrapping there too.
+/// Opening with nothing yet focused inside (however it was opened — click, Alt
+/// mnemonic, or a Left/Right switch from a sibling) lands on the first item, so
+/// Down always has a defined starting point.
+fn handle_dropdown_arrows(ctx: &egui::Context, nav: &MenuNav, popup_id: egui::Id, label: &str) {
+    if !egui::Popup::is_id_open(ctx, popup_id) || nav.items.is_empty() {
+        return;
+    }
+    let focused = ctx.memory(|m| m.focused());
+    let Some(current) = focused.and_then(|id| nav.items.iter().position(|i| *i == id)) else {
+        ctx.memory_mut(|m| m.request_focus(nav.items[0]));
+        return;
+    };
+
+    // Claim vertical+horizontal arrows so egui's own geometric "nearest widget in
+    // that screen direction" focus jump (see `Focus::end_pass`/
+    // `find_widget_in_direction` in egui's own source) never fires instead — the
+    // same technique `binder_panel.rs`'s `ARROW_KEYS_FILTER` and egui's own
+    // `Slider` arrow-key handling both use.
+    ctx.memory_mut(|m| {
+        m.set_focus_lock_filter(
+            nav.items[current],
+            egui::EventFilter {
+                tab: false,
+                horizontal_arrows: true,
+                vertical_arrows: true,
+                escape: false,
+            },
+        )
+    });
+
+    let len = nav.items.len();
+    let next = if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+        Some((current + 1) % len)
+    } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+        Some((current + len - 1) % len)
+    } else {
+        None
+    };
+    // Guard against a redundant `request_focus` call when already at the target
+    // index — it unconditionally resets the focus-lock filter set just above,
+    // which would otherwise reopen a one-frame gap every frame at the ends.
+    if let Some(next) = next
+        && next != current
+    {
+        ctx.memory_mut(|m| m.request_focus(nav.items[next]));
+    }
+
+    let right = ctx.input(|i| i.key_pressed(egui::Key::ArrowRight));
+    let left = ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft));
+    if right || left {
+        let my_index = TOP_MENUS
+            .iter()
+            .position(|(l, _)| *l == label)
+            .expect("label is always one of TOP_MENUS");
+        let delta = if right { 1 } else { TOP_MENUS.len() - 1 };
+        let target = (my_index + delta) % TOP_MENUS.len();
+        egui::Popup::open_id(ctx, top_menu_popup_id(TOP_MENUS[target].0));
+    }
 }
 
 /// What a `NamePromptState` modal should do with the name once confirmed.
@@ -2814,7 +2954,7 @@ impl eframe::App for SmaragdApp {
         if !self.focus_mode {
             egui::Panel::top("menu_bar").show(ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
-                    top_menu_button(ui, "File", egui::Key::F, |ui| {
+                    top_menu_button(ui, "File", egui::Key::F, |ui, nav| {
                         let new_project_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::NewProject);
                         let open_project_shortcut =
@@ -2827,19 +2967,22 @@ impl eframe::App for SmaragdApp {
                         let close_document_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::CloseDocument);
 
-                        if menu_button_with_shortcut(ui, "New Project", new_project_shortcut)
+                        if nav
+                            .shortcut_button(ui, "New Project", new_project_shortcut)
                             .clicked()
                         {
                             self.start_new_project();
                         }
-                        if menu_button_with_shortcut(ui, "Open Project", open_project_shortcut)
+                        if nav
+                            .shortcut_button(ui, "Open Project", open_project_shortcut)
                             .clicked()
                         {
                             self.browse_for_project();
                         }
                         ui.add_enabled(false, egui::Button::new("Close Project"));
                         ui.separator();
-                        if menu_button_with_shortcut(ui, "Open Document…", open_document_shortcut)
+                        if nav
+                            .shortcut_button(ui, "Open Document…", open_document_shortcut)
                             .clicked()
                         {
                             if self.project.is_some() {
@@ -2848,13 +2991,15 @@ impl eframe::App for SmaragdApp {
                                 self.push_error_toast("No project open");
                             }
                         }
-                        if menu_button_with_shortcut(ui, "Close Document", close_document_shortcut)
+                        if nav
+                            .shortcut_button(ui, "Close Document", close_document_shortcut)
                             .clicked()
                         {
                             let ctx = ui.ctx().clone();
                             self.close_document(&ctx);
                         }
-                        if menu_button_with_shortcut(ui, "Save Project as Template…", None)
+                        if nav
+                            .shortcut_button(ui, "Save Project as Template…", None)
                             .clicked()
                         {
                             if self.project.is_some() {
@@ -2877,7 +3022,8 @@ impl eframe::App for SmaragdApp {
                             .unwrap_or_default();
                         match manuscript_folders.as_slice() {
                             [] => {
-                                if menu_button_with_shortcut(ui, "Export Manuscript…", None)
+                                if nav
+                                    .shortcut_button(ui, "Export Manuscript…", None)
                                     .clicked()
                                 {
                                     if let Some(project) = &self.project {
@@ -2888,14 +3034,18 @@ impl eframe::App for SmaragdApp {
                                 }
                             }
                             [only] => {
-                                if menu_button_with_shortcut(ui, "Export Manuscript…", None)
+                                if nav
+                                    .shortcut_button(ui, "Export Manuscript…", None)
                                     .clicked()
                                 {
                                     self.open_export(only.clone());
                                 }
                             }
                             many => {
-                                ui.menu_button("Export Manuscript", |ui| {
+                                // Not keyboard-navigable past its own trigger row — see
+                                // the plan's scope note on nested submenus (Theme/
+                                // Layouts/this) staying mouse/hover-only for now.
+                                let outer = ui.menu_button("Export Manuscript", |ui| {
                                     for path in many {
                                         let label = self
                                             .project
@@ -2909,55 +3059,60 @@ impl eframe::App for SmaragdApp {
                                         }
                                     }
                                 });
+                                nav.track(ui, &outer.response);
                             }
                         }
                         ui.separator();
-                        if menu_button_with_shortcut(ui, "Settings", open_settings_shortcut)
+                        if nav
+                            .shortcut_button(ui, "Settings", open_settings_shortcut)
                             .clicked()
                         {
                             self.show_settings = true;
                         }
                         ui.separator();
-                        if menu_button_with_shortcut(ui, "Exit", exit_shortcut).clicked() {
+                        if nav.shortcut_button(ui, "Exit", exit_shortcut).clicked() {
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     });
-                    top_menu_button(ui, "Edit", egui::Key::E, |ui| {
-                        if menu_button_with_shortcut(
-                            ui,
-                            "Cut",
-                            Some(egui::KeyboardShortcut::new(
-                                egui::Modifiers::COMMAND,
-                                egui::Key::X,
-                            )),
-                        )
-                        .clicked()
+                    top_menu_button(ui, "Edit", egui::Key::E, |ui, nav| {
+                        if nav
+                            .shortcut_button(
+                                ui,
+                                "Cut",
+                                Some(egui::KeyboardShortcut::new(
+                                    egui::Modifiers::COMMAND,
+                                    egui::Key::X,
+                                )),
+                            )
+                            .clicked()
                         {
                             ui.ctx()
                                 .send_viewport_cmd(egui::ViewportCommand::RequestCut);
                         }
-                        if menu_button_with_shortcut(
-                            ui,
-                            "Copy",
-                            Some(egui::KeyboardShortcut::new(
-                                egui::Modifiers::COMMAND,
-                                egui::Key::C,
-                            )),
-                        )
-                        .clicked()
+                        if nav
+                            .shortcut_button(
+                                ui,
+                                "Copy",
+                                Some(egui::KeyboardShortcut::new(
+                                    egui::Modifiers::COMMAND,
+                                    egui::Key::C,
+                                )),
+                            )
+                            .clicked()
                         {
                             ui.ctx()
                                 .send_viewport_cmd(egui::ViewportCommand::RequestCopy);
                         }
-                        if menu_button_with_shortcut(
-                            ui,
-                            "Paste",
-                            Some(egui::KeyboardShortcut::new(
-                                egui::Modifiers::COMMAND,
-                                egui::Key::V,
-                            )),
-                        )
-                        .clicked()
+                        if nav
+                            .shortcut_button(
+                                ui,
+                                "Paste",
+                                Some(egui::KeyboardShortcut::new(
+                                    egui::Modifiers::COMMAND,
+                                    egui::Key::V,
+                                )),
+                            )
+                            .clicked()
                         {
                             ui.ctx()
                                 .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
@@ -2965,42 +3120,44 @@ impl eframe::App for SmaragdApp {
                         ui.separator();
                         let find_replace_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::FindReplace);
-                        if menu_button_with_shortcut(ui, "Find and Replace", find_replace_shortcut)
+                        if nav
+                            .shortcut_button(ui, "Find and Replace", find_replace_shortcut)
                             .clicked()
                         {
                             self.find_replace.request_open();
                         }
                         let metadata_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::EditMetadata);
-                        if menu_button_with_shortcut(ui, "Document Metadata", metadata_shortcut)
+                        if nav
+                            .shortcut_button(ui, "Document Metadata", metadata_shortcut)
                             .clicked()
                         {
                             self.toggle_dock_tab(DockTab::Metadata);
                         }
                     });
-                    top_menu_button(ui, "View", egui::Key::V, |ui| {
-                        if ui.button("Focus Mode").clicked() {
+                    top_menu_button(ui, "View", egui::Key::V, |ui, nav| {
+                        if nav.button(ui, "Focus Mode").clicked() {
                             let ctx = ui.ctx().clone();
                             self.set_focus_mode(&ctx, !self.focus_mode);
                         }
                         ui.separator();
-                        if ui.button("Editor").clicked() {
+                        if nav.button(ui, "Editor").clicked() {
                             self.toggle_dock_tab(DockTab::Editor);
                         }
-                        if ui.button("Preview").clicked() {
+                        if nav.button(ui, "Preview").clicked() {
                             self.toggle_dock_tab_near(DockTab::Preview, DockTab::Editor);
                         }
-                        if ui.button("Corkboard").clicked() {
+                        if nav.button(ui, "Corkboard").clicked() {
                             self.toggle_dock_tab_near(DockTab::Corkboard, DockTab::Editor);
                         }
                         ui.separator();
-                        if ui.button("Binder").clicked() {
+                        if nav.button(ui, "Binder").clicked() {
                             self.toggle_dock_tab(DockTab::Binder);
                         }
-                        if ui.button("Backlinks").clicked() {
+                        if nav.button(ui, "Backlinks").clicked() {
                             self.toggle_dock_tab(DockTab::Backlinks);
                         }
-                        if ui.button("Tags").clicked() {
+                        if nav.button(ui, "Tags").clicked() {
                             self.toggle_dock_tab(DockTab::Tags);
                         }
                         ui.separator();
@@ -3011,52 +3168,59 @@ impl eframe::App for SmaragdApp {
                         // proper submenu — items inside never got a chance to run, since
                         // the parent popup's own close-on-click handling collapsed it out
                         // from under `SubMenuButton`'s (hover-to-open, keeps parents open)
-                        // dedicated handling for exactly this case.
-                        egui::containers::menu::SubMenuButton::new("Theme").ui(ui, |ui| {
-                            if ui.button("Reload Custom Themes").clicked() {
-                                let ctx = ui.ctx().clone();
-                                self.reload_color_themes(&ctx);
-                            }
-                            ui.separator();
-                            // Cloned rather than borrowed: `set_color_theme` below needs
-                            // `&mut self`, which a live borrow of `self.settings`/
-                            // `self.color_themes` here would conflict with across loop
-                            // iterations.
-                            let current = self.settings.color_theme.clone();
-                            let themes = self.color_themes.clone();
-                            if ui.radio(current.is_none(), "Default").clicked() {
-                                self.set_color_theme(ui.ctx(), None);
-                            }
-                            for theme in &themes {
-                                if ui
-                                    .radio(
-                                        current.as_deref() == Some(theme.id.as_str()),
-                                        &theme.label,
-                                    )
-                                    .clicked()
-                                {
-                                    self.set_color_theme(ui.ctx(), Some(&theme.id));
+                        // dedicated handling for exactly this case. Its trigger row is
+                        // still tracked (so Up/Down/Left/Right can reach it like any other
+                        // row), but not arrow-navigable past it — the flyout stays
+                        // mouse/hover-only for now (see the arrow-nav plan's scope note).
+                        let (theme_trigger, _) =
+                            egui::containers::menu::SubMenuButton::new("Theme").ui(ui, |ui| {
+                                if ui.button("Reload Custom Themes").clicked() {
+                                    let ctx = ui.ctx().clone();
+                                    self.reload_color_themes(&ctx);
                                 }
-                            }
-                        });
+                                ui.separator();
+                                // Cloned rather than borrowed: `set_color_theme` below needs
+                                // `&mut self`, which a live borrow of `self.settings`/
+                                // `self.color_themes` here would conflict with across loop
+                                // iterations.
+                                let current = self.settings.color_theme.clone();
+                                let themes = self.color_themes.clone();
+                                if ui.radio(current.is_none(), "Default").clicked() {
+                                    self.set_color_theme(ui.ctx(), None);
+                                }
+                                for theme in &themes {
+                                    if ui
+                                        .radio(
+                                            current.as_deref() == Some(theme.id.as_str()),
+                                            &theme.label,
+                                        )
+                                        .clicked()
+                                    {
+                                        self.set_color_theme(ui.ctx(), Some(&theme.id));
+                                    }
+                                }
+                            });
+                        nav.track(ui, &theme_trigger);
                     });
-                    top_menu_button(ui, "Tools", egui::Key::T, |ui| {
+                    top_menu_button(ui, "Tools", egui::Key::T, |ui, nav| {
                         let command_prompt_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::CommandPrompt);
-                        if menu_button_with_shortcut(ui, "Command Prompt", command_prompt_shortcut)
+                        if nav
+                            .shortcut_button(ui, "Command Prompt", command_prompt_shortcut)
                             .clicked()
                         {
                             self.command_prompt.request_open();
                         }
                         let pomodoro_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::TogglePomodoro);
-                        if menu_button_with_shortcut(ui, "Pomodoro Timer", pomodoro_shortcut)
+                        if nav
+                            .shortcut_button(ui, "Pomodoro Timer", pomodoro_shortcut)
                             .clicked()
                         {
                             self.toggle_dock_tab(DockTab::Pomodoro);
                         }
                         ui.separator();
-                        if ui.button("Reload Plugins").clicked() {
+                        if nav.button(ui, "Reload Plugins").clicked() {
                             self.reload_plugins();
                         }
                         let project_plugins_enabled = self
@@ -3065,7 +3229,7 @@ impl eframe::App for SmaragdApp {
                             .is_some_and(|project| project.meta.plugins_enabled);
                         if self.project.is_some()
                             && !project_plugins_enabled
-                            && ui.button("Enable Project Plugins").clicked()
+                            && nav.button(ui, "Enable Project Plugins").clicked()
                         {
                             if let Some(project) = &mut self.project
                                 && let Err(err) = project.set_plugins_enabled(true)
@@ -3080,72 +3244,77 @@ impl eframe::App for SmaragdApp {
                     // "S" rather than "V" (Versions' first letter) since View already
                     // claims Alt+V — matches the classic Windows-mnemonic convention
                     // of falling back to a distinguishing later letter on collision.
-                    top_menu_button(ui, "Versions", egui::Key::S, |ui| {
+                    top_menu_button(ui, "Versions", egui::Key::S, |ui, nav| {
                         let git_enabled = self
                             .project
                             .as_ref()
                             .is_some_and(|project| project.meta.git_enabled);
                         if !git_enabled {
-                            if ui.button("Enable Git Support").clicked() {
+                            if nav.button(ui, "Enable Git Support").clicked() {
                                 self.enable_git_support_manually();
                             }
                         } else {
                             let commit_shortcut =
                                 self.settings.shortcuts.get(ShortcutAction::GitCommit);
-                            if menu_button_with_shortcut(ui, "Commit", commit_shortcut).clicked() {
+                            if nav.shortcut_button(ui, "Commit", commit_shortcut).clicked() {
                                 self.prompt_git_commit(false);
                             }
                             // Push/pull run on a background thread (see `spawn_git_operation`);
                             // disabled while one is already in flight rather than letting a
-                            // second click queue up or race it.
+                            // second click queue up or race it. `MenuNav::track`'s
+                            // `ui.is_enabled()` check means this trio is automatically
+                            // skipped by arrow-key navigation while busy, with no separate
+                            // bookkeeping needed.
                             let git_busy = self.pending_git.is_some();
                             ui.add_enabled_ui(!git_busy, |ui| {
-                                if ui.button("Commit and Push").clicked() {
+                                if nav.button(ui, "Commit and Push").clicked() {
                                     self.prompt_git_commit(true);
                                 }
                                 let push_shortcut =
                                     self.settings.shortcuts.get(ShortcutAction::GitPush);
-                                if menu_button_with_shortcut(ui, "Push", push_shortcut).clicked() {
+                                if nav.shortcut_button(ui, "Push", push_shortcut).clicked() {
                                     self.run_git_push(ui.ctx());
                                 }
-                                if ui.button("Pull").clicked() {
+                                if nav.button(ui, "Pull").clicked() {
                                     self.run_git_pull(ui.ctx());
                                 }
                             });
                         }
                     });
-                    top_menu_button(ui, "Window", egui::Key::W, |ui| {
-                        if ui.button("Save Current Layout…").clicked() {
+                    top_menu_button(ui, "Window", egui::Key::W, |ui, nav| {
+                        if nav.button(ui, "Save Current Layout…").clicked() {
                             self.prompt_save_layout();
                         }
                         // `SubMenuButton`, not `MenuButton` — see the matching comment on
-                        // View's "Theme" submenu for why.
-                        egui::containers::menu::SubMenuButton::new("Layouts").ui(ui, |ui| {
-                            if self.saved_layouts.is_empty() {
-                                ui.add_enabled(false, egui::Button::new("No saved layouts"));
-                            } else {
-                                // Collected up front rather than iterating
-                                // `self.saved_layouts` directly: clicking an entry needs
-                                // `&mut self.dock_state`, which an active immutable borrow
-                                // of `self.saved_layouts` (the loop) would conflict with.
-                                let names: Vec<String> =
-                                    self.saved_layouts.keys().cloned().collect();
-                                for name in names {
-                                    if ui.button(&name).clicked()
-                                        && let Some(layout) = self.saved_layouts.get(&name)
-                                    {
-                                        self.dock_state = layout.clone();
+                        // View's "Theme" submenu for why. Trigger row tracked the same way.
+                        let (layouts_trigger, _) =
+                            egui::containers::menu::SubMenuButton::new("Layouts").ui(ui, |ui| {
+                                if self.saved_layouts.is_empty() {
+                                    ui.add_enabled(false, egui::Button::new("No saved layouts"));
+                                } else {
+                                    // Collected up front rather than iterating
+                                    // `self.saved_layouts` directly: clicking an entry needs
+                                    // `&mut self.dock_state`, which an active immutable borrow
+                                    // of `self.saved_layouts` (the loop) would conflict with.
+                                    let names: Vec<String> =
+                                        self.saved_layouts.keys().cloned().collect();
+                                    for name in names {
+                                        if ui.button(&name).clicked()
+                                            && let Some(layout) = self.saved_layouts.get(&name)
+                                        {
+                                            self.dock_state = layout.clone();
+                                        }
                                     }
                                 }
-                            }
-                        });
+                            });
+                        nav.track(ui, &layouts_trigger);
                         ui.separator();
-                        if ui.button("Restore Default Layout").clicked() {
+                        if nav.button(ui, "Restore Default Layout").clicked() {
                             self.dock_state = default_dock_state();
                         }
                     });
-                    top_menu_button(ui, "Help", egui::Key::H, |ui| {
-                        if ui.button("About").clicked() {
+                    top_menu_button(ui, "Help", egui::Key::H, |ui, nav| {
+                        if nav.button(ui, "About").clicked() {
                             self.show_about = true;
                         }
                     });
@@ -3694,6 +3863,135 @@ mod dock_layout_persistence_tests {
         assert_eq!(
             tab_set(&restored["Research"]),
             vec![DockTab::Binder, DockTab::Corkboard]
+        );
+    }
+}
+
+#[cfg(test)]
+mod menu_nav_tests {
+    use super::{TOP_MENUS, top_menu_button, top_menu_popup_id};
+
+    /// Drives the real `top_menu_button` for `label` with three plain stand-in
+    /// items ("Alpha"/"Beta"/"Gamma"), for one frame with the given key
+    /// `events`, and returns the resulting item ids — going through
+    /// `top_menu_button` itself (rather than calling `MenuNav`/
+    /// `handle_dropdown_arrows` directly) matters: a `Popup`'s "still open"
+    /// bookkeeping (`keep_popup_open`, via `open_memory(None)`) is refreshed by
+    /// `Popup::show` every frame it's actually shown, so skipping that call
+    /// would make `Popup::is_id_open` silently go false after the first frame.
+    fn frame(
+        ctx: &egui::Context,
+        label: &'static str,
+        mnemonic: egui::Key,
+        events: Vec<egui::Event>,
+    ) -> Vec<egui::Id> {
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let mut items = Vec::new();
+        let _ = ctx.run_ui(input, |ui| {
+            top_menu_button(ui, label, mnemonic, |ui, nav| {
+                nav.button(ui, "Alpha");
+                nav.button(ui, "Beta");
+                nav.button(ui, "Gamma");
+                items = nav.items.clone();
+            });
+        });
+        items
+    }
+
+    fn key_event(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn down_and_up_wrap_at_the_ends_of_the_dropdown() {
+        let ctx = egui::Context::default();
+        ctx.all_styles_mut(|style| style.animation_time = 0.0);
+        let popup_id = top_menu_popup_id("File");
+        egui::Popup::open_id(&ctx, popup_id);
+        // A popup marked open via `open_id` outside any pass doesn't actually
+        // render its content until the following frame (`Popup::show`'s own
+        // first-frame settling) — one warm-up frame before relying on its
+        // content/`nav.items` having been populated at all.
+        frame(&ctx, "File", egui::Key::F, vec![]);
+
+        // Nothing focused yet — should land on the first item.
+        let items = frame(&ctx, "File", egui::Key::F, vec![]);
+        assert_eq!(ctx.memory(|m| m.focused()), Some(items[0]));
+
+        // Let focus settle a frame (mirrors `binder_panel.rs`'s test harness: a
+        // widget's focus-lock filter only takes effect starting the frame after
+        // it gains focus) before pressing Up — from the first item, Up should
+        // wrap to the last.
+        frame(&ctx, "File", egui::Key::F, vec![]);
+        let items = frame(&ctx, "File", egui::Key::F, vec![key_event(egui::Key::ArrowUp)]);
+        assert_eq!(ctx.memory(|m| m.focused()), Some(items[2]));
+
+        // From the last item, Down should wrap back to the first.
+        frame(&ctx, "File", egui::Key::F, vec![]);
+        let items = frame(
+            &ctx,
+            "File",
+            egui::Key::F,
+            vec![key_event(egui::Key::ArrowDown)],
+        );
+        assert_eq!(ctx.memory(|m| m.focused()), Some(items[0]));
+    }
+
+    #[test]
+    fn right_and_left_cycle_through_top_menus_with_wraparound() {
+        let ctx = egui::Context::default();
+        ctx.all_styles_mut(|style| style.animation_time = 0.0);
+        let file_id = top_menu_popup_id("File");
+        egui::Popup::open_id(&ctx, file_id);
+        frame(&ctx, "File", egui::Key::F, vec![]); // focus lands on the first item
+        frame(&ctx, "File", egui::Key::F, vec![]); // let focus settle
+
+        frame(
+            &ctx,
+            "File",
+            egui::Key::F,
+            vec![key_event(egui::Key::ArrowRight)],
+        );
+        let edit_id = top_menu_popup_id("Edit");
+        assert!(
+            egui::Popup::is_id_open(&ctx, edit_id),
+            "Right from File should open Edit (the next menu in TOP_MENUS)"
+        );
+        assert!(!egui::Popup::is_id_open(&ctx, file_id));
+
+        // From Edit, Left should go back to File, and Left again should wrap
+        // around to the last menu (Help).
+        frame(&ctx, "Edit", egui::Key::E, vec![]);
+        frame(&ctx, "Edit", egui::Key::E, vec![]);
+        frame(
+            &ctx,
+            "Edit",
+            egui::Key::E,
+            vec![key_event(egui::Key::ArrowLeft)],
+        );
+        assert!(egui::Popup::is_id_open(&ctx, file_id));
+
+        frame(&ctx, "File", egui::Key::F, vec![]);
+        frame(&ctx, "File", egui::Key::F, vec![]);
+        frame(
+            &ctx,
+            "File",
+            egui::Key::F,
+            vec![key_event(egui::Key::ArrowLeft)],
+        );
+        let help_id = top_menu_popup_id(TOP_MENUS[TOP_MENUS.len() - 1].0);
+        assert!(
+            egui::Popup::is_id_open(&ctx, help_id),
+            "Left from File should wrap around to Help (the last menu in TOP_MENUS)"
         );
     }
 }
