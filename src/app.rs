@@ -37,6 +37,39 @@ fn menu_button_with_shortcut(
     ui.add(button)
 }
 
+/// A top-level menu-bar button (File/Edit/View/...) that also drops down when
+/// `mnemonic` is pressed with Alt held, in addition to the normal click-to-toggle
+/// behavior — a fixed Alt+letter menu-bar accelerator, matching the classic
+/// Windows/GTK convention. Deliberately *not* part of the user-configurable
+/// `ShortcutAction`/`shortcuts.rs` system: these are positional (whichever menu
+/// happens to be first gets Alt+F, etc.) and never meant to be rebound.
+///
+/// Reimplements `egui::containers::menu::MenuButton::ui` rather than calling it,
+/// since that helper always ties the dropdown's open state to the button's own
+/// click (`Popup::menu`'s built-in toggle) with no hook to force it open from an
+/// unrelated keypress; `Popup::menu(&response).open_memory(open_cmd)` below
+/// reproduces its exact behavior for a plain click; and adds the mnemonic. Safe
+/// to skip `MenuConfig::find`/`MenuBar::config`, which `MenuButton::ui` normally
+/// consults, since nothing in this app ever calls `MenuBar::config`/
+/// `MenuButton::config` to override the ambient default.
+fn top_menu_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    mnemonic: egui::Key,
+    content: impl FnOnce(&mut egui::Ui),
+) {
+    let pressed = ui.input_mut(|i| i.consume_key(egui::Modifiers::ALT, mnemonic));
+    let response = ui.button(label);
+    let open_cmd = if pressed {
+        Some(egui::SetOpenCommand::Bool(true))
+    } else {
+        response.clicked().then_some(egui::SetOpenCommand::Toggle)
+    };
+    egui::Popup::menu(&response)
+        .open_memory(open_cmd)
+        .show(content);
+}
+
 /// What a `NamePromptState` modal should do with the name once confirmed.
 enum PromptAction {
     NewFile {
@@ -2781,7 +2814,7 @@ impl eframe::App for SmaragdApp {
         if !self.focus_mode {
             egui::Panel::top("menu_bar").show(ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
-                    egui::containers::menu::MenuButton::new("File").ui(ui, |ui| {
+                    top_menu_button(ui, "File", egui::Key::F, |ui| {
                         let new_project_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::NewProject);
                         let open_project_shortcut =
@@ -2889,7 +2922,7 @@ impl eframe::App for SmaragdApp {
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     });
-                    egui::containers::menu::MenuButton::new("Edit").ui(ui, |ui| {
+                    top_menu_button(ui, "Edit", egui::Key::E, |ui| {
                         if menu_button_with_shortcut(
                             ui,
                             "Cut",
@@ -2945,7 +2978,7 @@ impl eframe::App for SmaragdApp {
                             self.toggle_dock_tab(DockTab::Metadata);
                         }
                     });
-                    egui::containers::menu::MenuButton::new("View").ui(ui, |ui| {
+                    top_menu_button(ui, "View", egui::Key::V, |ui| {
                         if ui.button("Focus Mode").clicked() {
                             let ctx = ui.ctx().clone();
                             self.set_focus_mode(&ctx, !self.focus_mode);
@@ -3007,7 +3040,7 @@ impl eframe::App for SmaragdApp {
                             }
                         });
                     });
-                    egui::containers::menu::MenuButton::new("Tools").ui(ui, |ui| {
+                    top_menu_button(ui, "Tools", egui::Key::T, |ui| {
                         let command_prompt_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::CommandPrompt);
                         if menu_button_with_shortcut(ui, "Command Prompt", command_prompt_shortcut)
@@ -3044,7 +3077,10 @@ impl eframe::App for SmaragdApp {
                             self.reload_plugins();
                         }
                     });
-                    egui::containers::menu::MenuButton::new("Versions").ui(ui, |ui| {
+                    // "S" rather than "V" (Versions' first letter) since View already
+                    // claims Alt+V — matches the classic Windows-mnemonic convention
+                    // of falling back to a distinguishing later letter on collision.
+                    top_menu_button(ui, "Versions", egui::Key::S, |ui| {
                         let git_enabled = self
                             .project
                             .as_ref()
@@ -3078,7 +3114,7 @@ impl eframe::App for SmaragdApp {
                             });
                         }
                     });
-                    egui::containers::menu::MenuButton::new("Window").ui(ui, |ui| {
+                    top_menu_button(ui, "Window", egui::Key::W, |ui| {
                         if ui.button("Save Current Layout…").clicked() {
                             self.prompt_save_layout();
                         }
@@ -3108,7 +3144,7 @@ impl eframe::App for SmaragdApp {
                             self.dock_state = default_dock_state();
                         }
                     });
-                    egui::containers::menu::MenuButton::new("Help").ui(ui, |ui| {
+                    top_menu_button(ui, "Help", egui::Key::H, |ui| {
                         if ui.button("About").clicked() {
                             self.show_about = true;
                         }
