@@ -145,12 +145,12 @@ pub fn show(
     event
 }
 
-fn role_suffix(role: Option<FolderRole>) -> &'static str {
+fn role_prefix(role: Option<FolderRole>) -> &'static str {
     match role {
-        Some(FolderRole::Research) => " (Research)",
-        Some(FolderRole::Trash) => " (Trash)",
-        Some(FolderRole::Templates) => " (Templates)",
-        Some(FolderRole::Manuscript) => " (Manuscript)",
+        Some(FolderRole::Research) => "🔍 ",
+        Some(FolderRole::Trash) => "🗑 ",
+        Some(FolderRole::Templates) => "📋 ",
+        Some(FolderRole::Manuscript) => "📖 ",
         None => "",
     }
 }
@@ -259,7 +259,7 @@ fn show_node(
     match &node.kind {
         BinderNodeKind::Folder { children } => {
             let role = project.folder_role(&node.path);
-            let label = format!("{}{}", node.name, role_suffix(role));
+            let label = format!("{}{}", role_prefix(role), node.name);
             let id = ui.make_persistent_id(&node.path);
             let (header_response, mut state) = folder_header(ui, id, &label, true);
             visible_rows.push((node.path.clone(), header_response.id));
