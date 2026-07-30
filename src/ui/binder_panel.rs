@@ -150,6 +150,7 @@ fn role_suffix(role: Option<FolderRole>) -> &'static str {
         Some(FolderRole::Research) => " (Research)",
         Some(FolderRole::Trash) => " (Trash)",
         Some(FolderRole::Templates) => " (Templates)",
+        Some(FolderRole::Manuscript) => " (Manuscript)",
         None => "",
     }
 }
@@ -400,6 +401,16 @@ fn show_node(
                             *event = Some(BinderEvent::SetFolderRole {
                                 path: node.path.clone(),
                                 role: Some(FolderRole::Templates),
+                            });
+                            ui.close();
+                        }
+                        if ui
+                            .radio(role == Some(FolderRole::Manuscript), "Manuscript")
+                            .clicked()
+                        {
+                            *event = Some(BinderEvent::SetFolderRole {
+                                path: node.path.clone(),
+                                role: Some(FolderRole::Manuscript),
                             });
                             ui.close();
                         }

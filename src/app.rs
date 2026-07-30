@@ -2830,6 +2830,54 @@ impl eframe::App for SmaragdApp {
                                 self.push_error_toast("No project open");
                             }
                         }
+                        // Manuscript isn't an exclusive role — a project can have
+                        // several Manuscript folders at once (see
+                        // `FolderRole::is_exclusive`) — so this offers a submenu to
+                        // choose among them once there's more than one, rather than
+                        // silently picking just the first.
+                        let manuscript_folders = self
+                            .project
+                            .as_ref()
+                            .map(|project| {
+                                project.folder_role_paths(crate::project::FolderRole::Manuscript)
+                            })
+                            .unwrap_or_default();
+                        match manuscript_folders.as_slice() {
+                            [] => {
+                                if menu_button_with_shortcut(ui, "Export Manuscript…", None)
+                                    .clicked()
+                                {
+                                    if let Some(project) = &self.project {
+                                        self.open_export(project.root.clone());
+                                    } else {
+                                        self.push_error_toast("No project open");
+                                    }
+                                }
+                            }
+                            [only] => {
+                                if menu_button_with_shortcut(ui, "Export Manuscript…", None)
+                                    .clicked()
+                                {
+                                    self.open_export(only.clone());
+                                }
+                            }
+                            many => {
+                                ui.menu_button("Export Manuscript", |ui| {
+                                    for path in many {
+                                        let label = self
+                                            .project
+                                            .as_ref()
+                                            .and_then(|project| project.tree.find_by_path(path))
+                                            .map(|node| node.name.clone())
+                                            .unwrap_or_else(|| path.display().to_string());
+                                        if ui.button(format!("{label}…")).clicked() {
+                                            self.open_export(path.clone());
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                            }
+                        }
                         ui.separator();
                         if menu_button_with_shortcut(ui, "Settings", open_settings_shortcut)
                             .clicked()
