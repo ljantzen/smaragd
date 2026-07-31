@@ -188,7 +188,19 @@ impl CollabSession {
     /// Drains queued [`CollabEvent`]s, applying remote updates to the
     /// internal CRDT document as they arrive, and returns what the caller
     /// needs to react to. Call once per frame, before rendering the editor.
+    ///
+    /// A no-op once [`Self::session_ended`] is already `true`: that flag is
+    /// only ever set below, the moment the background channel is first
+    /// observed disconnected (or a fatal error/explicit peer-disconnect
+    /// event arrives) — and a disconnected `mpsc::Receiver` reports
+    /// `Disconnected` on every subsequent `try_recv` forever. Without this
+    /// guard, a caller polling once per frame after that point would
+    /// re-discover "the peer disconnected" anew on every single frame (e.g.
+    /// re-pushing a toast every frame — see the `SmaragdApp` caller).
     pub fn poll(&mut self) -> Vec<SessionUpdate> {
+        if self.session_ended {
+            return Vec::new();
+        }
         let mut updates = Vec::new();
         loop {
             let event = match self.handle.event_rx.try_recv() {
@@ -255,6 +267,43 @@ impl CollabSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression test for a toast-spam bug: once the background channel is
+    /// gone, `mpsc::Receiver::try_recv` reports `Disconnected` on every call
+    /// forever, so without the `session_ended` guard at the top of `poll`,
+    /// each frame's poll would re-discover "peer disconnected" and the
+    /// caller (`SmaragdApp::poll_collab_events`) would push a fresh toast
+    /// every single frame. No real networking needed: a dropped `event_tx`
+    /// reproduces the same disconnected-channel state a torn-down
+    /// background thread leaves behind.
+    #[test]
+    fn poll_reports_disconnect_once_not_every_frame_after() {
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        drop(event_tx);
+        let mut session = CollabSession {
+            handle: CollabHandle { cmd_tx, event_rx },
+            role: CollabRole::Host,
+            code: None,
+            peer_connected: true,
+            peer_fingerprint: Some("abcd1234".to_string()),
+            session_ended: false,
+            doc: crdt::CrdtDoc::new(),
+            last_synced_text: String::new(),
+        };
+
+        let first = session.poll();
+        assert_eq!(first.len(), 1);
+        assert!(matches!(first[0], SessionUpdate::PeerDisconnected));
+        assert!(session.session_ended);
+        assert!(!session.peer_connected);
+
+        // Simulating several more frames' worth of polling: none of them
+        // should produce another `PeerDisconnected` (or any other update).
+        for _ in 0..5 {
+            assert!(session.poll().is_empty());
+        }
+    }
     use std::time::{Duration, Instant};
 
     /// Exercises the full `SmaragdApp`-facing surface end to end over a real
