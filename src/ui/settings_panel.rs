@@ -133,301 +133,21 @@ pub fn show(
                 .resizable(false)
                 .exact_size(160.0)
                 .show(ui, |ui| show_category_nav(ui, category, just_opened));
-            egui::ScrollArea::vertical().show(ui, |ui| match *category {
-                SettingsCategory::General => {
-                    ui.heading("General");
-                    ui.add_space(12.0);
-                    changed |= ui
-                        .checkbox(
-                            &mut settings.reopen_last_project,
-                            "Reopen project on launch",
-                        )
-                        .changed();
-                    changed |= ui
-                        .checkbox(
-                            &mut settings.create_starter_folders,
-                            "Ensure Research and Trash folders exist in every project",
-                        )
-                        .changed();
-                    ui.add_space(12.0);
-                    ui.heading("Notifications");
-                    ui.add_space(12.0);
-                    let mut seconds_row =
-                        |ui: &mut egui::Ui, label: &str, value: &mut u32, default: u32| {
-                            ui.horizontal(|ui| {
-                                ui.label(label);
-                                let mut seconds = if *value > 0 { *value } else { default };
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut seconds)
-                                            .range(1..=60)
-                                            .suffix(" sec"),
-                                    )
-                                    .changed()
-                                {
-                                    *value = seconds;
-                                    changed = true;
-                                }
-                            });
-                        };
-                    // Defaults here must match `app::DEFAULT_TOAST_DURATION`/
-                    // `DEFAULT_STATUS_MESSAGE_DURATION` — shown as the starting
-                    // value for an unconfigured (`0`) setting, same
-                    // blank-means-unset convention as the Pomodoro durations
-                    // below.
-                    seconds_row(
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                changed |= match *category {
+                    SettingsCategory::General => show_general_category(ui, settings),
+                    SettingsCategory::Appearance => show_appearance_category(ctx, ui, settings),
+                    SettingsCategory::Editor => show_editor_category(ui, settings),
+                    SettingsCategory::Templates => show_templates_category(ui, settings),
+                    SettingsCategory::Pomodoro => show_pomodoro_category(ui, settings),
+                    SettingsCategory::Shortcuts => show_shortcuts_category(
+                        ctx,
                         ui,
-                        "Error toast duration:",
-                        &mut settings.toast_duration_secs,
-                        6,
-                    );
-                    seconds_row(
-                        ui,
-                        "Status bar message duration:",
-                        &mut settings.status_message_duration_secs,
-                        8,
-                    );
-                }
-                SettingsCategory::Appearance => {
-                    ui.heading("Theme");
-                    ui.add_space(12.0);
-                    let previous_theme = settings.theme_preference;
-                    settings.theme_preference.radio_buttons(ui);
-                    if settings.theme_preference != previous_theme {
-                        ctx.set_theme(settings.theme_preference);
-                        changed = true;
-                    }
-                    ui.add_space(12.0);
-                    ui.heading("UI Scale");
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        ui.label("Scale:");
-                        let mut percent = (settings.resolve_ui_scale() * 100.0).round() as u32;
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut percent)
-                                    .range(50..=300)
-                                    .suffix("%"),
-                            )
-                            .changed()
-                        {
-                            settings.ui_scale = percent as f32 / 100.0;
-                            ctx.set_zoom_factor(settings.ui_scale);
-                            changed = true;
-                        }
-                        if ui.button("Reset").clicked() {
-                            settings.ui_scale = 0.0;
-                            ctx.set_zoom_factor(settings.resolve_ui_scale());
-                            changed = true;
-                        }
-                    })
-                    .response
-                    .on_hover_text(
-                        "A manual multiplier on top of whatever this platform's own \
-                         display scaling already reports — mainly useful when that \
-                         comes back wrong (some Wayland compositors don't report a \
-                         scale winit picks up). Leave at 100% if the UI already looks \
-                         right.",
-                    );
-                }
-                SettingsCategory::Editor => {
-                    ui.heading("Font");
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        ui.label("Editor and Preview font:");
-                        let previous_font = settings.editor_font;
-                        egui::ComboBox::new("editor_font_combo", "")
-                            .selected_text(settings.editor_font.label())
-                            .show_ui(ui, |ui| {
-                                for font in EditorFont::ALL {
-                                    ui.selectable_value(
-                                        &mut settings.editor_font,
-                                        font,
-                                        font.label(),
-                                    );
-                                }
-                            });
-                        changed |= settings.editor_font != previous_font;
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Size:");
-                        let mut size = crate::editor_font::resolve_size(settings.editor_font_size);
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut size)
-                                    .range(8.0..=48.0)
-                                    .suffix("pt"),
-                            )
-                            .changed()
-                        {
-                            settings.editor_font_size = size;
-                            changed = true;
-                        }
-                    });
-                    ui.add_space(12.0);
-                    ui.heading("Typography");
-                    ui.add_space(12.0);
-                    changed |= ui
-                        .checkbox(
-                            &mut settings.typewriter_quotes,
-                            "Typewriter quotes in Preview and export",
-                        )
-                        .on_hover_text(
-                            "Render \" ' -- ... as curly quotes, an em dash, and an \
-                             ellipsis. Only affects how markdown is rendered here and \
-                             in exported files — the source .md text you type is never \
-                             changed.",
-                        )
-                        .changed();
-                }
-                SettingsCategory::Templates => {
-                    ui.heading("Templates");
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        ui.label("Date format for ${{date}}:");
-                        changed |= ui
-                            .text_edit_singleline(&mut settings.template_date_format)
-                            .on_hover_text(
-                                "A chrono strftime pattern, e.g. %Y-%m-%d. Blank uses %Y-%m-%d.",
-                            )
-                            .changed();
-                    });
-                    ui.weak(format!(
-                        "Preview: {}",
-                        crate::templates::format_date(&settings.template_date_format)
-                    ));
-                }
-                SettingsCategory::Pomodoro => {
-                    ui.heading("Pomodoro");
-                    ui.add_space(12.0);
-                    let mut duration_row =
-                        |ui: &mut egui::Ui, label: &str, value: &mut u32, default: u32| {
-                            ui.horizontal(|ui| {
-                                ui.label(label);
-                                let mut minutes = if *value > 0 { *value } else { default };
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut minutes)
-                                            .range(1..=180)
-                                            .suffix(" min"),
-                                    )
-                                    .changed()
-                                {
-                                    *value = minutes;
-                                    changed = true;
-                                }
-                            });
-                        };
-                    duration_row(ui, "Work session:", &mut settings.pomodoro_work_minutes, 25);
-                    duration_row(
-                        ui,
-                        "Short break:",
-                        &mut settings.pomodoro_short_break_minutes,
-                        5,
-                    );
-                    duration_row(
-                        ui,
-                        "Long break:",
-                        &mut settings.pomodoro_long_break_minutes,
-                        15,
-                    );
-                    ui.horizontal(|ui| {
-                        ui.label("Work sessions before a long break:");
-                        let mut cycles = if settings.pomodoro_cycles_before_long_break > 0 {
-                            settings.pomodoro_cycles_before_long_break
-                        } else {
-                            4
-                        };
-                        if ui
-                            .add(egui::DragValue::new(&mut cycles).range(1..=12))
-                            .changed()
-                        {
-                            settings.pomodoro_cycles_before_long_break = cycles;
-                            changed = true;
-                        }
-                    });
-                }
-                SettingsCategory::Shortcuts => {
-                    ui.heading("Keyboard Shortcuts");
-                    ui.add_space(12.0);
-                    // Sorted by functional category (`ShortcutCategory::ALL`'s order),
-                    // then alphabetically by label within each — shown as a "Category"
-                    // column on every row rather than a heading per group, so the whole
-                    // list stays one scannable grid instead of several disjoint ones.
-                    let mut actions: Vec<ShortcutAction> = ShortcutAction::ALL.to_vec();
-                    actions.sort_by_key(|action| {
-                        let category_index = ShortcutCategory::ALL
-                            .iter()
-                            .position(|category| *category == action.category())
-                            .unwrap_or(usize::MAX);
-                        (category_index, action.label())
-                    });
-
-                    egui::Grid::new("shortcuts_grid")
-                        .num_columns(4)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            ui.strong("Category");
-                            ui.strong("Action");
-                            ui.strong("Shortcut");
-                            ui.end_row();
-
-                            for action in &actions {
-                                ui.label(action.category().label());
-                                ui.label(action.label());
-                                let text = settings
-                                    .shortcuts
-                                    .get(*action)
-                                    .map(|s| ctx.format_shortcut(&s))
-                                    .unwrap_or_else(|| "Unbound".to_string());
-                                ui.label(text);
-                                ui.horizontal(|ui| {
-                                    if ui.button("Change").clicked() {
-                                        *recording_shortcut =
-                                            Some(ShortcutTarget::BuiltIn(*action));
-                                    }
-                                    if ui.button("Clear").clicked() {
-                                        settings.shortcuts.set(*action, None);
-                                        changed = true;
-                                    }
-                                });
-                                ui.end_row();
-                            }
-                        });
-
-                    if !plugin_shortcut_rows.is_empty() {
-                        ui.separator();
-                        ui.heading("Plugin Shortcuts");
-                        ui.add_space(12.0);
-                        egui::Grid::new("plugin_shortcuts_grid")
-                            .num_columns(3)
-                            .striped(true)
-                            .show(ui, |ui| {
-                                for (name, current) in plugin_shortcut_rows {
-                                    ui.label(format!(":{name}"));
-                                    let text = current
-                                        .map(|s| ctx.format_shortcut(&s))
-                                        .unwrap_or_else(|| "Unbound".to_string());
-                                    ui.label(text);
-                                    ui.horizontal(|ui| {
-                                        if ui.button("Change").clicked() {
-                                            *recording_shortcut =
-                                                Some(ShortcutTarget::Plugin(name.clone()));
-                                        }
-                                        if ui.button("Clear").clicked() {
-                                            settings.set_plugin_shortcut(
-                                                name,
-                                                None,
-                                                plugin_shortcut_rows,
-                                            );
-                                            changed = true;
-                                        }
-                                    });
-                                    ui.end_row();
-                                }
-                            });
-                    }
-                }
+                        settings,
+                        recording_shortcut,
+                        plugin_shortcut_rows,
+                    ),
+                };
             });
         });
 
@@ -457,6 +177,314 @@ pub fn show(
         );
     }
 
+    changed
+}
+
+fn show_general_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
+    let mut changed = false;
+    ui.heading("General");
+    ui.add_space(12.0);
+    changed |= ui
+        .checkbox(
+            &mut settings.reopen_last_project,
+            "Reopen project on launch",
+        )
+        .changed();
+    changed |= ui
+        .checkbox(
+            &mut settings.create_starter_folders,
+            "Ensure Research and Trash folders exist in every project",
+        )
+        .changed();
+    ui.add_space(12.0);
+    ui.heading("Notifications");
+    ui.add_space(12.0);
+    let mut seconds_row = |ui: &mut egui::Ui, label: &str, value: &mut u32, default: u32| {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            let mut seconds = if *value > 0 { *value } else { default };
+            if ui
+                .add(
+                    egui::DragValue::new(&mut seconds)
+                        .range(1..=60)
+                        .suffix(" sec"),
+                )
+                .changed()
+            {
+                *value = seconds;
+                changed = true;
+            }
+        });
+    };
+    // Defaults here must match `app::DEFAULT_TOAST_DURATION`/
+    // `DEFAULT_STATUS_MESSAGE_DURATION` — shown as the starting
+    // value for an unconfigured (`0`) setting, same
+    // blank-means-unset convention as the Pomodoro durations
+    // below.
+    seconds_row(
+        ui,
+        "Error toast duration:",
+        &mut settings.toast_duration_secs,
+        6,
+    );
+    seconds_row(
+        ui,
+        "Status bar message duration:",
+        &mut settings.status_message_duration_secs,
+        8,
+    );
+    changed
+}
+
+fn show_appearance_category(
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+) -> bool {
+    let mut changed = false;
+    ui.heading("Theme");
+    ui.add_space(12.0);
+    let previous_theme = settings.theme_preference;
+    settings.theme_preference.radio_buttons(ui);
+    if settings.theme_preference != previous_theme {
+        ctx.set_theme(settings.theme_preference);
+        changed = true;
+    }
+    ui.add_space(12.0);
+    ui.heading("UI Scale");
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        ui.label("Scale:");
+        let mut percent = (settings.resolve_ui_scale() * 100.0).round() as u32;
+        if ui
+            .add(
+                egui::DragValue::new(&mut percent)
+                    .range(50..=300)
+                    .suffix("%"),
+            )
+            .changed()
+        {
+            settings.ui_scale = percent as f32 / 100.0;
+            ctx.set_zoom_factor(settings.ui_scale);
+            changed = true;
+        }
+        if ui.button("Reset").clicked() {
+            settings.ui_scale = 0.0;
+            ctx.set_zoom_factor(settings.resolve_ui_scale());
+            changed = true;
+        }
+    })
+    .response
+    .on_hover_text(
+        "A manual multiplier on top of whatever this platform's own \
+         display scaling already reports — mainly useful when that \
+         comes back wrong (some Wayland compositors don't report a \
+         scale winit picks up). Leave at 100% if the UI already looks \
+         right.",
+    );
+    changed
+}
+
+fn show_editor_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
+    let mut changed = false;
+    ui.heading("Font");
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        ui.label("Editor and Preview font:");
+        let previous_font = settings.editor_font;
+        egui::ComboBox::new("editor_font_combo", "")
+            .selected_text(settings.editor_font.label())
+            .show_ui(ui, |ui| {
+                for font in EditorFont::ALL {
+                    ui.selectable_value(&mut settings.editor_font, font, font.label());
+                }
+            });
+        changed |= settings.editor_font != previous_font;
+    });
+    ui.horizontal(|ui| {
+        ui.label("Size:");
+        let mut size = crate::editor_font::resolve_size(settings.editor_font_size);
+        if ui
+            .add(
+                egui::DragValue::new(&mut size)
+                    .range(8.0..=48.0)
+                    .suffix("pt"),
+            )
+            .changed()
+        {
+            settings.editor_font_size = size;
+            changed = true;
+        }
+    });
+    ui.add_space(12.0);
+    ui.heading("Typography");
+    ui.add_space(12.0);
+    changed |= ui
+        .checkbox(
+            &mut settings.typewriter_quotes,
+            "Typewriter quotes in Preview and export",
+        )
+        .on_hover_text(
+            "Render \" ' -- ... as curly quotes, an em dash, and an \
+             ellipsis. Only affects how markdown is rendered here and \
+             in exported files — the source .md text you type is never \
+             changed.",
+        )
+        .changed();
+    changed
+}
+
+fn show_templates_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
+    let mut changed = false;
+    ui.heading("Templates");
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        ui.label("Date format for ${{date}}:");
+        changed |= ui
+            .text_edit_singleline(&mut settings.template_date_format)
+            .on_hover_text("A chrono strftime pattern, e.g. %Y-%m-%d. Blank uses %Y-%m-%d.")
+            .changed();
+    });
+    ui.weak(format!(
+        "Preview: {}",
+        crate::templates::format_date(&settings.template_date_format)
+    ));
+    changed
+}
+
+fn show_pomodoro_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
+    let mut changed = false;
+    let mut duration_row = |ui: &mut egui::Ui, label: &str, value: &mut u32, default: u32| {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            let mut minutes = if *value > 0 { *value } else { default };
+            if ui
+                .add(
+                    egui::DragValue::new(&mut minutes)
+                        .range(1..=180)
+                        .suffix(" min"),
+                )
+                .changed()
+            {
+                *value = minutes;
+                changed = true;
+            }
+        });
+    };
+    ui.heading("Pomodoro");
+    ui.add_space(12.0);
+    duration_row(ui, "Work session:", &mut settings.pomodoro_work_minutes, 25);
+    duration_row(
+        ui,
+        "Short break:",
+        &mut settings.pomodoro_short_break_minutes,
+        5,
+    );
+    duration_row(
+        ui,
+        "Long break:",
+        &mut settings.pomodoro_long_break_minutes,
+        15,
+    );
+    ui.horizontal(|ui| {
+        ui.label("Work sessions before a long break:");
+        let mut cycles = if settings.pomodoro_cycles_before_long_break > 0 {
+            settings.pomodoro_cycles_before_long_break
+        } else {
+            4
+        };
+        if ui
+            .add(egui::DragValue::new(&mut cycles).range(1..=12))
+            .changed()
+        {
+            settings.pomodoro_cycles_before_long_break = cycles;
+            changed = true;
+        }
+    });
+    changed
+}
+
+fn show_shortcuts_category(
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    recording_shortcut: &mut Option<ShortcutTarget>,
+    plugin_shortcut_rows: &[(String, Option<egui::KeyboardShortcut>)],
+) -> bool {
+    let mut changed = false;
+    ui.heading("Keyboard Shortcuts");
+    ui.add_space(12.0);
+    // Sorted by functional category (`ShortcutCategory::ALL`'s order),
+    // then alphabetically by label within each — shown as a "Category"
+    // column on every row rather than a heading per group, so the whole
+    // list stays one scannable grid instead of several disjoint ones.
+    let mut actions: Vec<ShortcutAction> = ShortcutAction::ALL.to_vec();
+    actions.sort_by_key(|action| {
+        let category_index = ShortcutCategory::ALL
+            .iter()
+            .position(|category| *category == action.category())
+            .unwrap_or(usize::MAX);
+        (category_index, action.label())
+    });
+
+    egui::Grid::new("shortcuts_grid")
+        .num_columns(4)
+        .striped(true)
+        .show(ui, |ui| {
+            ui.strong("Category");
+            ui.strong("Action");
+            ui.strong("Shortcut");
+            ui.end_row();
+
+            for action in &actions {
+                ui.label(action.category().label());
+                ui.label(action.label());
+                let text = settings
+                    .shortcuts
+                    .get(*action)
+                    .map(|s| ctx.format_shortcut(&s))
+                    .unwrap_or_else(|| "Unbound".to_string());
+                ui.label(text);
+                ui.horizontal(|ui| {
+                    if ui.button("Change").clicked() {
+                        *recording_shortcut = Some(ShortcutTarget::BuiltIn(*action));
+                    }
+                    if ui.button("Clear").clicked() {
+                        settings.shortcuts.set(*action, None);
+                        changed = true;
+                    }
+                });
+                ui.end_row();
+            }
+        });
+
+    if !plugin_shortcut_rows.is_empty() {
+        ui.separator();
+        ui.heading("Plugin Shortcuts");
+        ui.add_space(12.0);
+        egui::Grid::new("plugin_shortcuts_grid")
+            .num_columns(3)
+            .striped(true)
+            .show(ui, |ui| {
+                for (name, current) in plugin_shortcut_rows {
+                    ui.label(format!(":{name}"));
+                    let text = current
+                        .map(|s| ctx.format_shortcut(&s))
+                        .unwrap_or_else(|| "Unbound".to_string());
+                    ui.label(text);
+                    ui.horizontal(|ui| {
+                        if ui.button("Change").clicked() {
+                            *recording_shortcut = Some(ShortcutTarget::Plugin(name.clone()));
+                        }
+                        if ui.button("Clear").clicked() {
+                            settings.set_plugin_shortcut(name, None, plugin_shortcut_rows);
+                            changed = true;
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+    }
     changed
 }
 
