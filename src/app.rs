@@ -3510,40 +3510,50 @@ impl SmaragdApp {
                         // an error for messages like "Committed".
                         ui.label(msg);
                     }
-                    // Independent of `status_message` above, same rationale as
-                    // the Pomodoro segment below — the Draft Target's progress
-                    // should be visible at a glance regardless of whether the
-                    // Word Count dock tab is open. Placed before Pomodoro so it
-                    // renders as the segment just left of it (right_to_left
-                    // layouts stack in call order), keeping Pomodoro anchored as
-                    // the rightmost item users are already used to. Only shown
-                    // once a Draft Target is actually set — Session Target
-                    // progress is dock-panel-only, not surfaced here.
-                    if let Some(project) = &self.project
-                        && let Some(target) = project.meta.draft_target_words
-                    {
+                    // Both the Pomodoro countdown and the Draft Target's word
+                    // count live on the right edge of the bar, independent of
+                    // `status_message` above (which ~40 other call sites
+                    // overwrite freely) and visible regardless of whether their
+                    // dock tabs are open. Deliberately *one* shared
+                    // `with_layout` rather than two separate sibling calls: each
+                    // `with_layout(right_to_left, ...)` claims the *whole*
+                    // remaining width of the row and right-aligns its own
+                    // content within it, so two sibling calls land on top of
+                    // each other instead of stacking — the first widget added
+                    // inside a single shared right_to_left layout is what ends
+                    // up rightmost, so Pomodoro (added first) stays anchored on
+                    // the far right, with the word count just to its left, same
+                    // as before this was one block.
+                    let draft_target_set = self
+                        .project
+                        .as_ref()
+                        .is_some_and(|project| project.meta.draft_target_words.is_some());
+                    if self.pomodoro.has_started() || draft_target_set {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(format!(
-                                "{} : {} / {} words",
-                                self.word_count.char_activity, self.word_count.cache, target
-                            ));
-                        });
-                    }
-                    // Independent of `status_message` above (which ~40 other call
-                    // sites overwrite freely) — a running/paused-mid-session
-                    // Pomodoro timer needs a segment of its own that survives
-                    // those, so it's genuinely visible at a glance regardless of
-                    // whether its dock tab is open (see `tick_pomodoro`). Not
-                    // shown once nothing's ever been started this session.
-                    if self.pomodoro.has_started() {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let remaining = self.pomodoro.remaining().as_secs();
-                            ui.label(format!(
-                                "⏱ {} {:02}:{:02}",
-                                self.pomodoro.phase().label(),
-                                remaining / 60,
-                                remaining % 60
-                            ));
+                            // A running/paused-mid-session Pomodoro timer needs a
+                            // segment of its own that survives `status_message`
+                            // being overwritten (see `tick_pomodoro`). Not shown
+                            // once nothing's ever been started this session.
+                            if self.pomodoro.has_started() {
+                                let remaining = self.pomodoro.remaining().as_secs();
+                                ui.label(format!(
+                                    "⏱ {} {:02}:{:02}",
+                                    self.pomodoro.phase().label(),
+                                    remaining / 60,
+                                    remaining % 60
+                                ));
+                            }
+                            // Only shown once a Draft Target is actually set —
+                            // Session Target progress is dock-panel-only, not
+                            // surfaced here.
+                            if let Some(project) = &self.project
+                                && let Some(target) = project.meta.draft_target_words
+                            {
+                                ui.label(format!(
+                                    "{} : {} / {} words",
+                                    self.word_count.char_activity, self.word_count.cache, target
+                                ));
+                            }
                         });
                     }
                 });
