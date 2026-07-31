@@ -15,9 +15,19 @@
 //! Phase B: `ticket` (the pasteable connection code) and `net` (the iroh
 //! networking, on its own background thread).
 //!
-//! Phase C (current): `crypto`, the app-level end-to-end encryption layered
-//! on top of iroh's own transport security, wired into `net` so every frame
-//! exchanged between peers is ciphertext. No CRDT/UI integration yet.
+//! Phase C: `crypto`, the app-level end-to-end encryption layered on top of
+//! iroh's own transport security, wired into `net` so every frame exchanged
+//! between peers is ciphertext.
+//!
+//! Phase D (current): [`CollabSession`] — the `SmaragdApp`-facing surface
+//! tying `crdt`/`diff` to a running `net` session. Its `doc`/`last_synced`
+//! baseline always start empty regardless of role: whichever side already
+//! has the document open (normally the host) has its very next
+//! [`CollabSession::sync_local_edit`] diff the whole existing buffer against
+//! that empty baseline, producing one big "insert everything" edit that
+//! bootstraps the shared document — the ordinary per-frame diffing loop
+//! doubles as the initial sync, with no separate state-vector round trip
+//! needed for two peers.
 
 pub mod crdt;
 pub mod crypto;
@@ -39,8 +49,9 @@ pub enum CollabCommand {
 pub enum CollabEvent {
     /// Hosting is ready; the pasteable connection code to share with a peer.
     HostReady(String),
-    /// The peer's connection (and its one bidirectional stream) is up.
-    PeerConnected,
+    /// The peer's connection (and its one bidirectional stream) is up, with
+    /// a short display fingerprint for the peer (`iroh::PublicKey::fmt_short`).
+    PeerConnected(String),
     /// An already-encoded update received from the peer.
     RemoteUpdate(Vec<u8>),
     /// The peer's connection ended.
@@ -81,4 +92,231 @@ pub fn spawn_collab_session(role: SessionRole, ctx: egui::Context) -> CollabHand
     });
 
     CollabHandle { cmd_tx, event_rx }
+}
+
+/// Which side of a session `SmaragdApp` is playing — display-only (see
+/// `ui::collab_panel`); the wire protocol itself treats both sides
+/// identically once connected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CollabRole {
+    Host,
+    Joiner,
+}
+
+/// What happened this frame, for `SmaragdApp` to react to — returned by
+/// [`CollabSession::poll`].
+pub enum SessionUpdate {
+    /// The document's text changed because of a remote edit; apply
+    /// `new_text` to the editor buffer and use `change` to keep the local
+    /// cursor in the right place (see `collab::diff::adjust_cursor`).
+    TextChanged {
+        new_text: String,
+        change: diff::TextChange,
+    },
+    PeerConnected {
+        fingerprint: String,
+    },
+    PeerDisconnected,
+    Error(String),
+}
+
+/// The `SmaragdApp`-facing handle to one running collaboration session: the
+/// background thread's channels, the CRDT document, and the last-synced text
+/// baseline `sync_local_edit` diffs the live editor buffer against.
+pub struct CollabSession {
+    handle: CollabHandle,
+    pub role: CollabRole,
+    /// The pasteable connection code, once the host's networking has come up
+    /// (see `CollabEvent::HostReady`) — always `None` for a joiner.
+    pub code: Option<String>,
+    pub peer_connected: bool,
+    /// Short display fingerprint for the peer, set once `peer_connected`
+    /// becomes true (see `CollabEvent::PeerConnected`).
+    pub peer_fingerprint: Option<String>,
+    doc: crdt::CrdtDoc,
+    last_synced_text: String,
+}
+
+impl CollabSession {
+    /// Starts hosting. `doc`/`last_synced_text` deliberately start empty
+    /// regardless of the caller's actual buffer — see the module doc.
+    pub fn host(ctx: egui::Context) -> Self {
+        Self {
+            handle: spawn_collab_session(SessionRole::Host, ctx),
+            role: CollabRole::Host,
+            code: None,
+            peer_connected: false,
+            peer_fingerprint: None,
+            doc: crdt::CrdtDoc::new(),
+            last_synced_text: String::new(),
+        }
+    }
+
+    /// Joins a session using a code pasted from a host.
+    pub fn join(code: String, ctx: egui::Context) -> Self {
+        Self {
+            handle: spawn_collab_session(SessionRole::Join(code), ctx),
+            role: CollabRole::Joiner,
+            code: None,
+            peer_connected: false,
+            peer_fingerprint: None,
+            doc: crdt::CrdtDoc::new(),
+            last_synced_text: String::new(),
+        }
+    }
+
+    /// Ends the session: tells the background thread to stop, then drops
+    /// its channels — the thread tears down its connection/endpoint/runtime
+    /// and exits on its own.
+    pub fn end(self) {
+        let _ = self.handle.cmd_tx.send(CollabCommand::EndSession);
+    }
+
+    /// Drains queued [`CollabEvent`]s, applying remote updates to the
+    /// internal CRDT document as they arrive, and returns what the caller
+    /// needs to react to. Call once per frame, before rendering the editor.
+    pub fn poll(&mut self) -> Vec<SessionUpdate> {
+        let mut updates = Vec::new();
+        loop {
+            let event = match self.handle.event_rx.try_recv() {
+                Ok(event) => event,
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    updates.push(SessionUpdate::PeerDisconnected);
+                    break;
+                }
+            };
+            match event {
+                CollabEvent::HostReady(code) => self.code = Some(code),
+                CollabEvent::PeerConnected(fingerprint) => {
+                    self.peer_connected = true;
+                    self.peer_fingerprint = Some(fingerprint.clone());
+                    updates.push(SessionUpdate::PeerConnected { fingerprint });
+                }
+                CollabEvent::RemoteUpdate(bytes) => match self.doc.apply_remote_update(&bytes) {
+                    Ok(new_text) => {
+                        if let Some(change) = diff::diff(&self.last_synced_text, &new_text) {
+                            self.last_synced_text = new_text.clone();
+                            updates.push(SessionUpdate::TextChanged { new_text, change });
+                        }
+                    }
+                    Err(err) => {
+                        updates.push(SessionUpdate::Error(format!(
+                            "received an unreadable update from the peer: {err}"
+                        )));
+                    }
+                },
+                CollabEvent::PeerDisconnected => {
+                    self.peer_connected = false;
+                    updates.push(SessionUpdate::PeerDisconnected);
+                }
+                CollabEvent::Error(message) => updates.push(SessionUpdate::Error(message)),
+            }
+        }
+        updates
+    }
+
+    /// Diffs `current_text` (the live editor buffer) against the last-synced
+    /// baseline and, if it changed, applies the edit to the local CRDT
+    /// document and ships the resulting update to the peer. Call once per
+    /// frame, after the editor has had a chance to render/mutate its buffer.
+    pub fn sync_local_edit(&mut self, current_text: &str) {
+        let Some(change) = diff::diff(&self.last_synced_text, current_text) else {
+            return;
+        };
+        let update = self.doc.apply_local_change(&change);
+        let _ = self.handle.cmd_tx.send(CollabCommand::LocalEdit(update));
+        self.last_synced_text = current_text.to_string();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// Exercises the full `SmaragdApp`-facing surface end to end over a real
+    /// iroh connection: hosting against an already-"open" buffer, joining,
+    /// the bootstrap-via-first-diff mechanism (see the module doc), and
+    /// concurrent edits on both sides converging — everything Phase D wires
+    /// up except the actual egui widgets, which can't be driven headlessly
+    /// here. Real internet access to iroh's public relay infrastructure is
+    /// required, so — like the `net` module's own live tests — this is
+    /// excluded from the default `cargo test` run; run it manually with
+    /// `cargo test --lib collab::tests -- --ignored`.
+    #[test]
+    #[ignore = "requires real internet access to iroh's public relay infrastructure"]
+    fn two_sessions_converge_on_a_shared_document_with_concurrent_edits() {
+        let ctx = egui::Context::default();
+        let timeout = Duration::from_secs(30);
+
+        let mut host_text = "Chapter One\n\nIt was a dark and stormy night.".to_string();
+        let mut host = CollabSession::host(ctx.clone());
+
+        let code = drain_until(&mut host, timeout, |session| session.code.clone());
+        let mut joiner = CollabSession::join(code, ctx.clone());
+
+        drain_until(&mut joiner, timeout, |session| {
+            session.peer_connected.then_some(())
+        });
+        drain_until(&mut host, timeout, |session| {
+            session.peer_connected.then_some(())
+        });
+
+        // The host's very first sync bootstraps its already-open document to
+        // the joiner (see the module doc) — no separate "initial sync" step.
+        host.sync_local_edit(&host_text);
+        drain_until(&mut joiner, timeout, |session| {
+            (session.last_synced_text == host_text).then_some(())
+        });
+        let mut joiner_text = joiner.last_synced_text.clone();
+        assert_eq!(joiner_text, host_text);
+
+        // Concurrent edits: each side types something different before
+        // either has seen the other's change.
+        host_text.push_str(" The wind howled.");
+        host.sync_local_edit(&host_text);
+
+        joiner_text.insert_str(0, "PROLOGUE\n\n");
+        joiner.sync_local_edit(&joiner_text);
+
+        // Both sides should converge on an identical merged document.
+        drain_until(&mut host, timeout, |session| {
+            let text = &session.last_synced_text;
+            (text.contains("PROLOGUE") && text.contains("wind howled")).then_some(())
+        });
+        drain_until(&mut joiner, timeout, |session| {
+            let text = &session.last_synced_text;
+            (text.contains("PROLOGUE") && text.contains("wind howled")).then_some(())
+        });
+
+        assert_eq!(host.last_synced_text, joiner.last_synced_text);
+
+        host.end();
+        joiner.end();
+    }
+
+    /// Repeatedly polls `session` (applying its `SessionUpdate`s, including
+    /// exercising `diff::adjust_cursor` on every `TextChanged` the same way
+    /// `SmaragdApp::poll_collab_events` does) until `check` returns `Some`,
+    /// or panics after `timeout`.
+    fn drain_until<T>(
+        session: &mut CollabSession,
+        timeout: Duration,
+        mut check: impl FnMut(&CollabSession) -> Option<T>,
+    ) -> T {
+        let deadline = Instant::now() + timeout;
+        loop {
+            for update in session.poll() {
+                if let SessionUpdate::TextChanged { change, .. } = &update {
+                    let _ = diff::adjust_cursor(0, change);
+                }
+            }
+            if let Some(value) = check(session) {
+                return value;
+            }
+            assert!(Instant::now() < deadline, "timed out waiting for condition");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
 }

@@ -65,6 +65,25 @@ pub fn diff(old: &str, new: &str) -> Option<TextChange> {
     })
 }
 
+/// Adjusts a local cursor's byte offset for a remote edit that just changed
+/// the buffer out from under it, so the caret stays put relative to the
+/// surrounding text rather than jumping to wherever it now falls in the raw
+/// byte stream. Unchanged if the edit is entirely after the cursor; shifted
+/// by the edit's net length delta if entirely before; clamped to the edit's
+/// start if the cursor was sitting inside text the remote peer just deleted
+/// (the least-surprising landing spot — that's where the deleted text used
+/// to start).
+pub fn adjust_cursor(cursor_byte: usize, change: &TextChange) -> usize {
+    if cursor_byte <= change.pos {
+        cursor_byte
+    } else if cursor_byte >= change.pos + change.deleted_len {
+        let delta = change.inserted.len() as isize - change.deleted_len as isize;
+        (cursor_byte as isize + delta).max(0) as usize
+    } else {
+        change.pos
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +208,40 @@ mod tests {
                 assert_eq!(old, new);
             }
         }
+    }
+
+    #[test]
+    fn adjust_cursor_is_unchanged_when_the_edit_is_entirely_after_it() {
+        let change = change(10, 3, "xyz");
+        assert_eq!(adjust_cursor(5, &change), 5);
+        assert_eq!(adjust_cursor(10, &change), 10);
+    }
+
+    #[test]
+    fn adjust_cursor_shifts_by_the_net_length_delta_when_entirely_before_it() {
+        // A 3-byte deletion replaced by a 5-byte insertion: +2 net.
+        let change = change(0, 3, "hello");
+        assert_eq!(adjust_cursor(3, &change), 5);
+        assert_eq!(adjust_cursor(10, &change), 12);
+    }
+
+    #[test]
+    fn adjust_cursor_shifts_back_for_a_net_deletion() {
+        // A 5-byte deletion replaced by nothing: -5 net.
+        let change = change(0, 5, "");
+        assert_eq!(adjust_cursor(10, &change), 5);
+    }
+
+    #[test]
+    fn adjust_cursor_clamps_to_the_edit_start_when_inside_the_deleted_span() {
+        let change = change(4, 6, "x");
+        assert_eq!(adjust_cursor(7, &change), 4);
+        assert_eq!(adjust_cursor(9, &change), 4);
+    }
+
+    #[test]
+    fn adjust_cursor_never_underflows_on_a_large_deletion_before_a_small_cursor() {
+        let change = change(0, 100, "");
+        assert_eq!(adjust_cursor(0, &change), 0);
     }
 }

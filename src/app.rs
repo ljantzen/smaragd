@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::collab::{CollabSession, SessionUpdate};
 use crate::editor::EditorState;
 use crate::frontmatter::DocumentMeta;
 use crate::project::{BacklinkEntry, LoadError, Project, RestoreError};
@@ -14,6 +15,7 @@ use crate::ui;
 use crate::ui::WikilinkActivation;
 use crate::ui::backlinks_panel::BacklinksEvent;
 use crate::ui::binder_panel::BinderEvent;
+use crate::ui::collab_panel::{CollabPanelEvent, CollabStatus};
 use crate::ui::command_prompt::{
     Command, CommandPromptEvent, CommandPromptState, DarkModeChoice, GitCommand,
 };
@@ -77,15 +79,16 @@ impl MenuNav {
     }
 }
 
-/// The 7 top-level menus, in menu-bar order — also the fixed cycle Left/Right
+/// The 8 top-level menus, in menu-bar order — also the fixed cycle Left/Right
 /// switch through in `handle_dropdown_arrows` (wrapping: Help's Right goes to
 /// File, File's Left goes to Help).
-const TOP_MENUS: [(&str, egui::Key); 7] = [
+const TOP_MENUS: [(&str, egui::Key); 8] = [
     ("File", egui::Key::F),
     ("Edit", egui::Key::E),
     ("View", egui::Key::V),
     ("Tools", egui::Key::T),
     ("Versions", egui::Key::S),
+    ("Collaborate", egui::Key::C),
     ("Window", egui::Key::W),
     ("Help", egui::Key::H),
 ];
@@ -264,6 +267,9 @@ enum PromptAction {
     /// Save the current dock layout under the confirmed name (see
     /// `save_named_layout`).
     SaveLayout,
+    /// Join a collaboration session using the pasted connection code (see
+    /// `start_collab_join`).
+    JoinCollabSession,
     /// Save the current project's structure as a new custom template under the
     /// confirmed name (see `save_project_as_template`).
     SaveProjectAsTemplate,
@@ -341,6 +347,7 @@ enum DockTab {
     Corkboard,
     Pomodoro,
     WordCount,
+    Collab,
 }
 
 /// The initial dock layout for a fresh install (no persisted `dock_layout.json`
@@ -634,6 +641,11 @@ pub struct SmaragdApp {
     /// paragraph highlighted and everything else dimmed — see
     /// `set_focus_mode` and the `focus_mode` branch in `ui()`.
     focus_mode: bool,
+    /// The active peer-to-peer collaboration session, if any — hosting or
+    /// joined, scoped to whichever document is open when it starts (see
+    /// `start_collab_host`/`start_collab_join`/`end_collab_session`).
+    /// `None` whenever no session is running.
+    collab: Option<CollabSession>,
 }
 
 /// Which of the two network-bound git actions a `pending_git` background thread is
@@ -709,6 +721,7 @@ impl SmaragdApp {
             pomodoro: crate::pomodoro::PomodoroState::new(&initial_pomodoro_durations),
             focus_binder_requested: false,
             focus_mode: false,
+            collab: None,
         };
         app.reload_typeset_styles();
         app.reload_project_templates();
@@ -784,6 +797,7 @@ impl SmaragdApp {
             pomodoro: crate::pomodoro::PomodoroState::new(&pomodoro_durations),
             focus_binder_requested: false,
             focus_mode: false,
+            collab: None,
         }
     }
 
@@ -1417,7 +1431,23 @@ impl SmaragdApp {
         }
     }
 
+    /// Open `path` as a genuine switch to a different document — ends any
+    /// active collaboration session first (see `CollabSession`'s module
+    /// doc). Every call site *except* `rename_node`'s post-rename reopen
+    /// goes through here: a rename keeps the same logical document open
+    /// (see `open_document_internal`), so it must not tear down a session
+    /// scoped to it.
     fn open_document(&mut self, path: &Path) {
+        if self.collab.is_some() {
+            self.end_collab_session("Collaboration session ended: switched documents");
+        }
+        self.open_document_internal(path);
+    }
+
+    /// The actual open — no collaboration-session teardown. Only
+    /// `open_document` and `rename_node` (reopening the same document under
+    /// its new name) should call this directly.
+    fn open_document_internal(&mut self, path: &Path) {
         match self.editor.open(path) {
             Ok(()) => self.selected_path = Some(path.to_path_buf()),
             Err(err) => {
@@ -1429,6 +1459,9 @@ impl SmaragdApp {
     /// Close the currently open document (silently autosaving first if dirty — same
     /// convention as `open_document`/`rename_node`, no discard/cancel prompt).
     fn close_document(&mut self, ctx: &egui::Context) {
+        if self.collab.is_some() {
+            self.end_collab_session("Collaboration session ended: document closed");
+        }
         if let Err(err) = self.editor.close() {
             self.push_error_toast(format!("Couldn't save before closing: {err}"));
             return;
@@ -2108,6 +2141,123 @@ impl SmaragdApp {
         }
     }
 
+    /// Starts hosting a collaboration session against whatever document is
+    /// currently open — see `CollabSession::host`'s doc comment for why it
+    /// starts empty and lets the first `sync_local_collab_edit` bootstrap
+    /// the shared document from the live buffer.
+    fn start_collab_host(&mut self, ctx: &egui::Context) {
+        if self.collab.is_some() {
+            self.push_error_toast("A collaboration session is already active");
+            return;
+        }
+        if self.editor.open_path.is_none() {
+            self.push_error_toast("Open a document before hosting a collaboration session");
+            return;
+        }
+        self.collab = Some(CollabSession::host(ctx.clone()));
+        self.set_status_message("Hosting collaboration session…");
+    }
+
+    /// Joins a collaboration session using a pasted connection code. Refuses
+    /// while a document is already open, sidestepping any question of what
+    /// should happen to it: the shared document a join receives isn't tied
+    /// to any of the joiner's own files (see `CollabSession`'s module doc).
+    fn start_collab_join(&mut self, ctx: &egui::Context, code: &str) {
+        if self.collab.is_some() {
+            self.push_error_toast("A collaboration session is already active");
+            return;
+        }
+        if self.editor.open_path.is_some() {
+            self.push_error_toast(
+                "Close the current document before joining a collaboration session",
+            );
+            return;
+        }
+        self.collab = Some(CollabSession::join(code.to_string(), ctx.clone()));
+        self.set_status_message("Joining collaboration session…");
+    }
+
+    /// Ends the active collaboration session, if any — used both by the
+    /// explicit "End Session" action and by the document-switch teardown
+    /// hook in `open_document`/`close_document`.
+    fn end_collab_session(&mut self, reason: impl Into<String>) {
+        if let Some(session) = self.collab.take() {
+            session.end();
+            self.set_status_message(reason);
+        }
+    }
+
+    fn handle_collab_panel_event(&mut self, ctx: &egui::Context, event: CollabPanelEvent) {
+        match event {
+            CollabPanelEvent::HostRequested => self.start_collab_host(ctx),
+            CollabPanelEvent::JoinRequested => {
+                self.prompt = Some(PendingPrompt {
+                    action: PromptAction::JoinCollabSession,
+                    state: NamePromptState::new("Join Collaboration Session", "Join", ""),
+                });
+            }
+            CollabPanelEvent::EndRequested => {
+                self.end_collab_session("Collaboration session ended")
+            }
+        }
+    }
+
+    /// Applies queued collaboration events to the editor buffer — remote
+    /// edits merged in, with the local cursor adjusted so it doesn't jump
+    /// (see `collab::diff::adjust_cursor`) — and surfaces connection status
+    /// changes. Called once per frame, before the editor renders, so this
+    /// frame's `TextEdit` already reflects any merge.
+    fn poll_collab_events(&mut self, ctx: &egui::Context) {
+        let Some(session) = &mut self.collab else {
+            return;
+        };
+        for update in session.poll() {
+            match update {
+                SessionUpdate::TextChanged { new_text, change } => {
+                    let editor_id = ui::editor_panel::editor_text_edit_id();
+                    let cursor_byte = egui::TextEdit::load_state(ctx, editor_id)
+                        .and_then(|state| state.cursor.char_range())
+                        .map(|range| {
+                            crate::autocomplete::char_offset_to_byte(
+                                &self.editor.buffer,
+                                range.primary.index.0,
+                            )
+                        });
+                    self.editor.buffer = new_text;
+                    self.editor.mark_dirty();
+                    if let Some(cursor_byte) = cursor_byte {
+                        let adjusted = crate::collab::diff::adjust_cursor(cursor_byte, &change);
+                        ui::editor_panel::move_cursor_to(
+                            ctx,
+                            editor_id,
+                            &self.editor.buffer,
+                            adjusted,
+                        );
+                    }
+                }
+                SessionUpdate::PeerConnected { .. } => {
+                    self.set_status_message("Collaborator connected");
+                }
+                SessionUpdate::PeerDisconnected => {
+                    self.push_error_toast("Collaboration peer disconnected");
+                }
+                SessionUpdate::Error(message) => {
+                    self.push_error_toast(format!("Collaboration error: {message}"));
+                }
+            }
+        }
+    }
+
+    /// Diffs the live editor buffer against the collaboration session's
+    /// last-synced baseline and ships any local edit to the peer. Called
+    /// once per frame, after the editor has had a chance to render/mutate
+    /// its buffer.
+    fn sync_local_collab_edit(&mut self) {
+        if let Some(session) = &mut self.collab {
+            session.sync_local_edit(&self.editor.buffer);
+        }
+    }
+
     /// Advances the Pomodoro timer by however much wall-clock time passed since
     /// the last frame, regardless of whether its dock tab is currently open —
     /// its state (and the status bar's countdown segment) needs to keep moving
@@ -2439,6 +2589,7 @@ impl SmaragdApp {
             ShortcutAction::TogglePomodoro => self.toggle_dock_tab(DockTab::Pomodoro),
             ShortcutAction::ToggleWordCount => self.toggle_dock_tab(DockTab::WordCount),
             ShortcutAction::RefreshWordCount => self.spawn_word_count_recompute(ctx),
+            ShortcutAction::ToggleCollabPanel => self.toggle_dock_tab(DockTab::Collab),
         }
     }
 
@@ -2847,6 +2998,7 @@ impl SmaragdApp {
             PromptAction::GitCommit { push_after } => self.run_git_commit(ctx, name, push_after),
             PromptAction::SaveLayout => self.save_named_layout(ctx, name),
             PromptAction::SaveProjectAsTemplate => self.save_project_as_template(name),
+            PromptAction::JoinCollabSession => self.start_collab_join(ctx, name),
         }
     }
 
@@ -2873,7 +3025,7 @@ impl SmaragdApp {
         match project.rename(path, new_name) {
             Ok(new_path) => {
                 if self.selected_path.as_deref() == Some(path) {
-                    self.open_document(&new_path);
+                    self.open_document_internal(&new_path);
                 } else if !self.editor.dirty
                     && let Some(open_path) = self.editor.open_path.clone()
                 {
@@ -3326,6 +3478,42 @@ impl SmaragdApp {
                             });
                         }
                     });
+                    top_menu_button(ui, "Collaborate", egui::Key::C, |ui, nav| {
+                        let can_host = self.collab.is_none() && self.editor.open_path.is_some();
+                        ui.add_enabled_ui(can_host, |ui| {
+                            if nav.button(ui, "Host Session").clicked() {
+                                self.start_collab_host(ui.ctx());
+                            }
+                        });
+                        ui.add_enabled_ui(self.collab.is_none(), |ui| {
+                            if nav.button(ui, "Join Session…").clicked() {
+                                self.prompt = Some(PendingPrompt {
+                                    action: PromptAction::JoinCollabSession,
+                                    state: NamePromptState::new(
+                                        "Join Collaboration Session",
+                                        "Join",
+                                        "",
+                                    ),
+                                });
+                            }
+                        });
+                        ui.add_enabled_ui(self.collab.is_some(), |ui| {
+                            if nav.button(ui, "End Session").clicked() {
+                                self.end_collab_session("Collaboration session ended");
+                            }
+                        });
+                        ui.separator();
+                        let toggle_collab_shortcut = self
+                            .settings
+                            .shortcuts
+                            .get(ShortcutAction::ToggleCollabPanel);
+                        if nav
+                            .shortcut_button(ui, "Collaboration Panel", toggle_collab_shortcut)
+                            .clicked()
+                        {
+                            self.toggle_dock_tab(DockTab::Collab);
+                        }
+                    });
                     top_menu_button(ui, "Window", egui::Key::W, |ui, nav| {
                         if nav.button(ui, "Save Current Layout…").clicked() {
                             self.prompt_save_layout();
@@ -3576,6 +3764,7 @@ enum DockAction {
     Corkboard(CorkboardEvent),
     Pomodoro(crate::ui::pomodoro_panel::PomodoroEvent),
     WordCount(crate::ui::word_count_panel::WordCountEvent),
+    Collab(CollabPanelEvent),
 }
 
 /// A short-lived `egui_dock::TabViewer` impl, constructed fresh each frame right
@@ -3610,6 +3799,11 @@ struct AppTabViewer<'a> {
     actions: Vec<DockAction>,
     /// See `SmaragdApp::focus_binder_requested`.
     focus_binder_requested: bool,
+    /// Derived from `SmaragdApp::collab` — see `CollabStatus`.
+    collab_status: CollabStatus<'a>,
+    /// Whether a collaboration session is active — see `editor_panel::show`'s
+    /// `collaborating` parameter.
+    collaborating: bool,
 }
 
 impl egui_dock::TabViewer for AppTabViewer<'_> {
@@ -3626,6 +3820,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::Corkboard => "Corkboard".into(),
             DockTab::Pomodoro => "Pomodoro".into(),
             DockTab::WordCount => "Word Count".into(),
+            DockTab::Collab => "Collaborate".into(),
         }
     }
 
@@ -3734,6 +3929,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     false,
                     self.settings.editor_font,
                     crate::editor_font::resolve_size(self.settings.editor_font_size),
+                    self.collaborating,
                 ) {
                     Some(EditorEvent::SaveError(err)) => {
                         self.actions.push(DockAction::EditorSaveError(err));
@@ -3801,6 +3997,11 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     ui.label("Open a project folder to get started.");
                 }
             },
+            DockTab::Collab => {
+                if let Some(event) = ui::collab_panel::show(ui, self.collab_status) {
+                    self.actions.push(DockAction::Collab(event));
+                }
+            }
         }
     }
 }
@@ -3809,6 +4010,7 @@ impl eframe::App for SmaragdApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_git_operation(ui.ctx());
         self.poll_word_count();
+        self.poll_collab_events(ui.ctx());
         self.tick_pomodoro(ui.ctx());
         self.show_toasts(ui.ctx());
         self.clear_status_message_if_expired(ui.ctx());
@@ -3937,6 +4139,7 @@ impl eframe::App for SmaragdApp {
                     true,
                     self.settings.editor_font,
                     crate::editor_font::resolve_size(self.settings.editor_font_size),
+                    self.collab.is_some(),
                 ) {
                     Some(EditorEvent::SaveError(err)) => self.push_error_toast(err),
                     Some(EditorEvent::Wikilink(activation)) => self.activate_wikilink(activation),
@@ -3945,6 +4148,19 @@ impl eframe::App for SmaragdApp {
             });
         } else {
             egui::CentralPanel::default().show(ui, |ui| {
+                let collab_status = match &self.collab {
+                    None => CollabStatus::Idle,
+                    Some(session) if session.peer_connected => CollabStatus::Connected {
+                        peer_fingerprint: session
+                            .peer_fingerprint
+                            .as_deref()
+                            .unwrap_or("unknown peer"),
+                    },
+                    Some(session) => match &session.code {
+                        Some(code) => CollabStatus::Hosting { code },
+                        None => CollabStatus::Connecting,
+                    },
+                };
                 let mut viewer = AppTabViewer {
                     project: self.project.as_ref(),
                     selected_path: self.selected_path.as_deref(),
@@ -3963,6 +4179,8 @@ impl eframe::App for SmaragdApp {
                     char_activity: self.word_count.char_activity,
                     actions: Vec::new(),
                     focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
+                    collab_status,
+                    collaborating: self.collab.is_some(),
                 };
                 egui_dock::DockArea::new(&mut self.dock_state)
                     .style(egui_dock::Style::from_egui(ui.style().as_ref()))
@@ -3980,12 +4198,16 @@ impl eframe::App for SmaragdApp {
                         DockAction::WordCount(event) => {
                             self.handle_word_count_event(ui.ctx(), event)
                         }
+                        DockAction::Collab(event) => {
+                            self.handle_collab_panel_event(ui.ctx(), event)
+                        }
                     }
                 }
             });
         }
 
         self.apply_metadata_edits_if_changed();
+        self.sync_local_collab_edit();
         self.track_char_activity();
         self.refresh_tag_search_if_needed();
 

@@ -49,6 +49,7 @@ pub enum ShortcutAction {
     TogglePomodoro,
     ToggleWordCount,
     RefreshWordCount,
+    ToggleCollabPanel,
 }
 
 impl ShortcutAction {
@@ -82,6 +83,7 @@ impl ShortcutAction {
         Self::TogglePomodoro,
         Self::ToggleWordCount,
         Self::RefreshWordCount,
+        Self::ToggleCollabPanel,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -116,6 +118,7 @@ impl ShortcutAction {
             Self::TogglePomodoro => "Toggle Pomodoro Timer",
             Self::ToggleWordCount => "Toggle Word Count",
             Self::RefreshWordCount => "Refresh Word Count",
+            Self::ToggleCollabPanel => "Toggle Collaboration Panel",
         }
     }
 
@@ -155,6 +158,7 @@ impl ShortcutAction {
             Self::TogglePomodoro => "toggle_pomodoro",
             Self::ToggleWordCount => "toggle_word_count",
             Self::RefreshWordCount => "refresh_word_count",
+            Self::ToggleCollabPanel => "toggle_collab_panel",
         }
     }
 
@@ -191,7 +195,8 @@ impl ShortcutAction {
             Self::CommandPrompt
             | Self::TogglePomodoro
             | Self::ToggleWordCount
-            | Self::RefreshWordCount => ShortcutCategory::Tools,
+            | Self::RefreshWordCount
+            | Self::ToggleCollabPanel => ShortcutCategory::Tools,
         }
     }
 
@@ -256,6 +261,9 @@ impl ShortcutAction {
             // Bare F5, the conventional cross-app "refresh" key — safe
             // modifier-free per `is_modifier_free_safe_key`, and otherwise unused.
             Self::RefreshWordCount => KeyboardShortcut::new(Modifiers::NONE, Key::F5),
+            Self::ToggleCollabPanel => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::L)
+            }
         }
     }
 }
