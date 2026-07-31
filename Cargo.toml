@@ -6,7 +6,9 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/ljantzen/smaragd"
 
 [dependencies]
+blake3 = "1.8.5"
 bs58 = "0.5.1"
+chacha20poly1305 = "0.11.0"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 directories = "6.0"
 docx-rs = "0.4.22"

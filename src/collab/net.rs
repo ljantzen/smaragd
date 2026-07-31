@@ -1,18 +1,21 @@
 //! The async iroh networking that runs on the collaboration session's
 //! background thread (spawned by [`crate::collab::spawn_collab_session`]).
 //!
-//! Deliberately minimal: this module only ever moves already-encoded bytes
+//! Deliberately minimal: this module only ever moves already-encrypted bytes
 //! in both directions (see the module doc on `src/collab/mod.rs` for why the
-//! CRDT and encryption both stay on the main thread instead). It doesn't
-//! know or care what the bytes mean.
+//! CRDT stays on the main thread instead). It doesn't know or care what the
+//! plaintext means — it just derives the session key from the ticket's
+//! secret once at session start and uses `crypto::encrypt`/`crypto::decrypt`
+//! around every frame, including the joiner's initial handshake ping.
 
 use std::sync::mpsc::Sender as EventSender;
 
 use iroh::endpoint::{RecvStream, SendStream};
 use tokio::sync::mpsc::UnboundedReceiver;
 
+use crate::collab::crypto::SessionKey;
 use crate::collab::ticket::CollabTicket;
-use crate::collab::{CollabCommand, CollabEvent, SessionRole};
+use crate::collab::{CollabCommand, CollabEvent, SessionRole, crypto};
 
 /// Identifies this application's protocol to iroh's `Endpoint` — connections
 /// for any other ALPN are rejected during the handshake.
@@ -81,9 +84,9 @@ async fn run_session(
         }
     };
 
-    let (mut send_stream, mut recv_stream) =
+    let (mut send_stream, mut recv_stream, key) =
         match establish(&role, &endpoint, &event_tx, &ctx).await {
-            Some(streams) => streams,
+            Some(result) => result,
             None => {
                 endpoint.close().await;
                 return;
@@ -92,7 +95,7 @@ async fn run_session(
 
     send_event(&event_tx, &ctx, CollabEvent::PeerConnected);
 
-    // The reader runs as its own task so it can be blocked on `read_frame`
+    // The reader runs as its own task so it can be blocked on `read_encrypted`
     // (an inherently async wait for the peer's next message) concurrently
     // with this thread's loop waiting on local commands — a single
     // `tokio::select!` can't hold two separate `&mut` borrows of the one
@@ -101,7 +104,7 @@ async fn run_session(
     let reader_ctx = ctx.clone();
     let reader = tokio::spawn(async move {
         loop {
-            match read_frame(&mut recv_stream).await {
+            match read_encrypted(&mut recv_stream, &key).await {
                 // An empty frame is the joiner's handshake ping (see
                 // `establish`), not a real update — swallow it rather than
                 // surfacing a meaningless empty `RemoteUpdate`.
@@ -124,7 +127,7 @@ async fn run_session(
     while let Some(command) = cmd_rx.recv().await {
         match command {
             CollabCommand::LocalEdit(bytes) => {
-                if let Err(err) = write_frame(&mut send_stream, &bytes).await {
+                if let Err(err) = write_encrypted(&mut send_stream, &key, &bytes).await {
                     send_event(
                         &event_tx,
                         &ctx,
@@ -166,17 +169,18 @@ async fn wait_for_relay_addr(endpoint: &iroh::Endpoint) -> iroh::EndpointAddr {
 }
 
 /// Hosts or joins the session per `role`, returning the resulting
-/// bidirectional stream pair, or `None` if an event was already sent
-/// reporting why establishment failed.
+/// bidirectional stream pair and the session's derived encryption key, or
+/// `None` if an event was already sent reporting why establishment failed.
 async fn establish(
     role: &SessionRole,
     endpoint: &iroh::Endpoint,
     event_tx: &EventSender<CollabEvent>,
     ctx: &egui::Context,
-) -> Option<(SendStream, RecvStream)> {
+) -> Option<(SendStream, RecvStream, SessionKey)> {
     match role {
         SessionRole::Host => {
             let session_secret: [u8; 32] = rand::random();
+            let key = crypto::derive_key(&session_secret);
             let addr = wait_for_relay_addr(endpoint).await;
             let ticket = CollabTicket::new(addr, session_secret);
             send_event(event_tx, ctx, CollabEvent::HostReady(ticket.encode()));
@@ -203,7 +207,7 @@ async fn establish(
                 }
             };
             match conn.accept_bi().await {
-                Ok(streams) => Some(streams),
+                Ok((send_stream, recv_stream)) => Some((send_stream, recv_stream, key)),
                 Err(err) => {
                     send_event(
                         event_tx,
@@ -226,6 +230,7 @@ async fn establish(
                     return None;
                 }
             };
+            let key = crypto::derive_key(&ticket.session_secret);
             let conn = match endpoint.connect(ticket.endpoint_addr, ALPN).await {
                 Ok(conn) => conn,
                 Err(err) => {
@@ -247,7 +252,7 @@ async fn establish(
                     // the host reports `PeerConnected` immediately, rather
                     // than staying blocked in `accept_bi` until the first
                     // real edit happens to be typed.
-                    if let Err(err) = write_frame(&mut send_stream, &[]).await {
+                    if let Err(err) = write_encrypted(&mut send_stream, &key, &[]).await {
                         send_event(
                             event_tx,
                             ctx,
@@ -257,7 +262,7 @@ async fn establish(
                         );
                         return None;
                     }
-                    Some((send_stream, recv_stream))
+                    Some((send_stream, recv_stream, key))
                 }
                 Err(err) => {
                     send_event(
@@ -280,6 +285,8 @@ enum FrameError {
     Read(#[from] iroh::endpoint::ReadExactError),
     #[error("peer claimed an implausibly large frame ({0} bytes)")]
     TooLarge(u32),
+    #[error("{0}")]
+    Decrypt(#[from] crypto::DecryptError),
 }
 
 async fn write_frame(stream: &mut SendStream, payload: &[u8]) -> Result<(), FrameError> {
@@ -299,6 +306,24 @@ async fn read_frame(stream: &mut RecvStream) -> Result<Vec<u8>, FrameError> {
     let mut payload = vec![0u8; len as usize];
     stream.read_exact(&mut payload).await?;
     Ok(payload)
+}
+
+/// Encrypts `plaintext` and sends it as one frame — every frame on the wire
+/// is ciphertext, including the joiner's empty handshake ping, so there is
+/// no plaintext-vs-ciphertext special case to get wrong.
+async fn write_encrypted(
+    stream: &mut SendStream,
+    key: &SessionKey,
+    plaintext: &[u8],
+) -> Result<(), FrameError> {
+    let ciphertext = crypto::encrypt(key, plaintext);
+    write_frame(stream, &ciphertext).await
+}
+
+async fn read_encrypted(stream: &mut RecvStream, key: &SessionKey) -> Result<Vec<u8>, FrameError> {
+    let ciphertext = read_frame(stream).await?;
+    let plaintext = crypto::decrypt(key, &ciphertext)?;
+    Ok(plaintext)
 }
 
 #[cfg(test)]
@@ -411,6 +436,53 @@ mod tests {
         ));
 
         host.cmd_tx.send(CollabCommand::EndSession).unwrap();
+        joiner.cmd_tx.send(CollabCommand::EndSession).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires real internet access to iroh's public relay infrastructure"]
+    fn a_mismatched_session_secret_fails_closed_instead_of_producing_garbage() {
+        // Corrupts the session secret before the joiner uses it, so the two
+        // sides derive different encryption keys despite using "the same"
+        // connection code — proving the encryption layer fails closed
+        // rather than one side silently accepting garbage as a real update.
+        let ctx = egui::Context::default();
+        let timeout = Duration::from_secs(30);
+
+        let host = spawn_collab_session(SessionRole::Host, ctx.clone());
+        let code = match recv_event(&host.event_rx, timeout) {
+            CollabEvent::HostReady(code) => code,
+            other => panic!("expected HostReady, got {other:?}"),
+        };
+
+        let mut ticket = CollabTicket::decode(&code).unwrap();
+        ticket.session_secret[0] ^= 0xFF;
+        let wrong_key_code = ticket.encode();
+
+        let joiner = spawn_collab_session(SessionRole::Join(wrong_key_code), ctx.clone());
+
+        // The QUIC-level connection still succeeds on both sides — a session
+        // key mismatch is invisible below the encryption layer.
+        assert!(matches!(
+            recv_event(&joiner.event_rx, timeout),
+            CollabEvent::PeerConnected
+        ));
+
+        // The host also reports `PeerConnected` immediately (the QUIC-level
+        // handshake succeeded before any encrypted payload was involved)...
+        assert!(matches!(
+            recv_event(&host.event_rx, timeout),
+            CollabEvent::PeerConnected
+        ));
+
+        // ...but it can never decrypt anything the joiner sends, starting
+        // with the joiner's own handshake ping, so the session fails closed
+        // instead of proceeding on garbage.
+        match recv_event(&host.event_rx, timeout) {
+            CollabEvent::PeerDisconnected => {}
+            other => panic!("expected the mismatched key to fail closed, got {other:?}"),
+        }
+
         joiner.cmd_tx.send(CollabCommand::EndSession).unwrap();
     }
 }

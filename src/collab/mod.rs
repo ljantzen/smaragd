@@ -12,11 +12,15 @@
 //! Phase A: the CRDT engine (`crdt`) and its diffing (`diff`), proven
 //! convergent against in-process documents only.
 //!
-//! Phase B (current): `ticket` (the pasteable connection code) and `net`
-//! (the iroh networking, on its own background thread) — raw, unencrypted
-//! byte exchange between two peers. No CRDT/encryption/UI integration yet.
+//! Phase B: `ticket` (the pasteable connection code) and `net` (the iroh
+//! networking, on its own background thread).
+//!
+//! Phase C (current): `crypto`, the app-level end-to-end encryption layered
+//! on top of iroh's own transport security, wired into `net` so every frame
+//! exchanged between peers is ciphertext. No CRDT/UI integration yet.
 
 pub mod crdt;
+pub mod crypto;
 pub mod diff;
 pub mod net;
 pub mod ticket;
