@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 use crate::editor_font::EditorFont;
 use crate::shortcuts::{ShortcutAction, ShortcutMap};
 
+/// egui's own default zoom factor — used when `Settings::ui_scale` is
+/// unconfigured (`0.0`), i.e. no change from `native_pixels_per_point`.
+const DEFAULT_UI_SCALE: f32 = 1.0;
+
 /// A user's explicit choice for a plugin-registered `:` command's shortcut, kept
 /// separate from a plain `Option<KeyboardShortcut>` so `Unbound` can be told apart
 /// from "no override recorded yet" (see `plugin_shortcut_overrides`'s doc comment)
@@ -189,6 +193,17 @@ impl Settings {
         }
     }
 
+    /// Resolve `ui_scale`'s blank-means-unset (`0.0`) convention to an actual
+    /// `egui::Context::set_zoom_factor` multiplier — same shape as
+    /// `editor_font::resolve_size`/`pomodoro::resolve_durations`.
+    pub fn resolve_ui_scale(&self) -> f32 {
+        if self.ui_scale > 0.0 {
+            self.ui_scale
+        } else {
+            DEFAULT_UI_SCALE
+        }
+    }
+
     pub fn save_to_path(&self, path: &Path) -> io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -261,6 +276,24 @@ mod tests {
         let settings = Settings::default();
         assert_eq!(settings.toast_duration_secs, 0);
         assert_eq!(settings.status_message_duration_secs, 0);
+    }
+
+    #[test]
+    fn resolve_ui_scale_falls_back_to_the_default_when_unconfigured() {
+        let settings = Settings {
+            ui_scale: 0.0,
+            ..Default::default()
+        };
+        assert_eq!(settings.resolve_ui_scale(), DEFAULT_UI_SCALE);
+    }
+
+    #[test]
+    fn resolve_ui_scale_uses_the_configured_value() {
+        let settings = Settings {
+            ui_scale: 1.5,
+            ..Default::default()
+        };
+        assert_eq!(settings.resolve_ui_scale(), 1.5);
     }
 
     #[test]

@@ -202,8 +202,7 @@ pub fn show(
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
                         ui.label("Scale:");
-                        let mut percent =
-                            (crate::app::resolve_ui_scale(settings) * 100.0).round() as u32;
+                        let mut percent = (settings.resolve_ui_scale() * 100.0).round() as u32;
                         if ui
                             .add(
                                 egui::DragValue::new(&mut percent)
@@ -218,7 +217,7 @@ pub fn show(
                         }
                         if ui.button("Reset").clicked() {
                             settings.ui_scale = 0.0;
-                            ctx.set_zoom_factor(crate::app::resolve_ui_scale(settings));
+                            ctx.set_zoom_factor(settings.resolve_ui_scale());
                             changed = true;
                         }
                     })
