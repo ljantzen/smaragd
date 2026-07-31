@@ -9,6 +9,7 @@ This manual covers what the app does and how to use it. For internals (source la
 - [Installation](#installation)
 - [Projects](#projects)
 - [Project Templates](#project-templates)
+- [The Menu Bar](#the-menu-bar)
 - [Dockable Tool Windows](#dockable-tool-windows)
 - [The Binder](#the-binder)
 - [Writing and the Editor](#writing-and-the-editor)
@@ -18,12 +19,13 @@ This manual covers what the app does and how to use it. For internals (source la
 - [Backlinks](#backlinks)
 - [Document Metadata (Frontmatter)](#document-metadata-frontmatter)
 - [Tags](#tags)
-- [Folder Roles: Research, Trash, Templates](#folder-roles-research-trash-templates)
+- [Folder Roles: Research, Trash, Templates, Manuscript](#folder-roles-research-trash-templates-manuscript)
 - [Export](#export)
 - [Story Cards (Corkboard)](#story-cards-corkboard)
 - [Find and Replace](#find-and-replace)
 - [The Command Prompt](#the-command-prompt)
 - [Pomodoro Timer](#pomodoro-timer)
+- [Word Count](#word-count)
 - [Plugins](#plugins)
 - [Git Integration](#git-integration)
 - [Themes and Appearance](#themes-and-appearance)
@@ -97,9 +99,17 @@ Custom templates are stored in `smaragd/project_templates/` in the platform conf
 
 Each is a subfolder containing a `template.toml` (label, description) and a `content/` folder mirroring the structure to stamp out. Unlike custom themes/styles, there's no "Reload Custom Templates" button — a hand-dropped or hand-edited template only shows up in the picker after restarting the app (saving one via **Save Project as Template…** refreshes the list immediately, since the app already knows it just wrote it).
 
+## The Menu Bar
+
+The top menu bar — File, Edit, View, Tools, Versions, Window, Help — can be driven entirely from the keyboard:
+
+- **Alt+letter mnemonics** drop a menu down without touching the mouse: `Alt+F` File, `Alt+E` Edit, `Alt+V` View, `Alt+T` Tools, `Alt+S` Versions (Versions uses `S` since View already claims `V`), `Alt+W` Window, `Alt+H` Help.
+- **Arrow-key navigation** once a menu is open: `Up`/`Down` moves the highlighted item within the open dropdown, wrapping at the ends; `Left`/`Right` switches to the adjacent top-level menu, also wrapping, and auto-focuses its first item.
+- Three nested submenus — **View > Theme**, **Window > Layouts**, and **File > Export Manuscript…** when more than one folder holds the Manuscript role — stay mouse/hover-only for now; their trigger row is keyboard-navigable, just not their flyout contents.
+
 ## Dockable Tool Windows
 
-The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Preview**, **Corkboard**, and **Pomodoro** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
+The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Preview**, **Corkboard**, **Pomodoro**, and **Word Count** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
 
 - **Drag a tab's title** onto empty space to pop it out into its own floating window
 - **Drag a floating window's title back** onto the dock area to re-dock it
@@ -107,7 +117,7 @@ The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Pr
 - **Drag a tab to an edge** of another tab or the dock area to split the layout and place it side by side
 - **Resize** the dock area, or a floating window, by dragging its edge
 
-Binder and Editor are present from the moment a project is open; Backlinks, Tags, Metadata, Preview, Corkboard, and Pomodoro start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Tags`**, **`View > Preview`**, **`View > Corkboard`**, **`Edit > Document Metadata`**, or (for Pomodoro specifically) **`Tools > Pomodoro Timer`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
+Binder and Editor are present from the moment a project is open; Backlinks, Tags, Metadata, Preview, Corkboard, Pomodoro, and Word Count start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Tags`**, **`View > Preview`**, **`View > Corkboard`**, **`Edit > Document Metadata`**, or (for Pomodoro and Word Count) **`Tools > Pomodoro Timer`**/**`Tools > Word Count`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
 
 The whole arrangement — which tabs are open, how they're split or floated, and window position/size — persists across restarts. **`Window`** menu:
 
@@ -126,11 +136,12 @@ The left-hand panel is the **binder** — a tree view of your project folder, on
 - **Drag and drop** a file or folder *onto* another folder to move it there. Drag it *onto another document* instead to reorder — dropping it just before that document, within the same folder — without changing which folder it's in.
 - **`F6`** (the remappable "Toggle Binder/Editor Focus" shortcut) jumps keyboard focus back and forth between the binder and the editor/preview, without touching the mouse.
 - **Right-click** a row for a context menu:
-  - **New File** / **New Folder** / **New From Template** (folders only — see [Templates](#folder-roles-research-trash-templates)) — each prompts for a name (`Enter` to confirm)
+  - **New File** / **New Folder** / **New From Template** (folders only — see [Templates](#folder-roles-research-trash-templates-manuscript)) — each prompts for a name (`Enter` to confirm)
   - **Rename** — also prompts for a name, and updates any `[[wikilinks]]` elsewhere in the project that pointed at the old name
   - **Delete** — shows a native confirmation dialog; if a Trash folder is configured, it's worded as a move to Trash rather than a permanent delete
   - **Restore** (on a trashed item) — moves it back to its original folder, offering to recreate that folder if it's gone since
-  - **Folder Role** / **Dropdown Source** / **Empty Trash** (folders only) — see [Folder Roles](#folder-roles-research-trash-templates) and [Dropdown Source Folders](#dropdown-source-folders)
+  - **Folder Role** / **Dropdown Source** / **Empty Trash** (folders only) — see [Folder Roles](#folder-roles-research-trash-templates-manuscript) and [Dropdown Source Folders](#dropdown-source-folders)
+- A folder with a role assigned shows a leading icon instead of a text label: 🔍 Research, 🗑 Trash, 📋 Templates, 📖 Manuscript
 
 ## Writing and the Editor
 
@@ -220,10 +231,10 @@ By default, `type`/`status`/`pov` are free text — nothing stops "Scene" and "s
 
 A few things worth knowing:
 
-- **Independent per field, and independent of Folder Role.** Type, Status, and POV each have their own separate folder assignment — the same folder can drive more than one field, or each can point somewhere different. Checking a folder here doesn't touch whatever [Folder Role](#folder-roles-research-trash-templates) it already has (or lack of one), and doesn't exclude it from [Export](#export) — so an existing Research folder of character bios can double as the POV dropdown's source without anything else about it changing.
+- **Independent per field, and independent of Folder Role.** Type, Status, and POV each have their own separate folder assignment — the same folder can drive more than one field, or each can point somewhere different. Checking a folder here doesn't touch whatever [Folder Role](#folder-roles-research-trash-templates-manuscript) it already has (or lack of one), and doesn't exclude it from [Export](#export) — so an existing Research folder of character bios can double as the POV dropdown's source without anything else about it changing.
 - **Never destroys an existing value.** If a document's `pov: Alice` was typed before you ever assigned a POV folder — or Alice's document has since been renamed or removed from that folder — the field still shows "Alice" as-is; it just isn't one of the clickable options until you pick something else from the dropdown.
 - **"(none)"** is always the first dropdown entry, for clearing the field.
-- Not recursive: only documents placed directly inside the assigned folder count, the same limitation [Templates](#folder-roles-research-trash-templates) has.
+- Not recursive: only documents placed directly inside the assigned folder count, the same limitation [Templates](#folder-roles-research-trash-templates-manuscript) has.
 
 ## Tags
 
@@ -235,13 +246,14 @@ Click a tag heading itself, or type into the panel's own **Search** box, to swit
 
 The **`:tag <name>`** [command prompt](#the-command-prompt) command opens the Tags window pre-filled with a project-wide search for `<name>`, without needing to open the window or type into its search box first.
 
-## Folder Roles: Research, Trash, Templates
+## Folder Roles: Research, Trash, Templates, Manuscript
 
-Right-click a folder and choose **Folder Role** to designate it as one of three special folders. At most one folder can hold each role, project-wide.
+Right-click a folder and choose **Folder Role** to designate it as one of four special folders. A folder with a role assigned shows a leading icon in the binder (🔍/🗑/📋/📖) instead of a text label. Research, Trash, and Templates are exclusive — at most one folder per role, project-wide — but Manuscript isn't: several folders can hold it at once, e.g. one per book in a series.
 
 - **Trash**: deleting a file or folder moves it here instead of removing it from disk. Right-click the Trash folder for **Empty Trash** (permanent, with confirmation), or right-click a trashed item for **Restore**.
 - **Templates**: any document placed directly inside this folder (not in a subfolder of it) shows up in every other folder's right-click **"New From Template"** submenu. Picking one creates a new document from a copy of it — frontmatter included, with [template variables](#template-variables) substituted — after prompting you for a name. The template itself is never modified.
 - **Research**: currently just a marker with no behavior yet attached — reserved for future features like word-count rollups. Unlike Trash and Templates, [Export](#export) does *not* skip a Research-role folder — right-clicking one to export it exports it like any other folder.
+- **Manuscript**: designates a folder as your project's primary manuscript content, mirroring Scrivener's Draft folder. **`File > Export Manuscript…`** compiles straight from it instead of you having to right-click and find the folder yourself: if no folder has the role yet, it falls back to exporting the whole project; if exactly one does, it exports that folder directly; if more than one does, it opens a submenu to pick which one. It's also what the [Word Count](#word-count) panel's "Manuscript folders only" tracking scope sums.
 
 ### Template Variables
 
@@ -282,6 +294,8 @@ A format that isn't a valid strftime pattern falls back to `%Y-%m-%d` automatica
 ## Export
 
 Right-click any folder in the binder and choose **Export…** to compile it — and everything nested inside it, in the same top-to-bottom order shown in the binder — into a single DOCX, EPUB, or print-ready PDF file. A nested folder whose role is **Trash** or **Templates** is skipped automatically, so deleted or template content never accidentally ends up in a compiled manuscript. If [Typewriter Quotes](#typewriter-quotes) is turned on, the exported file gets curly quotes/em dashes/ellipses too, same as the Preview pane.
+
+**`File > Export Manuscript…`** is a shortcut to the same dialog for whichever folder(s) hold the [Manuscript role](#folder-roles-research-trash-templates-manuscript) — see there for how it behaves with zero, one, or several such folders.
 
 The export dialog has:
 
@@ -435,6 +449,20 @@ Any `:` command a loaded plugin has registered also works here (see below) — p
 The timer keeps running whether or not its dock tab is open or visible (it's part of the app's state, not something tied to a window being shown), and a compact countdown — `⏱ Work 12:34` — shows in the status bar at the bottom of the window any time a session has been started, so it's visible at a glance without needing to switch tabs. It doesn't appear during [Focus Mode](#focus-mode), which hides the whole status bar; the dock tab itself is unaffected and still works there.
 
 Durations default to the traditional 25 minutes of work, a 5-minute short break, and a 15-minute long break every 4 sessions — all four are adjustable in [Settings](#settings).
+
+## Word Count
+
+**`Tools > Word Count`** (or the remappable shortcut, `Ctrl+Alt+W` by default) opens a Word Count dock tab, Scrivener-style: a **Draft Target** for the whole manuscript and a **Session Target** for today's writing, each shown as a progress bar against the project's current word count.
+
+- **Track** — a per-project toggle for what counts toward the total: **Manuscript folders only** (any folder holding the [Manuscript role](#folder-roles-research-trash-templates-manuscript), falling back to the whole project if none is assigned yet) or **Everything except Trash** (every document except Trash and Templates content). Trash and Templates are excluded either way — the toggle only changes whether tracking is scoped to your Manuscript folder(s) or opened up to the whole project.
+- **Draft Target** — type a target word count to see a progress bar (current / target); leave it blank to hide the bar.
+- **Session Target** — a separate, smaller target for today's writing, measured against words written since the session's baseline rather than the Draft Target's running total. The baseline rolls forward automatically at the start of a new calendar day, or immediately if you click **Reset Session**.
+- **Characters typed this session** — a plain informational count, no target: every character you insert *or* delete in a tracked document adds to it, so typing 100 characters and then deleting them all reads 200, not a net 0. It only counts keystrokes in documents inside the current Track scope, resets when a project is opened or you click Reset Session, and isn't saved to disk — it doesn't survive quitting and relaunching smaragd.
+- **Refresh** — recomputes the current word count immediately. There's also a dedicated remappable shortcut for this, **Refresh Word Count** (`F5` by default), so you don't need the panel open to force an update.
+
+The total doesn't recompute on every keystroke or every frame — recomputing means re-reading every tracked document from disk, so it only happens on a handful of triggers (opening a project, a git pull, a folder-role or Track-scope change, an actual save, or an explicit Refresh) and always runs on a background thread so it never freezes the UI. Creating, deleting, moving, or renaming a document doesn't trigger a recompute on its own — click Refresh (or its shortcut) if the count looks stale after one of those.
+
+A compact `✎ 12,345 / 50,000 words` segment shows in the status bar, next to the Pomodoro countdown, any time a Draft Target is set — the Session Target and characters-typed counter are dock-tab-only, not mirrored in the status bar.
 
 ## Plugins
 
@@ -621,6 +649,8 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Open Document | `Ctrl+P` |
 | Close Document | `Ctrl+W` |
 | Toggle Pomodoro Timer | `Ctrl+Alt+T` |
+| Toggle Word Count | `Ctrl+Alt+W` |
+| Refresh Word Count | `F5` |
 
 Two shortcuts can never overlap — rebinding one to a combo another action already owns automatically un-assigns it from the previous owner. This holds across built-ins and plugin shortcuts alike: if a loaded plugin registered a `:` command with its own shortcut (see [Plugins](#plugins)), it shows up in its own "Plugin Shortcuts" section further down the same window, remappable/unbindable the same way.
 

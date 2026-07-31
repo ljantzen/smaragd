@@ -47,6 +47,8 @@ pub enum ShortcutAction {
     /// `dispatch_shortcut_action` — see both call sites.
     ActivateWikilink,
     TogglePomodoro,
+    ToggleWordCount,
+    RefreshWordCount,
 }
 
 impl ShortcutAction {
@@ -78,6 +80,8 @@ impl ShortcutAction {
         Self::CloseDocument,
         Self::ActivateWikilink,
         Self::TogglePomodoro,
+        Self::ToggleWordCount,
+        Self::RefreshWordCount,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -110,12 +114,17 @@ impl ShortcutAction {
             Self::CloseDocument => "Close Document",
             Self::ActivateWikilink => "Activate Wikilink",
             Self::TogglePomodoro => "Toggle Pomodoro Timer",
+            Self::ToggleWordCount => "Toggle Word Count",
+            Self::RefreshWordCount => "Refresh Word Count",
         }
     }
 
     /// Stable identifier used as the TOML key for this action, independent of enum
-    /// declaration order or the display label (which may change).
-    fn id(&self) -> &'static str {
+    /// declaration order or the display label (which may change). `pub(crate)`
+    /// rather than private: `settings::Settings::backfill_new_shortcut_defaults`
+    /// needs it too, to record which actions a settings file has already seen —
+    /// see `Settings::shortcuts_seen`'s doc comment.
+    pub(crate) fn id(&self) -> &'static str {
         match self {
             Self::NewProject => "new_project",
             Self::OpenProject => "open_project",
@@ -144,6 +153,8 @@ impl ShortcutAction {
             Self::CloseDocument => "close_document",
             Self::ActivateWikilink => "activate_wikilink",
             Self::TogglePomodoro => "toggle_pomodoro",
+            Self::ToggleWordCount => "toggle_word_count",
+            Self::RefreshWordCount => "refresh_word_count",
         }
     }
 
@@ -177,7 +188,10 @@ impl ShortcutAction {
             | Self::ToggleBinderFocus
             | Self::ToggleFocusMode => ShortcutCategory::View,
             Self::GitCommit | Self::GitPush => ShortcutCategory::Git,
-            Self::CommandPrompt | Self::TogglePomodoro => ShortcutCategory::Tools,
+            Self::CommandPrompt
+            | Self::TogglePomodoro
+            | Self::ToggleWordCount
+            | Self::RefreshWordCount => ShortcutCategory::Tools,
         }
     }
 
@@ -236,6 +250,12 @@ impl ShortcutAction {
             Self::TogglePomodoro => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::T)
             }
+            Self::ToggleWordCount => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::W)
+            }
+            // Bare F5, the conventional cross-app "refresh" key — safe
+            // modifier-free per `is_modifier_free_safe_key`, and otherwise unused.
+            Self::RefreshWordCount => KeyboardShortcut::new(Modifiers::NONE, Key::F5),
         }
     }
 }

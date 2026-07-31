@@ -340,6 +340,7 @@ enum DockTab {
     Preview,
     Corkboard,
     Pomodoro,
+    WordCount,
 }
 
 /// The initial dock layout for a fresh install (no persisted `dock_layout.json`
@@ -497,6 +498,44 @@ pub struct SmaragdApp {
     tag_search_results: Vec<(PathBuf, String)>,
     /// Which `tags_search_text` value `tag_search_results` was last computed for.
     tag_search_computed_for: String,
+    /// The open project's word count under `ProjectMeta::word_count_scope`, shown
+    /// in the Word Count dock tab and the status bar. Recomputed only on a
+    /// handful of triggers (see `spawn_word_count_recompute`'s callers) via a
+    /// background thread, never every frame — unlike `metadata_panel`'s live
+    /// per-document count from the open buffer, which is unrelated to this.
+    word_count_cache: usize,
+    /// A word-count recompute currently running on a background thread, if any —
+    /// walking every tracked document's content from disk could be slow for a
+    /// large project, so (like `pending_git`'s push/pull) this never runs
+    /// synchronously on the UI thread. `None` once `poll_word_count` has picked
+    /// up its result.
+    pending_word_count: Option<std::sync::mpsc::Receiver<usize>>,
+    /// `editor.dirty` as of the previous frame — compared against its current
+    /// value in `refresh_word_count_if_needed` to edge-detect "a save just
+    /// happened" (dirty went `true` -> `false`), the moment any of the three
+    /// existing save paths (explicit save, focus-loss autosave, closing the
+    /// document) commits bytes to disk, without needing a call at each site.
+    word_count_last_dirty: bool,
+    /// Characters typed *and* deleted this session, in tracked documents only
+    /// (see `Project::is_path_tracked`) — an activity counter, not a net delta:
+    /// typing 100 characters then deleting them all reads 200, not 0. Purely
+    /// informational (no target), kept only in memory — not persisted to
+    /// `project.json` — and reset when a project is opened (see `set_project`)
+    /// or the panel's "Reset Session" is clicked (see `handle_word_count_event`).
+    /// Updated by `track_char_activity`, called after the dock renders each
+    /// frame.
+    char_activity: u64,
+    /// The open document's buffer length (in `chars()`), as of the last frame
+    /// `track_char_activity` ran — compared against the current frame's length
+    /// to find how many characters just changed. `None` right after opening or
+    /// switching documents, so the jump between two different documents' lengths
+    /// is never miscounted as characters typed.
+    char_activity_last_len: Option<usize>,
+    /// Which document `char_activity_last_len` was captured for — lets
+    /// `track_char_activity` notice a document switch (vs. an edit to the same
+    /// document) and reset the baseline instead of diffing across two unrelated
+    /// buffers.
+    char_activity_tracked_path: Option<PathBuf>,
     /// The current dock layout — which tabs are open, and whether they're docked
     /// together, split, or floating in their own window. Persisted across
     /// restarts (see `persist_dock_layout`); defaults to `default_dock_state()`.
@@ -625,6 +664,12 @@ impl SmaragdApp {
             tags_search_text: String::new(),
             tag_search_results: Vec::new(),
             tag_search_computed_for: String::new(),
+            word_count_cache: 0,
+            pending_word_count: None,
+            word_count_last_dirty: false,
+            char_activity: 0,
+            char_activity_last_len: None,
+            char_activity_tracked_path: None,
             dock_state: Self::load_dock_state(),
             saved_layouts: Self::load_saved_layouts(),
             pending_git: None,
@@ -660,7 +705,7 @@ impl SmaragdApp {
         if app.settings.reopen_last_project
             && let Some(path) = app.settings.last_project_path.clone()
         {
-            app.open_project(&path);
+            app.open_project(&cc.egui_ctx, &path);
         }
 
         app
@@ -789,16 +834,16 @@ impl SmaragdApp {
     /// startup, where a missing `.smaragd` marker must just be reported (not
     /// interactively resolved) — the user didn't just explicitly ask to open this
     /// folder, so an unprompted modal dialog on launch would be wrong.
-    fn open_project(&mut self, path: &Path) {
+    fn open_project(&mut self, ctx: &egui::Context, path: &Path) {
         match Project::load_from_folder(path) {
-            Ok(project) => self.set_project(project, path),
+            Ok(project) => self.set_project(ctx, project, path),
             Err(err) => {
                 self.push_error_toast(format!("Couldn't open {}: {err}", path.display()));
             }
         }
     }
 
-    fn set_project(&mut self, mut project: Project, path: &Path) {
+    fn set_project(&mut self, ctx: &egui::Context, mut project: Project, path: &Path) {
         if self.settings.create_starter_folders {
             Self::ensure_starter_folders(&mut project);
         }
@@ -815,6 +860,11 @@ impl SmaragdApp {
             self.push_error_toast(format!("Couldn't initialize git: {err}"));
         }
         self.reload_plugins();
+        self.word_count_last_dirty = false;
+        self.char_activity = 0;
+        self.char_activity_last_len = None;
+        self.char_activity_tracked_path = None;
+        self.spawn_word_count_recompute(ctx);
     }
 
     /// If git support is enabled for `project` but its `.git` directory is missing —
@@ -1022,7 +1072,7 @@ impl SmaragdApp {
     /// apply its result — a status message, plus a binder rescan on a successful pull.
     /// Called every frame; a no-op whenever nothing is pending or the background
     /// thread hasn't sent its result yet.
-    fn poll_git_operation(&mut self) {
+    fn poll_git_operation(&mut self, ctx: &egui::Context) {
         let Some((_, receiver)) = &self.pending_git else {
             return;
         };
@@ -1045,6 +1095,7 @@ impl SmaragdApp {
                     && let Some(project) = &mut self.project
                 {
                     project.rescan();
+                    self.spawn_word_count_recompute(ctx);
                 }
                 self.set_status_message(format!("{}ed", operation.label()));
             }
@@ -1148,9 +1199,9 @@ impl SmaragdApp {
     /// Project" menu item). If `path` has never been opened by smaragd before (no
     /// `.smaragd/project.json`), offers via a native Yes/No dialog to set it up in
     /// place, matching `delete_node`'s confirmation pattern.
-    fn open_project_or_offer_to_adopt(&mut self, path: &Path) {
+    fn open_project_or_offer_to_adopt(&mut self, ctx: &egui::Context, path: &Path) {
         match Project::load_from_folder(path) {
-            Ok(project) => self.set_project(project, path),
+            Ok(project) => self.set_project(ctx, project, path),
             Err(LoadError::NotInitialized(_)) => {
                 let adopt = rfd::MessageDialog::new()
                     .set_title("Set Up Project")
@@ -1163,7 +1214,7 @@ impl SmaragdApp {
                     .show();
                 if adopt == rfd::MessageDialogResult::Yes {
                     match Project::initialize(path) {
-                        Ok(project) => self.set_project(project, path),
+                        Ok(project) => self.set_project(ctx, project, path),
                         Err(err) => {
                             self.push_error_toast(format!(
                                 "Couldn't set up {}: {err}",
@@ -1181,9 +1232,9 @@ impl SmaragdApp {
 
     /// Open the OS's native folder-picker dialog and, if the user selects a folder,
     /// open it as a project immediately (offering to adopt it if needed).
-    fn browse_for_project(&mut self) {
+    fn browse_for_project(&mut self, ctx: &egui::Context) {
         if let Some(path) = rfd::FileDialog::new().pick_folder() {
-            self.open_project_or_offer_to_adopt(&path);
+            self.open_project_or_offer_to_adopt(ctx, &path);
         }
     }
 
@@ -1210,7 +1261,13 @@ impl SmaragdApp {
         });
     }
 
-    fn create_project(&mut self, location: &Path, name: &str, template_id: &str) {
+    fn create_project(
+        &mut self,
+        ctx: &egui::Context,
+        location: &Path,
+        name: &str,
+        template_id: &str,
+    ) {
         let root = location.join(name);
         if root.exists() {
             // Unlike the adopt flow, "New Project" should only ever create a fresh
@@ -1229,7 +1286,7 @@ impl SmaragdApp {
                         .and_then(|template| template.apply(&mut project).err());
                 // `set_project` unconditionally clears `status_message`, so a
                 // template-apply error must be recorded after it runs, not before.
-                self.set_project(project, &root);
+                self.set_project(ctx, project, &root);
                 if let Some(err) = template_error {
                     self.push_error_toast(format!("Couldn't apply template: {err}"));
                 }
@@ -1413,6 +1470,115 @@ impl SmaragdApp {
         self.tag_search_computed_for = self.tags_search_text.clone();
     }
 
+    /// Recompute `word_count_cache` whenever a save just completed — edge-detects
+    /// `editor.dirty` going `true` -> `false` this frame, the moment any of the
+    /// three existing save paths (explicit `Ctrl+S`, focus-loss autosave inside
+    /// `editor_panel::show`, or `close_document`) commits bytes to disk, without
+    /// needing a call at each of those sites. Unlike `refresh_backlinks_if_needed`/
+    /// `refresh_tags_if_needed` (keyed on which document is open), word count
+    /// doesn't depend on the open document at all, so a dirty-edge check is the
+    /// right trigger here instead. A no-op most frames.
+    fn refresh_word_count_if_needed(&mut self, ctx: &egui::Context) {
+        let just_saved = self.word_count_last_dirty && !self.editor.dirty;
+        self.word_count_last_dirty = self.editor.dirty;
+        if just_saved {
+            self.spawn_word_count_recompute(ctx);
+        }
+    }
+
+    /// Update `char_activity` from however much the open document's buffer
+    /// length changed since the last frame — both growing (typing) and
+    /// shrinking (deleting) count toward the total, so typing 100 characters
+    /// then deleting them all adds 200, not 0 (see `char_activity`'s doc
+    /// comment). Cheap (no disk I/O, no full-project walk — see
+    /// `Project::is_path_tracked`), so unlike `word_count_cache` this runs every
+    /// frame. Called after the dock renders each frame, alongside
+    /// `apply_metadata_edits_if_changed`.
+    fn track_char_activity(&mut self) {
+        let Some(open_path) = self.editor.open_path.clone() else {
+            self.char_activity_last_len = None;
+            self.char_activity_tracked_path = None;
+            return;
+        };
+        if self.char_activity_tracked_path.as_deref() != Some(open_path.as_path()) {
+            // Just opened or switched to this document — the previous frame's
+            // length (if any) belonged to a different buffer, so there's
+            // nothing meaningful to diff against yet.
+            self.char_activity_tracked_path = Some(open_path.clone());
+            self.char_activity_last_len = Some(self.editor.buffer.chars().count());
+            return;
+        }
+        let current_len = self.editor.buffer.chars().count();
+        if let Some(previous_len) = self.char_activity_last_len {
+            let is_tracked = self.project.as_ref().is_some_and(|project| {
+                project.is_path_tracked(&open_path, project.meta.word_count_scope)
+            });
+            if is_tracked {
+                self.char_activity += current_len.abs_diff(previous_len) as u64;
+            }
+        }
+        self.char_activity_last_len = Some(current_len);
+    }
+
+    /// Kick off a word-count recompute on a background thread for the current
+    /// project (a no-op with none open) — walking every tracked document's
+    /// content from disk could be slow for a large project, so (like `git push`/
+    /// `pull`, see `spawn_git_operation`) this never runs synchronously on the UI
+    /// thread. Refuses to start a second computation while one's already in
+    /// flight rather than queuing or racing it. The spawned thread requests a
+    /// repaint once it has a result, so `poll_word_count` (called every frame)
+    /// picks it up promptly.
+    fn spawn_word_count_recompute(&mut self, ctx: &egui::Context) {
+        let Some(project) = &self.project else {
+            self.word_count_cache = 0;
+            return;
+        };
+        if self.pending_word_count.is_some() {
+            return;
+        }
+        // Clone just the data the walk needs rather than requiring `Project`
+        // itself to be `Send` — `root`/`tree`/`meta` are all plain, cloneable
+        // data (see their derives in `project/mod.rs`).
+        let root = project.root.clone();
+        let tree = project.tree.clone();
+        let meta = project.meta.clone();
+        let scope = meta.word_count_scope;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let repaint_ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let snapshot = crate::project::Project { root, tree, meta };
+            let total = snapshot.word_count(scope);
+            let _ = sender.send(total);
+            repaint_ctx.request_repaint();
+        });
+        self.pending_word_count = Some(receiver);
+    }
+
+    /// Check whether an in-flight `pending_word_count` recompute has finished,
+    /// and if so apply it to `word_count_cache` and roll the Session Target's
+    /// baseline forward if the calendar day has changed (see
+    /// `Project::maybe_roll_over_session`). Called every frame, mirroring
+    /// `poll_git_operation`; a no-op whenever nothing is pending or the
+    /// background thread hasn't sent its result yet.
+    fn poll_word_count(&mut self) {
+        let Some(receiver) = &self.pending_word_count else {
+            return;
+        };
+        let total = match receiver.try_recv() {
+            Ok(total) => total,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_word_count = None;
+                return;
+            }
+        };
+        self.pending_word_count = None;
+        self.word_count_cache = total;
+        if let Some(project) = &mut self.project {
+            let _ = project.maybe_roll_over_session(total);
+        }
+    }
+
     /// Open or close a dock tab: present → removed, absent → opened in whichever
     /// leaf currently has focus.
     fn toggle_dock_tab(&mut self, tab: DockTab) {
@@ -1514,7 +1680,7 @@ impl SmaragdApp {
         self.create_document(&parent, target);
     }
 
-    fn handle_binder_event(&mut self, event: BinderEvent) {
+    fn handle_binder_event(&mut self, ctx: &egui::Context, event: BinderEvent) {
         match event {
             BinderEvent::Selected(path) => self.open_document(&path),
             BinderEvent::NewFile { parent } => self.prompt_new_file(parent),
@@ -1526,7 +1692,7 @@ impl SmaragdApp {
             BinderEvent::Rename { path } => self.prompt_rename(path),
             BinderEvent::Delete { path } => self.delete_node(&path),
             BinderEvent::Restore { path } => self.restore_node(&path),
-            BinderEvent::SetFolderRole { path, role } => self.set_folder_role(&path, role),
+            BinderEvent::SetFolderRole { path, role } => self.set_folder_role(ctx, &path, role),
             BinderEvent::SetPicklistFolder { field, path } => self.set_picklist_folder(field, path),
             BinderEvent::EmptyTrash { path } => self.empty_trash_folder(&path),
             BinderEvent::MoveItem { path, new_parent } => self.move_item(&path, &new_parent),
@@ -1824,6 +1990,48 @@ impl SmaragdApp {
         }
     }
 
+    fn handle_word_count_event(
+        &mut self,
+        ctx: &egui::Context,
+        event: ui::word_count_panel::WordCountEvent,
+    ) {
+        use ui::word_count_panel::WordCountEvent;
+        match event {
+            WordCountEvent::SetDraftTarget(target) => {
+                if let Some(project) = &mut self.project
+                    && let Err(err) = project.set_draft_target_words(target)
+                {
+                    self.push_error_toast(format!("Couldn't save draft target: {err}"));
+                }
+            }
+            WordCountEvent::SetSessionTarget(target) => {
+                if let Some(project) = &mut self.project
+                    && let Err(err) = project.set_session_target_words(target)
+                {
+                    self.push_error_toast(format!("Couldn't save session target: {err}"));
+                }
+            }
+            WordCountEvent::SetScope(scope) => {
+                if let Some(project) = &mut self.project
+                    && let Err(err) = project.set_word_count_scope(scope)
+                {
+                    self.push_error_toast(format!("Couldn't save tracking scope: {err}"));
+                }
+                self.spawn_word_count_recompute(ctx);
+            }
+            WordCountEvent::Refresh => self.spawn_word_count_recompute(ctx),
+            WordCountEvent::ResetSession => {
+                let total = self.word_count_cache;
+                if let Some(project) = &mut self.project
+                    && let Err(err) = project.reset_session(total)
+                {
+                    self.push_error_toast(format!("Couldn't reset session: {err}"));
+                }
+                self.char_activity = 0;
+            }
+        }
+    }
+
     /// Advances the Pomodoro timer by however much wall-clock time passed since
     /// the last frame, regardless of whether its dock tab is currently open —
     /// its state (and the status bar's countdown segment) needs to keep moving
@@ -2047,7 +2255,7 @@ impl SmaragdApp {
     fn dispatch_shortcut_action(&mut self, ctx: &egui::Context, action: ShortcutAction) {
         match action {
             ShortcutAction::NewProject => self.start_new_project(),
-            ShortcutAction::OpenProject => self.browse_for_project(),
+            ShortcutAction::OpenProject => self.browse_for_project(ctx),
             ShortcutAction::OpenSettings => self.show_settings = true,
             ShortcutAction::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             ShortcutAction::TogglePreview => {
@@ -2153,6 +2361,8 @@ impl SmaragdApp {
             // above has to stay exhaustive over `ShortcutAction`.
             ShortcutAction::ActivateWikilink => {}
             ShortcutAction::TogglePomodoro => self.toggle_dock_tab(DockTab::Pomodoro),
+            ShortcutAction::ToggleWordCount => self.toggle_dock_tab(DockTab::WordCount),
+            ShortcutAction::RefreshWordCount => self.spawn_word_count_recompute(ctx),
         }
     }
 
@@ -2481,12 +2691,18 @@ impl SmaragdApp {
         }
     }
 
-    fn set_folder_role(&mut self, path: &Path, role: Option<crate::project::FolderRole>) {
+    fn set_folder_role(
+        &mut self,
+        ctx: &egui::Context,
+        path: &Path,
+        role: Option<crate::project::FolderRole>,
+    ) {
         let Some(project) = &mut self.project else {
             return;
         };
-        if let Err(err) = project.set_folder_role(path, role) {
-            self.push_error_toast(format!("Couldn't set folder role: {err}"));
+        match project.set_folder_role(path, role) {
+            Ok(()) => self.spawn_word_count_recompute(ctx),
+            Err(err) => self.push_error_toast(format!("Couldn't set folder role: {err}")),
         }
     }
 
@@ -2551,7 +2767,7 @@ impl SmaragdApp {
             PromptAction::NewProject {
                 location,
                 template_id,
-            } => self.create_project(&location, name, &template_id),
+            } => self.create_project(ctx, &location, name, &template_id),
             PromptAction::GitCommit { push_after } => self.run_git_commit(ctx, name, push_after),
             PromptAction::SaveLayout => self.save_named_layout(ctx, name),
             PromptAction::SaveProjectAsTemplate => self.save_project_as_template(name),
@@ -2696,6 +2912,7 @@ enum DockAction {
     Wikilink(WikilinkActivation),
     Corkboard(CorkboardEvent),
     Pomodoro(crate::ui::pomodoro_panel::PomodoroEvent),
+    WordCount(crate::ui::word_count_panel::WordCountEvent),
 }
 
 /// A short-lived `egui_dock::TabViewer` impl, constructed fresh each frame right
@@ -2723,6 +2940,10 @@ struct AppTabViewer<'a> {
     color_themes: &'a [crate::color_theme::ColorTheme],
     pomodoro: &'a crate::pomodoro::PomodoroState,
     pomodoro_durations: crate::pomodoro::PomodoroDurations,
+    /// See `SmaragdApp::word_count_cache`.
+    word_count_cache: usize,
+    /// See `SmaragdApp::char_activity`.
+    char_activity: u64,
     actions: Vec<DockAction>,
     /// See `SmaragdApp::focus_binder_requested`.
     focus_binder_requested: bool,
@@ -2741,6 +2962,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::Preview => "Preview".into(),
             DockTab::Corkboard => "Corkboard".into(),
             DockTab::Pomodoro => "Pomodoro".into(),
+            DockTab::WordCount => "Word Count".into(),
         }
     }
 
@@ -2901,13 +3123,29 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     self.actions.push(DockAction::Pomodoro(event));
                 }
             }
+            DockTab::WordCount => match self.project {
+                Some(project) => {
+                    if let Some(event) = ui::word_count_panel::show(
+                        ui,
+                        project,
+                        self.word_count_cache,
+                        self.char_activity,
+                    ) {
+                        self.actions.push(DockAction::WordCount(event));
+                    }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
         }
     }
 }
 
 impl eframe::App for SmaragdApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.poll_git_operation();
+        self.poll_git_operation(ui.ctx());
+        self.poll_word_count();
         self.tick_pomodoro(ui.ctx());
         self.show_toasts(ui.ctx());
         self.clear_status_message_if_expired(ui.ctx());
@@ -3004,7 +3242,7 @@ impl eframe::App for SmaragdApp {
                             .shortcut_button(ui, "Open Project", open_project_shortcut)
                             .clicked()
                         {
-                            self.browse_for_project();
+                            self.browse_for_project(ui.ctx());
                         }
                         ui.add_enabled(false, egui::Button::new("Close Project"));
                         ui.separator();
@@ -3246,6 +3484,24 @@ impl eframe::App for SmaragdApp {
                         {
                             self.toggle_dock_tab(DockTab::Pomodoro);
                         }
+                        let word_count_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::ToggleWordCount);
+                        if nav
+                            .shortcut_button(ui, "Word Count", word_count_shortcut)
+                            .clicked()
+                        {
+                            self.toggle_dock_tab(DockTab::WordCount);
+                        }
+                        let refresh_word_count_shortcut = self
+                            .settings
+                            .shortcuts
+                            .get(ShortcutAction::RefreshWordCount);
+                        if nav
+                            .shortcut_button(ui, "Refresh Word Count", refresh_word_count_shortcut)
+                            .clicked()
+                        {
+                            self.spawn_word_count_recompute(ui.ctx());
+                        }
                         ui.separator();
                         if nav.button(ui, "Reload Plugins").clicked() {
                             self.reload_plugins();
@@ -3481,6 +3737,22 @@ impl eframe::App for SmaragdApp {
                         // an error for messages like "Committed".
                         ui.label(msg);
                     }
+                    // Independent of `status_message` above, same rationale as
+                    // the Pomodoro segment below — the Draft Target's progress
+                    // should be visible at a glance regardless of whether the
+                    // Word Count dock tab is open. Placed before Pomodoro so it
+                    // renders as the segment just left of it (right_to_left
+                    // layouts stack in call order), keeping Pomodoro anchored as
+                    // the rightmost item users are already used to. Only shown
+                    // once a Draft Target is actually set — Session Target
+                    // progress is dock-panel-only, not surfaced here.
+                    if let Some(project) = &self.project
+                        && let Some(target) = project.meta.draft_target_words
+                    {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(format!("✎ {} / {} words", self.word_count_cache, target));
+                        });
+                    }
                     // Independent of `status_message` above (which ~40 other call
                     // sites overwrite freely) — a running/paused-mid-session
                     // Pomodoro timer needs a segment of its own that survives
@@ -3505,6 +3777,7 @@ impl eframe::App for SmaragdApp {
         self.refresh_backlinks_if_needed();
         self.refresh_tags_if_needed();
         self.refresh_metadata_if_needed();
+        self.refresh_word_count_if_needed(ui.ctx());
 
         if self.focus_mode {
             egui::CentralPanel::default().show(ui, |ui| {
@@ -3575,6 +3848,8 @@ impl eframe::App for SmaragdApp {
                     color_themes: &self.color_themes,
                     pomodoro: &self.pomodoro,
                     pomodoro_durations: crate::pomodoro::resolve_durations(&self.settings),
+                    word_count_cache: self.word_count_cache,
+                    char_activity: self.char_activity,
                     actions: Vec::new(),
                     focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
                 };
@@ -3584,19 +3859,23 @@ impl eframe::App for SmaragdApp {
                 for action in viewer.actions {
                     match action {
                         DockAction::OpenDocument(path) => self.open_document(&path),
-                        DockAction::Binder(event) => self.handle_binder_event(event),
+                        DockAction::Binder(event) => self.handle_binder_event(ui.ctx(), event),
                         DockAction::RefreshBacklinks => self.recompute_backlinks(),
                         DockAction::RefreshTags => self.recompute_tags(),
                         DockAction::EditorSaveError(err) => self.push_error_toast(err),
                         DockAction::Wikilink(activation) => self.activate_wikilink(activation),
                         DockAction::Corkboard(event) => self.handle_corkboard_event(event),
                         DockAction::Pomodoro(event) => self.handle_pomodoro_event(event),
+                        DockAction::WordCount(event) => {
+                            self.handle_word_count_event(ui.ctx(), event)
+                        }
                     }
                 }
             });
         }
 
         self.apply_metadata_edits_if_changed();
+        self.track_char_activity();
         self.refresh_tag_search_if_needed();
 
         if let Some(draft) = &mut self.card_draft {
@@ -3983,7 +4262,12 @@ mod menu_nav_tests {
         // it gains focus) before pressing Up — from the first item, Up should
         // wrap to the last.
         frame(&ctx, "File", egui::Key::F, vec![]);
-        let items = frame(&ctx, "File", egui::Key::F, vec![key_event(egui::Key::ArrowUp)]);
+        let items = frame(
+            &ctx,
+            "File",
+            egui::Key::F,
+            vec![key_event(egui::Key::ArrowUp)],
+        );
         assert_eq!(ctx.memory(|m| m.focused()), Some(items[2]));
 
         // From the last item, Down should wrap back to the first.

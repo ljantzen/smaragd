@@ -3,14 +3,14 @@
 //! directory — `~/.config/smaragd` on Linux, `~/Library/Application Support/smaragd`
 //! on macOS, `%APPDATA%\smaragd\config` on Windows — via the `directories` crate.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::editor_font::EditorFont;
-use crate::shortcuts::ShortcutMap;
+use crate::shortcuts::{ShortcutAction, ShortcutMap};
 
 /// A user's explicit choice for a plugin-registered `:` command's shortcut, kept
 /// separate from a plain `Option<KeyboardShortcut>` so `Unbound` can be told apart
@@ -101,6 +101,18 @@ pub struct Settings {
     /// blank-means-unset convention as `toast_duration_secs`
     /// (`app::resolve_status_message_duration`).
     pub status_message_duration_secs: u32,
+    /// Every `ShortcutAction::id()` this settings file has ever been loaded
+    /// with — internal bookkeeping for `backfill_new_shortcut_defaults`, not
+    /// user-facing. `shortcuts` (above) treats an action absent from its map as
+    /// unbound, which is correct when the user explicitly clicked "Clear" in
+    /// the Settings window (see `settings_panel.rs`), but wrong when the
+    /// absence is really "this `ShortcutAction` variant didn't exist yet when
+    /// this file was last saved" — both look identical as plain absence. This
+    /// set is what tells them apart: an id missing from *both* `shortcuts` and
+    /// here is a newly added action that should start bound to its default; one
+    /// missing from `shortcuts` but present here was deliberately cleared and
+    /// should stay that way.
+    pub shortcuts_seen: BTreeSet<String>,
 }
 
 /// The full path to the settings file, e.g. `~/.config/smaragd/smaragd.toml` on
@@ -139,10 +151,29 @@ impl Settings {
     /// its contents can't be parsed — a first launch or a hand-edited file should
     /// never prevent the app from starting.
     pub fn load_from_path(path: &Path) -> Self {
-        std::fs::read_to_string(path)
+        let mut settings: Self = std::fs::read_to_string(path)
             .ok()
             .and_then(|contents| toml::from_str(&contents).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        settings.backfill_new_shortcut_defaults();
+        settings
+    }
+
+    /// Bind any `ShortcutAction` this settings file has never seen before to its
+    /// `default_shortcut()` — see `shortcuts_seen`'s doc comment for why plain
+    /// absence from `shortcuts` isn't enough to tell "brand new action" apart
+    /// from "user cleared it." Called once after loading (both from a real file
+    /// and the empty-defaults fallback, so a fresh install's `shortcuts_seen`
+    /// starts fully populated too and a Clear on launch #1 is never mistaken for
+    /// "new" on launch #2).
+    fn backfill_new_shortcut_defaults(&mut self) {
+        for action in ShortcutAction::ALL {
+            if self.shortcuts_seen.insert(action.id().to_string())
+                && self.shortcuts.get(*action).is_none()
+            {
+                self.shortcuts.set(*action, Some(action.default_shortcut()));
+            }
+        }
     }
 
     pub fn save_to_path(&self, path: &Path) -> io::Result<()> {
@@ -270,6 +301,13 @@ mod tests {
             )),
         );
         plugin_shortcut_overrides.insert("hello".to_string(), PluginShortcutOverride::Unbound);
+        // Every action already "seen," so `load_from_path`'s
+        // `backfill_new_shortcut_defaults` is a no-op and this round-trips
+        // exactly rather than picking up freshly backfilled entries.
+        let shortcuts_seen = crate::shortcuts::ShortcutAction::ALL
+            .iter()
+            .map(|action| action.id().to_string())
+            .collect();
         let settings = Settings {
             reopen_last_project: true,
             last_project_path: Some(PathBuf::from("/home/author/my-novel")),
@@ -288,6 +326,7 @@ mod tests {
             typewriter_quotes: true,
             toast_duration_secs: 10,
             status_message_duration_secs: 12,
+            shortcuts_seen,
         };
 
         settings.save_to_path(&path).unwrap();
@@ -307,12 +346,27 @@ mod tests {
         assert_eq!(loaded.shortcuts, ShortcutMap::default());
     }
 
+    /// The expected result of loading a missing/corrupt settings file:
+    /// `Settings::default()` with every `ShortcutAction` marked as already
+    /// "seen" — `load_from_path` runs `backfill_new_shortcut_defaults` on
+    /// *every* path, including this fallback one, so a fresh install's
+    /// `shortcuts_seen` starts fully populated too (see that method's doc
+    /// comment for why).
+    fn default_settings_after_load() -> Settings {
+        let mut settings = Settings::default();
+        settings.backfill_new_shortcut_defaults();
+        settings
+    }
+
     #[test]
     fn missing_settings_file_falls_back_to_default() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("does-not-exist.toml");
 
-        assert_eq!(Settings::load_from_path(&path), Settings::default());
+        assert_eq!(
+            Settings::load_from_path(&path),
+            default_settings_after_load()
+        );
     }
 
     #[test]
@@ -321,7 +375,49 @@ mod tests {
         let path = dir.path().join("smaragd.toml");
         std::fs::write(&path, "not valid { toml").unwrap();
 
-        assert_eq!(Settings::load_from_path(&path), Settings::default());
+        assert_eq!(
+            Settings::load_from_path(&path),
+            default_settings_after_load()
+        );
+    }
+
+    #[test]
+    fn loading_an_older_settings_file_backfills_a_newly_added_action_to_its_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("smaragd.toml");
+        // Simulates a settings.toml saved by an older build that predates
+        // `ShortcutAction::ToggleWordCount` — the `[shortcuts]` table exists
+        // but has no `toggle_word_count` key at all, the exact bug scenario
+        // (a codebase-added default silently reads as "unbound" otherwise).
+        std::fs::write(&path, "[shortcuts]\nsave = \"Ctrl+S\"\n").unwrap();
+
+        let loaded = Settings::load_from_path(&path);
+
+        assert_eq!(
+            loaded.shortcuts.get(ShortcutAction::ToggleWordCount),
+            Some(ShortcutAction::ToggleWordCount.default_shortcut())
+        );
+    }
+
+    #[test]
+    fn loading_a_settings_file_does_not_resurrect_a_deliberately_cleared_shortcut() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("smaragd.toml");
+        let mut settings = Settings::default();
+        // The Settings window's "Clear" button (`ShortcutMap::set(_, None)`)
+        // removes the key outright — indistinguishable, by itself, from an
+        // action this file has simply never encountered. `shortcuts_seen` is
+        // what tells them apart: it must already list `save` for the clear to
+        // stick across a reload.
+        settings.shortcuts.set(ShortcutAction::Save, None);
+        settings
+            .shortcuts_seen
+            .insert(ShortcutAction::Save.id().to_string());
+        settings.save_to_path(&path).unwrap();
+
+        let loaded = Settings::load_from_path(&path);
+
+        assert_eq!(loaded.shortcuts.get(ShortcutAction::Save), None);
     }
 
     #[test]
