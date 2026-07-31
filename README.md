@@ -46,6 +46,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Word Count targets (`Tools > Word Count`, remappable shortcut, default `Ctrl+Alt+W`), Scrivener-style: a dockable tab with a Draft Target (overall manuscript goal) and a Session Target (today's writing goal), each shown as a progress bar against the project's current word count. A per-project scope toggle picks what counts toward that total — Manuscript-role folder(s) only (falling back to the whole project, minus Trash/Templates, if none is assigned yet) or the whole project minus just Trash — with Trash and Templates always excluded either way. The total recomputes on a background thread (never blocking the UI) on a handful of triggers — opening a project, a git pull, a folder-role or scope change, an actual save, or the remappable "Refresh Word Count" shortcut (default `F5`) — rather than every frame or on every document change; a status bar segment mirrors the Draft Target's progress whenever one is set, the same way the Pomodoro countdown does. The panel also shows a target-less "characters typed this session" activity counter — every character inserted *or* deleted in a tracked document counts, so typing 100 characters then deleting them all reads 200, not a net 0 — kept only in memory (not persisted) and reset when a project opens or "Reset Session" is clicked
 - Fully remappable keyboard shortcuts (`File > Settings`), including a fullscreen toggle
 - Error-severity notifications surface as toasts, not status-bar text: a stack of auto-dismissing boxes in the top-right corner (each with its own × to close early), used for anything that represents an actual problem — a failed save/export/git operation, invalid frontmatter YAML, and the like — so they can't be missed the way status-bar text can (easy to glance past, and gone the instant an unrelated action overwrites it). Routine confirmations ("Committed", "Exported to ...") still use the plain status bar, which now also auto-clears itself after a few seconds rather than sitting there until the next status update happens to replace it. Both durations are configurable in `File > Settings > General`
+- Real-time peer-to-peer collaborative editing (`Collaborate` menu, `Ctrl+Shift+L` for its dockable panel): host a session on the currently open document (`Host Session`) and share the one-time connection code it generates; a peer pastes that code in (`Join Session…`) and both sides then edit the same document live, merged via a CRDT (Yjs/yrs) so concurrent edits from both sides converge without conflicts. No server ever holds the manuscript text — peers connect directly via [iroh](https://iroh.computer), and traffic is end-to-end encrypted on top of iroh's own transport security with keys derived from a secret that lives only in the connection code: pairing requires each side to prove it holds that secret before the other reports a collaborator as connected, so a stranger who reaches the host's network endpoint without the code can neither read the session nor block the genuine peer from joining. No reconnection in v1 — a dropped peer ends the session and a fresh one is started from scratch. Hosting requires a document to already be open; joining requires no document open yet, since the shared document a join receives isn't tied to any of the joiner's own files. Opening/closing/switching documents ends an active session
 - `File > Settings` is an IntelliJ-style modal dialog: a left-hand category list (General, Appearance, Editor, Templates, Pomodoro, Shortcuts) with Up/Down keyboard navigation and a per-category content pane, rather than one long scrolling column. Settings persist to `smaragd.toml` in the platform's standard config directory (`~/.config/smaragd` on Linux, `~/Library/Application Support/smaragd` on macOS, `%APPDATA%\smaragd\config` on Windows); General has "Reopen project on launch", "Ensure Research and Trash folders exist in every project" (off by default — on every project open, creates each one independently if no folder holds that role yet, or recreates it at its original path if it was deleted from disk since), and a Notifications section with the error-toast and status-bar-message durations mentioned above (1–60 seconds each, defaulting to 6 and 8 respectively)
 
 ## Running
@@ -100,6 +101,13 @@ src/
   project_template.rs     Scrivener-style New Project templates: built-in Blank/Novel/Nonfiction/Screenplay + loaded-from-disk custom ones, apply()/save_from_project()
   editor/mod.rs           EditorState: open/close document, dirty tracking, save
   editor_font.rs          the curated Editor/Preview font set, and registering the two custom ones with egui
+  collab/
+    mod.rs                 CollabSession: the SmaragdApp-facing surface tying crdt/diff to a running net session
+    crdt.rs                 CRDT document (Yjs/yrs), proven convergent against in-process documents
+    diff.rs                 text diffing (old vs. new buffer -> TextChange) + cursor adjustment on remote edits
+    ticket.rs                the pasteable connection code: iroh EndpointAddr + session secret, postcard + base58
+    crypto.rs                app-level end-to-end encryption layered on top of iroh's transport security (directional keys, implicit counter nonces, host identity folded into key derivation)
+    net.rs                   iroh networking on its own background thread/tokio runtime: pairing handshake, encrypted frame exchange
   export/
     mod.rs                 gather() (binder walk, Trash/Templates-skipping) + shared ExportDoc/BookMeta/ExportError
     style.rs                TypesetStyle: built-in + loaded-from-.toml typesetting styles shared by all 3 formats
@@ -134,9 +142,10 @@ src/
     export_panel.rs         export dialog: Title/Author/Style + DOCX/EPUB/Print PDF buttons
     pomodoro_panel.rs       Pomodoro dock tab: countdown + Start/Pause/Skip/Reset
     word_count_panel.rs     Word Count dock tab: scope toggle, Draft/Session Target progress bars, characters-typed counter
+    collab_panel.rs         Collaborate dock tab: connection code / peer fingerprint + Host/Join/End
 ```
 
-Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, Pomodoro, and Word Count all dock together in one shared area via [`egui_dock`](https://github.com/Adanos020/egui_dock), wired up in `app.rs`'s `DockTab`/`AppTabViewer`.
+Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, Pomodoro, Word Count, and Collaborate all dock together in one shared area via [`egui_dock`](https://github.com/Adanos020/egui_dock), wired up in `app.rs`'s `DockTab`/`AppTabViewer`.
 
 ## License
 
