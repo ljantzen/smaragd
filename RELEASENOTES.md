@@ -20,6 +20,8 @@ this file.
   scaling, for cases where automatic HiDPI detection comes back wrong (e.g.
   some Wayland compositors) and the whole UI renders tiny with no way to fix
   it from inside the app until now.
+- Added a "Recent Projects" submenu to `File`, listing the last 10 opened
+  project folders (most recent first) for one-click reopening.
 
 ## v0.5.2 — 2026-07-31
 

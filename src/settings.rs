@@ -16,6 +16,11 @@ use crate::shortcuts::{ShortcutAction, ShortcutMap};
 /// unconfigured (`0.0`), i.e. no change from `native_pixels_per_point`.
 const DEFAULT_UI_SCALE: f32 = 1.0;
 
+/// How many entries `Settings::recent_project_paths` keeps before dropping the
+/// oldest — enough to be useful without the File menu's submenu growing
+/// unwieldy.
+const MAX_RECENT_PROJECTS: usize = 10;
+
 /// A user's explicit choice for a plugin-registered `:` command's shortcut, kept
 /// separate from a plain `Option<KeyboardShortcut>` so `Unbound` can be told apart
 /// from "no override recorded yet" (see `plugin_shortcut_overrides`'s doc comment)
@@ -36,6 +41,15 @@ pub struct Settings {
     /// The most recently opened project folder, tracked regardless of
     /// `reopen_last_project` so toggling the setting on later works immediately.
     pub last_project_path: Option<PathBuf>,
+    /// Every project folder opened recently, most-recent-first and capped at
+    /// `MAX_RECENT_PROJECTS` — backs `File > Recent Projects`. Distinct from
+    /// `last_project_path` above (which drives auto-reopen-on-launch and is a
+    /// single path, not a list); updated alongside it in `set_project`. Not
+    /// pruned when a folder stops existing — same "let the open attempt fail
+    /// with a normal error toast" handling `open_project`'s own missing-marker
+    /// case already uses, rather than silently vanishing an entry the user
+    /// might still recognize (e.g. an unmounted external drive).
+    pub recent_project_paths: Vec<PathBuf>,
     /// Ensure every opened project has a Research and a Trash folder (roles already
     /// assigned — Scrivener's Fiction-template starter experience), each checked and
     /// created independently on every open, not just when a project is first
@@ -193,6 +207,15 @@ impl Settings {
         }
     }
 
+    /// Record `path` as the most recently opened project: moved to the front if
+    /// already present rather than duplicated, and the list capped at
+    /// `MAX_RECENT_PROJECTS`, oldest dropped first.
+    pub fn record_recent_project(&mut self, path: &Path) {
+        self.recent_project_paths.retain(|p| p != path);
+        self.recent_project_paths.insert(0, path.to_path_buf());
+        self.recent_project_paths.truncate(MAX_RECENT_PROJECTS);
+    }
+
     /// Resolve `ui_scale`'s blank-means-unset (`0.0`) convention to an actual
     /// `egui::Context::set_zoom_factor` multiplier — same shape as
     /// `editor_font::resolve_size`/`pomodoro::resolve_durations`.
@@ -269,6 +292,54 @@ mod tests {
         let settings = Settings::default();
         assert!(!settings.reopen_last_project);
         assert_eq!(settings.last_project_path, None);
+        assert!(settings.recent_project_paths.is_empty());
+    }
+
+    #[test]
+    fn record_recent_project_inserts_at_the_front() {
+        let mut settings = Settings::default();
+        settings.record_recent_project(Path::new("/home/author/first"));
+        settings.record_recent_project(Path::new("/home/author/second"));
+        assert_eq!(
+            settings.recent_project_paths,
+            vec![
+                PathBuf::from("/home/author/second"),
+                PathBuf::from("/home/author/first"),
+            ]
+        );
+    }
+
+    #[test]
+    fn record_recent_project_moves_an_existing_entry_to_the_front_instead_of_duplicating() {
+        let mut settings = Settings::default();
+        settings.record_recent_project(Path::new("/home/author/first"));
+        settings.record_recent_project(Path::new("/home/author/second"));
+        settings.record_recent_project(Path::new("/home/author/first"));
+        assert_eq!(
+            settings.recent_project_paths,
+            vec![
+                PathBuf::from("/home/author/first"),
+                PathBuf::from("/home/author/second"),
+            ]
+        );
+    }
+
+    #[test]
+    fn record_recent_project_caps_the_list_and_drops_the_oldest() {
+        let mut settings = Settings::default();
+        for n in 0..MAX_RECENT_PROJECTS + 3 {
+            settings.record_recent_project(&PathBuf::from(format!("/home/author/project-{n}")));
+        }
+        assert_eq!(settings.recent_project_paths.len(), MAX_RECENT_PROJECTS);
+        assert_eq!(
+            settings.recent_project_paths[0],
+            PathBuf::from(format!("/home/author/project-{}", MAX_RECENT_PROJECTS + 2))
+        );
+        assert!(
+            !settings
+                .recent_project_paths
+                .contains(&PathBuf::from("/home/author/project-0"))
+        );
     }
 
     #[test]
@@ -357,6 +428,10 @@ mod tests {
         let settings = Settings {
             reopen_last_project: true,
             last_project_path: Some(PathBuf::from("/home/author/my-novel")),
+            recent_project_paths: vec![
+                PathBuf::from("/home/author/my-novel"),
+                PathBuf::from("/home/author/old-draft"),
+            ],
             create_starter_folders: true,
             shortcuts,
             theme_preference: egui::ThemePreference::Dark,
