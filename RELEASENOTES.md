@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v0.5.2 — 2026-07-31
+
 - Added arrow-key navigation to the top menu bar: Up/Down moves the
   highlighted item within whichever dropdown is open, wrapping at the ends;
   Left/Right switches between the seven top-level menus, also wrapping.
@@ -19,12 +21,17 @@ this file.
   assigned yet.
 - Added Word Count targets (`Tools > Word Count`), Scrivener-style: a Draft
   Target for the whole manuscript and a Session Target for today's writing,
-  each with a progress bar, plus a target-less "characters typed this session"
-  activity counter (insertions and deletions both count). A per-project toggle
-  picks whether the total tracks Manuscript folders only or the whole project
-  minus Trash. Recomputes on a background thread on save/project-open/role- or
+  each with a progress bar, plus a target-less characters-typed activity
+  counter (insertions and deletions both count). A per-project toggle picks
+  whether the total tracks Manuscript folders only or the whole project minus
+  Trash. Recomputes on a background thread on save/project-open/role- or
   scope-change/manual refresh (new "Refresh Word Count" shortcut, `F5`), never
-  every frame, and mirrors the Draft Target's progress in the status bar.
+  every frame, and mirrors the current count in the status bar.
+- Fixed a bug where a keyboard shortcut given a default binding in code would
+  load as unbound for anyone who already had a settings file predating that
+  shortcut, rather than falling back to its default.
+- Fixed markdown preview text (`[[wikilinks]]` and list-item bullets) not
+  scaling with the configured Editor/Preview font size.
 
 ## v0.5.1 — 2026-07-29
 
