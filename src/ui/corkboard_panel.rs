@@ -468,3 +468,133 @@ pub fn show_card_editor(
 
     outcome
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::StoryCard;
+
+    #[test]
+    fn card_draft_new_starts_blank_and_marked_as_new() {
+        let draft = CardDraft::new();
+        assert!(draft.is_new);
+        assert_eq!(draft.subplot_tags_text, "");
+        assert_eq!(draft.linked_document_text, "");
+    }
+
+    #[test]
+    fn card_draft_from_card_is_not_new_and_joins_subplot_tags() {
+        let mut card = StoryCard::new();
+        card.subplot_tags = vec!["heist".to_string(), "betrayal".to_string()];
+        card.linked_document_stem = Some("Chapter 3".to_string());
+
+        let draft = CardDraft::from_card(&card);
+
+        assert!(!draft.is_new);
+        assert_eq!(draft.subplot_tags_text, "heist, betrayal");
+        assert_eq!(draft.linked_document_text, "Chapter 3");
+    }
+
+    #[test]
+    fn finalize_splits_trims_and_filters_subplot_tags() {
+        let mut draft = CardDraft::new();
+        draft.subplot_tags_text = " heist ,, betrayal ,".to_string();
+
+        let card = draft.finalize();
+
+        assert_eq!(card.subplot_tags, vec!["heist", "betrayal"]);
+    }
+
+    #[test]
+    fn finalize_treats_a_blank_linked_document_field_as_unlinked() {
+        let mut draft = CardDraft::new();
+        draft.linked_document_text = "   ".to_string();
+
+        let card = draft.finalize();
+
+        assert_eq!(card.linked_document_stem, None);
+    }
+
+    #[test]
+    fn finalize_trims_a_linked_document_stem() {
+        let mut draft = CardDraft::new();
+        draft.linked_document_text = "  Chapter 3  ".to_string();
+
+        let card = draft.finalize();
+
+        assert_eq!(card.linked_document_stem, Some("Chapter 3".to_string()));
+    }
+
+    #[test]
+    fn truncate_leaves_short_text_unchanged() {
+        assert_eq!(truncate("Short cause", 40), "Short cause");
+    }
+
+    #[test]
+    fn truncate_only_keeps_the_first_line() {
+        assert_eq!(truncate("First line\nSecond line", 40), "First line");
+    }
+
+    #[test]
+    fn truncate_adds_an_ellipsis_past_the_limit() {
+        let long = "a".repeat(50);
+        let result = truncate(&long, 10);
+        assert_eq!(result.chars().count(), 11); // 10 chars + the ellipsis
+        assert!(result.ends_with('\u{2026}'));
+    }
+
+    fn key_event(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// Drives `show_card_editor` with synthetic input, mirroring
+    /// `binder_panel.rs`'s harness — worth it here specifically for the
+    /// Escape-cancels and suggestion-popup key-stealing behavior, neither of
+    /// which a plain unit test over `CardDraft` alone can exercise.
+    fn run_show_card_editor(
+        ctx: &egui::Context,
+        draft: &mut CardDraft,
+        note_titles: &[String],
+        events: Vec<egui::Event>,
+    ) -> Option<CardEditorOutcome> {
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let mut outcome = None;
+        let _ = ctx.run_ui(input, |ui| {
+            outcome = show_card_editor(ui.ctx(), draft, note_titles);
+        });
+        outcome
+    }
+
+    #[test]
+    fn escape_cancels_the_card_editor() {
+        let ctx = egui::Context::default();
+        let mut draft = CardDraft::new();
+
+        // First frame: just render, so the modal and its fields exist.
+        run_show_card_editor(&ctx, &mut draft, &[], vec![]);
+
+        let outcome =
+            run_show_card_editor(&ctx, &mut draft, &[], vec![key_event(egui::Key::Escape)]);
+
+        assert!(matches!(outcome, Some(CardEditorOutcome::Cancel)));
+    }
+
+    #[test]
+    fn with_no_input_the_card_editor_produces_no_outcome() {
+        let ctx = egui::Context::default();
+        let mut draft = CardDraft::new();
+
+        let outcome = run_show_card_editor(&ctx, &mut draft, &[], vec![]);
+
+        assert!(outcome.is_none());
+    }
+}
