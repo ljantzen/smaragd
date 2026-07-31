@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v0.6.0 — 2026-07-31
+
 - Added real-time peer-to-peer collaborative editing (Collaborate menu /
   panel, `Ctrl+Shift+L`): host a session on the currently open document and
   share the one-time connection code; a peer pastes it to join and both sides
