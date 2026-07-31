@@ -9,7 +9,11 @@
 use crate::frontmatter::DocumentMeta;
 
 /// Plain-text editing buffers for a `DocumentMeta`'s fields, owned by `app.rs` for as
-/// long as the modal is open.
+/// long as the modal is open. Deriving `Default` gives exactly the same blank state
+/// as `from_meta(&DocumentMeta::default())` — every field is a `String`, and
+/// `DocumentMeta::default()` is all-`None`/empty, so `from_meta` would just fill
+/// each field with `unwrap_or_default()`'s own empty string anyway.
+#[derive(Default)]
 pub struct MetadataDraft {
     pub section_type: String,
     pub status: String,

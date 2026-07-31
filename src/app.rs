@@ -428,6 +428,102 @@ fn capture_floating_window_positions<Tab>(
     }
 }
 
+/// Live editing buffers for the open document's frontmatter, and the bookkeeping
+/// needed to keep them in sync with whichever document is open — grouped out of
+/// `SmaragdApp` (2026-07-31 code-quality review) since all three always change
+/// together, driven by `refresh_metadata_if_needed`/`apply_metadata_edits_if_changed`.
+#[derive(Default)]
+struct MetadataState {
+    /// There's no "closed" state to represent here, since the Metadata dock
+    /// tab's own presence in `dock_state` is what tracks visibility.
+    draft: MetadataDraft,
+    /// Which document `draft`/`last_applied` were last computed for, so a later
+    /// frame can tell whether `editor.open_path` has since changed.
+    computed_for: Option<PathBuf>,
+    /// The `DocumentMeta` last written into `editor.buffer` — compared against
+    /// `draft.to_meta()` each frame to notice a live edit without re-writing the
+    /// buffer when nothing changed.
+    last_applied: DocumentMeta,
+}
+
+/// Every `[[wikilink]]` elsewhere in the project pointing at the open document,
+/// and which document it was computed for — grouped out of `SmaragdApp`
+/// (2026-07-31 code-quality review) since both always change together, driven
+/// by `refresh_backlinks_if_needed`.
+#[derive(Default)]
+struct BacklinksState {
+    entries: Vec<BacklinkEntry>,
+    /// Which document `entries` was last computed for.
+    computed_for: Option<PathBuf>,
+}
+
+/// The open document's tags, the project-wide tag search box, and the
+/// bookkeeping needed to keep both in sync — grouped out of `SmaragdApp`
+/// (2026-07-31 code-quality review) since all five always change together,
+/// driven by `refresh_tags_if_needed`/`refresh_tag_search_if_needed`.
+#[derive(Default)]
+struct TagsState {
+    /// The open document's tags (frontmatter `tags:` merged with inline `#tag`
+    /// mentions), each paired with the other project documents sharing it.
+    entries: Vec<crate::project::TagGroup>,
+    /// Which document `entries` was last computed for.
+    computed_for: Option<PathBuf>,
+    /// Live text of the Tags dock's search box — typing here (or clicking one
+    /// of `entries`' tag headings, which fills it in) requests a vault-wide
+    /// lookup of every document carrying that tag.
+    search_text: String,
+    /// Vault-wide search results for `search_text` (see
+    /// `Project::documents_with_tag`), recomputed only when it changes.
+    search_results: Vec<(PathBuf, String)>,
+    /// Which `search_text` value `search_results` was last computed for.
+    search_computed_for: String,
+}
+
+/// The open project's word count, its background-recompute machinery, and the
+/// characters-typed activity counter — grouped out of `SmaragdApp` (2026-07-31
+/// code-quality review) since all six always change together, driven by
+/// `spawn_word_count_recompute`/`track_char_activity`.
+#[derive(Default)]
+struct WordCountState {
+    /// The open project's word count under `ProjectMeta::word_count_scope`,
+    /// shown in the Word Count dock tab and the status bar. Recomputed only on
+    /// a handful of triggers (see `spawn_word_count_recompute`'s callers) via a
+    /// background thread, never every frame — unlike `metadata_panel`'s live
+    /// per-document count from the open buffer, which is unrelated to this.
+    cache: usize,
+    /// A word-count recompute currently running on a background thread, if any —
+    /// walking every tracked document's content from disk could be slow for a
+    /// large project, so (like `pending_git`'s push/pull) this never runs
+    /// synchronously on the UI thread. `None` once `poll_word_count` has picked
+    /// up its result.
+    pending: Option<std::sync::mpsc::Receiver<usize>>,
+    /// `editor.dirty` as of the previous frame — compared against its current
+    /// value in `refresh_word_count_if_needed` to edge-detect "a save just
+    /// happened" (dirty went `true` -> `false`), the moment any of the three
+    /// existing save paths (explicit save, focus-loss autosave, closing the
+    /// document) commits bytes to disk, without needing a call at each site.
+    last_dirty: bool,
+    /// Characters typed *and* deleted this session, in tracked documents only
+    /// (see `Project::is_path_tracked`) — an activity counter, not a net delta:
+    /// typing 100 characters then deleting them all reads 200, not 0. Purely
+    /// informational (no target), kept only in memory — not persisted to
+    /// `project.json` — and reset when a project is opened (see `set_project`)
+    /// or the panel's "Reset Session" is clicked (see `handle_word_count_event`).
+    /// Updated by `track_char_activity`, called after the dock renders each frame.
+    char_activity: u64,
+    /// The open document's buffer length (in `chars()`), as of the last frame
+    /// `track_char_activity` ran — compared against the current frame's length
+    /// to find how many characters just changed. `None` right after opening or
+    /// switching documents, so the jump between two different documents' lengths
+    /// is never miscounted as characters typed.
+    char_activity_last_len: Option<usize>,
+    /// Which document `char_activity_last_len` was captured for — lets
+    /// `track_char_activity` notice a document switch (vs. an edit to the same
+    /// document) and reset the baseline instead of diffing across two unrelated
+    /// buffers.
+    char_activity_tracked_path: Option<PathBuf>,
+}
+
 pub struct SmaragdApp {
     project: Option<Project>,
     editor: EditorState,
@@ -462,80 +558,22 @@ pub struct SmaragdApp {
     command_prompt: CommandPromptState,
     open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState,
     new_project_template_prompt: ui::new_project_template_prompt::NewProjectTemplatePromptState,
-    /// Live editing buffers for the open document's frontmatter, always kept in sync
-    /// with whichever document is open (see `refresh_metadata_if_needed`) — there's
-    /// no "closed" state to represent here, since the Metadata dock tab's own
-    /// presence in `dock_state` is what tracks visibility.
-    metadata_draft: MetadataDraft,
-    /// Which document `metadata_draft`/`metadata_last_applied` were last computed
-    /// for, so a later frame can tell whether `editor.open_path` has since changed.
-    metadata_computed_for: Option<PathBuf>,
-    /// The `DocumentMeta` last written into `editor.buffer` — compared against
-    /// `metadata_draft.to_meta()` each frame to notice a live edit (see
-    /// `apply_metadata_edits_if_changed`) without re-writing the buffer when nothing
-    /// changed.
-    metadata_last_applied: DocumentMeta,
-    /// Every `[[wikilink]]` elsewhere in the project pointing at the open document,
-    /// kept in sync with whichever document is open (see
+    /// Live editing buffers for the open document's frontmatter, always kept in
+    /// sync with whichever document is open (see `refresh_metadata_if_needed`) —
+    /// there's no "closed" state to represent here, since the Metadata dock
+    /// tab's own presence in `dock_state` is what tracks visibility.
+    metadata: MetadataState,
+    /// Every `[[wikilink]]` elsewhere in the project pointing at the open
+    /// document, kept in sync with whichever document is open (see
     /// `refresh_backlinks_if_needed`).
-    backlinks: Vec<BacklinkEntry>,
-    /// Which document `backlinks` was last computed for.
-    backlinks_computed_for: Option<PathBuf>,
-    /// The open document's tags (frontmatter `tags:` merged with inline
-    /// `#tag` mentions), each paired with the other project documents sharing
-    /// it, kept in sync with whichever document is open (see
-    /// `refresh_tags_if_needed`).
-    tags: Vec<crate::project::TagGroup>,
-    /// Which document `tags` was last computed for.
-    tags_computed_for: Option<PathBuf>,
-    /// Live text of the Tags dock's search box — typing here (or clicking one
-    /// of `tags`' tag headings, which fills it in) requests a vault-wide
-    /// lookup of every document carrying that tag.
-    tags_search_text: String,
-    /// Vault-wide search results for `tags_search_text` (see
-    /// `Project::documents_with_tag`), recomputed only when it changes (see
-    /// `refresh_tag_search_if_needed`).
-    tag_search_results: Vec<(PathBuf, String)>,
-    /// Which `tags_search_text` value `tag_search_results` was last computed for.
-    tag_search_computed_for: String,
-    /// The open project's word count under `ProjectMeta::word_count_scope`, shown
-    /// in the Word Count dock tab and the status bar. Recomputed only on a
-    /// handful of triggers (see `spawn_word_count_recompute`'s callers) via a
-    /// background thread, never every frame — unlike `metadata_panel`'s live
-    /// per-document count from the open buffer, which is unrelated to this.
-    word_count_cache: usize,
-    /// A word-count recompute currently running on a background thread, if any —
-    /// walking every tracked document's content from disk could be slow for a
-    /// large project, so (like `pending_git`'s push/pull) this never runs
-    /// synchronously on the UI thread. `None` once `poll_word_count` has picked
-    /// up its result.
-    pending_word_count: Option<std::sync::mpsc::Receiver<usize>>,
-    /// `editor.dirty` as of the previous frame — compared against its current
-    /// value in `refresh_word_count_if_needed` to edge-detect "a save just
-    /// happened" (dirty went `true` -> `false`), the moment any of the three
-    /// existing save paths (explicit save, focus-loss autosave, closing the
-    /// document) commits bytes to disk, without needing a call at each site.
-    word_count_last_dirty: bool,
-    /// Characters typed *and* deleted this session, in tracked documents only
-    /// (see `Project::is_path_tracked`) — an activity counter, not a net delta:
-    /// typing 100 characters then deleting them all reads 200, not 0. Purely
-    /// informational (no target), kept only in memory — not persisted to
-    /// `project.json` — and reset when a project is opened (see `set_project`)
-    /// or the panel's "Reset Session" is clicked (see `handle_word_count_event`).
-    /// Updated by `track_char_activity`, called after the dock renders each
-    /// frame.
-    char_activity: u64,
-    /// The open document's buffer length (in `chars()`), as of the last frame
-    /// `track_char_activity` ran — compared against the current frame's length
-    /// to find how many characters just changed. `None` right after opening or
-    /// switching documents, so the jump between two different documents' lengths
-    /// is never miscounted as characters typed.
-    char_activity_last_len: Option<usize>,
-    /// Which document `char_activity_last_len` was captured for — lets
-    /// `track_char_activity` notice a document switch (vs. an edit to the same
-    /// document) and reset the baseline instead of diffing across two unrelated
-    /// buffers.
-    char_activity_tracked_path: Option<PathBuf>,
+    backlinks: BacklinksState,
+    /// The open document's tags and the project-wide tag search box, kept in
+    /// sync with whichever document is open (see `refresh_tags_if_needed`).
+    tags: TagsState,
+    /// The open project's word count, its background-recompute machinery, and
+    /// the characters-typed activity counter (see `refresh_word_count_if_needed`/
+    /// `track_char_activity`).
+    word_count: WordCountState,
     /// The current dock layout — which tabs are open, and whether they're docked
     /// together, split, or floating in their own window. Persisted across
     /// restarts (see `persist_dock_layout`); defaults to `default_dock_state()`.
@@ -655,22 +693,10 @@ impl SmaragdApp {
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
             new_project_template_prompt:
                 ui::new_project_template_prompt::NewProjectTemplatePromptState::default(),
-            metadata_draft: MetadataDraft::from_meta(&DocumentMeta::default()),
-            metadata_computed_for: None,
-            metadata_last_applied: DocumentMeta::default(),
-            backlinks: Vec::new(),
-            backlinks_computed_for: None,
-            tags: Vec::new(),
-            tags_computed_for: None,
-            tags_search_text: String::new(),
-            tag_search_results: Vec::new(),
-            tag_search_computed_for: String::new(),
-            word_count_cache: 0,
-            pending_word_count: None,
-            word_count_last_dirty: false,
-            char_activity: 0,
-            char_activity_last_len: None,
-            char_activity_tracked_path: None,
+            metadata: MetadataState::default(),
+            backlinks: BacklinksState::default(),
+            tags: TagsState::default(),
+            word_count: WordCountState::default(),
             dock_state: Self::load_dock_state(),
             saved_layouts: Self::load_saved_layouts(),
             pending_git: None,
@@ -742,22 +768,10 @@ impl SmaragdApp {
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
             new_project_template_prompt:
                 ui::new_project_template_prompt::NewProjectTemplatePromptState::default(),
-            metadata_draft: MetadataDraft::from_meta(&DocumentMeta::default()),
-            metadata_computed_for: None,
-            metadata_last_applied: DocumentMeta::default(),
-            backlinks: Vec::new(),
-            backlinks_computed_for: None,
-            tags: Vec::new(),
-            tags_computed_for: None,
-            tags_search_text: String::new(),
-            tag_search_results: Vec::new(),
-            tag_search_computed_for: String::new(),
-            word_count_cache: 0,
-            pending_word_count: None,
-            word_count_last_dirty: false,
-            char_activity: 0,
-            char_activity_last_len: None,
-            char_activity_tracked_path: None,
+            metadata: MetadataState::default(),
+            backlinks: BacklinksState::default(),
+            tags: TagsState::default(),
+            word_count: WordCountState::default(),
             dock_state: default_dock_state(),
             saved_layouts: std::collections::BTreeMap::new(),
             pending_git: None,
@@ -922,10 +936,10 @@ impl SmaragdApp {
             self.push_error_toast(format!("Couldn't initialize git: {err}"));
         }
         self.reload_plugins();
-        self.word_count_last_dirty = false;
-        self.char_activity = 0;
-        self.char_activity_last_len = None;
-        self.char_activity_tracked_path = None;
+        self.word_count.last_dirty = false;
+        self.word_count.char_activity = 0;
+        self.word_count.char_activity_last_len = None;
+        self.word_count.char_activity_tracked_path = None;
         self.spawn_word_count_recompute(ctx);
     }
 
@@ -1428,22 +1442,22 @@ impl SmaragdApp {
         }
     }
 
-    /// Refresh `metadata_draft` from the open document's current frontmatter
+    /// Refresh `metadata.draft` from the open document's current frontmatter
     /// (parsed from the live buffer, not necessarily what's on disk yet, so it
     /// reflects any unsaved edits to the block itself) whenever the open document
     /// has changed since the last computation — a no-op most frames. Called before
     /// the dock renders each frame, alongside `refresh_backlinks_if_needed`.
     fn refresh_metadata_if_needed(&mut self) {
-        if self.editor.open_path == self.metadata_computed_for {
+        if self.editor.open_path == self.metadata.computed_for {
             return;
         }
         let meta = match &self.editor.open_path {
             Some(_) => crate::frontmatter::parse(&self.editor.buffer),
             None => DocumentMeta::default(),
         };
-        self.metadata_draft = MetadataDraft::from_meta(&meta);
-        self.metadata_last_applied = meta;
-        self.metadata_computed_for = self.editor.open_path.clone();
+        self.metadata.draft = MetadataDraft::from_meta(&meta);
+        self.metadata.last_applied = meta;
+        self.metadata.computed_for = self.editor.open_path.clone();
         // Only set — never clear — the status message here: most document switches
         // have nothing wrong with their frontmatter, and blanking whatever the
         // status bar was already showing (e.g. a just-completed git operation) on
@@ -1455,7 +1469,7 @@ impl SmaragdApp {
         }
     }
 
-    /// Notice a live edit to `metadata_draft` (typed into the Metadata dock tab this
+    /// Notice a live edit to `metadata.draft` (typed into the Metadata dock tab this
     /// frame, if it was visible) and, if anything actually changed, rewrite the
     /// editor buffer's frontmatter block in place (preserving any keys the form
     /// doesn't expose — see `frontmatter::write_back`) and mark it dirty, same as
@@ -1467,13 +1481,13 @@ impl SmaragdApp {
         if self.editor.open_path.is_none() {
             return;
         }
-        let current = self.metadata_draft.to_meta();
-        if current == self.metadata_last_applied {
+        let current = self.metadata.draft.to_meta();
+        if current == self.metadata.last_applied {
             return;
         }
         self.editor.buffer = crate::frontmatter::write_back(&self.editor.buffer, &current);
         self.editor.mark_dirty();
-        self.metadata_last_applied = current;
+        self.metadata.last_applied = current;
     }
 
     /// Refresh `backlinks` from the project whenever the open document has changed
@@ -1482,57 +1496,57 @@ impl SmaragdApp {
     /// be visible right now is simplest, since the scan itself is cheap (see
     /// `Project::backlinks`).
     fn refresh_backlinks_if_needed(&mut self) {
-        if self.editor.open_path == self.backlinks_computed_for {
+        if self.editor.open_path == self.backlinks.computed_for {
             return;
         }
         self.recompute_backlinks();
     }
 
     fn recompute_backlinks(&mut self) {
-        self.backlinks = match (&self.project, &self.editor.open_path) {
+        self.backlinks.entries = match (&self.project, &self.editor.open_path) {
             (Some(project), Some(path)) => project.backlinks(path),
             _ => Vec::new(),
         };
-        self.backlinks_computed_for = self.editor.open_path.clone();
+        self.backlinks.computed_for = self.editor.open_path.clone();
     }
 
     /// Refresh `tags` from the project whenever the open document has changed
     /// since the last scan — a no-op most frames. Called before the dock
     /// renders each frame, alongside `refresh_backlinks_if_needed`.
     fn refresh_tags_if_needed(&mut self) {
-        if self.editor.open_path == self.tags_computed_for {
+        if self.editor.open_path == self.tags.computed_for {
             return;
         }
         self.recompute_tags();
     }
 
     fn recompute_tags(&mut self) {
-        self.tags = match (&self.project, &self.editor.open_path) {
+        self.tags.entries = match (&self.project, &self.editor.open_path) {
             (Some(project), Some(path)) => project.related_by_tag(path),
             _ => Vec::new(),
         };
-        self.tags_computed_for = self.editor.open_path.clone();
+        self.tags.computed_for = self.editor.open_path.clone();
     }
 
-    /// Refresh `tag_search_results` whenever `tags_search_text` has changed
+    /// Refresh `tags.search_results` whenever `tags.search_text` has changed
     /// since the last scan — a no-op most frames. Called *after* the dock
     /// renders each frame (unlike `refresh_tags_if_needed`), since the search
     /// box is a live text field the user may have just edited that same
     /// frame — same reasoning as why `apply_metadata_edits_if_changed` runs
     /// after rendering rather than before.
     fn refresh_tag_search_if_needed(&mut self) {
-        if self.tags_search_text == self.tag_search_computed_for {
+        if self.tags.search_text == self.tags.search_computed_for {
             return;
         }
-        let query = self.tags_search_text.trim();
-        self.tag_search_results = match (&self.project, query.is_empty()) {
+        let query = self.tags.search_text.trim();
+        self.tags.search_results = match (&self.project, query.is_empty()) {
             (Some(project), false) => project.documents_with_tag(query),
             _ => Vec::new(),
         };
-        self.tag_search_computed_for = self.tags_search_text.clone();
+        self.tags.search_computed_for = self.tags.search_text.clone();
     }
 
-    /// Recompute `word_count_cache` whenever a save just completed — edge-detects
+    /// Recompute `word_count.cache` whenever a save just completed — edge-detects
     /// `editor.dirty` going `true` -> `false` this frame, the moment any of the
     /// three existing save paths (explicit `Ctrl+S`, focus-loss autosave inside
     /// `editor_panel::show`, or `close_document`) commits bytes to disk, without
@@ -1541,45 +1555,45 @@ impl SmaragdApp {
     /// doesn't depend on the open document at all, so a dirty-edge check is the
     /// right trigger here instead. A no-op most frames.
     fn refresh_word_count_if_needed(&mut self, ctx: &egui::Context) {
-        let just_saved = self.word_count_last_dirty && !self.editor.dirty;
-        self.word_count_last_dirty = self.editor.dirty;
+        let just_saved = self.word_count.last_dirty && !self.editor.dirty;
+        self.word_count.last_dirty = self.editor.dirty;
         if just_saved {
             self.spawn_word_count_recompute(ctx);
         }
     }
 
-    /// Update `char_activity` from however much the open document's buffer
-    /// length changed since the last frame — both growing (typing) and
+    /// Update `word_count.char_activity` from however much the open document's
+    /// buffer length changed since the last frame — both growing (typing) and
     /// shrinking (deleting) count toward the total, so typing 100 characters
-    /// then deleting them all adds 200, not 0 (see `char_activity`'s doc
+    /// then deleting them all adds 200, not 0 (see that field's doc
     /// comment). Cheap (no disk I/O, no full-project walk — see
-    /// `Project::is_path_tracked`), so unlike `word_count_cache` this runs every
+    /// `Project::is_path_tracked`), so unlike `word_count.cache` this runs every
     /// frame. Called after the dock renders each frame, alongside
     /// `apply_metadata_edits_if_changed`.
     fn track_char_activity(&mut self) {
         let Some(open_path) = self.editor.open_path.clone() else {
-            self.char_activity_last_len = None;
-            self.char_activity_tracked_path = None;
+            self.word_count.char_activity_last_len = None;
+            self.word_count.char_activity_tracked_path = None;
             return;
         };
-        if self.char_activity_tracked_path.as_deref() != Some(open_path.as_path()) {
+        if self.word_count.char_activity_tracked_path.as_deref() != Some(open_path.as_path()) {
             // Just opened or switched to this document — the previous frame's
             // length (if any) belonged to a different buffer, so there's
             // nothing meaningful to diff against yet.
-            self.char_activity_tracked_path = Some(open_path.clone());
-            self.char_activity_last_len = Some(self.editor.buffer.chars().count());
+            self.word_count.char_activity_tracked_path = Some(open_path.clone());
+            self.word_count.char_activity_last_len = Some(self.editor.buffer.chars().count());
             return;
         }
         let current_len = self.editor.buffer.chars().count();
-        if let Some(previous_len) = self.char_activity_last_len {
+        if let Some(previous_len) = self.word_count.char_activity_last_len {
             let is_tracked = self.project.as_ref().is_some_and(|project| {
                 project.is_path_tracked(&open_path, project.meta.word_count_scope)
             });
             if is_tracked {
-                self.char_activity += current_len.abs_diff(previous_len) as u64;
+                self.word_count.char_activity += current_len.abs_diff(previous_len) as u64;
             }
         }
-        self.char_activity_last_len = Some(current_len);
+        self.word_count.char_activity_last_len = Some(current_len);
     }
 
     /// Kick off a word-count recompute on a background thread for the current
@@ -1592,10 +1606,10 @@ impl SmaragdApp {
     /// picks it up promptly.
     fn spawn_word_count_recompute(&mut self, ctx: &egui::Context) {
         let Some(project) = &self.project else {
-            self.word_count_cache = 0;
+            self.word_count.cache = 0;
             return;
         };
-        if self.pending_word_count.is_some() {
+        if self.word_count.pending.is_some() {
             return;
         }
         // Clone just the data the walk needs rather than requiring `Project`
@@ -1613,29 +1627,29 @@ impl SmaragdApp {
             let _ = sender.send(total);
             repaint_ctx.request_repaint();
         });
-        self.pending_word_count = Some(receiver);
+        self.word_count.pending = Some(receiver);
     }
 
-    /// Check whether an in-flight `pending_word_count` recompute has finished,
-    /// and if so apply it to `word_count_cache` and roll the Session Target's
+    /// Check whether an in-flight `word_count.pending` recompute has finished,
+    /// and if so apply it to `word_count.cache` and roll the Session Target's
     /// baseline forward if the calendar day has changed (see
     /// `Project::maybe_roll_over_session`). Called every frame, mirroring
     /// `poll_git_operation`; a no-op whenever nothing is pending or the
     /// background thread hasn't sent its result yet.
     fn poll_word_count(&mut self) {
-        let Some(receiver) = &self.pending_word_count else {
+        let Some(receiver) = &self.word_count.pending else {
             return;
         };
         let total = match receiver.try_recv() {
             Ok(total) => total,
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.pending_word_count = None;
+                self.word_count.pending = None;
                 return;
             }
         };
-        self.pending_word_count = None;
-        self.word_count_cache = total;
+        self.word_count.pending = None;
+        self.word_count.cache = total;
         if let Some(project) = &mut self.project {
             let _ = project.maybe_roll_over_session(total);
         }
@@ -2083,13 +2097,13 @@ impl SmaragdApp {
             }
             WordCountEvent::Refresh => self.spawn_word_count_recompute(ctx),
             WordCountEvent::ResetSession => {
-                let total = self.word_count_cache;
+                let total = self.word_count.cache;
                 if let Some(project) = &mut self.project
                     && let Err(err) = project.reset_session(total)
                 {
                     self.push_error_toast(format!("Couldn't reset session: {err}"));
                 }
-                self.char_activity = 0;
+                self.word_count.char_activity = 0;
             }
         }
     }
@@ -2531,7 +2545,7 @@ impl SmaragdApp {
             }
             Command::Tag(query) => {
                 if !query.is_empty() {
-                    self.tags_search_text = query;
+                    self.tags.search_text = query;
                 }
                 if self.dock_state.find_tab(&DockTab::Tags).is_none() {
                     self.dock_state.push_to_focused_leaf(DockTab::Tags);
@@ -3511,7 +3525,7 @@ impl SmaragdApp {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(format!(
                                 "{} : {} / {} words",
-                                self.char_activity, self.word_count_cache, target
+                                self.word_count.char_activity, self.word_count.cache, target
                             ));
                         });
                     }
@@ -3925,18 +3939,18 @@ impl eframe::App for SmaragdApp {
                     project: self.project.as_ref(),
                     selected_path: self.selected_path.as_deref(),
                     open_path: self.editor.open_path.clone(),
-                    backlinks: &self.backlinks,
-                    tags: &self.tags,
-                    tags_search_text: &mut self.tags_search_text,
-                    tag_search_results: &self.tag_search_results,
-                    metadata_draft: &mut self.metadata_draft,
+                    backlinks: &self.backlinks.entries,
+                    tags: &self.tags.entries,
+                    tags_search_text: &mut self.tags.search_text,
+                    tag_search_results: &self.tags.search_results,
+                    metadata_draft: &mut self.metadata.draft,
                     editor: &mut self.editor,
                     settings: &self.settings,
                     color_themes: &self.color_themes,
                     pomodoro: &self.pomodoro,
                     pomodoro_durations: crate::pomodoro::resolve_durations(&self.settings),
-                    word_count_cache: self.word_count_cache,
-                    char_activity: self.char_activity,
+                    word_count_cache: self.word_count.cache,
+                    char_activity: self.word_count.char_activity,
                     actions: Vec::new(),
                     focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
                 };
@@ -4506,7 +4520,7 @@ mod execute_command_tests {
 
         app.execute_command(&ctx, Command::Tag("worldbuilding".to_string()));
 
-        assert_eq!(app.tags_search_text, "worldbuilding");
+        assert_eq!(app.tags.search_text, "worldbuilding");
         assert!(app.dock_state.find_tab(&DockTab::Tags).is_some());
     }
 
@@ -4653,7 +4667,7 @@ mod event_routing_tests {
             app.project.as_ref().unwrap().meta.word_count_scope,
             WordCountScope::EverythingExceptTrash
         );
-        assert!(app.pending_word_count.is_some());
+        assert!(app.word_count.pending.is_some());
     }
 
     #[test]
@@ -4662,12 +4676,12 @@ mod event_routing_tests {
         let project = Project::initialize(dir.path()).unwrap();
         let mut app = SmaragdApp::test_fixture();
         app.project = Some(project);
-        app.char_activity = 42;
+        app.word_count.char_activity = 42;
         let ctx = egui::Context::default();
 
         app.handle_word_count_event(&ctx, WordCountEvent::ResetSession);
 
-        assert_eq!(app.char_activity, 0);
+        assert_eq!(app.word_count.char_activity, 0);
     }
 }
 
@@ -4682,7 +4696,7 @@ mod char_activity_tests {
         app.track_char_activity();
         app.track_char_activity();
 
-        assert_eq!(app.char_activity, 0);
+        assert_eq!(app.word_count.char_activity, 0);
     }
 
     #[test]
@@ -4697,18 +4711,18 @@ mod char_activity_tests {
         // First frame with this document open: only establishes the baseline,
         // the initial (empty) length isn't itself counted as "typed."
         app.track_char_activity();
-        assert_eq!(app.char_activity, 0);
+        assert_eq!(app.word_count.char_activity, 0);
 
         // "Type" 100 characters.
         app.editor.buffer = "a".repeat(100);
         app.track_char_activity();
-        assert_eq!(app.char_activity, 100);
+        assert_eq!(app.word_count.char_activity, 100);
 
         // "Delete" them all back to empty — the example from the bug report:
         // 100 typed + 100 deleted reads 200, not a net 0.
         app.editor.buffer.clear();
         app.track_char_activity();
-        assert_eq!(app.char_activity, 200);
+        assert_eq!(app.word_count.char_activity, 200);
     }
 
     #[test]
@@ -4724,7 +4738,7 @@ mod char_activity_tests {
         app.track_char_activity(); // establishes the baseline (empty) length
         app.editor.buffer = "a".repeat(50);
         app.track_char_activity();
-        assert_eq!(app.char_activity, 50);
+        assert_eq!(app.word_count.char_activity, 50);
 
         // Switch to a different, much longer document.
         app.editor.open_path = Some(second);
@@ -4733,7 +4747,7 @@ mod char_activity_tests {
 
         // The 450-character jump between the two unrelated buffers must not
         // be counted as characters typed.
-        assert_eq!(app.char_activity, 50);
+        assert_eq!(app.word_count.char_activity, 50);
     }
 
     #[test]
@@ -4755,7 +4769,7 @@ mod char_activity_tests {
         app.editor.buffer = "a".repeat(100);
         app.track_char_activity();
 
-        assert_eq!(app.char_activity, 0);
+        assert_eq!(app.word_count.char_activity, 0);
     }
 }
 
@@ -4774,14 +4788,14 @@ mod word_count_refresh_tests {
         app.editor.dirty = true;
         app.refresh_word_count_if_needed(&ctx);
         assert!(
-            app.pending_word_count.is_none(),
+            app.word_count.pending.is_none(),
             "becoming dirty is not a save"
         );
 
         app.editor.dirty = false;
         app.refresh_word_count_if_needed(&ctx);
         assert!(
-            app.pending_word_count.is_some(),
+            app.word_count.pending.is_some(),
             "dirty->clean transition is a save and should trigger a recompute"
         );
     }
@@ -4794,6 +4808,6 @@ mod word_count_refresh_tests {
         app.refresh_word_count_if_needed(&ctx);
         app.refresh_word_count_if_needed(&ctx);
 
-        assert!(app.pending_word_count.is_none());
+        assert!(app.word_count.pending.is_none());
     }
 }
