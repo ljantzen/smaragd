@@ -197,6 +197,39 @@ pub fn show(
                         ctx.set_theme(settings.theme_preference);
                         changed = true;
                     }
+                    ui.add_space(12.0);
+                    ui.heading("UI Scale");
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Scale:");
+                        let mut percent =
+                            (crate::app::resolve_ui_scale(settings) * 100.0).round() as u32;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut percent)
+                                    .range(50..=300)
+                                    .suffix("%"),
+                            )
+                            .changed()
+                        {
+                            settings.ui_scale = percent as f32 / 100.0;
+                            ctx.set_zoom_factor(settings.ui_scale);
+                            changed = true;
+                        }
+                        if ui.button("Reset").clicked() {
+                            settings.ui_scale = 0.0;
+                            ctx.set_zoom_factor(crate::app::resolve_ui_scale(settings));
+                            changed = true;
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "A manual multiplier on top of whatever this platform's own \
+                         display scaling already reports — mainly useful when that \
+                         comes back wrong (some Wayland compositors don't report a \
+                         scale winit picks up). Leave at 100% if the UI already looks \
+                         right.",
+                    );
                 }
                 SettingsCategory::Editor => {
                     ui.heading("Font");

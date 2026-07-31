@@ -5,6 +5,12 @@ this file.
 
 ## Unreleased
 
+- Added a UI Scale setting (`File > Settings > Appearance`, 50%–300%, default
+  100%) — a manual multiplier on top of the OS/display server's own reported
+  scaling, for cases where automatic HiDPI detection comes back wrong (e.g.
+  some Wayland compositors) and the whole UI renders tiny with no way to fix
+  it from inside the app until now.
+
 ## v0.5.2 — 2026-07-31
 
 - Added arrow-key navigation to the top menu bar: Up/Down moves the

@@ -313,6 +313,21 @@ fn resolve_status_message_duration(settings: &Settings) -> std::time::Duration {
     }
 }
 
+/// egui's own default zoom factor — used when `Settings::ui_scale` is
+/// unconfigured (`0.0`), i.e. no change from `native_pixels_per_point`.
+const DEFAULT_UI_SCALE: f32 = 1.0;
+
+/// Resolve `Settings::ui_scale`'s blank-means-unset (`0.0`) convention to an
+/// actual `egui::Context::set_zoom_factor` multiplier — same shape as
+/// `editor_font::resolve_size`/`resolve_toast_duration` above.
+pub(crate) fn resolve_ui_scale(settings: &Settings) -> f32 {
+    if settings.ui_scale > 0.0 {
+        settings.ui_scale
+    } else {
+        DEFAULT_UI_SCALE
+    }
+}
+
 /// State for the open Export dialog (`ui::export_panel`), from the binder's
 /// "Export…" context-menu entry — which folder to compile and the book
 /// title/author fields being edited live.
@@ -624,6 +639,7 @@ impl SmaragdApp {
             .map(|path| Settings::load_from_path(&path))
             .unwrap_or_default();
         cc.egui_ctx.set_theme(settings.theme_preference);
+        cc.egui_ctx.set_zoom_factor(resolve_ui_scale(&settings));
         let initial_pomodoro_durations = crate::pomodoro::resolve_durations(&settings);
         // Match the editor's background to the surrounding chrome instead of egui's
         // default `extreme_bg_color`, which renders TextEdit widgets noticeably darker
@@ -3914,8 +3930,8 @@ impl eframe::App for SmaragdApp {
 #[cfg(test)]
 mod duration_resolution_tests {
     use super::{
-        DEFAULT_STATUS_MESSAGE_DURATION, DEFAULT_TOAST_DURATION, resolve_status_message_duration,
-        resolve_toast_duration,
+        DEFAULT_STATUS_MESSAGE_DURATION, DEFAULT_TOAST_DURATION, DEFAULT_UI_SCALE,
+        resolve_status_message_duration, resolve_toast_duration, resolve_ui_scale,
     };
     use crate::settings::Settings;
 
@@ -3938,6 +3954,24 @@ mod duration_resolution_tests {
             resolve_toast_duration(&settings),
             std::time::Duration::from_secs(20)
         );
+    }
+
+    #[test]
+    fn resolve_ui_scale_falls_back_to_the_default_when_unconfigured() {
+        let settings = Settings {
+            ui_scale: 0.0,
+            ..Default::default()
+        };
+        assert_eq!(resolve_ui_scale(&settings), DEFAULT_UI_SCALE);
+    }
+
+    #[test]
+    fn resolve_ui_scale_uses_the_configured_value() {
+        let settings = Settings {
+            ui_scale: 1.5,
+            ..Default::default()
+        };
+        assert_eq!(resolve_ui_scale(&settings), 1.5);
     }
 
     #[test]

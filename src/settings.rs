@@ -113,6 +113,19 @@ pub struct Settings {
     /// missing from `shortcuts` but present here was deliberately cleared and
     /// should stay that way.
     pub shortcuts_seen: BTreeSet<String>,
+    /// A manual multiplier on top of whatever `native_pixels_per_point` the
+    /// windowing backend reports (`egui::Context::set_zoom_factor`), for
+    /// platforms/compositors where automatic HiDPI detection comes back wrong
+    /// (reported: a tiny, unresponsive-to-toolkit-scaling UI on some
+    /// Wayland/Hyprland setups — winit reads the compositor's advertised output
+    /// scale, not desktop-toolkit env vars like `GDK_SCALE`, and can also fall
+    /// back silently to unscaled XWayland). `0.0` means "not yet configured,"
+    /// resolved to `1.0` (no change from today's behavior) at the point of use
+    /// (`app::resolve_ui_scale`) — same blank-means-unset convention as
+    /// `editor_font_size`. Harmless to leave untouched on any platform: it's a
+    /// pure multiplier on top of whatever the OS already reports, not a
+    /// replacement for it.
+    pub ui_scale: f32,
 }
 
 /// The full path to the settings file, e.g. `~/.config/smaragd/smaragd.toml` on
@@ -327,6 +340,7 @@ mod tests {
             toast_duration_secs: 10,
             status_message_duration_secs: 12,
             shortcuts_seen,
+            ui_scale: 1.25,
         };
 
         settings.save_to_path(&path).unwrap();
