@@ -3750,7 +3750,10 @@ impl eframe::App for SmaragdApp {
                         && let Some(target) = project.meta.draft_target_words
                     {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(format!("✎ {} / {} words", self.word_count_cache, target));
+                            ui.label(format!(
+                                "{} : {} / {} words",
+                                self.char_activity, self.word_count_cache, target
+                            ));
                         });
                     }
                     // Independent of `status_message` above (which ~40 other call

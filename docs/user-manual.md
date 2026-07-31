@@ -462,7 +462,7 @@ Durations default to the traditional 25 minutes of work, a 5-minute short break,
 
 The total doesn't recompute on every keystroke or every frame — recomputing means re-reading every tracked document from disk, so it only happens on a handful of triggers (opening a project, a git pull, a folder-role or Track-scope change, an actual save, or an explicit Refresh) and always runs on a background thread so it never freezes the UI. Creating, deleting, moving, or renaming a document doesn't trigger a recompute on its own — click Refresh (or its shortcut) if the count looks stale after one of those.
 
-A compact `✎ 12,345 / 50,000 words` segment shows in the status bar, next to the Pomodoro countdown, any time a Draft Target is set — the Session Target and characters-typed counter are dock-tab-only, not mirrored in the status bar.
+A compact `340 : 12,345 / 50,000 words` segment (characters typed this session, then current/target words) shows in the status bar, next to the Pomodoro countdown, any time a Draft Target is set — the Session Target is dock-tab-only, not mirrored in the status bar.
 
 ## Plugins
 

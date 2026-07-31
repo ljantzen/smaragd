@@ -96,9 +96,7 @@ pub fn show(
         let fraction = (session_words as f32 / target as f32).min(1.0);
         ui.add(egui::ProgressBar::new(fraction).text(format!("{session_words} / {target}")));
     }
-    ui.label(format!(
-        "Characters typed this session: {chars_typed} (no target — informational only)"
-    ));
+    ui.label(format!("Characters typed: {chars_typed}"));
     ui.separator();
 
     ui.horizontal(|ui| {
