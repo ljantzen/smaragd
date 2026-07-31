@@ -64,6 +64,8 @@ cargo fmt                                     # must be applied before committin
 
 Version control uses [jj (Jujutsu)](https://github.com/jj-vcs/jj) with the git backend (colocated).
 
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the same three checks on every push/PR to `main`, plus a separate `cargo llvm-cov` job that uploads an `lcov.info` coverage report as a build artifact (informational — nothing is currently gated on a coverage threshold).
+
 ## Releases
 
 Pushing a semantic-version tag (`v1.2.3` or `1.2.3`, prerelease suffixes like `-rc.1` allowed) triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds:
@@ -107,7 +109,13 @@ src/
   project/
     model.rs              BinderTree/BinderNode data model
     scan.rs                folder -> BinderTree via ignore::WalkBuilder
-    mod.rs                 Project: load/initialize, metadata, folder roles, trash/restore, create/rename/delete/reorder, story cards, backlinks scan, tag index/search, word count (WordCountScope-aware tree walk) + Draft/Session target persistence
+    mod.rs                 Project: type defs (FolderRole, ProjectMeta, StoryCard, ...) + core lifecycle/CRUD (load/initialize/rescan, create/rename/delete/move)
+    roles.rs               folder-role assignment/lookup, trash_path/deletes_to_trash
+    trash.rs                restore-from-trash/empty-trash/permanent-delete
+    story_cards.rs          story cards + protagonist Desire/Misbelief
+    queries.rs              backlinks + tag index/search
+    word_count.rs           word count (WordCountScope-aware tree walk), is_path_tracked, Draft/Session target persistence
+    picklists.rs            Type/Status/POV dropdown-source folders
   ui/
     about_panel.rs          Help > About modal: version + build info
     backlinks_panel.rs      backlinks list rendering (dockable tab)
