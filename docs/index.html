@@ -113,6 +113,42 @@
   .card h3 { margin: 0 0 8px; font-size: 1.05em; }
   .card p { margin: 0; color: var(--fg-dim); font-size: 0.95em; }
 
+  .hero-shot {
+    display: block;
+    max-width: 100%;
+    margin: 0 auto 40px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  }
+
+  .shot-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 24px;
+  }
+  .shot {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .shot a { display: block; line-height: 0; }
+  .shot img {
+    display: block;
+    width: 100%;
+    height: 200px;
+    object-fit: cover;
+    object-position: top;
+    background: var(--code-bg);
+  }
+  .shot p {
+    margin: 0;
+    padding: 14px 16px;
+    color: var(--fg-dim);
+    font-size: 0.9em;
+  }
+
   .platforms { display: flex; gap: 16px; flex-wrap: wrap; }
   .platform {
     flex: 1 1 220px;
@@ -171,6 +207,7 @@
         Smaragd
       </div>
       <nav>
+        <a href="#screenshots">Screenshots</a>
         <a href="https://github.com/ljantzen/smaragd">GitHub</a>
         <a href="https://github.com/ljantzen/smaragd/blob/main/docs/user-manual.md">User Manual</a>
         <a href="https://github.com/ljantzen/smaragd/releases/latest">Releases</a>
@@ -248,6 +285,46 @@
         <div class="card">
           <h3>Built-in Pomodoro timer</h3>
           <p>Work/break cadence with a status-bar countdown that keeps ticking whether or not its tab is open — configurable durations and session count.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="screenshots">
+      <h2>See it in action</h2>
+      <p class="lede">A native, IntelliJ/Visual-Studio-style workspace — every panel below is a dockable tab you can drag, split, float, or close.</p>
+      <a href="white-desktop.png" target="_blank" rel="noopener">
+        <img class="hero-shot" src="white-desktop.png" alt="The full Smaragd workspace: binder tree on the left, editor and preview in the middle, Pomodoro/Metadata/Backlinks/Word Count docked on the right, and a corkboard of story cards below the editor.">
+      </a>
+      <div class="shot-grid">
+        <div class="shot">
+          <a href="new-project.png" target="_blank" rel="noopener">
+            <img src="new-project.png" alt="The New Project dialog, offering Blank, Novel, Nonfiction, and Screenplay starting templates.">
+          </a>
+          <p>Scrivener-style starting templates — Blank, Novel, Nonfiction, or Screenplay — scaffold folders and starter documents in one step.</p>
+        </div>
+        <div class="shot">
+          <a href="new-story-card.png" target="_blank" rel="noopener">
+            <img src="new-story-card.png" alt="The New Story Card editor, with fields for Cause, Effect, Why It Matters, Realization, and And So?.">
+          </a>
+          <p><em>Story Genius</em>–style story cards — Cause, Effect, Why It Matters, Realization, And So? — plot structure independent of your manuscript.</p>
+        </div>
+        <div class="shot">
+          <a href="vim-style-commandline.png" target="_blank" rel="noopener">
+            <img src="vim-style-commandline.png" alt="The Helix-inspired command prompt, showing tab-completion for commands like dmode, find, git, theme.">
+          </a>
+          <p>A Helix-inspired <code>:</code> command prompt — <code>:dmode</code>, <code>:theme</code>, <code>:git</code>, and more, with tab-completion.</p>
+        </div>
+        <div class="shot">
+          <a href="settings-shortcuts.png" target="_blank" rel="noopener">
+            <img src="settings-shortcuts.png" alt="The Settings dialog's Shortcuts category, listing every keyboard shortcut grouped by category with Change/Clear buttons.">
+          </a>
+          <p>Every keyboard shortcut is remappable from one place, grouped by category, with instant Change/Clear.</p>
+        </div>
+        <div class="shot">
+          <a href="window-layout.png" target="_blank" rel="noopener">
+            <img src="window-layout.png" alt="The Window menu, showing Save Current Layout, a Layouts submenu with saved layouts, and Restore Default Layout.">
+          </a>
+          <p>Save named dock layouts from the Window menu and switch between them instantly — arrange once, recall anytime.</p>
         </div>
       </div>
     </section>
