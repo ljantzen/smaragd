@@ -26,6 +26,7 @@ toml = "1.1"
 typst-as-lib = { version = "0.16.0", features = ["typst-kit-fonts", "typst-kit-embed-fonts"] }
 typst-pdf = "0.15.1"
 uuid = { version = "1.24", features = ["v4", "serde"] }
+yrs = "0.27.3"
 
 [build-dependencies]
 resvg = "0.47"
