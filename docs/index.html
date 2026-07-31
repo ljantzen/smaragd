@@ -207,6 +207,7 @@
         Smaragd
       </div>
       <nav>
+        <a href="#collaboration">Collaboration</a>
         <a href="#screenshots">Screenshots</a>
         <a href="https://github.com/ljantzen/smaragd">GitHub</a>
         <a href="https://github.com/ljantzen/smaragd/blob/main/docs/user-manual.md">User Manual</a>
@@ -285,6 +286,29 @@
         <div class="card">
           <h3>Built-in Pomodoro timer</h3>
           <p>Work/break cadence with a status-bar countdown that keeps ticking whether or not its tab is open — configurable durations and session count.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="collaboration">
+      <h2>Write together, live — no server involved</h2>
+      <p class="lede">Host a session on the document you have open, share the one-time connection code, and a collaborator pastes it in to start editing with you in real time — no account, no cloud service, no third party ever holding your manuscript.</p>
+      <div class="grid">
+        <div class="card">
+          <h3>Peer-to-peer, not cloud</h3>
+          <p>Peers connect directly via <a href="https://iroh.computer">iroh</a>. Your text is never uploaded to or stored on a server — it only ever exists on your machine and your collaborator's.</p>
+        </div>
+        <div class="card">
+          <h3>End-to-end encrypted</h3>
+          <p>Every edit is encrypted with a key derived from a secret that lives only in the connection code, so even the infrastructure that helps peers find each other can't read what you're writing.</p>
+        </div>
+        <div class="card">
+          <h3>Conflict-free merging</h3>
+          <p>Concurrent edits from both sides — even to the same paragraph — merge automatically via a CRDT, the same category of algorithm behind Google Docs, with no manual conflict resolution.</p>
+        </div>
+        <div class="card">
+          <h3>One code to pair</h3>
+          <p>Host generates a short, pasteable code; join with it from the Collaborate menu or its dockable panel (<code>Ctrl+Shift+L</code>). Whoever holds the code can join — once, for that session only.</p>
         </div>
       </div>
     </section>
