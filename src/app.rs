@@ -2898,325 +2898,11 @@ impl SmaragdApp {
             Err(err) => self.push_error_toast(format!("Couldn't create file: {err}")),
         }
     }
-}
 
-/// Requests raised by `AppTabViewer::ui` for the caller to apply once the dock has
-/// finished rendering for the frame — `egui_dock::TabViewer::ui` only gets `&mut
-/// self` on the *viewer*, not on `SmaragdApp`, so it can't call `&mut self`
-/// methods like `open_document` directly; it collects what it wants done instead.
-enum DockAction {
-    OpenDocument(PathBuf),
-    Binder(BinderEvent),
-    RefreshBacklinks,
-    RefreshTags,
-    EditorSaveError(String),
-    Wikilink(WikilinkActivation),
-    Corkboard(CorkboardEvent),
-    Pomodoro(crate::ui::pomodoro_panel::PomodoroEvent),
-    WordCount(crate::ui::word_count_panel::WordCountEvent),
-}
-
-/// A short-lived `egui_dock::TabViewer` impl, constructed fresh each frame right
-/// before `DockArea::show_inside` and drained right after (see `DockAction`).
-/// Borrows exactly what each tab's content needs to render; `metadata_draft` and
-/// `editor` are the two `&mut` fields since the Metadata and Editor tabs mutate
-/// them directly (live editing, no event needed for Metadata — see
-/// `apply_metadata_edits_if_changed` — while Editor's own internal edits don't
-/// need to round-trip through a `DockAction` either, only its save/wikilink
-/// outcomes do).
-struct AppTabViewer<'a> {
-    project: Option<&'a Project>,
-    selected_path: Option<&'a Path>,
-    /// Owned (not `&'a Path`) because `editor` below is a `&'a mut EditorState`
-    /// borrowed at the same time — an `&'a Path` still pointing into
-    /// `editor.open_path` would alias it.
-    open_path: Option<PathBuf>,
-    backlinks: &'a [BacklinkEntry],
-    tags: &'a [crate::project::TagGroup],
-    tags_search_text: &'a mut String,
-    tag_search_results: &'a [(PathBuf, String)],
-    metadata_draft: &'a mut MetadataDraft,
-    editor: &'a mut EditorState,
-    settings: &'a Settings,
-    color_themes: &'a [crate::color_theme::ColorTheme],
-    pomodoro: &'a crate::pomodoro::PomodoroState,
-    pomodoro_durations: crate::pomodoro::PomodoroDurations,
-    /// See `SmaragdApp::word_count_cache`.
-    word_count_cache: usize,
-    /// See `SmaragdApp::char_activity`.
-    char_activity: u64,
-    actions: Vec<DockAction>,
-    /// See `SmaragdApp::focus_binder_requested`.
-    focus_binder_requested: bool,
-}
-
-impl egui_dock::TabViewer for AppTabViewer<'_> {
-    type Tab = DockTab;
-
-    fn title(&mut self, tab: &mut DockTab) -> egui::WidgetText {
-        match tab {
-            DockTab::Binder => "Binder".into(),
-            DockTab::Backlinks => "Backlinks".into(),
-            DockTab::Tags => "Tags".into(),
-            DockTab::Metadata => "Metadata".into(),
-            DockTab::Editor => "Editor".into(),
-            DockTab::Preview => "Preview".into(),
-            DockTab::Corkboard => "Corkboard".into(),
-            DockTab::Pomodoro => "Pomodoro".into(),
-            DockTab::WordCount => "Word Count".into(),
-        }
-    }
-
-    /// The Editor tab can't be closed: unlike every other tab here, closing it
-    /// would stop `editor_panel::show` from rendering that frame, which means its
-    /// "save on lost-focus" path never runs — a silent way to lose unsaved edits
-    /// that has no precedent before this tab existed (the editor was never
-    /// closeable at all).
-    fn closeable(&mut self, tab: &mut DockTab) -> bool {
-        !matches!(tab, DockTab::Editor)
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut DockTab) {
-        match tab {
-            DockTab::Binder => match self.project {
-                Some(project) => {
-                    if let Some(event) = ui::binder_panel::show(
-                        ui,
-                        project,
-                        self.selected_path,
-                        self.focus_binder_requested,
-                    ) {
-                        self.actions.push(DockAction::Binder(event));
-                    }
-                }
-                None => {
-                    ui.label("Open a project folder to get started.");
-                }
-            },
-            DockTab::Backlinks => {
-                if let Some(event) =
-                    ui::backlinks_panel::show(ui, self.open_path.as_deref(), self.backlinks)
-                {
-                    match event {
-                        BacklinksEvent::OpenDocument(path) => {
-                            self.actions.push(DockAction::OpenDocument(path));
-                        }
-                        BacklinksEvent::Refresh => self.actions.push(DockAction::RefreshBacklinks),
-                    }
-                }
-            }
-            DockTab::Tags => {
-                if let Some(event) = ui::tags_panel::show(
-                    ui,
-                    self.open_path.as_deref(),
-                    self.tags,
-                    self.tags_search_text,
-                    self.tag_search_results,
-                ) {
-                    match event {
-                        ui::tags_panel::TagsEvent::OpenDocument(path) => {
-                            self.actions.push(DockAction::OpenDocument(path));
-                        }
-                        ui::tags_panel::TagsEvent::Refresh => {
-                            self.actions.push(DockAction::RefreshTags)
-                        }
-                    }
-                }
-            }
-            DockTab::Metadata => {
-                let project = self.project;
-                let picklist_titles = |field: crate::project::PicklistField| -> Vec<String> {
-                    project
-                        .map(|project| {
-                            project
-                                .picklist_documents(field)
-                                .iter()
-                                .map(|node| {
-                                    ui::binder_panel::document_label(&node.name).to_string()
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                };
-                let types = picklist_titles(crate::project::PicklistField::Type);
-                let statuses = picklist_titles(crate::project::PicklistField::Status);
-                let povs = picklist_titles(crate::project::PicklistField::Pov);
-                let picklists = ui::metadata_panel::MetadataPicklists {
-                    types: &types,
-                    statuses: &statuses,
-                    povs: &povs,
-                };
-                let word_count = crate::frontmatter::count_words(&self.editor.buffer);
-                ui::metadata_panel::show(
-                    ui,
-                    self.open_path.as_deref(),
-                    self.metadata_draft,
-                    &picklists,
-                    word_count,
-                );
-            }
-            DockTab::Editor => {
-                let note_titles = self
-                    .project
-                    .map(|project| project.tree.document_names())
-                    .unwrap_or_default();
-                let activate_wikilink_shortcut = self
-                    .settings
-                    .shortcuts
-                    .get(ShortcutAction::ActivateWikilink);
-                match ui::editor_panel::show(
-                    ui,
-                    self.editor,
-                    &note_titles,
-                    activate_wikilink_shortcut,
-                    false,
-                    self.settings.editor_font,
-                    crate::editor_font::resolve_size(self.settings.editor_font_size),
-                ) {
-                    Some(EditorEvent::SaveError(err)) => {
-                        self.actions.push(DockAction::EditorSaveError(err));
-                    }
-                    Some(EditorEvent::Wikilink(activation)) => {
-                        self.actions.push(DockAction::Wikilink(activation));
-                    }
-                    None => {}
-                }
-            }
-            DockTab::Preview => {
-                if self.editor.open_path.is_some() {
-                    let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
-                    let project_root = self.project.map(|project| project.root.as_path());
-                    let active_theme = self
-                        .settings
-                        .color_theme
-                        .as_deref()
-                        .and_then(|id| crate::color_theme::find(self.color_themes, id));
-                    if let Some(activation) = ui::markdown_preview::show(
-                        ui,
-                        &self.editor.buffer,
-                        base_dir,
-                        project_root,
-                        active_theme,
-                        self.settings.editor_font,
-                        crate::editor_font::resolve_size(self.settings.editor_font_size),
-                        self.settings.typewriter_quotes,
-                    ) {
-                        self.actions.push(DockAction::Wikilink(activation));
-                    }
-                } else {
-                    ui.label("Select a file from the binder to preview.");
-                }
-            }
-            DockTab::Corkboard => match self.project {
-                Some(project) => {
-                    if let Some(event) = ui::corkboard_panel::show(ui, project) {
-                        self.actions.push(DockAction::Corkboard(event));
-                    }
-                }
-                None => {
-                    ui.label("Open a project folder to get started.");
-                }
-            },
-            DockTab::Pomodoro => {
-                if let Some(event) =
-                    ui::pomodoro_panel::show(ui, self.pomodoro, &self.pomodoro_durations)
-                {
-                    self.actions.push(DockAction::Pomodoro(event));
-                }
-            }
-            DockTab::WordCount => match self.project {
-                Some(project) => {
-                    if let Some(event) = ui::word_count_panel::show(
-                        ui,
-                        project,
-                        self.word_count_cache,
-                        self.char_activity,
-                    ) {
-                        self.actions.push(DockAction::WordCount(event));
-                    }
-                }
-                None => {
-                    ui.label("Open a project folder to get started.");
-                }
-            },
-        }
-    }
-}
-
-impl eframe::App for SmaragdApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.poll_git_operation(ui.ctx());
-        self.poll_word_count();
-        self.tick_pomodoro(ui.ctx());
-        self.show_toasts(ui.ctx());
-        self.clear_status_message_if_expired(ui.ctx());
-
-        // Save the dock layout right as shutdown starts (a window-close click, or
-        // `ShortcutAction::Exit`'s `ViewportCommand::Close`, both surface here)
-        // rather than in `eframe::App::on_exit` — that hook runs after the last
-        // frame and isn't handed a `Context`, but capturing a floating panel's
-        // current on-screen position (see `capture_floating_window_positions`)
-        // needs one. Runs every frame from here until the app actually closes,
-        // which in practice is just the one closing frame or two; re-saving the
-        // same state each of those times is harmless.
-        if ui.ctx().input(|i| i.viewport().close_requested()) {
-            let ctx = ui.ctx().clone();
-            self.persist_dock_layout(&ctx);
-        }
-
-        if self.recording_shortcut.is_none() {
-            let ctx = ui.ctx().clone();
-            let mut pairs: Vec<(ShortcutTarget, egui::KeyboardShortcut)> = self
-                .settings
-                .shortcuts
-                .bindings()
-                .into_iter()
-                // `ActivateWikilink` is consumed inline in `editor_panel::show`
-                // instead (see its doc comment) — including it here too would let
-                // this pass steal the key event first, so `editor_panel::show`
-                // would never see it.
-                .filter(|(action, _)| *action != ShortcutAction::ActivateWikilink)
-                .map(|(action, shortcut)| (ShortcutTarget::BuiltIn(action), shortcut))
-                .collect();
-            pairs.extend(
-                self.plugin_shortcuts
-                    .iter()
-                    .map(|(name, shortcut)| (ShortcutTarget::Plugin(name.clone()), *shortcut)),
-            );
-            let bindings = sorted_by_specificity(pairs);
-            let triggered: Vec<ShortcutTarget> = bindings
-                .into_iter()
-                .filter(|(_, shortcut)| ctx.input_mut(|i| i.consume_shortcut(shortcut)))
-                .map(|(target, _)| target)
-                .collect();
-            for target in triggered {
-                match target {
-                    ShortcutTarget::BuiltIn(action) => self.dispatch_shortcut_action(&ctx, action),
-                    ShortcutTarget::Plugin(name) => self.run_plugin_command(&name, ""),
-                }
-            }
-        }
-
-        // Escape exits Focus Mode — the first top-level Escape consumption in
-        // this file; every other Escape handler (name-prompt, command prompt,
-        // wikilink-autocomplete popup, shortcut-recording) lives inside its own
-        // modal's `show`, scoped to just that modal. Gated on no modal being
-        // open so a single Escape press doesn't also exit Focus Mode while
-        // dismissing one of those, mirroring `self.recording_shortcut.is_none()`
-        // guarding the shortcut-dispatch pass above.
-        if self.focus_mode
-            && self.prompt.is_none()
-            && !self.show_settings
-            && !self.find_replace.open
-            && !self.command_prompt.open
-            && self.card_draft.is_none()
-            && self.export.is_none()
-            && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))
-        {
-            let ctx = ui.ctx().clone();
-            self.set_focus_mode(&ctx, false);
-        }
-
+    /// Renders the top menu bar (File/Edit/View/Tools/Versions/Window/Help) —
+    /// hidden during Focus Mode. Extracted from `ui()` verbatim (2026-07-31
+    /// code-quality review: that function was 766 lines).
+    fn show_menu_bar(&mut self, ui: &mut egui::Ui) {
         if !self.focus_mode {
             egui::Panel::top("menu_bar").show(ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
@@ -3605,7 +3291,14 @@ impl eframe::App for SmaragdApp {
                 });
             });
         }
+    }
 
+    /// Renders every modal/dialog overlay that isn't the menu or status bar:
+    /// Settings, the name-prompt, Find and Replace, the command prompt, the
+    /// Open Document quick-switcher, the New Project template picker, and
+    /// Help > About. Extracted from `ui()` verbatim (2026-07-31 code-quality
+    /// review).
+    fn show_modals(&mut self, ui: &mut egui::Ui) {
         let plugin_shortcut_rows: Vec<(String, Option<egui::KeyboardShortcut>)> = self
             .plugin_engine
             .shortcut_defaults()
@@ -3718,7 +3411,11 @@ impl eframe::App for SmaragdApp {
         if self.show_about && ui::about_panel::show(ui.ctx()) {
             self.show_about = false;
         }
+    }
 
+    /// Renders the bottom status bar — hidden during Focus Mode. Extracted
+    /// from `ui()` verbatim (2026-07-31 code-quality review).
+    fn show_status_bar(&mut self, ui: &mut egui::Ui) {
         if !self.focus_mode {
             egui::Panel::bottom("status_bar").show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -3777,6 +3474,331 @@ impl eframe::App for SmaragdApp {
                 });
             });
         }
+    }
+}
+
+/// Requests raised by `AppTabViewer::ui` for the caller to apply once the dock has
+/// finished rendering for the frame — `egui_dock::TabViewer::ui` only gets `&mut
+/// self` on the *viewer*, not on `SmaragdApp`, so it can't call `&mut self`
+/// methods like `open_document` directly; it collects what it wants done instead.
+enum DockAction {
+    OpenDocument(PathBuf),
+    Binder(BinderEvent),
+    RefreshBacklinks,
+    RefreshTags,
+    EditorSaveError(String),
+    Wikilink(WikilinkActivation),
+    Corkboard(CorkboardEvent),
+    Pomodoro(crate::ui::pomodoro_panel::PomodoroEvent),
+    WordCount(crate::ui::word_count_panel::WordCountEvent),
+}
+
+/// A short-lived `egui_dock::TabViewer` impl, constructed fresh each frame right
+/// before `DockArea::show_inside` and drained right after (see `DockAction`).
+/// Borrows exactly what each tab's content needs to render; `metadata_draft` and
+/// `editor` are the two `&mut` fields since the Metadata and Editor tabs mutate
+/// them directly (live editing, no event needed for Metadata — see
+/// `apply_metadata_edits_if_changed` — while Editor's own internal edits don't
+/// need to round-trip through a `DockAction` either, only its save/wikilink
+/// outcomes do).
+struct AppTabViewer<'a> {
+    project: Option<&'a Project>,
+    selected_path: Option<&'a Path>,
+    /// Owned (not `&'a Path`) because `editor` below is a `&'a mut EditorState`
+    /// borrowed at the same time — an `&'a Path` still pointing into
+    /// `editor.open_path` would alias it.
+    open_path: Option<PathBuf>,
+    backlinks: &'a [BacklinkEntry],
+    tags: &'a [crate::project::TagGroup],
+    tags_search_text: &'a mut String,
+    tag_search_results: &'a [(PathBuf, String)],
+    metadata_draft: &'a mut MetadataDraft,
+    editor: &'a mut EditorState,
+    settings: &'a Settings,
+    color_themes: &'a [crate::color_theme::ColorTheme],
+    pomodoro: &'a crate::pomodoro::PomodoroState,
+    pomodoro_durations: crate::pomodoro::PomodoroDurations,
+    /// See `SmaragdApp::word_count_cache`.
+    word_count_cache: usize,
+    /// See `SmaragdApp::char_activity`.
+    char_activity: u64,
+    actions: Vec<DockAction>,
+    /// See `SmaragdApp::focus_binder_requested`.
+    focus_binder_requested: bool,
+}
+
+impl egui_dock::TabViewer for AppTabViewer<'_> {
+    type Tab = DockTab;
+
+    fn title(&mut self, tab: &mut DockTab) -> egui::WidgetText {
+        match tab {
+            DockTab::Binder => "Binder".into(),
+            DockTab::Backlinks => "Backlinks".into(),
+            DockTab::Tags => "Tags".into(),
+            DockTab::Metadata => "Metadata".into(),
+            DockTab::Editor => "Editor".into(),
+            DockTab::Preview => "Preview".into(),
+            DockTab::Corkboard => "Corkboard".into(),
+            DockTab::Pomodoro => "Pomodoro".into(),
+            DockTab::WordCount => "Word Count".into(),
+        }
+    }
+
+    /// The Editor tab can't be closed: unlike every other tab here, closing it
+    /// would stop `editor_panel::show` from rendering that frame, which means its
+    /// "save on lost-focus" path never runs — a silent way to lose unsaved edits
+    /// that has no precedent before this tab existed (the editor was never
+    /// closeable at all).
+    fn closeable(&mut self, tab: &mut DockTab) -> bool {
+        !matches!(tab, DockTab::Editor)
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut DockTab) {
+        match tab {
+            DockTab::Binder => match self.project {
+                Some(project) => {
+                    if let Some(event) = ui::binder_panel::show(
+                        ui,
+                        project,
+                        self.selected_path,
+                        self.focus_binder_requested,
+                    ) {
+                        self.actions.push(DockAction::Binder(event));
+                    }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
+            DockTab::Backlinks => {
+                if let Some(event) =
+                    ui::backlinks_panel::show(ui, self.open_path.as_deref(), self.backlinks)
+                {
+                    match event {
+                        BacklinksEvent::OpenDocument(path) => {
+                            self.actions.push(DockAction::OpenDocument(path));
+                        }
+                        BacklinksEvent::Refresh => self.actions.push(DockAction::RefreshBacklinks),
+                    }
+                }
+            }
+            DockTab::Tags => {
+                if let Some(event) = ui::tags_panel::show(
+                    ui,
+                    self.open_path.as_deref(),
+                    self.tags,
+                    self.tags_search_text,
+                    self.tag_search_results,
+                ) {
+                    match event {
+                        ui::tags_panel::TagsEvent::OpenDocument(path) => {
+                            self.actions.push(DockAction::OpenDocument(path));
+                        }
+                        ui::tags_panel::TagsEvent::Refresh => {
+                            self.actions.push(DockAction::RefreshTags)
+                        }
+                    }
+                }
+            }
+            DockTab::Metadata => {
+                let project = self.project;
+                let picklist_titles = |field: crate::project::PicklistField| -> Vec<String> {
+                    project
+                        .map(|project| {
+                            project
+                                .picklist_documents(field)
+                                .iter()
+                                .map(|node| {
+                                    ui::binder_panel::document_label(&node.name).to_string()
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
+                let types = picklist_titles(crate::project::PicklistField::Type);
+                let statuses = picklist_titles(crate::project::PicklistField::Status);
+                let povs = picklist_titles(crate::project::PicklistField::Pov);
+                let picklists = ui::metadata_panel::MetadataPicklists {
+                    types: &types,
+                    statuses: &statuses,
+                    povs: &povs,
+                };
+                let word_count = crate::frontmatter::count_words(&self.editor.buffer);
+                ui::metadata_panel::show(
+                    ui,
+                    self.open_path.as_deref(),
+                    self.metadata_draft,
+                    &picklists,
+                    word_count,
+                );
+            }
+            DockTab::Editor => {
+                let note_titles = self
+                    .project
+                    .map(|project| project.tree.document_names())
+                    .unwrap_or_default();
+                let activate_wikilink_shortcut = self
+                    .settings
+                    .shortcuts
+                    .get(ShortcutAction::ActivateWikilink);
+                match ui::editor_panel::show(
+                    ui,
+                    self.editor,
+                    &note_titles,
+                    activate_wikilink_shortcut,
+                    false,
+                    self.settings.editor_font,
+                    crate::editor_font::resolve_size(self.settings.editor_font_size),
+                ) {
+                    Some(EditorEvent::SaveError(err)) => {
+                        self.actions.push(DockAction::EditorSaveError(err));
+                    }
+                    Some(EditorEvent::Wikilink(activation)) => {
+                        self.actions.push(DockAction::Wikilink(activation));
+                    }
+                    None => {}
+                }
+            }
+            DockTab::Preview => {
+                if self.editor.open_path.is_some() {
+                    let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
+                    let project_root = self.project.map(|project| project.root.as_path());
+                    let active_theme = self
+                        .settings
+                        .color_theme
+                        .as_deref()
+                        .and_then(|id| crate::color_theme::find(self.color_themes, id));
+                    if let Some(activation) = ui::markdown_preview::show(
+                        ui,
+                        &self.editor.buffer,
+                        base_dir,
+                        project_root,
+                        active_theme,
+                        self.settings.editor_font,
+                        crate::editor_font::resolve_size(self.settings.editor_font_size),
+                        self.settings.typewriter_quotes,
+                    ) {
+                        self.actions.push(DockAction::Wikilink(activation));
+                    }
+                } else {
+                    ui.label("Select a file from the binder to preview.");
+                }
+            }
+            DockTab::Corkboard => match self.project {
+                Some(project) => {
+                    if let Some(event) = ui::corkboard_panel::show(ui, project) {
+                        self.actions.push(DockAction::Corkboard(event));
+                    }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
+            DockTab::Pomodoro => {
+                if let Some(event) =
+                    ui::pomodoro_panel::show(ui, self.pomodoro, &self.pomodoro_durations)
+                {
+                    self.actions.push(DockAction::Pomodoro(event));
+                }
+            }
+            DockTab::WordCount => match self.project {
+                Some(project) => {
+                    if let Some(event) = ui::word_count_panel::show(
+                        ui,
+                        project,
+                        self.word_count_cache,
+                        self.char_activity,
+                    ) {
+                        self.actions.push(DockAction::WordCount(event));
+                    }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
+        }
+    }
+}
+
+impl eframe::App for SmaragdApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_git_operation(ui.ctx());
+        self.poll_word_count();
+        self.tick_pomodoro(ui.ctx());
+        self.show_toasts(ui.ctx());
+        self.clear_status_message_if_expired(ui.ctx());
+
+        // Save the dock layout right as shutdown starts (a window-close click, or
+        // `ShortcutAction::Exit`'s `ViewportCommand::Close`, both surface here)
+        // rather than in `eframe::App::on_exit` — that hook runs after the last
+        // frame and isn't handed a `Context`, but capturing a floating panel's
+        // current on-screen position (see `capture_floating_window_positions`)
+        // needs one. Runs every frame from here until the app actually closes,
+        // which in practice is just the one closing frame or two; re-saving the
+        // same state each of those times is harmless.
+        if ui.ctx().input(|i| i.viewport().close_requested()) {
+            let ctx = ui.ctx().clone();
+            self.persist_dock_layout(&ctx);
+        }
+
+        if self.recording_shortcut.is_none() {
+            let ctx = ui.ctx().clone();
+            let mut pairs: Vec<(ShortcutTarget, egui::KeyboardShortcut)> = self
+                .settings
+                .shortcuts
+                .bindings()
+                .into_iter()
+                // `ActivateWikilink` is consumed inline in `editor_panel::show`
+                // instead (see its doc comment) — including it here too would let
+                // this pass steal the key event first, so `editor_panel::show`
+                // would never see it.
+                .filter(|(action, _)| *action != ShortcutAction::ActivateWikilink)
+                .map(|(action, shortcut)| (ShortcutTarget::BuiltIn(action), shortcut))
+                .collect();
+            pairs.extend(
+                self.plugin_shortcuts
+                    .iter()
+                    .map(|(name, shortcut)| (ShortcutTarget::Plugin(name.clone()), *shortcut)),
+            );
+            let bindings = sorted_by_specificity(pairs);
+            let triggered: Vec<ShortcutTarget> = bindings
+                .into_iter()
+                .filter(|(_, shortcut)| ctx.input_mut(|i| i.consume_shortcut(shortcut)))
+                .map(|(target, _)| target)
+                .collect();
+            for target in triggered {
+                match target {
+                    ShortcutTarget::BuiltIn(action) => self.dispatch_shortcut_action(&ctx, action),
+                    ShortcutTarget::Plugin(name) => self.run_plugin_command(&name, ""),
+                }
+            }
+        }
+
+        // Escape exits Focus Mode — the first top-level Escape consumption in
+        // this file; every other Escape handler (name-prompt, command prompt,
+        // wikilink-autocomplete popup, shortcut-recording) lives inside its own
+        // modal's `show`, scoped to just that modal. Gated on no modal being
+        // open so a single Escape press doesn't also exit Focus Mode while
+        // dismissing one of those, mirroring `self.recording_shortcut.is_none()`
+        // guarding the shortcut-dispatch pass above.
+        if self.focus_mode
+            && self.prompt.is_none()
+            && !self.show_settings
+            && !self.find_replace.open
+            && !self.command_prompt.open
+            && self.card_draft.is_none()
+            && self.export.is_none()
+            && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))
+        {
+            let ctx = ui.ctx().clone();
+            self.set_focus_mode(&ctx, false);
+        }
+
+        self.show_menu_bar(ui);
+
+        self.show_modals(ui);
+
+        self.show_status_bar(ui);
 
         self.refresh_backlinks_if_needed();
         self.refresh_tags_if_needed();
