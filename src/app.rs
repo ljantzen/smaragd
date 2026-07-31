@@ -712,6 +712,67 @@ impl SmaragdApp {
         app
     }
 
+    /// A minimal `SmaragdApp` for unit tests of routing/state logic (command
+    /// execution, event handlers, the word-count/char-activity trackers) —
+    /// unlike `new()`, needs no live `eframe::CreationContext` and touches no
+    /// real config directory: no font/image-loader installation, no
+    /// persisted settings/dock-layout/saved-layouts loaded from disk, no
+    /// disk-scanned themes/plugins/templates. Every field starts at the same
+    /// value `new()` gives it before those disk/context-dependent steps run.
+    #[cfg(test)]
+    fn test_fixture() -> Self {
+        let settings = Settings::default();
+        let pomodoro_durations = crate::pomodoro::resolve_durations(&settings);
+        Self {
+            project: None,
+            editor: EditorState::default(),
+            selected_path: None,
+            status_message: None,
+            status_message_set_at: None,
+            toasts: Vec::new(),
+            settings,
+            show_settings: false,
+            show_about: false,
+            prompt: None,
+            recording_shortcut: None,
+            settings_category: ui::settings_panel::SettingsCategory::General,
+            find_replace: FindReplaceState::default(),
+            card_draft: None,
+            command_prompt: CommandPromptState::default(),
+            open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
+            new_project_template_prompt:
+                ui::new_project_template_prompt::NewProjectTemplatePromptState::default(),
+            metadata_draft: MetadataDraft::from_meta(&DocumentMeta::default()),
+            metadata_computed_for: None,
+            metadata_last_applied: DocumentMeta::default(),
+            backlinks: Vec::new(),
+            backlinks_computed_for: None,
+            tags: Vec::new(),
+            tags_computed_for: None,
+            tags_search_text: String::new(),
+            tag_search_results: Vec::new(),
+            tag_search_computed_for: String::new(),
+            word_count_cache: 0,
+            pending_word_count: None,
+            word_count_last_dirty: false,
+            char_activity: 0,
+            char_activity_last_len: None,
+            char_activity_tracked_path: None,
+            dock_state: default_dock_state(),
+            saved_layouts: std::collections::BTreeMap::new(),
+            pending_git: None,
+            plugin_engine: crate::plugins::PluginEngine::default(),
+            plugin_shortcuts: Vec::new(),
+            color_themes: Vec::new(),
+            project_templates: Vec::new(),
+            export: None,
+            typeset_styles: Vec::new(),
+            pomodoro: crate::pomodoro::PomodoroState::new(&pomodoro_durations),
+            focus_binder_requested: false,
+            focus_mode: false,
+        }
+    }
+
     /// The plugin directories that currently apply: the global directory always,
     /// plus the open project's own `.smaragd/plugins` if it has opted in.
     fn plugin_dirs(&self) -> Vec<PathBuf> {
@@ -4396,5 +4457,343 @@ mod menu_nav_tests {
             Some(other_id),
             "File's dropdown re-stole focus even though it didn't just open this frame"
         );
+    }
+}
+
+#[cfg(test)]
+mod execute_command_tests {
+    use super::*;
+
+    #[test]
+    fn dark_mode_command_updates_theme_preference() {
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+
+        app.execute_command(&ctx, Command::DarkMode(DarkModeChoice::Dark));
+
+        assert_eq!(app.settings.theme_preference, egui::ThemePreference::Dark);
+    }
+
+    #[test]
+    fn find_command_with_a_query_sets_it_and_opens_the_panel() {
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+
+        app.execute_command(&ctx, Command::Find("dragon".to_string()));
+
+        assert_eq!(app.find_replace.query, "dragon");
+        assert!(app.find_replace.open);
+    }
+
+    #[test]
+    fn find_command_with_an_empty_query_opens_the_panel_without_clearing_it() {
+        let mut app = SmaragdApp::test_fixture();
+        app.find_replace.query = "earlier query".to_string();
+        let ctx = egui::Context::default();
+
+        app.execute_command(&ctx, Command::Find(String::new()));
+
+        assert_eq!(app.find_replace.query, "earlier query");
+        assert!(app.find_replace.open);
+    }
+
+    #[test]
+    fn tag_command_sets_search_text_and_opens_the_tags_tab() {
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+
+        assert!(app.dock_state.find_tab(&DockTab::Tags).is_none());
+
+        app.execute_command(&ctx, Command::Tag("worldbuilding".to_string()));
+
+        assert_eq!(app.tags_search_text, "worldbuilding");
+        assert!(app.dock_state.find_tab(&DockTab::Tags).is_some());
+    }
+
+    #[test]
+    fn tag_command_does_not_reopen_an_already_open_tags_tab() {
+        let mut app = SmaragdApp::test_fixture();
+        app.dock_state.push_to_focused_leaf(DockTab::Tags);
+        let ctx = egui::Context::default();
+
+        app.execute_command(&ctx, Command::Tag("worldbuilding".to_string()));
+
+        // A single Tags tab, not a second one pushed alongside it.
+        let tag_tab_count = app
+            .dock_state
+            .iter_all_tabs()
+            .filter(|(_, tab)| **tab == DockTab::Tags)
+            .count();
+        assert_eq!(tag_tab_count, 1);
+    }
+
+    #[test]
+    fn open_command_without_a_project_pushes_an_error_toast() {
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+
+        app.execute_command(&ctx, Command::Open("Chapter One".to_string()));
+
+        assert_eq!(app.toasts.len(), 1);
+        assert_eq!(app.toasts[0].message, "No project open");
+    }
+
+    #[test]
+    fn new_command_without_a_project_pushes_an_error_toast() {
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+
+        app.execute_command(&ctx, Command::New("Chapter One".to_string()));
+
+        assert_eq!(app.toasts.len(), 1);
+        assert_eq!(app.toasts[0].message, "No project open");
+    }
+
+    #[test]
+    fn open_command_with_no_matching_document_pushes_an_error_toast_naming_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        let ctx = egui::Context::default();
+
+        app.execute_command(&ctx, Command::Open("Nonexistent".to_string()));
+
+        assert_eq!(app.toasts.len(), 1);
+        assert_eq!(app.toasts[0].message, "No note found for \"Nonexistent\"");
+    }
+}
+
+#[cfg(test)]
+mod event_routing_tests {
+    use super::*;
+    use crate::project::WordCountScope;
+    use crate::ui::word_count_panel::WordCountEvent;
+
+    #[test]
+    fn pomodoro_start_event_starts_the_timer() {
+        let mut app = SmaragdApp::test_fixture();
+        assert!(!app.pomodoro.is_running());
+
+        app.handle_pomodoro_event(ui::pomodoro_panel::PomodoroEvent::Start);
+
+        assert!(app.pomodoro.is_running());
+    }
+
+    #[test]
+    fn pomodoro_pause_event_stops_a_running_timer() {
+        let mut app = SmaragdApp::test_fixture();
+        app.handle_pomodoro_event(ui::pomodoro_panel::PomodoroEvent::Start);
+        assert!(app.pomodoro.is_running());
+
+        app.handle_pomodoro_event(ui::pomodoro_panel::PomodoroEvent::Pause);
+
+        assert!(!app.pomodoro.is_running());
+    }
+
+    #[test]
+    fn corkboard_event_updates_protagonist_desire_on_the_open_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+
+        app.handle_corkboard_event(CorkboardEvent::SetProtagonistDesire(
+            "Reclaim the throne".to_string(),
+        ));
+
+        assert_eq!(
+            app.project.as_ref().unwrap().meta.protagonist_desire,
+            "Reclaim the throne"
+        );
+    }
+
+    #[test]
+    fn corkboard_event_is_a_no_op_without_an_open_project() {
+        let mut app = SmaragdApp::test_fixture();
+
+        // Must not panic when there's nothing to apply the edit to.
+        app.handle_corkboard_event(CorkboardEvent::SetProtagonistMisbelief(
+            "Unworthy of the crown".to_string(),
+        ));
+
+        assert!(app.project.is_none());
+    }
+
+    #[test]
+    fn word_count_event_set_draft_target_persists_on_the_open_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        let ctx = egui::Context::default();
+
+        app.handle_word_count_event(&ctx, WordCountEvent::SetDraftTarget(Some(50_000)));
+
+        assert_eq!(
+            app.project.as_ref().unwrap().meta.draft_target_words,
+            Some(50_000)
+        );
+    }
+
+    #[test]
+    fn word_count_event_set_scope_persists_and_triggers_a_recompute() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        let ctx = egui::Context::default();
+
+        app.handle_word_count_event(
+            &ctx,
+            WordCountEvent::SetScope(WordCountScope::EverythingExceptTrash),
+        );
+
+        assert_eq!(
+            app.project.as_ref().unwrap().meta.word_count_scope,
+            WordCountScope::EverythingExceptTrash
+        );
+        assert!(app.pending_word_count.is_some());
+    }
+
+    #[test]
+    fn word_count_event_reset_session_zeroes_char_activity() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.char_activity = 42;
+        let ctx = egui::Context::default();
+
+        app.handle_word_count_event(&ctx, WordCountEvent::ResetSession);
+
+        assert_eq!(app.char_activity, 0);
+    }
+}
+
+#[cfg(test)]
+mod char_activity_tests {
+    use super::*;
+
+    #[test]
+    fn no_project_and_no_open_document_never_panics_or_accumulates() {
+        let mut app = SmaragdApp::test_fixture();
+
+        app.track_char_activity();
+        app.track_char_activity();
+
+        assert_eq!(app.char_activity, 0);
+    }
+
+    #[test]
+    fn typing_then_deleting_counts_both_directions_not_the_net_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let path = project.create_document(dir.path(), "Scene").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.editor.open_path = Some(path);
+
+        // First frame with this document open: only establishes the baseline,
+        // the initial (empty) length isn't itself counted as "typed."
+        app.track_char_activity();
+        assert_eq!(app.char_activity, 0);
+
+        // "Type" 100 characters.
+        app.editor.buffer = "a".repeat(100);
+        app.track_char_activity();
+        assert_eq!(app.char_activity, 100);
+
+        // "Delete" them all back to empty — the example from the bug report:
+        // 100 typed + 100 deleted reads 200, not a net 0.
+        app.editor.buffer.clear();
+        app.track_char_activity();
+        assert_eq!(app.char_activity, 200);
+    }
+
+    #[test]
+    fn switching_documents_does_not_count_the_length_jump_between_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let first = project.create_document(dir.path(), "First").unwrap();
+        let second = project.create_document(dir.path(), "Second").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+
+        app.editor.open_path = Some(first);
+        app.track_char_activity(); // establishes the baseline (empty) length
+        app.editor.buffer = "a".repeat(50);
+        app.track_char_activity();
+        assert_eq!(app.char_activity, 50);
+
+        // Switch to a different, much longer document.
+        app.editor.open_path = Some(second);
+        app.editor.buffer = "b".repeat(500);
+        app.track_char_activity();
+
+        // The 450-character jump between the two unrelated buffers must not
+        // be counted as characters typed.
+        assert_eq!(app.char_activity, 50);
+    }
+
+    #[test]
+    fn editing_a_document_outside_the_tracked_scope_does_not_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let manuscript = project.create_folder(dir.path(), "Manuscript").unwrap();
+        project
+            .set_folder_role(&manuscript, Some(crate::project::FolderRole::Manuscript))
+            .unwrap();
+        // ManuscriptOnly is the default scope, and this document lives
+        // outside the one Manuscript-role folder.
+        let outtake = project.create_document(dir.path(), "Outtake").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.editor.open_path = Some(outtake);
+
+        app.track_char_activity();
+        app.editor.buffer = "a".repeat(100);
+        app.track_char_activity();
+
+        assert_eq!(app.char_activity, 0);
+    }
+}
+
+#[cfg(test)]
+mod word_count_refresh_tests {
+    use super::*;
+
+    #[test]
+    fn a_save_edge_triggers_a_recompute() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        let ctx = egui::Context::default();
+
+        app.editor.dirty = true;
+        app.refresh_word_count_if_needed(&ctx);
+        assert!(
+            app.pending_word_count.is_none(),
+            "becoming dirty is not a save"
+        );
+
+        app.editor.dirty = false;
+        app.refresh_word_count_if_needed(&ctx);
+        assert!(
+            app.pending_word_count.is_some(),
+            "dirty->clean transition is a save and should trigger a recompute"
+        );
+    }
+
+    #[test]
+    fn staying_clean_never_triggers_a_recompute() {
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+
+        app.refresh_word_count_if_needed(&ctx);
+        app.refresh_word_count_if_needed(&ctx);
+
+        assert!(app.pending_word_count.is_none());
     }
 }
