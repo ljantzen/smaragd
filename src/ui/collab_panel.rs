@@ -27,6 +27,14 @@ pub enum CollabStatus<'a> {
     Connected {
         peer_fingerprint: &'a str,
     },
+    /// The peer's connection genuinely ended (network drop, or the peer
+    /// closed their side) — distinct from `Idle`, so it's clear *something*
+    /// happened rather than nothing ever having connected. No automatic
+    /// reconnection in v1: Host/Join here start a fresh session, same as
+    /// from `Idle`.
+    Disconnected {
+        peer_fingerprint: Option<&'a str>,
+    },
 }
 
 /// Renders the Collaborate dock tab: connection code to share while hosting,
@@ -82,6 +90,25 @@ pub fn show(ui: &mut egui::Ui, status: CollabStatus) -> Option<CollabPanelEvent>
                 if ui.button("End Session").clicked() {
                     event = Some(CollabPanelEvent::EndRequested);
                 }
+            }
+            CollabStatus::Disconnected { peer_fingerprint } => {
+                match peer_fingerprint {
+                    Some(fingerprint) => {
+                        ui.label(format!("Lost connection to peer {fingerprint}."));
+                    }
+                    None => {
+                        ui.label("Lost connection to your collaborator.");
+                    }
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Host Session").clicked() {
+                        event = Some(CollabPanelEvent::HostRequested);
+                    }
+                    if ui.button("Join Session…").clicked() {
+                        event = Some(CollabPanelEvent::JoinRequested);
+                    }
+                });
             }
         }
     });

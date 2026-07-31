@@ -120,7 +120,7 @@ async fn run_session(
     let reader_event_tx = event_tx.clone();
     let reader_ctx = ctx.clone();
     let reader_role_label = role_label;
-    let reader = tokio::spawn(async move {
+    let mut reader = tokio::spawn(async move {
         loop {
             match read_encrypted(&mut recv_stream, &key).await {
                 // An empty frame is the joiner's handshake ping (see
@@ -145,25 +145,41 @@ async fn run_session(
         }
     });
 
+    // Races the command loop against the reader task itself: without this,
+    // a reader failure (the peer's connection actually dying) would only
+    // ever end the reader sub-task, leaving this loop waiting forever for
+    // commands on a connection nothing is receiving from any more — a
+    // zombie session that looks alive to the main thread (the command
+    // channel is still open) but can never do anything useful again.
     loop {
-        match cmd_rx.recv().await {
-            Some(CollabCommand::LocalEdit(bytes)) => {
-                if let Err(err) = write_encrypted(&mut send_stream, &key, &bytes).await {
-                    println!("[collab:{role_label}] write to peer failed: {err}");
-                    send_event(
-                        &event_tx,
-                        &ctx,
-                        CollabEvent::Error(format!("failed to send edit to peer: {err}")),
-                    );
-                    break;
+        tokio::select! {
+            command = cmd_rx.recv() => {
+                match command {
+                    Some(CollabCommand::LocalEdit(bytes)) => {
+                        if let Err(err) = write_encrypted(&mut send_stream, &key, &bytes).await {
+                            println!("[collab:{role_label}] write to peer failed: {err}");
+                            send_event(
+                                &event_tx,
+                                &ctx,
+                                CollabEvent::Error(format!("failed to send edit to peer: {err}")),
+                            );
+                            break;
+                        }
+                    }
+                    Some(CollabCommand::EndSession) => {
+                        println!("[collab:{role_label}] EndSession command received");
+                        break;
+                    }
+                    None => {
+                        println!(
+                            "[collab:{role_label}] command channel closed (CollabSession dropped)"
+                        );
+                        break;
+                    }
                 }
             }
-            Some(CollabCommand::EndSession) => {
-                println!("[collab:{role_label}] EndSession command received");
-                break;
-            }
-            None => {
-                println!("[collab:{role_label}] command channel closed (CollabSession dropped)");
+            _ = &mut reader => {
+                println!("[collab:{role_label}] reader task ended, tearing down session");
                 break;
             }
         }

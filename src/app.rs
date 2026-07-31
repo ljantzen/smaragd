@@ -2145,8 +2145,26 @@ impl SmaragdApp {
     /// currently open — see `CollabSession::host`'s doc comment for why it
     /// starts empty and lets the first `sync_local_collab_edit` bootstrap
     /// the shared document from the live buffer.
+    /// Whether `self.collab` is a *live*, still-usable session. An ended one
+    /// (the peer disconnected, or a fatal error occurred — see
+    /// `CollabSession::session_ended`) is cleared silently here rather than
+    /// left blocking a fresh Host/Join with a stale "already active" error:
+    /// there's no automatic reconnection in v1, so the only way forward
+    /// after a disconnect is starting over, and that shouldn't require an
+    /// extra manual "End Session" click first.
+    fn collab_is_live(&mut self) -> bool {
+        match &self.collab {
+            Some(session) if !session.session_ended => true,
+            Some(_) => {
+                self.collab.take().expect("checked above").end();
+                false
+            }
+            None => false,
+        }
+    }
+
     fn start_collab_host(&mut self, ctx: &egui::Context) {
-        if self.collab.is_some() {
+        if self.collab_is_live() {
             self.push_error_toast("A collaboration session is already active");
             return;
         }
@@ -2163,7 +2181,7 @@ impl SmaragdApp {
     /// should happen to it: the shared document a join receives isn't tied
     /// to any of the joiner's own files (see `CollabSession`'s module doc).
     fn start_collab_join(&mut self, ctx: &egui::Context, code: &str) {
-        if self.collab.is_some() {
+        if self.collab_is_live() {
             self.push_error_toast("A collaboration session is already active");
             return;
         }
@@ -3479,13 +3497,20 @@ impl SmaragdApp {
                         }
                     });
                     top_menu_button(ui, "Collaborate", egui::Key::C, |ui, nav| {
-                        let can_host = self.collab.is_none() && self.editor.open_path.is_some();
+                        // A session that's already ended (peer disconnected, or a
+                        // fatal error — see `CollabSession::session_ended`) doesn't
+                        // count as "active" here: `collab_is_live` clears it
+                        // automatically once Host/Join is actually clicked, so
+                        // graying those out after a disconnect would just add an
+                        // extra, unnecessary "End Session" click before starting over.
+                        let collab_live = self.collab.as_ref().is_some_and(|s| !s.session_ended);
+                        let can_host = !collab_live && self.editor.open_path.is_some();
                         ui.add_enabled_ui(can_host, |ui| {
                             if nav.button(ui, "Host Session").clicked() {
                                 self.start_collab_host(ui.ctx());
                             }
                         });
-                        ui.add_enabled_ui(self.collab.is_none(), |ui| {
+                        ui.add_enabled_ui(!collab_live, |ui| {
                             if nav.button(ui, "Join Session…").clicked() {
                                 self.prompt = Some(PendingPrompt {
                                     action: PromptAction::JoinCollabSession,
@@ -4150,6 +4175,9 @@ impl eframe::App for SmaragdApp {
             egui::CentralPanel::default().show(ui, |ui| {
                 let collab_status = match &self.collab {
                     None => CollabStatus::Idle,
+                    Some(session) if session.session_ended => CollabStatus::Disconnected {
+                        peer_fingerprint: session.peer_fingerprint.as_deref(),
+                    },
                     Some(session) if session.peer_connected => CollabStatus::Connected {
                         peer_fingerprint: session
                             .peer_fingerprint
