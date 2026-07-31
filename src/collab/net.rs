@@ -4,16 +4,19 @@
 //! Deliberately minimal: this module only ever moves already-encrypted bytes
 //! in both directions (see the module doc on `src/collab/mod.rs` for why the
 //! CRDT stays on the main thread instead). It doesn't know or care what the
-//! plaintext means — it just derives the session key from the ticket's
-//! secret once at session start and uses `crypto::encrypt`/`crypto::decrypt`
-//! around every frame, including the joiner's initial handshake ping.
+//! plaintext means — it derives the session's directional frame keys from
+//! the ticket's secret once at session start and runs every frame through
+//! `crypto::SealCipher`/`crypto::OpenCipher`, starting with the empty
+//! handshake ping/ack pair each side must successfully decrypt before
+//! either reports the peer as connected.
 
 use std::sync::mpsc::Sender as EventSender;
+use std::time::Duration;
 
 use iroh::endpoint::{RecvStream, SendStream};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::collab::crypto::SessionKey;
+use crate::collab::crypto::{Direction, OpenCipher, SealCipher};
 use crate::collab::ticket::CollabTicket;
 use crate::collab::{CollabCommand, CollabEvent, SessionRole, crypto};
 
@@ -25,6 +28,12 @@ const ALPN: &[u8] = b"smaragd/collab/1";
 /// frame length above it is treated as a protocol error rather than an
 /// invitation to make a huge allocation.
 const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
+
+/// How long a connected peer gets to complete the encrypted handshake (the
+/// empty ping/ack frames proving each side holds the session key) before
+/// the attempt is abandoned. Generous enough for a relay round trip; short
+/// enough that a connector who never speaks can't park the session.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Runs one collaboration session to completion: establishes the iroh
 /// connection (hosting or joining, per `role`), then shuttles bytes between
@@ -95,15 +104,43 @@ async fn run_session(
         endpoint.id().fmt_short()
     );
 
-    let (mut send_stream, mut recv_stream, key, peer_fingerprint) =
-        match establish(&role, &endpoint, &event_tx, &ctx).await {
-            Some(result) => result,
-            None => {
-                println!("[collab:{role_label}] establish() failed — see CollabEvent::Error above");
-                endpoint.close().await;
-                return;
+    // `establish` can wait indefinitely (a host has no deadline for a peer
+    // to show up), so it races the command channel here: an EndSession (or
+    // the handle being dropped) while still waiting must tear the endpoint
+    // down immediately, not leave it listening in the background. Local
+    // edits that arrive meanwhile — the host's initial bootstrap diff,
+    // above all — are queued and flushed right after the handshake.
+    let mut pending_edits: Vec<Vec<u8>> = Vec::new();
+    let outcome = {
+        let establish_fut = establish(&role, &endpoint, &event_tx, &ctx);
+        tokio::pin!(establish_fut);
+        loop {
+            tokio::select! {
+                result = &mut establish_fut => break Some(result),
+                command = cmd_rx.recv() => match command {
+                    Some(CollabCommand::LocalEdit(bytes)) => pending_edits.push(bytes),
+                    Some(CollabCommand::EndSession) | None => break None,
+                }
             }
-        };
+        }
+    };
+    let Some(result) = outcome else {
+        println!("[collab:{role_label}] session ended before a peer connected, tearing down");
+        endpoint.close().await;
+        return;
+    };
+    let Some(established) = result else {
+        println!("[collab:{role_label}] establish() failed — see CollabEvent::Error above");
+        endpoint.close().await;
+        return;
+    };
+    let Established {
+        mut send_stream,
+        recv_stream,
+        mut sealer,
+        opener,
+        peer_fingerprint,
+    } = established;
     println!("[collab:{role_label}] connected to peer {peer_fingerprint}");
 
     send_event(
@@ -111,6 +148,19 @@ async fn run_session(
         &ctx,
         CollabEvent::PeerConnected(peer_fingerprint),
     );
+
+    for bytes in pending_edits {
+        if let Err(err) = write_encrypted(&mut send_stream, &mut sealer, &bytes).await {
+            println!("[collab:{role_label}] flushing queued edit to peer failed: {err}");
+            send_event(
+                &event_tx,
+                &ctx,
+                CollabEvent::Error(format!("failed to send edit to peer: {err}")),
+            );
+            endpoint.close().await;
+            return;
+        }
+    }
 
     // The reader runs as its own task so it can be blocked on `read_encrypted`
     // (an inherently async wait for the peer's next message) concurrently
@@ -121,11 +171,14 @@ async fn run_session(
     let reader_ctx = ctx.clone();
     let reader_role_label = role_label;
     let mut reader = tokio::spawn(async move {
+        let mut recv_stream = recv_stream;
+        let mut opener = opener;
         loop {
-            match read_encrypted(&mut recv_stream, &key).await {
-                // An empty frame is the joiner's handshake ping (see
-                // `establish`), not a real update — swallow it rather than
-                // surfacing a meaningless empty `RemoteUpdate`.
+            match read_encrypted(&mut recv_stream, &mut opener).await {
+                // The handshake ping/ack are consumed inside `establish`,
+                // but tolerate an empty frame here too — it carries no
+                // update, so swallow it rather than surfacing a meaningless
+                // empty `RemoteUpdate`.
                 Ok(bytes) if bytes.is_empty() => {}
                 Ok(bytes) => {
                     send_event(
@@ -156,7 +209,9 @@ async fn run_session(
             command = cmd_rx.recv() => {
                 match command {
                     Some(CollabCommand::LocalEdit(bytes)) => {
-                        if let Err(err) = write_encrypted(&mut send_stream, &key, &bytes).await {
+                        if let Err(err) =
+                            write_encrypted(&mut send_stream, &mut sealer, &bytes).await
+                        {
                             println!("[collab:{role_label}] write to peer failed: {err}");
                             send_event(
                                 &event_tx,
@@ -214,20 +269,35 @@ async fn wait_for_relay_addr(endpoint: &iroh::Endpoint) -> iroh::EndpointAddr {
     addr
 }
 
-/// Hosts or joins the session per `role`, returning the resulting
-/// bidirectional stream pair, the session's derived encryption key, and a
-/// short display fingerprint for the peer (see `iroh::PublicKey::fmt_short`),
-/// or `None` if an event was already sent reporting why establishment failed.
+/// The result of a completed `establish`: the stream pair, the stateful
+/// directional frame ciphers (see `crypto`), and a short display fingerprint
+/// for the peer (see `iroh::PublicKey::fmt_short`).
+struct Established {
+    send_stream: SendStream,
+    recv_stream: RecvStream,
+    sealer: SealCipher,
+    opener: OpenCipher,
+    peer_fingerprint: String,
+}
+
+/// Hosts or joins the session per `role`, completing the encrypted handshake
+/// (joiner's ping, host's ack — each side must decrypt the other's before a
+/// peer is ever reported as connected), or returns `None` if an event was
+/// already sent reporting why establishment failed.
 async fn establish(
     role: &SessionRole,
     endpoint: &iroh::Endpoint,
     event_tx: &EventSender<CollabEvent>,
     ctx: &egui::Context,
-) -> Option<(SendStream, RecvStream, SessionKey, String)> {
+) -> Option<Established> {
     match role {
         SessionRole::Host => {
             let session_secret: [u8; 32] = rand::random();
-            let key = crypto::derive_key(&session_secret);
+            let host_id = *endpoint.id().as_bytes();
+            let send_key =
+                crypto::derive_directional_key(&session_secret, &host_id, Direction::HostToJoiner);
+            let recv_key =
+                crypto::derive_directional_key(&session_secret, &host_id, Direction::JoinerToHost);
             println!("[collab:host] waiting for a relay address...");
             let addr = wait_for_relay_addr(endpoint).await;
             println!(
@@ -238,48 +308,92 @@ async fn establish(
             let ticket = CollabTicket::new(addr, session_secret);
             send_event(event_tx, ctx, CollabEvent::HostReady(ticket.encode()));
 
-            println!("[collab:host] waiting for an incoming connection...");
-            let incoming = endpoint.accept().await.or_else(|| {
-                println!("[collab:host] endpoint.accept() returned None (endpoint closed)");
-                send_event(
-                    event_tx,
-                    ctx,
-                    CollabEvent::Error(
-                        "networking endpoint closed before a peer connected".to_string(),
-                    ),
-                );
-                None
-            })?;
-            let conn = match incoming.await {
-                Ok(conn) => conn,
-                Err(err) => {
-                    println!("[collab:host] incoming connection failed: {err}");
+            // Keep accepting until a connector proves — within
+            // `HANDSHAKE_TIMEOUT` — that it holds the session key. Anyone
+            // else (whoever reached this endpoint id without the code)
+            // burns only its own attempt, not the session: the genuine
+            // collaborator can still pair with the same code afterwards.
+            loop {
+                println!("[collab:host] waiting for an incoming connection...");
+                let incoming = endpoint.accept().await.or_else(|| {
+                    println!("[collab:host] endpoint.accept() returned None (endpoint closed)");
                     send_event(
                         event_tx,
                         ctx,
-                        CollabEvent::Error(format!("incoming connection failed: {err}")),
-                    );
-                    return None;
-                }
-            };
-            let peer_fingerprint = conn.remote_id().fmt_short().to_string();
-            println!(
-                "[collab:host] connection accepted from {peer_fingerprint}, waiting for the peer's bi-stream..."
-            );
-            match conn.accept_bi().await {
-                Ok((send_stream, recv_stream)) => {
-                    println!("[collab:host] accept_bi() succeeded");
-                    Some((send_stream, recv_stream, key, peer_fingerprint))
-                }
-                Err(err) => {
-                    println!("[collab:host] accept_bi() failed: {err}");
-                    send_event(
-                        event_tx,
-                        ctx,
-                        CollabEvent::Error(format!("failed to accept peer stream: {err}")),
+                        CollabEvent::Error(
+                            "networking endpoint closed before a peer connected".to_string(),
+                        ),
                     );
                     None
+                })?;
+                let conn = match incoming.await {
+                    Ok(conn) => conn,
+                    Err(err) => {
+                        println!(
+                            "[collab:host] incoming connection failed ({err}), still listening"
+                        );
+                        continue;
+                    }
+                };
+                let peer_fingerprint = conn.remote_id().fmt_short().to_string();
+                println!(
+                    "[collab:host] connection from {peer_fingerprint}, awaiting its handshake..."
+                );
+
+                // Fresh ciphers per attempt: frame counters are
+                // per-connection, and a rejected attempt never produced a
+                // frame under these keys anyway (nothing it sent decrypted).
+                let mut opener = OpenCipher::new(&recv_key);
+                let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+                    let (send_stream, mut recv_stream) = conn
+                        .accept_bi()
+                        .await
+                        .map_err(|err| format!("accepting the peer's stream failed: {err}"))?;
+                    let ping = read_frame(&mut recv_stream)
+                        .await
+                        .map_err(|err| format!("reading the handshake frame failed: {err}"))?;
+                    opener
+                        .open(&ping)
+                        .map_err(|err| format!("the handshake frame did not decrypt: {err}"))?;
+                    Ok::<_, String>((send_stream, recv_stream))
+                })
+                .await;
+                let (mut send_stream, recv_stream) = match handshake {
+                    Ok(Ok(streams)) => streams,
+                    Ok(Err(reason)) => {
+                        println!(
+                            "[collab:host] pairing attempt by {peer_fingerprint} rejected ({reason}), still listening"
+                        );
+                        conn.close(1u32.into(), b"pairing failed");
+                        continue;
+                    }
+                    Err(_) => {
+                        println!(
+                            "[collab:host] pairing attempt by {peer_fingerprint} timed out, still listening"
+                        );
+                        conn.close(1u32.into(), b"pairing timed out");
+                        continue;
+                    }
+                };
+
+                let mut sealer = SealCipher::new(&send_key);
+                // The ack is the joiner's mirror-image proof that this side
+                // holds the key too — it won't report the peer as connected
+                // (or send anything) until this decrypts.
+                if let Err(err) = write_frame(&mut send_stream, &sealer.seal(&[])).await {
+                    println!(
+                        "[collab:host] sending the handshake ack failed ({err}), still listening"
+                    );
+                    continue;
                 }
+                println!("[collab:host] handshake complete with {peer_fingerprint}");
+                return Some(Established {
+                    send_stream,
+                    recv_stream,
+                    sealer,
+                    opener,
+                    peer_fingerprint,
+                });
             }
         }
         SessionRole::Join(code) => {
@@ -295,7 +409,17 @@ async fn establish(
                     return None;
                 }
             };
-            let key = crypto::derive_key(&ticket.session_secret);
+            let host_id = *ticket.endpoint_addr.id.as_bytes();
+            let mut sealer = SealCipher::new(&crypto::derive_directional_key(
+                &ticket.session_secret,
+                &host_id,
+                Direction::JoinerToHost,
+            ));
+            let mut opener = OpenCipher::new(&crypto::derive_directional_key(
+                &ticket.session_secret,
+                &host_id,
+                Direction::HostToJoiner,
+            ));
             println!(
                 "[collab:joiner] connecting to host ({} addr(s), relay={})...",
                 ticket.endpoint_addr.addrs.len(),
@@ -315,37 +439,74 @@ async fn establish(
             };
             let peer_fingerprint = conn.remote_id().fmt_short().to_string();
             println!("[collab:joiner] connected to {peer_fingerprint}, opening bi-stream...");
-            match conn.open_bi().await {
-                Ok((mut send_stream, recv_stream)) => {
-                    println!("[collab:joiner] open_bi() succeeded, sending handshake ping...");
-                    // `accept_bi` on the host's side does not resolve just
-                    // because we opened the stream — the host only unblocks
-                    // once actual data arrives on it (this is a documented
-                    // quirk of iroh/QUIC bidirectional streams, not
-                    // optional). Ping it explicitly with an empty frame so
-                    // the host reports `PeerConnected` immediately, rather
-                    // than staying blocked in `accept_bi` until the first
-                    // real edit happens to be typed.
-                    if let Err(err) = write_encrypted(&mut send_stream, &key, &[]).await {
-                        println!("[collab:joiner] handshake ping failed: {err}");
-                        send_event(
-                            event_tx,
-                            ctx,
-                            CollabEvent::Error(format!(
-                                "failed to complete handshake with peer: {err}"
-                            )),
-                        );
-                        return None;
-                    }
-                    println!("[collab:joiner] handshake ping sent");
-                    Some((send_stream, recv_stream, key, peer_fingerprint))
-                }
+            let (mut send_stream, mut recv_stream) = match conn.open_bi().await {
+                Ok(streams) => streams,
                 Err(err) => {
                     println!("[collab:joiner] open_bi() failed: {err}");
                     send_event(
                         event_tx,
                         ctx,
                         CollabEvent::Error(format!("failed to open stream to peer: {err}")),
+                    );
+                    return None;
+                }
+            };
+            // The encrypted ping both proves this side holds the session
+            // key (the host rejects the pairing otherwise) and unblocks the
+            // host's `accept_bi` in the first place — that call only
+            // resolves once actual data arrives on the stream (a documented
+            // quirk of iroh/QUIC bidirectional streams, not optional).
+            println!("[collab:joiner] open_bi() succeeded, sending handshake ping...");
+            if let Err(err) = write_frame(&mut send_stream, &sealer.seal(&[])).await {
+                println!("[collab:joiner] handshake ping failed: {err}");
+                send_event(
+                    event_tx,
+                    ctx,
+                    CollabEvent::Error(format!("failed to complete handshake with peer: {err}")),
+                );
+                return None;
+            }
+            // ...and the host's ack is the mirror-image proof: nothing is
+            // reported as connected here until the host has shown it can
+            // produce a frame under the session key too.
+            println!("[collab:joiner] handshake ping sent, waiting for the host's ack...");
+            let ack = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+                let frame = read_frame(&mut recv_stream).await?;
+                opener.open(&frame)?;
+                Ok::<(), FrameError>(())
+            })
+            .await;
+            match ack {
+                Ok(Ok(())) => {
+                    println!("[collab:joiner] handshake complete with {peer_fingerprint}");
+                    Some(Established {
+                        send_stream,
+                        recv_stream,
+                        sealer,
+                        opener,
+                        peer_fingerprint,
+                    })
+                }
+                Ok(Err(err)) => {
+                    println!("[collab:joiner] handshake with host failed: {err}");
+                    send_event(
+                        event_tx,
+                        ctx,
+                        CollabEvent::Error(format!(
+                            "handshake with the host failed: {err} — check the connection code"
+                        )),
+                    );
+                    None
+                }
+                Err(_) => {
+                    println!("[collab:joiner] host did not answer the handshake in time");
+                    send_event(
+                        event_tx,
+                        ctx,
+                        CollabEvent::Error(
+                            "the host did not answer the handshake in time — check the connection code"
+                                .to_string(),
+                        ),
                     );
                     None
                 }
@@ -385,22 +546,24 @@ async fn read_frame(stream: &mut RecvStream) -> Result<Vec<u8>, FrameError> {
     Ok(payload)
 }
 
-/// Encrypts `plaintext` and sends it as one frame — every frame on the wire
-/// is ciphertext, including the joiner's empty handshake ping, so there is
-/// no plaintext-vs-ciphertext special case to get wrong.
+/// Seals `plaintext` as the next outgoing frame — every frame on the wire
+/// is ciphertext, including the empty handshake ping/ack, so there is no
+/// plaintext-vs-ciphertext special case to get wrong.
 async fn write_encrypted(
     stream: &mut SendStream,
-    key: &SessionKey,
+    sealer: &mut SealCipher,
     plaintext: &[u8],
 ) -> Result<(), FrameError> {
-    let ciphertext = crypto::encrypt(key, plaintext);
+    let ciphertext = sealer.seal(plaintext);
     write_frame(stream, &ciphertext).await
 }
 
-async fn read_encrypted(stream: &mut RecvStream, key: &SessionKey) -> Result<Vec<u8>, FrameError> {
+async fn read_encrypted(
+    stream: &mut RecvStream,
+    opener: &mut OpenCipher,
+) -> Result<Vec<u8>, FrameError> {
     let ciphertext = read_frame(stream).await?;
-    let plaintext = crypto::decrypt(key, &ciphertext)?;
-    Ok(plaintext)
+    Ok(opener.open(&ciphertext)?)
 }
 
 #[cfg(test)]
@@ -518,11 +681,46 @@ mod tests {
 
     #[test]
     #[ignore = "requires real internet access to iroh's public relay infrastructure"]
-    fn a_mismatched_session_secret_fails_closed_instead_of_producing_garbage() {
+    fn canceling_a_waiting_host_tears_the_whole_session_down() {
+        // Regression test: EndSession while the host is still waiting for a
+        // peer must tear down the background thread (and with it the
+        // endpoint) immediately — not leave it listening until a peer
+        // happens to connect. Observable from outside as the event channel
+        // disconnecting once the thread exits and drops its sender.
+        let ctx = egui::Context::default();
+        let timeout = Duration::from_secs(30);
+
+        let host = spawn_collab_session(SessionRole::Host, ctx.clone());
+        match recv_event(&host.event_rx, timeout) {
+            CollabEvent::HostReady(_) => {}
+            other => panic!("expected HostReady, got {other:?}"),
+        }
+
+        host.cmd_tx.send(CollabCommand::EndSession).unwrap();
+
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match host.event_rx.recv_timeout(Duration::from_millis(100)) {
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Ok(other) => panic!("expected no further events, got {other:?}"),
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "background thread did not exit after EndSession while waiting for a peer"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires real internet access to iroh's public relay infrastructure"]
+    fn a_mismatched_session_secret_is_rejected_and_the_host_keeps_listening() {
         // Corrupts the session secret before the joiner uses it, so the two
-        // sides derive different encryption keys despite using "the same"
-        // connection code — proving the encryption layer fails closed
-        // rather than one side silently accepting garbage as a real update.
+        // sides derive different frame keys despite using "the same"
+        // connection code. The wrong-key joiner must be rejected during the
+        // encrypted handshake — neither side ever reports it as a connected
+        // peer — and the host must survive the attempt: a joiner with the
+        // genuine code still pairs afterwards.
         let ctx = egui::Context::default();
         let timeout = Duration::from_secs(30);
 
@@ -536,30 +734,32 @@ mod tests {
         ticket.session_secret[0] ^= 0xFF;
         let wrong_key_code = ticket.encode();
 
-        let joiner = spawn_collab_session(SessionRole::Join(wrong_key_code), ctx.clone());
+        let wrong_joiner = spawn_collab_session(SessionRole::Join(wrong_key_code), ctx.clone());
 
-        // The QUIC-level connection still succeeds on both sides — a session
-        // key mismatch is invisible below the encryption layer.
+        // The host can't decrypt the wrong-key ping and closes the attempt,
+        // so the joiner's handshake fails with an error — it must never see
+        // `PeerConnected`.
+        match recv_event(&wrong_joiner.event_rx, timeout) {
+            CollabEvent::Error(_) => {}
+            other => panic!("expected the wrong key to fail the handshake, got {other:?}"),
+        }
+
+        // The host is still listening on the same code: the genuine secret
+        // pairs successfully afterwards.
+        let good_joiner = spawn_collab_session(SessionRole::Join(code), ctx.clone());
         assert!(matches!(
-            recv_event(&joiner.event_rx, timeout),
+            recv_event(&good_joiner.event_rx, timeout),
             CollabEvent::PeerConnected(_)
         ));
 
-        // The host also reports `PeerConnected` immediately (the QUIC-level
-        // handshake succeeded before any encrypted payload was involved)...
+        // And this is the host's *first* connection event of any kind — the
+        // rejected attempt produced none.
         assert!(matches!(
             recv_event(&host.event_rx, timeout),
             CollabEvent::PeerConnected(_)
         ));
 
-        // ...but it can never decrypt anything the joiner sends, starting
-        // with the joiner's own handshake ping, so the session fails closed
-        // instead of proceeding on garbage.
-        match recv_event(&host.event_rx, timeout) {
-            CollabEvent::PeerDisconnected => {}
-            other => panic!("expected the mismatched key to fail closed, got {other:?}"),
-        }
-
-        joiner.cmd_tx.send(CollabCommand::EndSession).unwrap();
+        host.cmd_tx.send(CollabCommand::EndSession).unwrap();
+        good_joiner.cmd_tx.send(CollabCommand::EndSession).unwrap();
     }
 }

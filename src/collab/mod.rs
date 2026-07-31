@@ -49,8 +49,10 @@ pub enum CollabCommand {
 pub enum CollabEvent {
     /// Hosting is ready; the pasteable connection code to share with a peer.
     HostReady(String),
-    /// The peer's connection (and its one bidirectional stream) is up, with
-    /// a short display fingerprint for the peer (`iroh::PublicKey::fmt_short`).
+    /// The peer's connection (and its one bidirectional stream) is up and
+    /// the encrypted handshake completed — the peer has proven it holds the
+    /// session key, and vice versa (see `net::establish`). Carries a short
+    /// display fingerprint for the peer (`iroh::PublicKey::fmt_short`).
     PeerConnected(String),
     /// An already-encoded update received from the peer.
     RemoteUpdate(Vec<u8>),

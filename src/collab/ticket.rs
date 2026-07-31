@@ -2,9 +2,10 @@
 //!
 //! Wraps iroh's own [`iroh::EndpointAddr`] (which already knows how to
 //! serialize itself) together with a session secret that never touches
-//! iroh's relay, keeping the app-level encryption key (derived from that
-//! secret — see `src/collab/crypto.rs`, added in a later phase)
-//! cryptographically independent of iroh's own transport security.
+//! iroh's relay, keeping the app-level encryption keys (derived from that
+//! secret together with the host's endpoint id — see
+//! `src/collab/crypto.rs`) cryptographically independent of iroh's own
+//! transport security.
 
 use serde::{Deserialize, Serialize};
 
