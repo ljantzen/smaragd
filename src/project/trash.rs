@@ -124,3 +124,311 @@ impl Project {
         rewrite_prefix_in(&mut self.meta.trashed_origins, old_prefix, new_prefix);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deletes_to_trash_reports_correctly_for_configured_vs_unconfigured_trash() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc").unwrap();
+
+        assert!(!project.deletes_to_trash(&doc));
+
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+
+        assert!(project.deletes_to_trash(&doc));
+        assert!(!project.deletes_to_trash(&trash));
+    }
+
+    #[test]
+    fn delete_moves_into_designated_trash_folder_instead_of_removing_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let doc = project.create_document(dir.path(), "Doomed").unwrap();
+
+        project.delete(&doc).unwrap();
+
+        assert!(!doc.exists());
+        let expected = trash.join("Doomed.md");
+        assert!(expected.exists());
+        assert!(project.tree.find_by_path(&expected).is_some());
+    }
+
+    #[test]
+    fn delete_of_the_trash_folder_itself_permanently_removes_it_and_clears_the_role() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+
+        project.delete(&trash).unwrap();
+
+        assert!(!trash.exists());
+        assert_eq!(project.folder_role(&trash), None);
+    }
+
+    #[test]
+    fn delete_of_an_item_already_inside_trash_permanently_removes_it_instead_of_re_trashing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let doc = project.create_document(&trash, "Already Trashed").unwrap();
+
+        project.delete(&doc).unwrap();
+
+        assert!(!doc.exists());
+        assert!(project.tree.find_by_path(&doc).is_none());
+    }
+
+    #[test]
+    fn move_to_trash_uniquifies_a_colliding_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        fs::write(trash.join("Doomed.md"), "").unwrap();
+        let doc = project.create_document(dir.path(), "Doomed").unwrap();
+
+        project.delete(&doc).unwrap();
+
+        assert!(trash.join("Doomed (2).md").exists());
+    }
+
+    #[test]
+    fn move_to_trash_preserves_nested_order_keys_for_a_trashed_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let chapter = project.create_folder(dir.path(), "Old Chapter").unwrap();
+        project.create_document(&chapter, "Scene 1").unwrap();
+
+        project.delete(&chapter).unwrap();
+
+        let moved = trash.join("Old Chapter");
+        assert!(moved.join("Scene 1.md").exists());
+        assert_eq!(
+            project.meta.node_order.get("Trash/Old Chapter"),
+            Some(&vec!["Scene 1.md".to_string()])
+        );
+        assert!(!project.meta.node_order.contains_key("Old Chapter"));
+    }
+
+    #[test]
+    fn move_to_trash_records_the_original_relative_path_in_trashed_origins() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let doc = project.create_document(&chapter, "Notes").unwrap();
+
+        project.delete(&doc).unwrap();
+
+        assert_eq!(
+            project.meta.trashed_origins.get("Trash/Notes.md"),
+            Some(&"Chapter 1/Notes.md".to_string())
+        );
+    }
+
+    #[test]
+    fn move_to_trash_disambiguates_two_same_named_items_from_different_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let chapter1 = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let chapter2 = project.create_folder(dir.path(), "Chapter 2").unwrap();
+        let doc1 = project.create_document(&chapter1, "notes").unwrap();
+        let doc2 = project.create_document(&chapter2, "notes").unwrap();
+
+        project.delete(&doc1).unwrap();
+        project.delete(&doc2).unwrap();
+
+        assert!(trash.join("notes.md").exists());
+        assert!(trash.join("notes (2).md").exists());
+        assert_eq!(
+            project.meta.trashed_origins.get("Trash/notes.md"),
+            Some(&"Chapter 1/notes.md".to_string())
+        );
+        assert_eq!(
+            project.meta.trashed_origins.get("Trash/notes (2).md"),
+            Some(&"Chapter 2/notes.md".to_string())
+        );
+    }
+
+    #[test]
+    fn empty_trash_permanently_removes_all_trashed_items_and_their_origin_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let doc = project.create_document(dir.path(), "Doomed").unwrap();
+        project.delete(&doc).unwrap();
+        assert!(!project.meta.trashed_origins.is_empty());
+
+        project.empty_trash().unwrap();
+
+        assert!(!trash.join("Doomed.md").exists());
+        assert!(project.meta.trashed_origins.is_empty());
+        assert_eq!(project.folder_role(&trash), Some(FolderRole::Trash));
+    }
+
+    #[test]
+    fn empty_trash_is_a_no_op_when_no_trash_folder_is_designated() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        assert!(project.empty_trash().is_ok());
+    }
+
+    fn project_with_trashed_doc(dir: &Path) -> (Project, PathBuf, PathBuf, PathBuf) {
+        let mut project = Project::initialize(dir).unwrap();
+        let trash = project.create_folder(dir, "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let chapter = project.create_folder(dir, "Chapter 1").unwrap();
+        let doc = project.create_document(&chapter, "Notes").unwrap();
+        project.delete(&doc).unwrap();
+        let trashed = trash.join("Notes.md");
+        (project, trash, chapter, trashed)
+    }
+
+    #[test]
+    fn trashed_origin_returns_the_original_absolute_path_for_a_trashed_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let (project, _trash, chapter, trashed) = project_with_trashed_doc(dir.path());
+
+        assert_eq!(
+            project.trashed_origin(&trashed),
+            Some(chapter.join("Notes.md"))
+        );
+    }
+
+    #[test]
+    fn trashed_origin_returns_none_for_a_non_trashed_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+
+        assert_eq!(project.trashed_origin(dir.path()), None);
+    }
+
+    #[test]
+    fn restore_from_trash_moves_item_back_to_its_original_folder_and_clears_the_origin_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut project, _trash, chapter, trashed) = project_with_trashed_doc(dir.path());
+
+        let restored = project.restore_from_trash(&trashed, false).unwrap();
+
+        assert_eq!(restored, chapter.join("Notes.md"));
+        assert!(restored.exists());
+        assert!(!trashed.exists());
+        assert!(project.trashed_origin(&restored).is_none());
+        assert!(project.tree.find_by_path(&restored).is_some());
+    }
+
+    #[test]
+    fn restore_from_trash_errors_when_path_is_not_a_recorded_trashed_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc").unwrap();
+
+        let result = project.restore_from_trash(&doc, false);
+
+        assert!(matches!(result, Err(RestoreError::NotTrashed)));
+    }
+
+    #[test]
+    fn restore_from_trash_errors_when_original_folder_is_missing_and_recreate_is_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut project, _trash, chapter, trashed) = project_with_trashed_doc(dir.path());
+        project.delete(&chapter).unwrap(); // moves "Chapter 1" itself into Trash
+
+        let result = project.restore_from_trash(&trashed, false);
+
+        assert!(matches!(
+            result,
+            Err(RestoreError::OriginalFolderMissing(_))
+        ));
+        assert!(trashed.exists()); // left in place, not moved
+    }
+
+    #[test]
+    fn restore_from_trash_recreates_the_original_folder_when_recreate_is_true() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut project, _trash, chapter, trashed) = project_with_trashed_doc(dir.path());
+        fs::remove_dir_all(&chapter).unwrap(); // "Chapter 1" is gone, but not via project.delete
+
+        let restored = project.restore_from_trash(&trashed, true).unwrap();
+
+        assert!(chapter.is_dir());
+        assert_eq!(restored, chapter.join("Notes.md"));
+        assert!(restored.exists());
+    }
+
+    #[test]
+    fn restore_from_trash_uniquifies_when_something_now_occupies_the_original_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut project, _trash, chapter, trashed) = project_with_trashed_doc(dir.path());
+        fs::write(chapter.join("Notes.md"), "new content").unwrap();
+
+        let restored = project.restore_from_trash(&trashed, false).unwrap();
+
+        assert_eq!(restored, chapter.join("Notes (2).md"));
+        assert_eq!(
+            fs::read_to_string(chapter.join("Notes.md")).unwrap(),
+            "new content"
+        );
+    }
+
+    #[test]
+    fn restore_from_trash_of_a_folder_preserves_nested_order_keys_and_removes_trashs_order_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let old_chapter = project.create_folder(dir.path(), "Old Chapter").unwrap();
+        project.create_document(&old_chapter, "Scene 1").unwrap();
+        project.delete(&old_chapter).unwrap();
+        let trashed = trash.join("Old Chapter");
+
+        let restored = project.restore_from_trash(&trashed, false).unwrap();
+
+        assert_eq!(restored, dir.path().join("Old Chapter"));
+        assert!(restored.join("Scene 1.md").exists());
+        assert_eq!(
+            project.meta.node_order.get("Old Chapter"),
+            Some(&vec!["Scene 1.md".to_string()])
+        );
+        assert!(!project.meta.node_order.contains_key("Trash/Old Chapter"));
+        assert_eq!(project.meta.node_order.get("Trash"), Some(&vec![]));
+    }
+}

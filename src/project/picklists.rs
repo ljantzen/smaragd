@@ -1,5 +1,23 @@
 use super::*;
 
+/// Which metadata field a folder's direct child documents' titles populate as
+/// dropdown options in the Metadata panel — see [`Project::picklist_documents`].
+/// Deliberately *not* a [`FolderRole`]: a folder assigned here gets no other special
+/// behavior (no export exclusion, no Trash-style semantics, no project-wide
+/// exclusivity across fields) — it's purely a pointer used to build a dropdown, so an
+/// existing folder that already serves another purpose (e.g. a Research subfolder of
+/// character bios) can double as a picklist source without anything else about it
+/// changing. Each field is its own independent slot on [`ProjectMeta`] (see
+/// `type_picklist_folder`/`pov_picklist_folder`/`status_picklist_folder`), so —
+/// unlike `FolderRole`'s single shared map — assigning one field's folder never
+/// affects another field's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PicklistField {
+    Type,
+    Pov,
+    Status,
+}
+
 impl Project {
     /// The documents (folders excluded) directly inside the project's designated
     /// Templates folder, if any — the candidate list for "New From Template". Not
@@ -96,5 +114,139 @@ impl Project {
             PicklistField::Status => self.meta.status_picklist_folder = key,
         }
         self.save_metadata()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn template_documents_is_empty_when_no_folder_holds_the_templates_role() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let templates = project.create_folder(dir.path(), "Templates").unwrap();
+        project.create_document(&templates, "Character").unwrap();
+
+        assert!(project.template_documents().is_empty());
+    }
+
+    #[test]
+    fn template_documents_lists_only_direct_child_documents_of_the_templates_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let templates = project.create_folder(dir.path(), "Templates").unwrap();
+        project
+            .set_folder_role(&templates, Some(FolderRole::Templates))
+            .unwrap();
+        project
+            .create_document(&templates, "Character Sheet")
+            .unwrap();
+        let nested = project.create_folder(&templates, "Nested").unwrap();
+        project.create_document(&nested, "Too Deep").unwrap();
+
+        let names: Vec<&str> = project
+            .template_documents()
+            .iter()
+            .map(|doc| doc.name.as_str())
+            .collect();
+
+        assert_eq!(names, vec!["Character Sheet.md"]);
+    }
+
+    #[test]
+    fn picklist_documents_is_empty_when_the_field_has_no_folder_assigned() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let people = project.create_folder(dir.path(), "People").unwrap();
+        project.create_document(&people, "Alice").unwrap();
+
+        assert!(project.picklist_documents(PicklistField::Pov).is_empty());
+    }
+
+    #[test]
+    fn picklist_documents_lists_only_direct_child_documents_of_the_assigned_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let people = project.create_folder(dir.path(), "People").unwrap();
+        project
+            .set_picklist_folder(PicklistField::Pov, Some(&people))
+            .unwrap();
+        project.create_document(&people, "Alice").unwrap();
+        let nested = project.create_folder(&people, "Nested").unwrap();
+        project.create_document(&nested, "Too Deep").unwrap();
+
+        let names: Vec<&str> = project
+            .picklist_documents(PicklistField::Pov)
+            .iter()
+            .map(|doc| doc.name.as_str())
+            .collect();
+
+        assert_eq!(names, vec!["Alice.md"]);
+    }
+
+    #[test]
+    fn set_picklist_folder_is_independent_per_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let people = project.create_folder(dir.path(), "People").unwrap();
+        let types = project.create_folder(dir.path(), "Types").unwrap();
+        project
+            .set_picklist_folder(PicklistField::Pov, Some(&people))
+            .unwrap();
+        project
+            .set_picklist_folder(PicklistField::Type, Some(&types))
+            .unwrap();
+
+        assert!(project.is_picklist_folder(PicklistField::Pov, &people));
+        assert!(!project.is_picklist_folder(PicklistField::Type, &people));
+        assert!(project.is_picklist_folder(PicklistField::Type, &types));
+        assert!(!project.is_picklist_folder(PicklistField::Status, &types));
+    }
+
+    #[test]
+    fn set_picklist_folder_reassignment_supersedes_the_previous_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let old = project.create_folder(dir.path(), "Old").unwrap();
+        let new = project.create_folder(dir.path(), "New").unwrap();
+        project
+            .set_picklist_folder(PicklistField::Status, Some(&old))
+            .unwrap();
+        project
+            .set_picklist_folder(PicklistField::Status, Some(&new))
+            .unwrap();
+
+        assert!(!project.is_picklist_folder(PicklistField::Status, &old));
+        assert!(project.is_picklist_folder(PicklistField::Status, &new));
+    }
+
+    #[test]
+    fn set_picklist_folder_none_clears_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let people = project.create_folder(dir.path(), "People").unwrap();
+        project
+            .set_picklist_folder(PicklistField::Pov, Some(&people))
+            .unwrap();
+        project
+            .set_picklist_folder(PicklistField::Pov, None)
+            .unwrap();
+
+        assert!(!project.is_picklist_folder(PicklistField::Pov, &people));
+        assert!(project.picklist_documents(PicklistField::Pov).is_empty());
+    }
+
+    #[test]
+    fn set_picklist_folder_errors_for_a_document_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Note").unwrap();
+
+        assert!(
+            project
+                .set_picklist_folder(PicklistField::Type, Some(&doc))
+                .is_err()
+        );
     }
 }

@@ -1,5 +1,37 @@
 use super::*;
 
+/// A Scrivener-Research/Trash/Templates/Manuscript-style role assigned to a folder,
+/// decoupled from its position in the tree. At most one folder project-wide holds
+/// `Research`/`Trash`/`Templates` at a time (see [`FolderRole::is_exclusive`]);
+/// `Manuscript` is the one exception — a project can have several Manuscript
+/// folders at once (e.g. one per book in a series, or per POV thread), so
+/// assigning it to a new folder never clears it from any other. `Research` is
+/// currently just a marker — a forward-looking extension point for features
+/// (Compile, word-count rollups) that don't exist yet. `Trash` has a real
+/// behavior change: see [`Project::delete`]. `Templates`'s direct child
+/// documents become the candidate list for "New From Template": see
+/// [`Project::template_documents`]. `Manuscript` designates one or more
+/// Scrivener-Draft-style primary content folders — see
+/// [`Project::folder_role_paths`] and its use as the source list for "Export
+/// Manuscript…".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FolderRole {
+    Research,
+    Trash,
+    Templates,
+    Manuscript,
+}
+
+impl FolderRole {
+    /// Whether at most one folder project-wide may hold this role at a time —
+    /// true for every role except `Manuscript`. Governs whether
+    /// [`Project::set_folder_role`] clears any existing holder before assigning
+    /// this role to a new folder.
+    fn is_exclusive(self) -> bool {
+        !matches!(self, FolderRole::Manuscript)
+    }
+}
+
 impl Project {
     /// The role assigned to the folder at `path`, if any.
     pub fn folder_role(&self, path: &Path) -> Option<FolderRole> {
@@ -111,5 +143,197 @@ impl Project {
     pub fn deletes_to_trash(&self, path: &Path) -> bool {
         self.trash_path()
             .is_some_and(|trash| path != trash && !path.starts_with(&trash))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_folder_role_assigns_and_enforces_single_holder_per_role() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let a = project.create_folder(dir.path(), "A").unwrap();
+        let b = project.create_folder(dir.path(), "B").unwrap();
+
+        project
+            .set_folder_role(&a, Some(FolderRole::Trash))
+            .unwrap();
+        assert_eq!(project.folder_role(&a), Some(FolderRole::Trash));
+
+        project
+            .set_folder_role(&b, Some(FolderRole::Trash))
+            .unwrap();
+        assert_eq!(project.folder_role(&b), Some(FolderRole::Trash));
+        assert_eq!(project.folder_role(&a), None);
+    }
+
+    #[test]
+    fn set_folder_role_clears_with_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let a = project.create_folder(dir.path(), "A").unwrap();
+        project
+            .set_folder_role(&a, Some(FolderRole::Research))
+            .unwrap();
+
+        project.set_folder_role(&a, None).unwrap();
+
+        assert_eq!(project.folder_role(&a), None);
+    }
+
+    #[test]
+    fn folder_role_path_resolves_the_manuscript_folders_absolute_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let manuscript = project.create_folder(dir.path(), "Manuscript").unwrap();
+
+        project
+            .set_folder_role(&manuscript, Some(FolderRole::Manuscript))
+            .unwrap();
+
+        assert_eq!(
+            project.folder_role_path(FolderRole::Manuscript),
+            Some(manuscript)
+        );
+    }
+
+    #[test]
+    fn folder_role_path_returns_none_when_unassigned() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+
+        assert_eq!(project.folder_role_path(FolderRole::Manuscript), None);
+    }
+
+    #[test]
+    fn set_folder_role_allows_multiple_simultaneous_manuscript_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let a = project.create_folder(dir.path(), "Book One").unwrap();
+        let b = project.create_folder(dir.path(), "Book Two").unwrap();
+
+        project
+            .set_folder_role(&a, Some(FolderRole::Manuscript))
+            .unwrap();
+        project
+            .set_folder_role(&b, Some(FolderRole::Manuscript))
+            .unwrap();
+
+        assert_eq!(project.folder_role(&a), Some(FolderRole::Manuscript));
+        assert_eq!(project.folder_role(&b), Some(FolderRole::Manuscript));
+        assert_eq!(project.folder_role_paths(FolderRole::Manuscript), {
+            let mut expected = vec![a, b];
+            expected.sort();
+            expected
+        });
+    }
+
+    #[test]
+    fn set_folder_role_errors_for_a_document_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc").unwrap();
+
+        let result = project.set_folder_role(&doc, Some(FolderRole::Research));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn ensure_role_folder_creates_and_assigns_when_no_folder_holds_the_role() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        project
+            .ensure_role_folder(FolderRole::Research, "Research")
+            .unwrap();
+
+        let path = dir.path().join("Research");
+        assert!(path.is_dir());
+        assert_eq!(project.folder_role(&path), Some(FolderRole::Research));
+    }
+
+    #[test]
+    fn ensure_role_folder_uniquifies_the_default_name_if_already_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        project.create_folder(dir.path(), "Research").unwrap();
+
+        project
+            .ensure_role_folder(FolderRole::Research, "Research")
+            .unwrap();
+
+        let path = dir.path().join("Research (2)");
+        assert!(path.is_dir());
+        assert_eq!(project.folder_role(&path), Some(FolderRole::Research));
+    }
+
+    #[test]
+    fn ensure_role_folder_is_a_no_op_when_the_assigned_folder_already_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+
+        project
+            .ensure_role_folder(FolderRole::Trash, "Trash")
+            .unwrap();
+
+        assert!(
+            !dir.path().join("Trash (2)").exists(),
+            "should not have created a second Trash-like folder"
+        );
+        assert_eq!(project.folder_role(&trash), Some(FolderRole::Trash));
+    }
+
+    #[test]
+    fn ensure_role_folder_recreates_a_missing_assigned_folder_at_its_original_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        fs::remove_dir(&trash).unwrap();
+
+        project
+            .ensure_role_folder(FolderRole::Trash, "Trash")
+            .unwrap();
+
+        assert!(trash.is_dir());
+        assert_eq!(project.folder_role(&trash), Some(FolderRole::Trash));
+    }
+
+    #[test]
+    fn ensure_role_folder_treats_research_and_trash_independently() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+
+        project
+            .ensure_role_folder(FolderRole::Research, "Research")
+            .unwrap();
+
+        assert!(dir.path().join("Research").is_dir());
+        assert_eq!(project.folder_role(&trash), Some(FolderRole::Trash));
+        assert_eq!(
+            project.folder_role(&dir.path().join("Research")),
+            Some(FolderRole::Research)
+        );
+    }
+
+    #[test]
+    fn folder_role_returns_none_when_unassigned() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+
+        assert_eq!(project.folder_role(dir.path()), None);
     }
 }
