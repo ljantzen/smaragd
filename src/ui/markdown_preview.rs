@@ -334,7 +334,12 @@ fn render_list_item(
         } else {
             "◦".to_string()
         };
-        ui.label(RichText::new(bullet).color(palette.body).strong());
+        ui.label(
+            RichText::new(bullet)
+                .color(palette.body)
+                .font(palette.font_id(palette.body_size))
+                .strong(),
+        );
         render_spans(
             ui,
             palette,
@@ -436,7 +441,11 @@ fn render_spans(
                     ));
                     buffer.clear();
                 }
-                let response = ui.link(RichText::new(&span.text).color(palette.wikilink));
+                let response = ui.link(
+                    RichText::new(&span.text)
+                        .color(palette.wikilink)
+                        .font(base_font.clone()),
+                );
                 if response.clicked() {
                     let force_create = ui.input(|i| i.modifiers.command);
                     clicked = Some(WikilinkActivation {
