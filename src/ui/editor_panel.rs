@@ -66,6 +66,7 @@ pub fn editor_text_edit_id() -> Id {
 /// `font`/`font_size` are `Settings::editor_font`/`editor_font_size` (already
 /// resolved via `editor_font::resolve_size` — this takes a real point size, not
 /// the raw possibly-`0.0` setting), shared with the Preview.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
     editor: &mut EditorState,
@@ -74,8 +75,19 @@ pub fn show(
     focus_mode: bool,
     font: EditorFont,
     font_size: f32,
+    collaborating: bool,
 ) -> Option<EditorEvent> {
-    if editor.open_path.is_none() {
+    // A joined collaboration session deliberately has no `open_path` (it
+    // isn't tied to any of the joiner's own files — see `CollabSession`'s
+    // module doc), but its shared content still needs to be visible and
+    // editable: without this, there'd be nothing to look at but "Select a
+    // file..." even once real content has arrived, an irresistible pull to
+    // go click something in the binder — which would then end the session
+    // (see `open_document`'s teardown guard) with no obvious explanation.
+    // `EditorState::save` already no-ops safely with no `open_path`, so
+    // rendering here doesn't risk trying to save collaboratively-received
+    // content to a file that doesn't exist.
+    if editor.open_path.is_none() && !collaborating {
         ui.label("Select a file from the binder to start editing.");
         return None;
     }
@@ -428,6 +440,7 @@ mod tests {
                 false,
                 EditorFont::Monospace,
                 14.0,
+                false,
             );
         });
 
@@ -439,6 +452,79 @@ mod tests {
             "expected the editable area to fill most of a {viewport_height}px-tall \
              viewport for a one-line document, got {}px",
             response.rect.height()
+        );
+    }
+
+    /// Regression test for a real bug: a joined collaboration session
+    /// deliberately has no `open_path` (it isn't tied to any of the
+    /// joiner's own files), but its shared content still needs to be
+    /// visible — without the `collaborating` bypass, the joiner would see
+    /// only "Select a file..." even after content arrived, with nothing to
+    /// do but click around in the binder, which then silently ends the
+    /// session (see `open_document`'s teardown guard).
+    #[test]
+    fn collaborating_with_no_open_path_still_renders_the_editor() {
+        let ctx = egui::Context::default();
+        let mut editor = EditorState {
+            open_path: None,
+            buffer: "Shared content from a peer".to_string(),
+            ..Default::default()
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+
+        let _ = ctx.run_ui(input, |ui| {
+            show(
+                ui,
+                &mut editor,
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                true,
+            );
+        });
+
+        assert!(
+            ctx.read_response(editor_text_edit_id()).is_some(),
+            "expected the TextEdit to render while collaborating, even with no open_path"
+        );
+    }
+
+    #[test]
+    fn not_collaborating_with_no_open_path_shows_the_placeholder_instead() {
+        let ctx = egui::Context::default();
+        let mut editor = EditorState::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+
+        let _ = ctx.run_ui(input, |ui| {
+            show(
+                ui,
+                &mut editor,
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+            );
+        });
+
+        assert!(
+            ctx.read_response(editor_text_edit_id()).is_none(),
+            "expected no TextEdit to render with nothing open and no collaboration session"
         );
     }
 

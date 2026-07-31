@@ -26,13 +26,13 @@ This manual covers what the app does and how to use it. For internals (source la
 - [The Command Prompt](#the-command-prompt)
 - [Pomodoro Timer](#pomodoro-timer)
 - [Word Count](#word-count)
+- [Collaboration](#collaboration)
 - [Plugins](#plugins)
 - [Git Integration](#git-integration)
 - [Themes and Appearance](#themes-and-appearance)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Notifications](#notifications)
 - [Settings](#settings)
-- [Current Limitations](#current-limitations)
 
 ## Installation
 
@@ -109,7 +109,7 @@ The top menu bar — File, Edit, View, Tools, Versions, Window, Help — can be 
 
 ## Dockable Tool Windows
 
-The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Preview**, **Corkboard**, **Pomodoro**, and **Word Count** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
+The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Preview**, **Corkboard**, **Pomodoro**, **Word Count**, and **Collaborate** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
 
 - **Drag a tab's title** onto empty space to pop it out into its own floating window
 - **Drag a floating window's title back** onto the dock area to re-dock it
@@ -117,7 +117,7 @@ The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Pr
 - **Drag a tab to an edge** of another tab or the dock area to split the layout and place it side by side
 - **Resize** the dock area, or a floating window, by dragging its edge
 
-Binder and Editor are present from the moment a project is open; Backlinks, Tags, Metadata, Preview, Corkboard, Pomodoro, and Word Count start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Tags`**, **`View > Preview`**, **`View > Corkboard`**, **`Edit > Document Metadata`**, or (for Pomodoro and Word Count) **`Tools > Pomodoro Timer`**/**`Tools > Word Count`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
+Binder and Editor are present from the moment a project is open; Backlinks, Tags, Metadata, Preview, Corkboard, Pomodoro, Word Count, and Collaborate start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Tags`**, **`View > Preview`**, **`View > Corkboard`**, **`Edit > Document Metadata`**, **`Collaborate > Collaboration Panel`**, or (for Pomodoro and Word Count) **`Tools > Pomodoro Timer`**/**`Tools > Word Count`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
 
 The whole arrangement — which tabs are open, how they're split or floated, and window position/size — persists across restarts. **`Window`** menu:
 
@@ -464,6 +464,38 @@ The total doesn't recompute on every keystroke or every frame — recomputing me
 
 A compact `340 : 12,345 / 50,000 words` segment (characters typed this session, then current/target words) shows in the status bar, next to the Pomodoro countdown, any time a Draft Target is set — the Session Target is dock-tab-only, not mirrored in the status bar.
 
+## Collaboration
+
+The **`Collaborate`** menu (and its dockable **Collaboration Panel**, `Ctrl+Shift+L`) lets two people edit the same document together in real time, peer-to-peer — no server, no account, no third-party service ever holds the manuscript text.
+
+### Hosting a session
+
+1. Open the document you want to collaborate on.
+2. **`Collaborate > Host Session`** (needs a document open; disabled otherwise).
+3. Smaragd generates a one-time **connection code** and shows it in the Collaboration Panel. **Copy** it and send it to your collaborator through whatever channel you'd already trust with the document itself — chat, email, whatever.
+4. The panel shows "Waiting for a peer to join…" until they do.
+
+### Joining a session
+
+1. **`Collaborate > Join Session…`** (or **Join Session…** in the panel itself) — needs *no* document currently open, since the shared document a join receives replaces whatever was there, not merges with one of your own files. Close your current document first if one's open.
+2. Paste the code your collaborator sent you and confirm.
+3. Once paired, the host's document appears in your editor and either side can type — edits from both sides merge automatically.
+
+### While connected
+
+Both sides just type normally in the Editor tab; there's no separate "collaboration mode" to the editing experience itself. Under the hood, each side's edits are diffed against a shared baseline and merged with a CRDT (the same category of algorithm behind Google Docs/Yjs), so concurrent edits from both people — even to the same paragraph — converge to the same result on both sides without overwriting each other or needing a manual conflict resolution step. When a remote edit comes in, your local cursor position is adjusted to stay put relative to the surrounding text rather than jumping.
+
+The panel shows **Connected to peer `<fingerprint>`** once pairing completes — a short id derived from the peer's network identity, useful for confirming you're connected to who you think you are, not a name either side chooses. **End Session** stops collaborating; the document itself is unaffected and stays open normally afterward.
+
+A session also ends automatically if you open a different document, close the current one, or your collaborator's connection drops (network loss, or they closed their side) — the panel then shows **"Lost connection to your collaborator"**. There's no automatic reconnection: start a fresh **Host Session**/**Join Session…** to resume.
+
+### Privacy and security
+
+- **No server holds your text.** Peers connect directly to each other via [iroh](https://iroh.computer) (falling back to iroh's relay infrastructure only to help establish that direct connection when needed, the same way most peer-to-peer / video-call tools do) — the manuscript itself is never uploaded anywhere or stored by a third party.
+- **End-to-end encrypted**, on top of iroh's own transport encryption: every edit exchanged between peers is additionally encrypted with a key derived from a secret that exists only inside the connection code itself, so even iroh's own relay infrastructure can't read the content it's helping relay.
+- **The connection code is the credential.** Whoever holds it can join the session — treat it like a password for as long as the session is open, and don't post it somewhere public. Joining requires proving you hold the secret from the code before the other side ever reports you as connected, so a stranger who reaches the host's network endpoint without the code can neither read the session nor block the real collaborator from pairing.
+- Each session's encryption keys are freshly derived per session and tied to that specific connection code — an old code from a past session can't be reused to rejoin a new one.
+
 ## Plugins
 
 Smaragd can be extended with small scripts written in [Rhai](https://rhai.rs), an embedded scripting language. A plugin script can:
@@ -651,6 +683,7 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Toggle Pomodoro Timer | `Ctrl+Alt+T` |
 | Toggle Word Count | `Ctrl+Alt+W` |
 | Refresh Word Count | `F5` |
+| Toggle Collaboration Panel | `Ctrl+Shift+L` |
 
 Two shortcuts can never overlap — rebinding one to a combo another action already owns automatically un-assigns it from the previous owner. This holds across built-ins and plugin shortcuts alike: if a loaded plugin registered a `:` command with its own shortcut (see [Plugins](#plugins)), it shows up in its own "Plugin Shortcuts" section further down the same window, remappable/unbindable the same way.
 
@@ -675,13 +708,3 @@ Both durations are configurable — see **Notifications** under [Settings](#sett
 - **Shortcuts**: remap or unbind any action, including a fullscreen toggle
 
 If the settings file is missing or its contents can't be parsed, smaragd falls back to defaults rather than failing to start.
-
-## Current Limitations
-
-Menu items present but not yet functional: `File > Close Project`.
-
-Not yet implemented: an Excalidraw-style canvas, multi-tab editing, and template/dropdown-source folders/subfolders beyond a flat list (only documents directly inside the Templates folder, or a [Dropdown Source](#dropdown-source-folders) folder, are offered — not ones nested in a subfolder of it). A hand-dropped or hand-edited [custom project template](#project-templates) only appears in the New Project picker after restarting the app — unlike custom themes/styles/plugins, there's no manual reload button for it yet. [Export](#export)'s own gaps are listed at the end of that section.
-
-[Tags](#tags): an inline `#tag` mention isn't rendered specially (as a clickable, styled element) in [Markdown Preview](#markdown-preview), the way `[[wikilinks]]` are, and typing `#` in the editor gets no autocomplete against tags already used elsewhere, unlike `[[`. The frontmatter `tags:` field in [Document Metadata](#document-metadata-frontmatter) is still a plain comma-separated text box, not a chip-style or autocompleting editor. There's no "rename this tag everywhere in the project" action — renaming means editing each document's frontmatter and/or inline `#tag` mentions by hand. Nested tags (`#projects/smaragd`) aren't grouped hierarchically in the Tags window; every tag is a flat, independent entry.
-
-In the Markdown preview specifically: raw HTML is dropped rather than rendered; table column alignment (`:---:`) is parsed but not yet reflected visually; GFM task lists and footnotes aren't enabled; mixing container types (e.g. a list inside a blockquote) doesn't preserve proper nesting; and `![[Note]]` only actually embeds when `Note` has an image extension — embedding another note's rendered content (transclusion) falls back to behaving like a plain `[[Note]]` link.

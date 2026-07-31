@@ -5,6 +5,16 @@ this file.
 
 ## Unreleased
 
+- Added real-time peer-to-peer collaborative editing (Collaborate menu /
+  panel, `Ctrl+Shift+L`): host a session on the currently open document and
+  share the one-time connection code; a peer pastes it to join and both sides
+  edit live with CRDT merging (Yjs/yrs) — no server ever holds the text.
+  Traffic is end-to-end encrypted on top of iroh's transport security, keyed
+  from a secret that lives only in the connection code itself: pairing
+  requires each side to prove it holds that secret before the other reports a
+  collaborator as connected, and a stranger who reaches the host's network
+  endpoint without the code can neither read anything nor stop the genuine
+  collaborator from joining.
 - Added a UI Scale setting (`File > Settings > Appearance`, 50%–300%, default
   100%) — a manual multiplier on top of the OS/display server's own reported
   scaling, for cases where automatic HiDPI detection comes back wrong (e.g.
