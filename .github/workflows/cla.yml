@@ -37,3 +37,4 @@ jobs:
             by posting the following as a comment on this pull request:
 
             > I have read and agree to the Smaragd CLA (CLA.md).
+          lock-pullrequest-aftermerge: false
