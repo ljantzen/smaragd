@@ -96,7 +96,7 @@ jobs:
         run: sha256sum * > SHA256SUMS-x86_64-linux
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           prerelease: ${{ steps.version.outputs.prerelease }}
@@ -145,7 +145,7 @@ jobs:
         run: sha256sum * > SHA256SUMS-x86_64-windows
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           prerelease: ${{ steps.version.outputs.prerelease }}
@@ -230,7 +230,7 @@ jobs:
         run: shasum -a 256 * > SHA256SUMS-universal-macos
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           prerelease: ${{ steps.version.outputs.prerelease }}
