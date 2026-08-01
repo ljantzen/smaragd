@@ -323,6 +323,16 @@ impl SmaragdApp {
                         {
                             self.spawn_word_count_recompute(ui.ctx());
                         }
+                        // Always shown, unlike the earlier global-Settings
+                        // design: the enable checkbox now lives inside the
+                        // Streak tab itself (per-project), so hiding this
+                        // entry when a project has it off would leave no way
+                        // to reach the checkbox that turns it back on.
+                        let streak_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::ToggleStreak);
+                        if nav.shortcut_button(ui, "Streak", streak_shortcut).clicked() {
+                            self.toggle_dock_tab(DockTab::Streak);
+                        }
                         ui.separator();
                         if nav.button(ui, "Reload Plugins").clicked() {
                             self.reload_plugins();

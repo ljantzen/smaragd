@@ -16,6 +16,7 @@ pub mod project_template;
 pub mod search;
 pub mod settings;
 pub mod shortcuts;
+pub mod streak;
 pub mod templates;
 pub mod ui;
 

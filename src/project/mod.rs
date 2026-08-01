@@ -7,6 +7,7 @@ mod rename_move_delete;
 mod roles;
 mod scan;
 mod story_cards;
+mod streak;
 mod trash;
 mod word_count;
 
@@ -17,7 +18,7 @@ pub use roles::FolderRole;
 pub use story_cards::StoryCard;
 pub use word_count::WordCountScope;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::fs;
 use std::io;
@@ -349,9 +350,13 @@ mod tests {
             "Chapter 1".to_string(),
             vec!["01-opening.md".to_string(), "02-arrival.md".to_string()],
         );
+        let mut daily_word_counts = BTreeMap::new();
+        daily_word_counts.insert("2024-01-08".to_string(), 512);
+        daily_word_counts.insert("2024-01-09".to_string(), 0);
         let meta = ProjectMeta {
             version: 1,
             node_order,
+            daily_word_counts,
             ..Default::default()
         };
 

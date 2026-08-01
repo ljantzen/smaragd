@@ -50,6 +50,7 @@ pub enum ShortcutAction {
     ToggleWordCount,
     RefreshWordCount,
     ToggleCollabPanel,
+    ToggleStreak,
 }
 
 impl ShortcutAction {
@@ -84,6 +85,7 @@ impl ShortcutAction {
         Self::ToggleWordCount,
         Self::RefreshWordCount,
         Self::ToggleCollabPanel,
+        Self::ToggleStreak,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -119,6 +121,7 @@ impl ShortcutAction {
             Self::ToggleWordCount => "Toggle Word Count",
             Self::RefreshWordCount => "Refresh Word Count",
             Self::ToggleCollabPanel => "Toggle Collaboration Panel",
+            Self::ToggleStreak => "Toggle Streak Tracking",
         }
     }
 
@@ -159,6 +162,7 @@ impl ShortcutAction {
             Self::ToggleWordCount => "toggle_word_count",
             Self::RefreshWordCount => "refresh_word_count",
             Self::ToggleCollabPanel => "toggle_collab_panel",
+            Self::ToggleStreak => "toggle_streak",
         }
     }
 
@@ -196,7 +200,8 @@ impl ShortcutAction {
             | Self::TogglePomodoro
             | Self::ToggleWordCount
             | Self::RefreshWordCount
-            | Self::ToggleCollabPanel => ShortcutCategory::Tools,
+            | Self::ToggleCollabPanel
+            | Self::ToggleStreak => ShortcutCategory::Tools,
         }
     }
 
@@ -263,6 +268,9 @@ impl ShortcutAction {
             Self::RefreshWordCount => KeyboardShortcut::new(Modifiers::NONE, Key::F5),
             Self::ToggleCollabPanel => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::L)
+            }
+            Self::ToggleStreak => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::S)
             }
         }
     }

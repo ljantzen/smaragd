@@ -5,6 +5,19 @@ this file.
 
 ## Unreleased
 
+- Added a Writing Streak feature (`Tools > Streak`, `Ctrl+Alt+S`; off by
+  default, configured per project — not the global Settings dialog). The
+  dock tab has two inner tabs, switchable freely: Configure (enable flag, a
+  word-count target per day of the week, how a week counts as "met," and
+  how many consecutive missed weeks turn the light red) and Streak (a
+  traffic-light badge for whether your most recently *completed* week met
+  it — never the still-in-progress current week, so it can't turn red
+  before you've had a chance to write — plus a live "Progress this week"
+  readout). Opening a project defaults to whichever tab is more useful.
+  A compact dot + percentage mirrors both in the status bar. Counts the
+  same words as the Word Count panel's Track scope (Manuscript folders
+  only, by default).
+
 ## v0.6.0 — 2026-07-31
 
 - Added real-time peer-to-peer collaborative editing (Collaborate menu /

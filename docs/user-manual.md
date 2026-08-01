@@ -26,6 +26,7 @@ This manual covers what the app does and how to use it. For internals (source la
 - [The Command Prompt](#the-command-prompt)
 - [Pomodoro Timer](#pomodoro-timer)
 - [Word Count](#word-count)
+- [Writing Streak](#writing-streak)
 - [Collaboration](#collaboration)
 - [Plugins](#plugins)
 - [Git Integration](#git-integration)
@@ -109,7 +110,7 @@ The top menu bar — File, Edit, View, Tools, Versions, Window, Help — can be 
 
 ## Dockable Tool Windows
 
-The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Preview**, **Corkboard**, **Pomodoro**, **Word Count**, and **Collaborate** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
+The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Preview**, **Corkboard**, **Pomodoro**, **Word Count**, **Collaborate**, and **Streak** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
 
 - **Drag a tab's title** onto empty space to pop it out into its own floating window
 - **Drag a floating window's title back** onto the dock area to re-dock it
@@ -117,7 +118,7 @@ The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Pr
 - **Drag a tab to an edge** of another tab or the dock area to split the layout and place it side by side
 - **Resize** the dock area, or a floating window, by dragging its edge
 
-Binder and Editor are present from the moment a project is open; Backlinks, Tags, Metadata, Preview, Corkboard, Pomodoro, Word Count, and Collaborate start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Tags`**, **`View > Preview`**, **`View > Corkboard`**, **`Edit > Document Metadata`**, **`Collaborate > Collaboration Panel`**, or (for Pomodoro and Word Count) **`Tools > Pomodoro Timer`**/**`Tools > Word Count`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
+Binder and Editor are present from the moment a project is open; Backlinks, Tags, Metadata, Preview, Corkboard, Pomodoro, Word Count, Collaborate, and Streak start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Tags`**, **`View > Preview`**, **`View > Corkboard`**, **`Edit > Document Metadata`**, **`Collaborate > Collaboration Panel`**, or (for Pomodoro, Word Count, and Streak) **`Tools > Pomodoro Timer`**/**`Tools > Word Count`**/**`Tools > Streak`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
 
 The whole arrangement — which tabs are open, how they're split or floated, and window position/size — persists across restarts. **`Window`** menu:
 
@@ -464,6 +465,19 @@ The total doesn't recompute on every keystroke or every frame — recomputing me
 
 A compact `340 : 12,345 / 50,000 words` segment (characters typed this session, then current/target words) shows in the status bar, next to the Pomodoro countdown, any time a Draft Target is set — the Session Target is dock-tab-only, not mirrored in the status bar.
 
+## Writing Streak
+
+**`Tools > Streak`** (or the remappable shortcut, `Ctrl+Alt+S` by default) opens a Streak dock tab that tracks whether you're keeping up with a self-set weekly writing schedule. Everything about it — including whether it's on at all — is configured **per project**, right inside the tab itself, not in the global Settings dialog: different projects can reasonably want different paces (or none at all).
+
+The tab itself has two inner tabs, **Streak** and **Configure**, switchable freely at any time. Opening the tab picks a sensible starting one for you — **Streak** if the project already has tracking on, **Configure** if it doesn't (e.g. a project you've never set this up for) — but that's just the default; nothing snaps you back to it afterward.
+
+- **Configure**: an enable checkbox ("Track a writing streak for this project"), a word target for each day of the week (0 for a day off), how a week counts as "met," and how many consecutive missed weeks turn the light red (default 2). All shown regardless of the enable flag, so you can set everything up before switching it on.
+- **Streak**: once enabled, shows **Last completed week** — a traffic-light badge (green/yellow/red, or gray until there's a full week of history) judged only from fully completed Monday–Sunday weeks. It never reacts to today or the still-in-progress current week, so it can't turn red on a Monday morning before you've had a chance to write anything — and **Progress this week**, a live, purely informational progress bar for the current week's actual words vs. target that never changes the badge's color above it. If the project doesn't have tracking on yet, this tab instead shows a short message and a button that jumps to Configure.
+- Two ways to judge whether a week was "met" (set in Configure): **Cumulative weekly total** (the week's total words meets the sum of that week's targets — a big Saturday can cover a missed Tuesday) or **Every day individually** (each day with a nonzero target must be met on its own).
+- A compact traffic-light dot plus a live percentage (e.g. `● 45%`) mirrors both readings in the status bar (once enabled for the open project); clicking either opens the Streak tab.
+
+**Streak counts the exact same words as the [Word Count](#word-count) panel's Track scope** — by default, **Manuscript folders only**. Words written in a folder outside your Manuscript folder(s) (Research, a Characters note, a loose file at the project root, etc.) won't count toward your streak at all, even though they're saved to disk — easy to miss the first time you test it. Switch Track to **Everything except Trash** in the Word Count panel if you want every document to count toward the streak too.
+
 ## Collaboration
 
 The **`Collaborate`** menu (and its dockable **Collaboration Panel**, `Ctrl+Shift+L`) lets two people edit the same document together in real time, peer-to-peer — no server, no account, no third-party service ever holds the manuscript text.
@@ -684,6 +698,7 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Toggle Word Count | `Ctrl+Alt+W` |
 | Refresh Word Count | `F5` |
 | Toggle Collaboration Panel | `Ctrl+Shift+L` |
+| Toggle Streak Tracking | `Ctrl+Alt+S` |
 
 Two shortcuts can never overlap — rebinding one to a combo another action already owns automatically un-assigns it from the previous owner. This holds across built-ins and plugin shortcuts alike: if a loaded plugin registered a `:` command with its own shortcut (see [Plugins](#plugins)), it shows up in its own "Plugin Shortcuts" section further down the same window, remappable/unbindable the same way.
 
@@ -698,7 +713,7 @@ Both durations are configurable — see **Notifications** under [Settings](#sett
 
 ## Settings
 
-**`File > Settings`** (or **`Ctrl+,`**) is a two-pane dialog, IntelliJ-style: a category list on the left (General, Appearance, Editor, Templates, Pomodoro, Shortcuts), `Up`/`Down` to move between categories, and that category's controls on the right. Settings are stored as `smaragd.toml` in the platform's config directory (the same base path as the global plugins, custom-themes, custom-styles, and custom-project-templates folders — see [Plugins](#plugins), [Custom themes](#custom-themes), [Typesetting styles](#typesetting-styles), and [Project Templates](#project-templates)).
+**`File > Settings`** (or **`Ctrl+,`**) is a two-pane dialog, IntelliJ-style: a category list on the left (General, Appearance, Editor, Templates, Pomodoro, Shortcuts), `Up`/`Down` to move between categories, and that category's controls on the right. Settings are stored as `smaragd.toml` in the platform's config directory (the same base path as the global plugins, custom-themes, custom-styles, and custom-project-templates folders — see [Plugins](#plugins), [Custom themes](#custom-themes), [Typesetting styles](#typesetting-styles), and [Project Templates](#project-templates)). Writing Streak is *not* here — it's configured per project, inside its own dock tab (see [Writing Streak](#writing-streak)).
 
 - **General**: **Reopen project on launch** (off by default), **Ensure Research and Trash folders exist in every project** (off by default; see [Projects](#projects)), and a **Notifications** section with **Error toast duration** and **Status bar message duration** (1–60 seconds each, defaulting to 6 and 8 respectively — see [Notifications](#notifications) above)
 - **Appearance**: Dark/Light/System and Color Theme (see [Themes](#themes-and-appearance)), plus **UI Scale** — a manual multiplier (50%–300%, default 100%) on top of whatever scaling your OS/display server already reports, for the rare case that comes back wrong (some Wayland compositors don't report a scale winit picks up, leaving the whole UI tiny with no apparent way to fix it). Takes effect immediately; **Reset** clears it back to 100%

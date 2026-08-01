@@ -14,6 +14,7 @@ pub mod new_project_template_prompt;
 pub mod open_document_prompt;
 pub mod pomodoro_panel;
 pub mod settings_panel;
+pub mod streak_panel;
 pub mod tags_panel;
 pub mod word_count_panel;
 

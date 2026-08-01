@@ -117,11 +117,27 @@ impl Project {
     /// `current_total` only if `session_baseline_date` isn't already today. A
     /// no-op otherwise, so it's safe to call unconditionally on every word-count
     /// recompute rather than needing its own separate trigger.
+    ///
+    /// Also the sole place `ProjectMeta::daily_word_counts` (the Writing
+    /// Streak feature's history) gets written: whenever a genuine day change
+    /// is detected, the previous day's word delta is logged under its date
+    /// before rebaselining, and the history is pruned to
+    /// `streak::DAILY_HISTORY_RETENTION_DAYS`. Deliberately reuses this
+    /// existing rollover hook rather than a separate polling mechanism — see
+    /// `ProjectMeta::daily_word_counts`'s doc comment for the accepted
+    /// day-boundary-precision limitation this inherits.
     pub fn maybe_roll_over_session(&mut self, current_total: usize) -> io::Result<()> {
-        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let now = chrono::Local::now();
+        let today = now.format("%Y-%m-%d").to_string();
         if self.meta.session_baseline_date.as_deref() == Some(today.as_str()) {
             return Ok(());
         }
+        if let Some(prev_date) = self.meta.session_baseline_date.clone() {
+            let words_written =
+                current_total.saturating_sub(self.meta.session_baseline_words as usize) as u32;
+            self.meta.daily_word_counts.insert(prev_date, words_written);
+        }
+        crate::streak::prune_daily_history(&mut self.meta.daily_word_counts, now.date_naive());
         self.meta.session_baseline_words = current_total as u32;
         self.meta.session_baseline_date = Some(today);
         self.save_metadata()
@@ -326,6 +342,7 @@ mod tests {
 
         assert_eq!(project.meta.session_baseline_words, 100);
         assert_eq!(project.meta.session_baseline_date, date_after_first_call);
+        assert!(project.meta.daily_word_counts.is_empty());
     }
 
     #[test]
@@ -343,6 +360,53 @@ mod tests {
             project.meta.session_baseline_date,
             Some("2000-01-01".to_string())
         );
+    }
+
+    #[test]
+    fn maybe_roll_over_session_logs_nothing_on_the_very_first_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        assert!(project.meta.session_baseline_date.is_none());
+
+        project.maybe_roll_over_session(100).unwrap();
+
+        assert!(project.meta.daily_word_counts.is_empty());
+    }
+
+    #[test]
+    fn maybe_roll_over_session_logs_the_previous_days_delta_under_its_own_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let yesterday = (chrono::Local::now().date_naive() - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        project.meta.session_baseline_words = 100;
+        project.meta.session_baseline_date = Some(yesterday.clone());
+        project.save_metadata().unwrap();
+
+        project.maybe_roll_over_session(350).unwrap();
+
+        assert_eq!(project.meta.daily_word_counts.get(&yesterday), Some(&250));
+    }
+
+    #[test]
+    fn maybe_roll_over_session_prunes_daily_history_older_than_the_retention_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let stale_date = (chrono::Local::now().date_naive()
+            - chrono::Duration::days(crate::streak::DAILY_HISTORY_RETENTION_DAYS + 10))
+        .format("%Y-%m-%d")
+        .to_string();
+        project
+            .meta
+            .daily_word_counts
+            .insert(stale_date.clone(), 999);
+        project.meta.session_baseline_date = Some("2000-01-01".to_string());
+        project.save_metadata().unwrap();
+
+        project.maybe_roll_over_session(100).unwrap();
+
+        assert!(!project.meta.daily_word_counts.contains_key(&stale_date));
     }
 
     #[test]

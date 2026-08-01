@@ -19,6 +19,7 @@ pub(super) enum DockTab {
     Pomodoro,
     WordCount,
     Collab,
+    Streak,
 }
 
 /// The initial dock layout for a fresh install (no persisted `dock_layout.json`

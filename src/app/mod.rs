@@ -17,6 +17,7 @@ mod project_lifecycle;
 mod prompt;
 mod refresh;
 mod settings_persist;
+mod streak_events;
 mod toast;
 mod word_count_events;
 use dock::{
@@ -81,6 +82,12 @@ pub struct SmaragdApp {
     prompt: Option<PendingPrompt>,
     recording_shortcut: Option<ShortcutTarget>,
     settings_category: ui::settings_panel::SettingsCategory,
+    /// Which of the Streak dock tab's two inner tabs is showing — reset to
+    /// the sensible default (`Streak` if the newly opened project already
+    /// has tracking on, `Configure` otherwise) by `set_project`
+    /// (`project_lifecycle.rs`) every time a project is opened; the user can
+    /// freely switch away from that default afterward.
+    streak_sub_tab: ui::streak_panel::StreakSubTab,
     find_replace: FindReplaceState,
     card_draft: Option<CardDraft>,
     command_prompt: CommandPromptState,
@@ -203,6 +210,7 @@ impl SmaragdApp {
             prompt: None,
             recording_shortcut: None,
             settings_category: ui::settings_panel::SettingsCategory::General,
+            streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
             find_replace: FindReplaceState::default(),
             card_draft: None,
             command_prompt: CommandPromptState::default(),
@@ -279,6 +287,7 @@ impl SmaragdApp {
             prompt: None,
             recording_shortcut: None,
             settings_category: ui::settings_panel::SettingsCategory::General,
+            streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
             find_replace: FindReplaceState::default(),
             card_draft: None,
             command_prompt: CommandPromptState::default(),
@@ -541,6 +550,7 @@ impl SmaragdApp {
             ShortcutAction::ToggleWordCount => self.toggle_dock_tab(DockTab::WordCount),
             ShortcutAction::RefreshWordCount => self.spawn_word_count_recompute(ctx),
             ShortcutAction::ToggleCollabPanel => self.toggle_dock_tab(DockTab::Collab),
+            ShortcutAction::ToggleStreak => self.toggle_dock_tab(DockTab::Streak),
         }
     }
 
@@ -855,6 +865,13 @@ impl SmaragdApp {
     /// from `ui()` verbatim (2026-07-31 code-quality review).
     fn show_status_bar(&mut self, ui: &mut egui::Ui) {
         if !self.focus_mode {
+            // Set from inside the closures below (which only ever borrow
+            // `self` immutably, alongside egui's own `&mut Ui`) and acted on
+            // afterward, once `self` is available mutably again — calling
+            // `self.toggle_dock_tab` (which needs `&mut self`) from within
+            // those closures would conflict with the immutable `self.*`
+            // reads happening in the same scope.
+            let mut streak_glyph_clicked = false;
             egui::Panel::bottom("status_bar").show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if let Some(path) = &self.editor.open_path {
@@ -891,7 +908,11 @@ impl SmaragdApp {
                         .project
                         .as_ref()
                         .is_some_and(|project| project.meta.draft_target_words.is_some());
-                    if self.pomodoro.has_started() || draft_target_set {
+                    let streak_visible = self
+                        .project
+                        .as_ref()
+                        .is_some_and(|project| project.meta.streak_enabled);
+                    if self.pomodoro.has_started() || draft_target_set || streak_visible {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             // A running/paused-mid-session Pomodoro timer needs a
                             // segment of its own that survives `status_message`
@@ -917,11 +938,96 @@ impl SmaragdApp {
                                     self.word_count.char_activity, self.word_count.cache, target
                                 ));
                             }
+                            // Compact traffic-light glyph for the Writing
+                            // Streak feature, plus a live current-week
+                            // percentage next to it — the dot alone only ever
+                            // reflects the *last completed* week (see
+                            // `streak::evaluate_streak`'s doc comment), so the
+                            // percentage is what gives an at-a-glance read on
+                            // today/this week without opening the dock tab.
+                            // Placed after Pomodoro but before the Draft
+                            // Target segment above (added second in this
+                            // right_to_left layout, so it renders between
+                            // them on screen: Pomodoro | Streak | word count).
+                            if streak_visible && let Some(project) = &self.project {
+                                let streak_config = crate::streak::resolve_streak_config(
+                                    project.meta.streak_enabled,
+                                    project.meta.streak_schedule,
+                                    project.meta.streak_evaluation_mode,
+                                    project.meta.streak_red_threshold_weeks,
+                                );
+                                let today = chrono::Local::now().date_naive();
+                                let status = crate::streak::evaluate_streak(
+                                    &streak_config.schedule,
+                                    streak_config.mode,
+                                    streak_config.red_threshold_weeks,
+                                    &project.meta.daily_word_counts,
+                                    today,
+                                );
+                                let today_words_so_far =
+                                    self.word_count.cache.saturating_sub(
+                                        project.meta.session_baseline_words as usize,
+                                    ) as u32;
+                                let (week_actual, week_target) =
+                                    crate::streak::current_week_progress(
+                                        &streak_config.schedule,
+                                        &project.meta.daily_word_counts,
+                                        today_words_so_far,
+                                        today,
+                                    );
+
+                                let (rect, response) = ui.allocate_exact_size(
+                                    egui::vec2(14.0, 14.0),
+                                    egui::Sense::click(),
+                                );
+                                ui.painter().circle_filled(
+                                    rect.center(),
+                                    6.0,
+                                    ui::streak_panel::status_color(ui, status),
+                                );
+                                let response =
+                                    response.on_hover_text(streak_status_hover_text(status));
+                                if response.clicked() {
+                                    streak_glyph_clicked = true;
+                                }
+
+                                if week_target > 0 {
+                                    let percent =
+                                        ((week_actual as f32 / week_target as f32) * 100.0).round()
+                                            as u32;
+                                    let label_response = ui.add(
+                                        egui::Label::new(format!("{percent}%"))
+                                            .sense(egui::Sense::click()),
+                                    );
+                                    let label_response = label_response.on_hover_text(format!(
+                                        "Progress this week: {week_actual} / {week_target} words"
+                                    ));
+                                    if label_response.clicked() {
+                                        streak_glyph_clicked = true;
+                                    }
+                                }
+                            }
                         });
                     }
                 });
             });
+            if streak_glyph_clicked {
+                self.toggle_dock_tab(DockTab::Streak);
+            }
         }
+    }
+}
+
+/// Hover tooltip for the status bar's compact streak glyph. A fixed string
+/// per status is enough for a tooltip; the dock tab (`ui::streak_panel::show`)
+/// is where the fuller, threshold-number-aware label lives.
+fn streak_status_hover_text(status: crate::streak::StreakStatus) -> &'static str {
+    match status {
+        crate::streak::StreakStatus::Disabled => "Streak tracking is disabled",
+        crate::streak::StreakStatus::InsufficientData => "Streak: not enough data yet",
+        crate::streak::StreakStatus::Green => "Streak: on track",
+        crate::streak::StreakStatus::Yellow => "Streak: off track this week",
+        crate::streak::StreakStatus::Red => "Streak: off track for multiple weeks",
     }
 }
 
@@ -1083,6 +1189,16 @@ impl eframe::App for SmaragdApp {
                         None => CollabStatus::Connecting,
                     },
                 };
+                let today_words_so_far = self
+                    .project
+                    .as_ref()
+                    .map(|project| {
+                        self.word_count
+                            .cache
+                            .saturating_sub(project.meta.session_baseline_words as usize)
+                            as u32
+                    })
+                    .unwrap_or(0);
                 let mut viewer = AppTabViewer {
                     project: self.project.as_ref(),
                     selected_path: self.selected_path.as_deref(),
@@ -1099,6 +1215,8 @@ impl eframe::App for SmaragdApp {
                     pomodoro_durations: crate::pomodoro::resolve_durations(&self.settings),
                     word_count_cache: self.word_count.cache,
                     char_activity: self.word_count.char_activity,
+                    today_words_so_far,
+                    streak_sub_tab: &mut self.streak_sub_tab,
                     actions: Vec::new(),
                     focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
                     collab_status,
@@ -1123,6 +1241,7 @@ impl eframe::App for SmaragdApp {
                         DockAction::Collab(event) => {
                             self.handle_collab_panel_event(ui.ctx(), event)
                         }
+                        DockAction::Streak(event) => self.handle_streak_event(event),
                     }
                 }
             });

@@ -120,4 +120,40 @@ pub struct ProjectMeta {
     /// `None` before the session mechanism has ever run once.
     #[serde(default)]
     pub session_baseline_date: Option<String>,
+    /// Each tracked calendar day's total words written (a delta, not a
+    /// cumulative running total), keyed `YYYY-MM-DD` — same string
+    /// convention as `session_baseline_date`. Populated exclusively by
+    /// [`Project::maybe_roll_over_session`] when a new day rolls over, and
+    /// pruned to `streak::DAILY_HISTORY_RETENTION_DAYS` on every write.
+    /// Feeds `streak::evaluate_streak` for the Writing Streak feature.
+    ///
+    /// Accepted precision limitation: a day's logged value is captured
+    /// whenever the *first* word-count recompute of the *next* day happens
+    /// to fire, not at a precise midnight boundary — the same approximation
+    /// `session_baseline_date`'s rollover already makes. If the app is
+    /// opened and typed in before that recompute runs, a few of the new
+    /// day's words can bleed into the previous day's logged figure.
+    #[serde(default)]
+    pub daily_word_counts: BTreeMap<String, u32>,
+    /// Master on/off switch for Writing Streak tracking on this project. Off
+    /// by default (same as `git_enabled`/`plugins_enabled` above) — a
+    /// deliberately per-project setting, not a global one in `Settings`:
+    /// different projects can reasonably want different writing paces (or
+    /// none at all), same rationale as `git_enabled`.
+    #[serde(default)]
+    pub streak_enabled: bool,
+    /// The weekly word-count schedule the streak is measured against — see
+    /// [`crate::streak::WeeklySchedule`].
+    #[serde(default)]
+    pub streak_schedule: crate::streak::WeeklySchedule,
+    /// How strictly a week counts as "met" — see
+    /// [`crate::streak::StreakEvaluationMode`].
+    #[serde(default)]
+    pub streak_evaluation_mode: crate::streak::StreakEvaluationMode,
+    /// How many consecutive missed weeks turn the streak light red. `0`
+    /// means "not yet configured," resolved to a real default at the point
+    /// of use (`streak::resolve_streak_config`) — same blank-means-unset
+    /// convention `pomodoro_work_minutes` (`settings.rs`) uses.
+    #[serde(default)]
+    pub streak_red_threshold_weeks: u32,
 }

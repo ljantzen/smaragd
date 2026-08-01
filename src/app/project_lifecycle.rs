@@ -18,6 +18,16 @@ impl SmaragdApp {
         if self.settings.create_starter_folders {
             Self::ensure_starter_folders(&mut project);
         }
+        // Default to whichever inner Streak tab is more useful for this
+        // specific project — `Streak` (the live badge/progress view) if
+        // tracking is already on, `Configure` otherwise — but only as a
+        // starting point: the user can freely switch afterward, and nothing
+        // else resets this until the next project open.
+        self.streak_sub_tab = if project.meta.streak_enabled {
+            ui::streak_panel::StreakSubTab::Streak
+        } else {
+            ui::streak_panel::StreakSubTab::Configure
+        };
         self.project = Some(project);
         self.editor = EditorState::default();
         self.selected_path = None;
@@ -280,5 +290,41 @@ impl SmaragdApp {
                 self.push_error_toast(format!("Couldn't move {}: {err}", path.display()));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opening_a_project_without_streak_enabled_defaults_the_sub_tab_to_configure() {
+        let dir = tempfile::tempdir().unwrap();
+        Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        // Start from the opposite value to prove `open_project` actually
+        // resets it, rather than the assertion passing by coincidence.
+        app.streak_sub_tab = ui::streak_panel::StreakSubTab::Streak;
+        let ctx = egui::Context::default();
+
+        app.open_project(&ctx, dir.path());
+
+        assert_eq!(
+            app.streak_sub_tab,
+            ui::streak_panel::StreakSubTab::Configure
+        );
+    }
+
+    #[test]
+    fn opening_a_project_with_streak_already_enabled_defaults_the_sub_tab_to_streak() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        project.set_streak_enabled(true).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+
+        app.open_project(&ctx, dir.path());
+
+        assert_eq!(app.streak_sub_tab, ui::streak_panel::StreakSubTab::Streak);
     }
 }

@@ -15,6 +15,7 @@ pub(super) enum DockAction {
     Pomodoro(crate::ui::pomodoro_panel::PomodoroEvent),
     WordCount(crate::ui::word_count_panel::WordCountEvent),
     Collab(CollabPanelEvent),
+    Streak(crate::ui::streak_panel::StreakEvent),
 }
 
 /// A short-lived `egui_dock::TabViewer` impl, constructed fresh each frame right
@@ -46,6 +47,13 @@ pub(super) struct AppTabViewer<'a> {
     pub(super) word_count_cache: usize,
     /// See `SmaragdApp::char_activity`.
     pub(super) char_activity: u64,
+    /// The same "session words" quantity `word_count_panel::show` computes
+    /// (`word_count_cache` minus `session_baseline_words`), hoisted up here
+    /// since both the Word Count and Streak tabs need it.
+    pub(super) today_words_so_far: u32,
+    /// Which of the Streak tab's two inner tabs is showing — see
+    /// `SmaragdApp::streak_sub_tab`.
+    pub(super) streak_sub_tab: &'a mut crate::ui::streak_panel::StreakSubTab,
     pub(super) actions: Vec<DockAction>,
     /// See `SmaragdApp::focus_binder_requested`.
     pub(super) focus_binder_requested: bool,
@@ -71,6 +79,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::Pomodoro => "Pomodoro".into(),
             DockTab::WordCount => "Word Count".into(),
             DockTab::Collab => "Collaborate".into(),
+            DockTab::Streak => "Streak".into(),
         }
     }
 
@@ -252,6 +261,21 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     self.actions.push(DockAction::Collab(event));
                 }
             }
+            DockTab::Streak => match self.project {
+                Some(project) => {
+                    if let Some(event) = ui::streak_panel::show(
+                        ui,
+                        project,
+                        self.today_words_so_far,
+                        self.streak_sub_tab,
+                    ) {
+                        self.actions.push(DockAction::Streak(event));
+                    }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
         }
     }
 }
