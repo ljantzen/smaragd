@@ -35,6 +35,13 @@ impl SmaragdApp {
         self.settings.last_project_path = Some(path.to_path_buf());
         self.settings.record_recent_project(path);
         self.persist_settings();
+        // Everything below here is a real-world side effect inappropriate
+        // for a test to trigger — most notably `maybe_offer_git_support`,
+        // which pops up a blocking native OS dialog and can hang a test run
+        // until someone dismisses it — see `is_test_fixture`'s doc comment.
+        if self.is_test_fixture {
+            return;
+        }
         self.maybe_offer_git_support();
         if let Some(project) = &self.project
             && let Err(err) = Self::ensure_git_repo(project)
@@ -326,5 +333,27 @@ mod tests {
         app.open_project(&ctx, dir.path());
 
         assert_eq!(app.streak_sub_tab, ui::streak_panel::StreakSubTab::Streak);
+    }
+
+    /// Regression test for the incident this guard exists to prevent:
+    /// `open_project` used to unconditionally call `maybe_offer_git_support`,
+    /// which pops up a blocking native "Enable Git Support" dialog — during
+    /// a `cargo test` run, on the developer's real screen, hanging the test
+    /// process until someone dismissed it. `git_prompted` staying `false`
+    /// here is a proxy for "the dialog path never ran": the real path always
+    /// sets it (see `maybe_offer_git_support`'s `enable_git_support`/
+    /// `decline_git_support` calls), so if this assertion ever starts
+    /// failing, the dialog is back.
+    #[test]
+    fn opening_a_project_in_a_test_fixture_never_reaches_the_git_support_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        assert!(app.is_test_fixture);
+        let ctx = egui::Context::default();
+
+        app.open_project(&ctx, dir.path());
+
+        assert!(!app.project.as_ref().unwrap().meta.git_prompted);
     }
 }

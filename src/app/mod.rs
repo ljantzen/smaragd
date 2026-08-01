@@ -97,6 +97,17 @@ pub struct SmaragdApp {
     /// `~/.config/smaragd/smaragd.toml`, the way it did before this field
     /// existed — see `persist_settings`'s doc comment.
     settings_path_override: Option<PathBuf>,
+    /// `true` only for `test_fixture`-built instances. Gates every other
+    /// real-world side effect `set_project` (`project_lifecycle.rs`) would
+    /// otherwise trigger on every `open_project`/`create_project` call: a
+    /// blocking native "Enable Git Support" dialog (`maybe_offer_git_support`
+    /// — this one doesn't just write a file, it pops up on the developer's
+    /// actual screen and can hang a test run until someone dismisses it),
+    /// real `git init`, reloading plugins from the developer's real global
+    /// plugin directory, and spawning a background word-count-recompute
+    /// thread — none of which a unit test exercising the open-project flow
+    /// should trigger just to check an unrelated bit of state.
+    is_test_fixture: bool,
     find_replace: FindReplaceState,
     card_draft: Option<CardDraft>,
     command_prompt: CommandPromptState,
@@ -221,6 +232,7 @@ impl SmaragdApp {
             settings_category: ui::settings_panel::SettingsCategory::General,
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
             settings_path_override: None,
+            is_test_fixture: false,
             find_replace: FindReplaceState::default(),
             card_draft: None,
             command_prompt: CommandPromptState::default(),
@@ -306,6 +318,7 @@ impl SmaragdApp {
                 "smaragd-test-settings-{}.toml",
                 uuid::Uuid::new_v4()
             ))),
+            is_test_fixture: true,
             find_replace: FindReplaceState::default(),
             card_draft: None,
             command_prompt: CommandPromptState::default(),
