@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v0.6.1 — 2026-08-01
+
 - Added a Writing Streak feature (`Tools > Streak`, `Ctrl+Alt+S`; off by
   default, configured per project — not the global Settings dialog). The
   dock tab has two inner tabs, switchable freely: Configure (enable flag, a
