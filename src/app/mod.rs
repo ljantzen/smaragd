@@ -88,6 +88,15 @@ pub struct SmaragdApp {
     /// (`project_lifecycle.rs`) every time a project is opened; the user can
     /// freely switch away from that default afterward.
     streak_sub_tab: ui::streak_panel::StreakSubTab,
+    /// Where `persist_settings` writes, in place of the real
+    /// `settings::config_file_path()` — always `None` in `new()` (the real
+    /// app), always `Some` (a throwaway path) in `test_fixture()`. Exists
+    /// specifically so a unit test that exercises `open_project`/
+    /// `create_project` (which call `persist_settings` as a side effect of
+    /// `set_project`) can never clobber the developer's actual
+    /// `~/.config/smaragd/smaragd.toml`, the way it did before this field
+    /// existed — see `persist_settings`'s doc comment.
+    settings_path_override: Option<PathBuf>,
     find_replace: FindReplaceState,
     card_draft: Option<CardDraft>,
     command_prompt: CommandPromptState,
@@ -211,6 +220,7 @@ impl SmaragdApp {
             recording_shortcut: None,
             settings_category: ui::settings_panel::SettingsCategory::General,
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
+            settings_path_override: None,
             find_replace: FindReplaceState::default(),
             card_draft: None,
             command_prompt: CommandPromptState::default(),
@@ -288,6 +298,14 @@ impl SmaragdApp {
             recording_shortcut: None,
             settings_category: ui::settings_panel::SettingsCategory::General,
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
+            // Always set, unconditionally — see this field's doc comment.
+            // Any test built on `test_fixture` must never be able to reach
+            // the developer's real `~/.config/smaragd/smaragd.toml`, even
+            // if the test author never thinks about persistence at all.
+            settings_path_override: Some(std::env::temp_dir().join(format!(
+                "smaragd-test-settings-{}.toml",
+                uuid::Uuid::new_v4()
+            ))),
             find_replace: FindReplaceState::default(),
             card_draft: None,
             command_prompt: CommandPromptState::default(),

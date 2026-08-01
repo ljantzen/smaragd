@@ -1,9 +1,24 @@
 use super::*;
 
 impl SmaragdApp {
+    /// Writes to `settings_path_override` if set (always the case for a
+    /// `test_fixture`-built app — see that field's doc comment), otherwise
+    /// the real `settings::config_file_path()`. Never resolve the real path
+    /// directly here or in any other persistence method a test could reach
+    /// — a test exercising `open_project`/`create_project` once wrote
+    /// straight through to a developer's actual
+    /// `~/.config/smaragd/smaragd.toml`, silently overwriting their real
+    /// settings with `Settings::default()` plus whatever tempdir path the
+    /// test happened to open, before this override existed.
     pub(super) fn persist_settings(&mut self) {
-        let Some(path) = crate::settings::config_file_path() else {
-            return;
+        let path = match &self.settings_path_override {
+            Some(path) => path.clone(),
+            None => {
+                let Some(path) = crate::settings::config_file_path() else {
+                    return;
+                };
+                path
+            }
         };
         if let Err(err) = self.settings.save_to_path(&path) {
             self.push_error_toast(format!("Couldn't save settings: {err}"));
@@ -90,6 +105,41 @@ impl SmaragdApp {
         capture_floating_window_positions(&mut snapshot, ctx);
         self.saved_layouts.insert(name.to_string(), snapshot);
         self.persist_saved_layouts();
+    }
+}
+
+#[cfg(test)]
+mod settings_persistence_isolation_tests {
+    use super::SmaragdApp;
+
+    /// Regression test for the incident this override exists to prevent: a
+    /// `test_fixture`-built app must never be able to write settings to the
+    /// developer's real config path, no matter which app method a future
+    /// test happens to exercise.
+    #[test]
+    fn test_fixture_always_overrides_the_settings_path_away_from_the_real_one() {
+        let app = SmaragdApp::test_fixture();
+
+        let override_path = app
+            .settings_path_override
+            .clone()
+            .expect("test_fixture must always set an override");
+
+        assert_ne!(Some(override_path), crate::settings::config_file_path());
+    }
+
+    #[test]
+    fn persist_settings_writes_to_the_override_path_not_the_real_one() {
+        let mut app = SmaragdApp::test_fixture();
+        let override_path = app.settings_path_override.clone().unwrap();
+
+        app.persist_settings();
+
+        assert!(
+            override_path.exists(),
+            "persist_settings should have written to the override path"
+        );
+        let _ = std::fs::remove_file(&override_path);
     }
 }
 
