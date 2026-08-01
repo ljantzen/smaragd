@@ -58,15 +58,20 @@ cargo run
 
 ## Development
 
+A [`justfile`](justfile) wraps the common commands (`just --list` to see all of them):
+
 ```sh
-cargo test                                    # unit tests
-cargo clippy --all-targets --all-features     # must be warning-free before committing
-cargo fmt                                     # must be applied before committing
+just check      # fmt-check + clippy + test — same as CI, run before committing
+just test       # cargo test --all-targets --all-features
+just clippy     # cargo clippy --all-targets --all-features -- -D warnings
+just fmt        # cargo fmt
 ```
+
+(Equivalent plain `cargo` commands work too, if you don't have [`just`](https://github.com/casey/just) installed — see the justfile for the exact invocations.)
 
 Version control uses [jj (Jujutsu)](https://github.com/jj-vcs/jj) with the git backend (colocated).
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the same three checks on every push/PR to `main`, plus a separate `cargo llvm-cov` job that uploads an `lcov.info` coverage report as a build artifact (informational — nothing is currently gated on a coverage threshold).
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the same fmt/clippy/test checks on every push/PR to `main`, plus a separate `cargo llvm-cov` job that uploads an `lcov.info` coverage report as a build artifact (informational — nothing is currently gated on a coverage threshold).
 
 ## Releases
 
@@ -76,7 +81,9 @@ Pushing a semantic-version tag (`v1.2.3` or `1.2.3`, prerelease suffixes like `-
 - **Windows**: an x86_64 build, packaged as a zip.
 - **macOS**: arm64 and x86_64 cross-compiled on a single arm64 runner, lipo'd into a universal binary, assembled into a `Smaragd.app` bundle (via [`packaging/macos/Info.plist.template`](packaging/macos/Info.plist.template)) and ad-hoc signed (required for arm64 under Gatekeeper).
 
-All three, plus a `SHA256SUMS` file per platform, are published to a GitHub release. See [RELEASENOTES.md](RELEASENOTES.md) for what's changed release to release — update its Unreleased section as changes land, and roll it into a new version header when cutting a release.
+All three, plus a `SHA256SUMS` file per platform, are published to a GitHub release. See [RELEASENOTES.md](RELEASENOTES.md) for what's changed release to release.
+
+`just release <version>` (e.g. `just release 0.6.2`) automates cutting one — [`scripts/release.sh`](scripts/release.sh) bumps `Cargo.toml`/`Cargo.lock`, rolls RELEASENOTES.md's Unreleased section into a dated `## vX.Y.Z` header, runs the same checks CI does, then (after a confirmation prompt) commits, pushes `main`, tags, and pushes the tag. Requires a clean jj working copy. `--dry-run` stops right before the push/tag step; `--yes` skips the confirmation prompt.
 
 ## Project layout
 
