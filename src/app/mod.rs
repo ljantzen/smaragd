@@ -52,6 +52,7 @@ use crate::ui::editor_panel::EditorEvent;
 use crate::ui::find_replace_panel::{FindReplaceEvent, FindReplaceState};
 use crate::ui::metadata_panel::MetadataDraft;
 use crate::ui::name_prompt::{NamePromptOutcome, NamePromptState};
+use crate::ui::story_grid_panel::StoryGridEvent;
 
 pub struct SmaragdApp {
     project: Option<Project>,
@@ -486,6 +487,9 @@ impl SmaragdApp {
             }
             ShortcutAction::ToggleCorkboard => {
                 self.toggle_dock_tab_near(DockTab::Corkboard, DockTab::Editor)
+            }
+            ShortcutAction::ToggleStoryGrid => {
+                self.toggle_dock_tab_near(DockTab::StoryGrid, DockTab::Editor)
             }
             ShortcutAction::Save => {
                 if let Err(err) = self.save_editor() {
@@ -1320,6 +1324,7 @@ impl eframe::App for SmaragdApp {
                         DockAction::EditorSaveError(err) => self.push_error_toast(err),
                         DockAction::Wikilink(activation) => self.activate_wikilink(activation),
                         DockAction::Corkboard(event) => self.handle_corkboard_event(event),
+                        DockAction::StoryGrid(event) => self.handle_story_grid_event(event),
                         DockAction::Pomodoro(event) => self.handle_pomodoro_event(event),
                         DockAction::WordCount(event) => {
                             self.handle_word_count_event(ui.ctx(), event)

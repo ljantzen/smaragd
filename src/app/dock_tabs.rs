@@ -148,13 +148,7 @@ impl SmaragdApp {
                 }
             }
             CorkboardEvent::OpenLinkedDocument(path) => {
-                self.open_document(&path);
-                match self.dock_state.find_tab(&DockTab::Editor) {
-                    Some(tab_path) => {
-                        let _ = self.dock_state.set_active_tab(tab_path);
-                    }
-                    None => self.open_tab_next_to(DockTab::Editor, DockTab::Corkboard),
-                }
+                self.open_linked_document_and_focus_editor(path, DockTab::Corkboard);
             }
             CorkboardEvent::SetProtagonistDesire(desire) => {
                 if let Some(project) = &mut self.project
@@ -169,6 +163,35 @@ impl SmaragdApp {
                 {
                     self.push_error_toast(format!("Couldn't save misbelief: {err}"));
                 }
+            }
+        }
+    }
+
+    /// Open `path` in the Editor tab and focus it, falling back to opening a new
+    /// Editor tab next to `anchor` if none is open yet — shared by both Corkboard's
+    /// and the Story Grid's "open linked document" link, which differ only in
+    /// which tab they fall back to opening the Editor next to.
+    fn open_linked_document_and_focus_editor(&mut self, path: PathBuf, anchor: DockTab) {
+        self.open_document(&path);
+        match self.dock_state.find_tab(&DockTab::Editor) {
+            Some(tab_path) => {
+                let _ = self.dock_state.set_active_tab(tab_path);
+            }
+            None => self.open_tab_next_to(DockTab::Editor, anchor),
+        }
+    }
+
+    pub(super) fn handle_story_grid_event(&mut self, event: StoryGridEvent) {
+        match event {
+            StoryGridEvent::OpenLinkedDocument(path) => {
+                self.open_linked_document_and_focus_editor(path, DockTab::StoryGrid);
+            }
+            StoryGridEvent::EditCard(id) => {
+                self.handle_corkboard_event(CorkboardEvent::EditCard(id))
+            }
+            StoryGridEvent::SetUnplacedPosition(position) => {
+                self.settings.unplaced_story_cards_position = position;
+                self.persist_settings();
             }
         }
     }

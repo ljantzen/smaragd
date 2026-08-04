@@ -8,6 +8,11 @@ this file.
 - Exiting with unsaved edits — the open document, or an open story card
   editor's draft — now prompts to Save, Discard, or Cancel instead of closing
   (or silently autosaving/losing them) right away.
+- Added a Story Grid view (`View > Story Grid`, `Ctrl+Shift+G`): a read-only,
+  manuscript-ordered table of the same Story Cards the Corkboard edits, with a
+  computed manuscript position, POV and word count read live from each linked
+  document, and every Story Genius field as its own column. Unplaced cards
+  group into a Top/Bottom-configurable section.
 
 ## v0.6.1 — 2026-08-01
 

@@ -406,6 +406,16 @@ Every scene card below is meant to test or advance this pair. Each card has:
 
 Cards are independent of the binder tree: you can reorder them freely, create a card with no linked document yet (pure plotting, before you've drafted the scene), or link a card to a document that later gets renamed or deleted — the link just resolves to "not found" rather than breaking anything, the same way a dangling `[[wikilink]]` behaves.
 
+### Story Grid
+
+**`View > Story Grid`** opens a second, read-only view of the same cards as a table — one row per card, in whatever order their linked document sits in the binder today, rather than the freeform order you set on the Corkboard.
+
+Each row shows a computed manuscript position (`#`), the card's own `Scene #` label (unchanged, shown alongside rather than replaced), the linked document's title, its POV and word count (read live from the document, the same way the Metadata and Word Count panels do), and every Story Genius field — Cause, Effect, Why It Matters, Realization, And So, and subplot tags.
+
+Cards with no linked document, or a link that no longer resolves, group into an **Unplaced** section — a toggle at the top of the panel puts that section above or below the placed rows. Unlike everything else on this page, that toggle is an app-wide preference, not a per-project one: it's remembered across every project you open, the same way UI Scale or your theme choice is. Clicking a linked document's title opens it in the Editor, same as Corkboard's own 🔗 link; clicking a row's Scene # opens the card editor.
+
+The Story Grid never reorders the manuscript itself — its row order is always a reflection of the binder, not something you can drag to change from here. To reorder scenes, reorder the documents in the Binder.
+
 ## Find and Replace
 
 **`Edit > Find and Replace`** searches plain text across a chosen scope:

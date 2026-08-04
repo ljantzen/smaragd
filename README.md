@@ -28,6 +28,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
   - Manuscript designates a folder as primary manuscript content, mirroring Scrivener's Draft folder. `File > Export Manuscript…` compiles straight from it — from the whole project if none is assigned yet, or via a submenu to pick among them when more than one folder holds the role
 - Per-document YAML frontmatter (`type`/`status`/`pov`/`word_count_target`/`tags` — Longform/Scrivener-style manuscript metadata): parsed on demand, stripped from the markdown preview so it doesn't render as a garbled paragraph, and editable live through a dockable form (`Edit > Document Metadata`) that only ever touches those five keys — any other hand-added YAML key in the block survives a save. Edits apply as you type, no Save/Cancel step. The `Type`/`Status`/`POV` fields switch from free text to a dropdown once a folder is checked as that field's "Dropdown Source" (any folder's right-click menu) — its direct child documents' titles become the options, independently per field and independent of `FolderRole` (a folder keeps whatever role, or none, it already has, and stays in export exactly as before). The panel also shows a live word count, recomputed every frame from the open buffer (not just the last save)
 - Story cards (`View > Corkboard`, Lisa Cron "Story Genius" style): a wrapping grid of scene cards, each with an Alpha Point, Cause, Effect, Why It Matters, Realization, and "And so?", plus optional subplot tags and an optional soft link to a manuscript document by title. Cards are independent of the binder tree — reorderable on their own, and a card can exist with no linked document yet (a pure plotting artifact) or be linked to a document that's since been renamed or deleted without breaking. The Corkboard also has a project-wide Desire/Misbelief pair (Cron's "Third Rail") that every card's Why It Matters is meant to test or advance
+- Story Grid (`View > Story Grid`): a second, read-only view of the same cards as a table, one row per card sorted by wherever its linked document sits in the binder today — a manuscript position column alongside the free-text Scene # label, POV and word count read live from the linked document, and every Story Genius field as its own column. Cards with no (or a dangling) link group into an "Unplaced" section, top or bottom per a toggle in the panel. Doesn't reorder the manuscript itself — that still happens from the Binder
 - Glow-CLI-styled markdown preview (`View > Preview`): colored heading hierarchy, barred blockquotes, boxed code blocks, striped GFM tables, and images — both standard `![alt](src)` and Obsidian-style `![[image.png]]` embeds — loaded via `egui_extras` (relative paths resolve against the open document's folder and are required to stay inside the project; remote `http(s)://` images aren't fetched)
 - Obsidian-style `[[Topic]]` / `[[Topic|Alias]]` wikilinks: rendered as clickable links in preview, resolved by filename within the project. Ctrl+Click a link in preview (or place the cursor on one and press the remappable "Activate Wikilink" shortcut, `Ctrl+Enter` by default, in the editor) to create the missing document, in the same folder as the note the link was in
 - Wikilink autocomplete while typing `[[`: filtered suggestions, arrow-key/Tab/Enter navigation, mouse click
@@ -142,6 +143,7 @@ src/
     editor_panel.rs         text editor + wikilink autocomplete popup + Focus Mode's paragraph-dimming layouter (dockable tab)
     markdown_preview.rs     glow-style preview rendering (dockable tab)
     corkboard_panel.rs      story-card grid + card editor modal (dockable tab)
+    story_grid_panel.rs     read-only, manuscript-ordered table view of the same story cards (dockable tab)
     metadata_panel.rs       document-metadata form editor, live-binding (dockable tab)
     open_document_prompt.rs fzf-style quick-switcher modal for Open Document
     find_replace_panel.rs   find/replace panel rendering
@@ -156,7 +158,7 @@ src/
     streak_panel.rs         Streak dock tab: Streak/Configure inner tabs, traffic-light badge, weekly schedule editing
 ```
 
-Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, Pomodoro, Word Count, Collaborate, and Streak all dock together in one shared area via [`egui_dock`](https://github.com/Adanos020/egui_dock), wired up in `app.rs`'s `DockTab`/`AppTabViewer`.
+Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, Story Grid, Pomodoro, Word Count, Collaborate, and Streak all dock together in one shared area via [`egui_dock`](https://github.com/Adanos020/egui_dock), wired up in `app.rs`'s `DockTab`/`AppTabViewer`.
 
 ## License
 

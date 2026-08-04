@@ -157,6 +157,34 @@ impl Project {
         Ok(crate::frontmatter::parse(&contents))
     }
 
+    /// Every document in the project, in binder order, skipping any folder whose
+    /// role is `Trash` or `Templates` — the same skip rule `export::gather_into`
+    /// uses when compiling a manuscript, reused here as the "manuscript position"
+    /// a Story Grid row is sorted by (see `ui::story_grid_panel`). Unlike
+    /// `export::gather`, this never reads file contents.
+    pub fn manuscript_document_order(&self) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        self.collect_manuscript_document_order(&self.tree.root, &mut out);
+        out
+    }
+
+    fn collect_manuscript_document_order(&self, node: &BinderNode, out: &mut Vec<PathBuf>) {
+        match &node.kind {
+            BinderNodeKind::Document => out.push(node.path.clone()),
+            BinderNodeKind::Folder { children } => {
+                if matches!(
+                    self.folder_role(&node.path),
+                    Some(FolderRole::Trash) | Some(FolderRole::Templates)
+                ) {
+                    return;
+                }
+                for child in children {
+                    self.collect_manuscript_document_order(child, out);
+                }
+            }
+        }
+    }
+
     pub fn rescan(&mut self) {
         let mut tree = scan_project(&self.root);
         apply_order(&mut tree.root, &self.root, &self.meta.node_order);
@@ -364,6 +392,44 @@ mod tests {
         let loaded = load_metadata(dir.path()).unwrap();
 
         assert_eq!(loaded, meta);
+    }
+
+    #[test]
+    fn manuscript_document_order_follows_binder_order_and_skips_trash_and_templates() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let templates = project.create_folder(dir.path(), "Templates").unwrap();
+        project
+            .set_folder_role(&templates, Some(FolderRole::Templates))
+            .unwrap();
+        let one = project.create_document(dir.path(), "01").unwrap();
+        let two = project.create_document(dir.path(), "02").unwrap();
+        project.create_document(&trash, "Trashed").unwrap();
+        project.create_document(&templates, "Template").unwrap();
+        project.rescan();
+
+        let order = project.manuscript_document_order();
+
+        assert_eq!(order, vec![one, two]);
+    }
+
+    #[test]
+    fn manuscript_document_order_respects_node_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let first = project.create_document(dir.path(), "Alpha").unwrap();
+        let second = project.create_document(dir.path(), "Beta").unwrap();
+        project
+            .move_item_before(&second, &first)
+            .expect("reorder Beta before Alpha");
+
+        let order = project.manuscript_document_order();
+
+        assert_eq!(order, vec![second, first]);
     }
 
     #[test]

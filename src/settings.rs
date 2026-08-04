@@ -33,6 +33,29 @@ pub enum PluginShortcutOverride {
     Unbound,
 }
 
+/// Where cards with no (or a dangling) linked document — "unplaced" cards — sit in
+/// the Story Grid view (`ui::story_grid_panel`), relative to the cards that do
+/// resolve to a document and so have a manuscript position. An app-wide preference
+/// (unlike the cards themselves, which are per-project) since it's purely about how
+/// you like to read the grid, not something tied to any one manuscript.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum UnplacedCardsPosition {
+    #[default]
+    Top,
+    Bottom,
+}
+
+impl UnplacedCardsPosition {
+    pub const ALL: [UnplacedCardsPosition; 2] = [Self::Top, Self::Bottom];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Top => "Top",
+            Self::Bottom => "Bottom",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -144,6 +167,9 @@ pub struct Settings {
     /// pure multiplier on top of whatever the OS already reports, not a
     /// replacement for it.
     pub ui_scale: f32,
+    /// Where unplaced cards sit in the Story Grid view — see
+    /// [`UnplacedCardsPosition`].
+    pub unplaced_story_cards_position: UnplacedCardsPosition,
 }
 
 /// The full path to the settings file, e.g. `~/.config/smaragd/smaragd.toml` on
@@ -387,6 +413,46 @@ mod tests {
     }
 
     #[test]
+    fn defaults_to_unplaced_cards_on_top() {
+        assert_eq!(
+            Settings::default().unplaced_story_cards_position,
+            UnplacedCardsPosition::Top
+        );
+    }
+
+    #[test]
+    fn settings_file_without_an_unplaced_story_cards_position_loads_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("smaragd.toml");
+        std::fs::write(&path, "reopen_last_project = true\n").unwrap();
+
+        let loaded = Settings::load_from_path(&path);
+
+        assert_eq!(
+            loaded.unplaced_story_cards_position,
+            UnplacedCardsPosition::Top
+        );
+    }
+
+    #[test]
+    fn unplaced_story_cards_position_persists_across_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("smaragd.toml");
+        let settings = Settings {
+            unplaced_story_cards_position: UnplacedCardsPosition::Bottom,
+            ..Default::default()
+        };
+        settings.save_to_path(&path).unwrap();
+
+        let loaded = Settings::load_from_path(&path);
+
+        assert_eq!(
+            loaded.unplaced_story_cards_position,
+            UnplacedCardsPosition::Bottom
+        );
+    }
+
+    #[test]
     fn settings_file_without_a_color_theme_loads_none() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("smaragd.toml");
@@ -449,6 +515,7 @@ mod tests {
             status_message_duration_secs: 12,
             shortcuts_seen,
             ui_scale: 1.25,
+            unplaced_story_cards_position: UnplacedCardsPosition::Bottom,
         };
 
         settings.save_to_path(&path).unwrap();

@@ -236,6 +236,9 @@ impl SmaragdApp {
                         if nav.button(ui, "Corkboard").clicked() {
                             self.toggle_dock_tab_near(DockTab::Corkboard, DockTab::Editor);
                         }
+                        if nav.button(ui, "Story Grid").clicked() {
+                            self.toggle_dock_tab_near(DockTab::StoryGrid, DockTab::Editor);
+                        }
                         ui.separator();
                         if nav.button(ui, "Binder").clicked() {
                             self.toggle_dock_tab(DockTab::Binder);

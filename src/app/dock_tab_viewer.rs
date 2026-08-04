@@ -12,6 +12,7 @@ pub(super) enum DockAction {
     EditorSaveError(String),
     Wikilink(WikilinkActivation),
     Corkboard(CorkboardEvent),
+    StoryGrid(crate::ui::story_grid_panel::StoryGridEvent),
     Pomodoro(crate::ui::pomodoro_panel::PomodoroEvent),
     WordCount(crate::ui::word_count_panel::WordCountEvent),
     Collab(CollabPanelEvent),
@@ -76,6 +77,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::Editor => "Editor".into(),
             DockTab::Preview => "Preview".into(),
             DockTab::Corkboard => "Corkboard".into(),
+            DockTab::StoryGrid => "Story Grid".into(),
             DockTab::Pomodoro => "Pomodoro".into(),
             DockTab::WordCount => "Word Count".into(),
             DockTab::Collab => "Collaborate".into(),
@@ -228,6 +230,20 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                 Some(project) => {
                     if let Some(event) = ui::corkboard_panel::show(ui, project) {
                         self.actions.push(DockAction::Corkboard(event));
+                    }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
+            DockTab::StoryGrid => match self.project {
+                Some(project) => {
+                    if let Some(event) = ui::story_grid_panel::show(
+                        ui,
+                        project,
+                        self.settings.unplaced_story_cards_position,
+                    ) {
+                        self.actions.push(DockAction::StoryGrid(event));
                     }
                 }
                 None => {
