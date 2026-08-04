@@ -5,6 +5,10 @@ this file.
 
 ## Unreleased
 
+- Exiting with unsaved edits — the open document, or an open story card
+  editor's draft — now prompts to Save, Discard, or Cancel instead of closing
+  (or silently autosaving/losing them) right away.
+
 ## v0.6.1 — 2026-08-01
 
 - Added a Writing Streak feature (`Tools > Streak`, `Ctrl+Alt+S`; off by

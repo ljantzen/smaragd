@@ -194,6 +194,10 @@ pub struct SmaragdApp {
     /// `start_collab_host`/`start_collab_join`/`end_collab_session`).
     /// `None` whenever no session is running.
     collab: Option<CollabSession>,
+    /// The "unsaved changes" dialog shown when the app is asked to close while
+    /// `editor.dirty` or an open, uncommitted `card_draft` — see
+    /// `has_unsaved_changes` and the `close_requested()` handling in `ui()`.
+    exit_confirm: ui::exit_confirm_prompt::ExitConfirmState,
 }
 
 impl SmaragdApp {
@@ -256,6 +260,7 @@ impl SmaragdApp {
             focus_binder_requested: false,
             focus_mode: false,
             collab: None,
+            exit_confirm: ui::exit_confirm_prompt::ExitConfirmState::default(),
         };
         app.reload_typeset_styles();
         app.reload_project_templates();
@@ -342,6 +347,7 @@ impl SmaragdApp {
             focus_binder_requested: false,
             focus_mode: false,
             collab: None,
+            exit_confirm: ui::exit_confirm_prompt::ExitConfirmState::default(),
         }
     }
 
@@ -585,6 +591,14 @@ impl SmaragdApp {
         }
     }
 
+    /// Whether exiting right now would silently lose something: the open document
+    /// has unsaved edits, or a card editor modal is open with a draft that hasn't
+    /// been saved (or explicitly discarded) yet — see the `close_requested()`
+    /// handling in `ui()`, the only caller.
+    fn has_unsaved_changes(&self) -> bool {
+        self.editor.dirty || self.card_draft.is_some()
+    }
+
     /// Save the open document, first running every loaded plugin's `on_save` hook
     /// over the buffer (see `plugins::PluginEngine::run_on_save`) — a hook that
     /// errors just leaves the text as-is rather than blocking the save, so a
@@ -810,6 +824,35 @@ impl SmaragdApp {
             };
             if let Some(outcome) = outcome {
                 self.finish_prompt(ui.ctx(), outcome);
+            }
+        }
+
+        if self.exit_confirm.open
+            && let Some(outcome) = ui::exit_confirm_prompt::show(ui.ctx(), &mut self.exit_confirm)
+        {
+            self.exit_confirm.open = false;
+            match outcome {
+                ui::exit_confirm_prompt::ExitConfirmOutcome::Save => {
+                    let mut ok = true;
+                    if self.editor.dirty
+                        && let Err(err) = self.save_editor()
+                    {
+                        self.push_error_toast(format!("Save failed: {err}"));
+                        ok = false;
+                    }
+                    if self.card_draft.is_some() {
+                        self.finish_card_editor(CardEditorOutcome::Save);
+                    }
+                    if ok {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+                ui::exit_confirm_prompt::ExitConfirmOutcome::Discard => {
+                    self.editor.dirty = false;
+                    self.finish_card_editor(CardEditorOutcome::Cancel);
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                ui::exit_confirm_prompt::ExitConfirmOutcome::Cancel => {}
             }
         }
 
@@ -1082,6 +1125,18 @@ impl eframe::App for SmaragdApp {
         if ui.ctx().input(|i| i.viewport().close_requested()) {
             let ctx = ui.ctx().clone();
             self.persist_dock_layout(&ctx);
+
+            // Veto the close and pop the Save/Discard/Cancel modal (rendered
+            // further down, alongside the other prompts) the first time we see
+            // unsaved edits. `!self.exit_confirm.open` guards against re-vetoing
+            // every frame while the modal itself is up: `CancelClose` only needs
+            // sending once, and by the time Save/Discard re-requests the close,
+            // `has_unsaved_changes` is already false so this whole branch is
+            // skipped.
+            if self.has_unsaved_changes() && !self.exit_confirm.open {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.exit_confirm.open = true;
+            }
         }
 
         if self.recording_shortcut.is_none() {
@@ -1414,5 +1469,58 @@ mod execute_command_tests {
 
         assert_eq!(app.toasts.len(), 1);
         assert_eq!(app.toasts[0].message, "No note found for \"Nonexistent\"");
+    }
+}
+
+#[cfg(test)]
+mod unsaved_changes_tests {
+    use super::*;
+
+    #[test]
+    fn has_unsaved_changes_is_false_by_default() {
+        let app = SmaragdApp::test_fixture();
+        assert!(!app.has_unsaved_changes());
+    }
+
+    #[test]
+    fn has_unsaved_changes_is_true_when_the_editor_is_dirty() {
+        let mut app = SmaragdApp::test_fixture();
+        app.editor.dirty = true;
+        assert!(app.has_unsaved_changes());
+    }
+
+    #[test]
+    fn has_unsaved_changes_is_true_when_a_card_draft_is_open() {
+        let mut app = SmaragdApp::test_fixture();
+        app.card_draft = Some(CardDraft::new());
+        assert!(app.has_unsaved_changes());
+    }
+
+    #[test]
+    fn discarding_clears_the_card_draft_without_saving_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.card_draft = Some(CardDraft::new());
+
+        app.finish_card_editor(CardEditorOutcome::Cancel);
+
+        assert!(app.card_draft.is_none());
+        assert!(app.project.as_ref().unwrap().meta.story_cards.is_empty());
+    }
+
+    #[test]
+    fn saving_persists_the_card_draft_and_clears_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.card_draft = Some(CardDraft::new());
+
+        app.finish_card_editor(CardEditorOutcome::Save);
+
+        assert!(app.card_draft.is_none());
+        assert_eq!(app.project.as_ref().unwrap().meta.story_cards.len(), 1);
     }
 }

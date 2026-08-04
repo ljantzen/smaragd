@@ -5,6 +5,7 @@ pub mod collab_panel;
 pub mod command_prompt;
 pub mod corkboard_panel;
 pub mod editor_panel;
+pub mod exit_confirm_prompt;
 pub mod export_panel;
 pub mod find_replace_panel;
 pub mod markdown_preview;
