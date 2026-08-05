@@ -70,9 +70,13 @@ done
 
 # Refuse to fold unrelated in-progress work into the release commit — jj's
 # working copy is always "the current commit," so anything already sitting
-# there would otherwise get swept in alongside the version bump.
-if [ -n "$(jj diff --stat 2>/dev/null)" ]; then
-    echo "error: working copy has uncommitted changes — describe or stash them first:" >&2
+# there would otherwise get swept in alongside the version bump. Uses jj's
+# own `empty` commit predicate rather than checking whether `jj diff --stat`
+# prints anything — that always prints a "0 files changed..." summary line
+# even for a genuinely empty commit (confirmed on jj 0.41.0), which made this
+# check reject every invocation, clean working copy or not.
+if [ "$(jj log -r @ --no-graph -T 'if(empty, "empty", "not-empty")' 2>/dev/null)" != "empty" ]; then
+    echo "error: the current commit has changes — describe it, then run 'jj new' for a fresh one, before releasing:" >&2
     jj diff --stat >&2
     exit 1
 fi
