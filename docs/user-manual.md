@@ -123,7 +123,7 @@ The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Pr
 - **Drag a tab to an edge** of another tab or the dock area to split the layout and place it side by side
 - **Resize** the dock area, or a floating window, by dragging its edge
 
-Binder and Editor are present from the moment a project is open; Backlinks, Tags, Metadata, Preview, Corkboard, Pomodoro, Word Count, Collaborate, and Streak start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Tags`**, **`View > Preview`**, **`View > Corkboard`**, **`Edit > Document Metadata`**, **`Collaborate > Collaboration Panel`**, or (for Pomodoro, Word Count, and Streak) **`Tools > Pomodoro Timer`**/**`Tools > Word Count`**/**`Tools > Streak`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
+Binder and Editor are present from the moment a project is open; Backlinks, Tags, Metadata, Preview, Corkboard, Pomodoro, Word Count, Collaborate, and Streak start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Tags`**, **`View > Preview`**, **`View > Corkboard`**, **`View > Metadata`**, **`Collaborate > Collaboration Panel`**, or (for Pomodoro, Word Count, and Streak) **`Tools > Pomodoro Timer`**/**`Tools > Word Count`**/**`Tools > Streak`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
 
 The whole arrangement — which tabs are open, how they're split or floated, and window position/size — persists across restarts. **`Window`** menu:
 
@@ -162,7 +162,7 @@ The main panel is a plain-text Markdown editor, borderless and filling the whole
 
 ## Focus Mode
 
-**`View > Focus Mode`** (or **`F9`**) is a distraction-free writing mode, similar to Scrivener's Composition Mode: the window maximizes and all chrome — menu bar, binder, other dock tabs — disappears, leaving just the current document centered in the available width. The paragraph your cursor is in stays at full brightness while other paragraphs dim, a typewriter-style aid for keeping your eye on the sentence you're actually writing.
+**`Tools > Focus Mode`** (or **`F9`**) is a distraction-free writing mode, similar to Scrivener's Composition Mode: the window maximizes and all chrome — menu bar, binder, other dock tabs — disappears, leaving just the current document centered in the available width. The paragraph your cursor is in stays at full brightness while other paragraphs dim, a typewriter-style aid for keeping your eye on the sentence you're actually writing.
 
 Focus Mode needs an open document to enter — with nothing open there's nothing to focus on. Press `Escape` or `F9` again to exit and return to the normal layout.
 
@@ -219,7 +219,7 @@ tags: [action, chapter-3]
 ---
 ```
 
-Open **`Edit > Document Metadata`** (or **`Ctrl+Shift+M`**) to edit these fields through a dockable form (see [Dockable Tool Windows](#dockable-tool-windows)) instead of hand-editing YAML. Unlike a typical dialog, there's no Save/Cancel step — edits apply as you type, the same way typing in the main editor does. Smaragd only ever reads/writes these five keys:
+Open **`View > Metadata`** (or **`Ctrl+Shift+M`**) to edit these fields through a dockable form (see [Dockable Tool Windows](#dockable-tool-windows)) instead of hand-editing YAML. Unlike a typical dialog, there's no Save/Cancel step — edits apply as you type, the same way typing in the main editor does. Smaragd only ever reads/writes these five keys:
 
 | Field | Meaning |
 |---|---|
@@ -723,7 +723,7 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Command Prompt | `Ctrl+:` |
 | Commit (Git) | `Ctrl+Alt+C` |
 | Push (Git) | `Ctrl+Alt+P` |
-| Document Metadata | `Ctrl+Shift+M` |
+| Metadata | `Ctrl+Shift+M` |
 | Activate Wikilink | `Ctrl+Enter` |
 | Toggle Binder/Editor Focus | `F6` |
 | Toggle Focus Mode | `F9` |

@@ -212,21 +212,8 @@ impl SmaragdApp {
                         {
                             self.find_replace.request_open();
                         }
-                        let metadata_shortcut =
-                            self.settings.shortcuts.get(ShortcutAction::EditMetadata);
-                        if nav
-                            .shortcut_button(ui, "Document Metadata", metadata_shortcut)
-                            .clicked()
-                        {
-                            self.toggle_dock_tab(DockTab::Metadata);
-                        }
                     });
                     top_menu_button(ui, "View", egui::Key::V, |ui, nav| {
-                        if nav.button(ui, "Focus Mode").clicked() {
-                            let ctx = ui.ctx().clone();
-                            self.set_focus_mode(&ctx, !self.focus_mode);
-                        }
-                        ui.separator();
                         if nav.button(ui, "Editor").clicked() {
                             self.toggle_dock_tab(DockTab::Editor);
                         }
@@ -242,6 +229,14 @@ impl SmaragdApp {
                         ui.separator();
                         if nav.button(ui, "Binder").clicked() {
                             self.toggle_dock_tab(DockTab::Binder);
+                        }
+                        let metadata_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::EditMetadata);
+                        if nav
+                            .shortcut_button(ui, "Metadata", metadata_shortcut)
+                            .clicked()
+                        {
+                            self.toggle_dock_tab(DockTab::Metadata);
                         }
                         if nav.button(ui, "Backlinks").clicked() {
                             self.toggle_dock_tab(DockTab::Backlinks);
@@ -292,6 +287,11 @@ impl SmaragdApp {
                         nav.track(ui, &theme_trigger);
                     });
                     top_menu_button(ui, "Tools", egui::Key::T, |ui, nav| {
+                        if nav.button(ui, "Focus Mode").clicked() {
+                            let ctx = ui.ctx().clone();
+                            self.set_focus_mode(&ctx, !self.focus_mode);
+                        }
+                        ui.separator();
                         let command_prompt_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::CommandPrompt);
                         if nav

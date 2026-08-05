@@ -114,7 +114,7 @@ impl ShortcutAction {
             Self::CommandPrompt => "Command Prompt",
             Self::GitCommit => "Commit (Git)",
             Self::GitPush => "Push (Git)",
-            Self::EditMetadata => "Document Metadata",
+            Self::EditMetadata => "Metadata",
             Self::ToggleBinderFocus => "Toggle Binder/Editor Focus",
             Self::ToggleFocusMode => "Toggle Focus Mode",
             Self::OpenDocument => "Open Document",

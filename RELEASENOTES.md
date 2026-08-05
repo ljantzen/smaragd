@@ -5,6 +5,11 @@ this file.
 
 ## Unreleased
 
+- Moved Metadata from the Edit menu to View (`View > Metadata`, reordered
+  alongside the other dock tabs: Editor, Preview, Corkboard, Story Grid,
+  Binder, Metadata, Backlinks, Tags, Theme), and moved Focus Mode from View
+  to Tools. Shortcuts (`Ctrl+Shift+M`, `F9`) are unchanged.
+
 ## v0.6.2 — 2026-08-05
 
 - New Project: picking an already-empty folder now creates the project
