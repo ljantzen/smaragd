@@ -229,15 +229,42 @@ impl SmaragdApp {
         }
     }
 
-    /// Open `path` as a genuine switch to a different document — ends any
-    /// active collaboration session first (see `CollabSession`'s module
-    /// doc). Every call site *except* `rename_node`'s post-rename reopen
-    /// goes through here: a rename keeps the same logical document open
-    /// (see `open_document_internal`), so it must not tear down a session
-    /// scoped to it.
+    /// Open `path` as a genuine switch to a different document. Every call
+    /// site *except* `rename_node`'s post-rename reopen goes through here: a
+    /// rename keeps the same logical document open (see
+    /// `open_document_internal`), so it must not touch a session scoped to
+    /// it.
+    ///
+    /// Role-aware collaboration handling (see `CollabSession`'s module
+    /// doc): a *host* switching documents doesn't end the session — the
+    /// next `sync_local_collab_edit` diffs the newly opened buffer against
+    /// the stale baseline and ships the whole new document to the joiner as
+    /// an ordinary (if large) update, so the joiner's view follows along
+    /// automatically. A *joiner* switching documents has no document of
+    /// their own tied to the session (see `start_collab_join`), so this
+    /// asks first via a native Yes/No dialog — matching `delete_node`'s
+    /// confirmation pattern — since it can only proceed by ending the
+    /// session; declining leaves the shared document showing and the
+    /// session alive.
     pub(super) fn open_document(&mut self, path: &Path) {
-        if self.collab.is_some() {
-            self.end_collab_session("Collaboration session ended: switched documents");
+        if let Some(session) = &self.collab {
+            match session.role {
+                CollabRole::Host => {}
+                CollabRole::Joiner => {
+                    let confirmed = rfd::MessageDialog::new()
+                        .set_title("End Collaboration Session")
+                        .set_description(
+                            "Opening another document will end the collaboration session. Continue?",
+                        )
+                        .set_level(rfd::MessageLevel::Warning)
+                        .set_buttons(rfd::MessageButtons::YesNo)
+                        .show();
+                    if confirmed != rfd::MessageDialogResult::Yes {
+                        return;
+                    }
+                    self.end_collab_session("Collaboration session ended: switched documents");
+                }
+            }
         }
         self.open_document_internal(path);
     }
@@ -427,5 +454,24 @@ mod tests {
         app.create_project(&ctx, location.path(), "My Novel", "blank");
 
         assert!(app.project.is_none());
+    }
+
+    /// Regression test for the host side of the role-aware collaboration
+    /// behavior: a host switching documents must not tear the session down
+    /// (see `open_document`'s doc comment) — the joiner's view instead
+    /// follows along via the ordinary per-frame diff/sync path.
+    #[test]
+    fn hosting_and_opening_another_document_keeps_the_session_alive() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_path = dir.path().join("doc.md");
+        fs::write(&doc_path, "hello").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.collab = Some(CollabSession::test_fixture(CollabRole::Host));
+
+        app.open_document(&doc_path);
+
+        assert!(app.collab.is_some());
+        assert_eq!(app.editor.open_path.as_deref(), Some(doc_path.as_path()));
+        assert_eq!(app.editor.buffer, "hello");
     }
 }

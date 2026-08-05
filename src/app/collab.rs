@@ -105,8 +105,22 @@ impl SmaragdApp {
                                 range.primary.index.0,
                             )
                         });
+                    let old_len = self.editor.buffer.len();
                     self.editor.buffer = new_text;
                     self.editor.mark_dirty();
+                    // Heuristic, not a protocol-level signal (no wire
+                    // changes needed for this): a `TextChange` that deletes
+                    // the whole previous buffer from position 0 looks the
+                    // same whether it's the host switching documents (see
+                    // `open_document`) or an ordinary "select all, paste
+                    // something else"/"replace all" edit that happens to
+                    // touch everything — the latter is an accepted, minor
+                    // false-positive here. `old_len > 0` excludes the
+                    // initial empty-to-full bootstrap on first connect,
+                    // which isn't a "switch".
+                    if change.pos == 0 && change.deleted_len == old_len && old_len > 0 {
+                        self.set_status_message("Your collaborator switched documents");
+                    }
                     if let Some(cursor_byte) = cursor_byte {
                         let adjusted = crate::collab::diff::adjust_cursor(cursor_byte, &change);
                         ui::editor_panel::move_cursor_to(

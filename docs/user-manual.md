@@ -536,7 +536,7 @@ Both sides just type normally in the Editor tab; there's no separate "collaborat
 
 The panel shows **Connected to peer `<fingerprint>`** once pairing completes — a short id derived from the peer's network identity, useful for confirming you're connected to who you think you are, not a name either side chooses. **End Session** stops collaborating; the document itself is unaffected and stays open normally afterward.
 
-A session also ends automatically if you open a different document, close the current one, or your collaborator's connection drops (network loss, or they closed their side) — the panel then shows **"Lost connection to your collaborator"**. There's no automatic reconnection: start a fresh **Host Session**/**Join Session…** to resume.
+What opening a different document does depends on which side you're on. If you're **hosting**, switching to another document keeps the session running — your collaborator's view follows along to the new document automatically, with a status message ("Your collaborator switched documents") to explain why their editor content just changed. If you're the one who **joined**, opening one of your own documents has nowhere to put the shared one, so you're asked to confirm first: decline and the shared document keeps showing with the session still live, confirm and the session ends before your document opens. Either side **closing** the current document, or your collaborator's connection dropping (network loss, or they closed their side), still ends the session immediately with no prompt — the panel then shows **"Lost connection to your collaborator"** for a drop. There's no automatic reconnection: start a fresh **Host Session**/**Join Session…** to resume.
 
 ### Privacy and security
 

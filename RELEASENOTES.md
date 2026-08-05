@@ -9,6 +9,15 @@ this file.
   alongside the other dock tabs: Editor, Preview, Corkboard, Story Grid,
   Binder, Metadata, Backlinks, Tags, Theme), and moved Focus Mode from View
   to Tools. Shortcuts (`Ctrl+Shift+M`, `F9`) are unchanged.
+- Collaboration sessions no longer end unconditionally when either side
+  opens a different document. Hosting and switching documents now keeps
+  the session alive — the collaborator's view follows along to the new
+  document automatically, with a status message noting the switch.
+  Joining and opening one of your own documents now asks for confirmation
+  first, since that still has to end the session; declining leaves the
+  shared document open and the session running. Closing the current
+  document, either side, is unchanged and still ends the session
+  immediately.
 
 ## v0.6.2 — 2026-08-05
 

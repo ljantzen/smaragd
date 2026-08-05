@@ -31,7 +31,7 @@ use prompt::{PendingPrompt, PromptAction};
 use refresh::{BacklinksState, MetadataState, TagsState, WordCountState};
 use toast::Toast;
 
-use crate::collab::{CollabSession, SessionUpdate};
+use crate::collab::{CollabRole, CollabSession, SessionUpdate};
 use crate::editor::EditorState;
 use crate::frontmatter::DocumentMeta;
 use crate::project::{BacklinkEntry, LoadError, Project, RestoreError};

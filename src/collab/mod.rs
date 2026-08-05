@@ -178,6 +178,27 @@ impl CollabSession {
         }
     }
 
+    /// A fake session for tests that need a `CollabSession` in a given role
+    /// without any real networking — same raw-struct-literal approach as
+    /// `poll_reports_disconnect_once_not_every_frame_after` below, just
+    /// exposed for use from outside this module (e.g.
+    /// `app::project_lifecycle`'s tests).
+    #[cfg(test)]
+    pub(crate) fn test_fixture(role: CollabRole) -> Self {
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = std::sync::mpsc::channel();
+        Self {
+            handle: CollabHandle { cmd_tx, event_rx },
+            role,
+            code: None,
+            peer_connected: true,
+            peer_fingerprint: None,
+            session_ended: false,
+            doc: crdt::CrdtDoc::new(),
+            last_synced_text: String::new(),
+        }
+    }
+
     /// Ends the session: tells the background thread to stop, then drops
     /// its channels — the thread tears down its connection/endpoint/runtime
     /// and exits on its own.
