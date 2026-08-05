@@ -101,18 +101,37 @@ impl SmaragdApp {
 
     /// Start the "New Project" flow: first the template-choice modal (see
     /// `start_new_project_with_template` for the rest of the flow, once a template's
-    /// been chosen).
+    /// been chosen). On a genuine first launch, pre-selects the richer
+    /// World-Building template instead of defaulting to Blank — a first-time user
+    /// benefits more from seeing what a scaffolded project looks like than from
+    /// today's "just an empty project" default.
     pub(super) fn start_new_project(&mut self) {
-        self.new_project_template_prompt.request_open();
+        if self.settings.is_first_launch() {
+            self.new_project_template_prompt
+                .request_open_preferring("worldbuilding", &self.project_templates);
+        } else {
+            self.new_project_template_prompt.request_open();
+        }
     }
 
-    /// Continue "New Project" once `template_id` has been chosen: pick a parent
-    /// folder via the native folder picker, then prompt for the new project's name
-    /// via the existing name-prompt modal.
-    pub(super) fn start_new_project_with_template(&mut self, template_id: String) {
+    /// Continue "New Project" once `template_id` has been chosen: pick a folder via
+    /// the native folder picker. If that folder is empty, there's nothing useful a
+    /// project name would add beyond what the folder is already called, so the
+    /// project is created directly in it, skipping the name-prompt modal. Otherwise
+    /// (a non-empty folder, meant as the *parent* for a new subfolder), prompt for
+    /// the new project's name via the existing name-prompt modal.
+    pub(super) fn start_new_project_with_template(
+        &mut self,
+        ctx: &egui::Context,
+        template_id: String,
+    ) {
         let Some(location) = rfd::FileDialog::new().pick_folder() else {
             return;
         };
+        if is_empty_dir(&location) {
+            self.initialize_and_set_project(ctx, &location, &template_id);
+            return;
+        }
         self.prompt = Some(PendingPrompt {
             action: PromptAction::NewProject {
                 location,
@@ -137,7 +156,14 @@ impl SmaragdApp {
             self.push_error_toast(format!("{} already exists", root.display()));
             return;
         }
-        match Project::initialize(&root) {
+        self.initialize_and_set_project(ctx, &root, template_id);
+    }
+
+    /// Shared tail end of both "New Project" paths: initialize `root` as a fresh
+    /// smaragd project, apply `template_id`'s scaffolding, and make it the open
+    /// project.
+    fn initialize_and_set_project(&mut self, ctx: &egui::Context, root: &Path, template_id: &str) {
+        match Project::initialize(root) {
             Ok(mut project) => {
                 // An id that no longer resolves (e.g. a custom template deleted
                 // between picker and confirm) is treated as "no scaffolding" rather
@@ -147,7 +173,7 @@ impl SmaragdApp {
                         .and_then(|template| template.apply(&mut project).err());
                 // `set_project` unconditionally clears `status_message`, so a
                 // template-apply error must be recorded after it runs, not before.
-                self.set_project(ctx, project, &root);
+                self.set_project(ctx, project, root);
                 if let Some(err) = template_error {
                     self.push_error_toast(format!("Couldn't apply template: {err}"));
                 }
@@ -300,6 +326,13 @@ impl SmaragdApp {
     }
 }
 
+/// True if `path` is a directory containing no entries at all — including dotfiles,
+/// so a bare `.git` or `.smaragd` left behind still counts as "not empty" and routes
+/// through the name-prompt flow rather than being silently adopted in place.
+fn is_empty_dir(path: &Path) -> bool {
+    fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,5 +388,40 @@ mod tests {
         app.open_project(&ctx, dir.path());
 
         assert!(!app.project.as_ref().unwrap().meta.git_prompted);
+    }
+
+    #[test]
+    fn is_empty_dir_is_true_only_for_a_directory_with_no_entries_at_all() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(is_empty_dir(dir.path()));
+
+        // A dotfile still counts as an entry.
+        fs::write(dir.path().join(".gitkeep"), "").unwrap();
+        assert!(!is_empty_dir(dir.path()));
+    }
+
+    #[test]
+    fn create_project_creates_a_named_subfolder_under_the_chosen_location() {
+        let location = tempfile::tempdir().unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+
+        app.create_project(&ctx, location.path(), "My Novel", "blank");
+
+        let root = location.path().join("My Novel");
+        assert!(root.is_dir());
+        assert_eq!(app.project.as_ref().unwrap().root, root);
+    }
+
+    #[test]
+    fn create_project_refuses_to_overwrite_an_existing_folder() {
+        let location = tempfile::tempdir().unwrap();
+        fs::create_dir(location.path().join("My Novel")).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+
+        app.create_project(&ctx, location.path(), "My Novel", "blank");
+
+        assert!(app.project.is_none());
     }
 }

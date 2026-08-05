@@ -267,10 +267,18 @@ mod dock_layout_persistence_tests {
     }
 
     #[test]
-    fn default_dock_state_has_exactly_binder_and_editor() {
+    fn default_dock_state_has_exactly_binder_editor_metadata_and_backlinks() {
         let state = super::super::dock::default_dock_state();
 
-        assert_eq!(tab_set(&state), vec![DockTab::Binder, DockTab::Editor]);
+        assert_eq!(
+            tab_set(&state),
+            vec![
+                DockTab::Backlinks,
+                DockTab::Binder,
+                DockTab::Editor,
+                DockTab::Metadata,
+            ]
+        );
     }
 
     #[test]
@@ -322,7 +330,15 @@ mod dock_layout_persistence_tests {
 
         super::super::dock::ensure_editor_tab_present(&mut state);
 
-        assert_eq!(tab_set(&state), vec![DockTab::Binder, DockTab::Editor]);
+        assert_eq!(
+            tab_set(&state),
+            vec![
+                DockTab::Backlinks,
+                DockTab::Binder,
+                DockTab::Editor,
+                DockTab::Metadata,
+            ]
+        );
     }
 
     #[test]
@@ -353,3 +369,4 @@ mod dock_layout_persistence_tests {
         );
     }
 }
+

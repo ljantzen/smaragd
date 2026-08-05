@@ -164,7 +164,7 @@ pub struct SmaragdApp {
     /// Every selectable color theme: the 15 built-ins plus whatever `*.toml` files
     /// are in `color_theme::global_themes_dir()`. Rebuilt by `reload_color_themes`.
     color_themes: Vec<crate::color_theme::ColorTheme>,
-    /// Every selectable project template: the 4 built-ins plus whatever custom
+    /// Every selectable project template: the 5 built-ins plus whatever custom
     /// templates are in `project_template::global_project_templates_dir()`.
     /// Rebuilt by `reload_project_templates`.
     project_templates: Vec<crate::project_template::ProjectTemplate>,
@@ -405,7 +405,7 @@ impl SmaragdApp {
         }
     }
 
-    /// Rebuild `project_templates` from the 4 built-ins plus whatever custom
+    /// Rebuild `project_templates` from the 5 built-ins plus whatever custom
     /// templates are currently in `project_template::global_project_templates_dir()`
     /// — called on startup, and after `save_project_as_template` succeeds so a
     /// newly saved template is immediately selectable without restarting.
@@ -931,7 +931,7 @@ impl SmaragdApp {
                 &self.project_templates,
             )
         {
-            self.start_new_project_with_template(template_id);
+            self.start_new_project_with_template(ui.ctx(), template_id);
         }
 
         if self.show_about && ui::about_panel::show(ui.ctx()) {
@@ -1333,6 +1333,8 @@ impl eframe::App for SmaragdApp {
                             self.handle_collab_panel_event(ui.ctx(), event)
                         }
                         DockAction::Streak(event) => self.handle_streak_event(event),
+                        DockAction::RequestNewProject => self.start_new_project(),
+                        DockAction::RequestOpenProject => self.browse_for_project(ui.ctx()),
                     }
                 }
             });

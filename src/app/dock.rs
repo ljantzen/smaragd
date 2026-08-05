@@ -25,20 +25,31 @@ pub(super) enum DockTab {
 
 /// The initial dock layout for a fresh install (no persisted `dock_layout.json`
 /// yet), and the "Restore Default Layout" Window-menu action: a narrow Binder
-/// column on the left, Editor filling the rest — the same visual arrangement
-/// this app always had back when Binder's dock and the editor were two
-/// separate, non-`egui_dock` layout systems (a fixed-width side `Panel` and a
-/// `CentralPanel`, respectively).
+/// column on the left, Editor filling the middle, and a Metadata/Backlinks
+/// column on the right — enough for a first-time user to see what the app can
+/// do without opening any menus, while staying short of the full tab roster
+/// (Tags/Pomodoro/WordCount/Collab/Streak all still start closed, reachable
+/// from the Window menu).
 pub(super) fn default_dock_state() -> egui_dock::DockState<DockTab> {
     let mut state = egui_dock::DockState::new(vec![DockTab::Editor]);
-    // `split_left`'s `fraction` is the *new* (left/Binder) node's share, despite
-    // its doc comment's wording ("how much of the parent's area the old node
-    // will occupy") — confirmed empirically: 0.78 here actually gave Binder 78%
-    // of the width and Editor the remaining 22%, the opposite of intended. 0.22
-    // gives Binder a narrow column and leaves Editor the majority.
-    state
+    // `fraction` is always the *first* (left/top) child's share, regardless of
+    // which side gets the newly-split-off node — confirmed empirically.
+    // `split_left` puts the *new* node on the left (child 0), so 0.22 there
+    // gives Binder a narrow column and leaves Editor the majority. `split_right`
+    // instead puts the *old* node on the left (child 0) and the new one on the
+    // right, so the fraction has to be inverted: 0.75 keeps Editor's share and
+    // leaves Metadata the narrow remainder — passing the same 0.25 as above
+    // would have swapped their proportions (Metadata mistakenly getting the
+    // majority) rather than mirroring it.
+    let [editor, _binder] = state
         .main_surface_mut()
         .split_left(egui_dock::NodeIndex::root(), 0.22, vec![DockTab::Binder]);
+    let [_editor, metadata] = state
+        .main_surface_mut()
+        .split_right(editor, 0.75, vec![DockTab::Metadata]);
+    state
+        .main_surface_mut()
+        .split_below(metadata, 0.5, vec![DockTab::Backlinks]);
     state
 }
 

@@ -1,4 +1,4 @@
-//! Scrivener-style project templates: built-in Blank/Novel/Nonfiction/Screenplay
+//! Scrivener-style project templates: built-in Blank/Novel/Nonfiction/Screenplay/World-Building
 //! scaffolds, plus user-saved custom templates loaded from a `template.toml` +
 //! `content/` directory pair in [`global_project_templates_dir`] (see [`load`]).
 //! Applied to a freshly-`Project::initialize`d project by `SmaragdApp::
@@ -169,7 +169,55 @@ fn screenplay_template() -> ProjectTemplate {
     }
 }
 
-/// The 4 built-in templates, Blank first — the template picker's default
+fn world_building_template() -> ProjectTemplate {
+    ProjectTemplate {
+        id: "worldbuilding".to_string(),
+        label: "World-Building".to_string(),
+        description:
+            "Manuscript and Research, plus a World folder for characters, locations, and items, and starter document templates."
+                .to_string(),
+        entries: vec![
+            TemplateEntry::folder(
+                "Manuscript",
+                vec![TemplateEntry::document("Chapter 1.md", "# Chapter 1\n\n")],
+            ),
+            TemplateEntry::folder("Research", vec![]),
+            TemplateEntry::folder(
+                "World",
+                vec![
+                    TemplateEntry::folder(
+                        "Characters",
+                        vec![
+                            TemplateEntry::folder("Main Characters", vec![]),
+                            TemplateEntry::folder("Supporting Characters", vec![]),
+                        ],
+                    ),
+                    TemplateEntry::folder("Locations", vec![]),
+                    TemplateEntry::folder("Items", vec![]),
+                ],
+            ),
+            TemplateEntry::folder(
+                "Templates",
+                vec![
+                    TemplateEntry::document(
+                        "Character.md",
+                        "# ${{name}}\n\n## Want\n\n## Misbelief\n\n## Need\n\n",
+                    ),
+                    TemplateEntry::document("Location.md", "# ${{name}}\n\n"),
+                ],
+            ),
+            TemplateEntry::folder("Trash", vec![]),
+        ],
+        folder_roles: HashMap::from([
+            ("Manuscript".to_string(), FolderRole::Manuscript),
+            ("Research".to_string(), FolderRole::Research),
+            ("Templates".to_string(), FolderRole::Templates),
+            ("Trash".to_string(), FolderRole::Trash),
+        ]),
+    }
+}
+
+/// The 5 built-in templates, Blank first — the template picker's default
 /// selection, and the only one that reproduces today's "just an empty project"
 /// New Project behavior exactly.
 pub fn built_in_templates() -> Vec<ProjectTemplate> {
@@ -178,6 +226,7 @@ pub fn built_in_templates() -> Vec<ProjectTemplate> {
         novel_template(),
         nonfiction_template(),
         screenplay_template(),
+        world_building_template(),
     ]
 }
 
@@ -455,14 +504,14 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn there_are_four_built_in_templates() {
-        assert_eq!(built_in_templates().len(), 4);
+    fn there_are_five_built_in_templates() {
+        assert_eq!(built_in_templates().len(), 5);
     }
 
     #[test]
     fn built_in_template_ids_are_unique() {
         let ids: HashSet<_> = built_in_templates().into_iter().map(|t| t.id).collect();
-        assert_eq!(ids.len(), 4);
+        assert_eq!(ids.len(), 5);
     }
 
     #[test]
@@ -483,14 +532,14 @@ mod tests {
     #[test]
     fn load_is_just_the_built_ins_when_no_custom_template_dirs_exist() {
         let (templates, errors) = load(&[]);
-        assert_eq!(templates.len(), 4);
+        assert_eq!(templates.len(), 5);
         assert!(errors.is_empty());
     }
 
     #[test]
     fn a_missing_directory_is_not_an_error() {
         let (templates, errors) = load(&[Path::new("/does/not/exist")]);
-        assert_eq!(templates.len(), 4);
+        assert_eq!(templates.len(), 5);
         assert!(errors.is_empty());
     }
 
@@ -537,7 +586,7 @@ mod tests {
 
         let (templates, errors) = load(&[dir.path()]);
 
-        assert_eq!(templates.len(), 4, "the built-in Novel should win");
+        assert_eq!(templates.len(), 5, "the built-in Novel should win");
         assert_eq!(
             find(&templates, "novel").map(|t| t.label.as_str()),
             Some("Novel")
@@ -552,7 +601,7 @@ mod tests {
 
         let (templates, errors) = load(&[dir.path()]);
 
-        assert_eq!(templates.len(), 4);
+        assert_eq!(templates.len(), 5);
         assert_eq!(errors.len(), 1);
     }
 
@@ -597,6 +646,54 @@ mod tests {
         assert_eq!(
             project.folder_role(&dir.path().join("Research")),
             Some(FolderRole::Research)
+        );
+        assert_eq!(
+            project.folder_role(&dir.path().join("Trash")),
+            Some(FolderRole::Trash)
+        );
+    }
+
+    #[test]
+    fn apply_world_building_template_creates_expected_folders_and_tags_roles() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        world_building_template().apply(&mut project).unwrap();
+
+        let mut names: Vec<_> = project
+            .tree
+            .root
+            .children()
+            .iter()
+            .map(|n| n.name.clone())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["Manuscript", "Research", "Templates", "Trash", "World"]
+        );
+        let world = dir.path().join("World");
+        let mut world_children: Vec<_> = project
+            .tree
+            .find_by_path(&world)
+            .expect("World folder created")
+            .children()
+            .iter()
+            .map(|n| n.name.clone())
+            .collect();
+        world_children.sort();
+        assert_eq!(world_children, vec!["Characters", "Items", "Locations"]);
+        assert_eq!(
+            project.folder_role(&dir.path().join("Manuscript")),
+            Some(FolderRole::Manuscript)
+        );
+        assert_eq!(
+            project.folder_role(&dir.path().join("Research")),
+            Some(FolderRole::Research)
+        );
+        assert_eq!(
+            project.folder_role(&dir.path().join("Templates")),
+            Some(FolderRole::Templates)
         );
         assert_eq!(
             project.folder_role(&dir.path().join("Trash")),

@@ -19,6 +19,19 @@ impl NewProjectTemplatePromptState {
         self.open = true;
         self.selected = 0; // Blank, first in the list
     }
+
+    /// Like `request_open`, but starts the radio selection on `preferred_id`
+    /// instead of Blank — used to steer a genuine first launch (see
+    /// `Settings::is_first_launch`) toward a richer starting template than an
+    /// empty project. Falls back to Blank if `preferred_id` isn't found (e.g. a
+    /// build where it's been renamed or removed).
+    pub fn request_open_preferring(&mut self, preferred_id: &str, templates: &[ProjectTemplate]) {
+        self.open = true;
+        self.selected = templates
+            .iter()
+            .position(|template| template.id == preferred_id)
+            .unwrap_or(0);
+    }
 }
 
 /// Renders the modal. Returns `Some(template_id)` the frame "Choose" is clicked;
@@ -68,4 +81,49 @@ pub fn show(
         state.open = false;
     }
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn templates() -> Vec<ProjectTemplate> {
+        crate::project_template::built_in_templates()
+    }
+
+    #[test]
+    fn request_open_preferring_selects_the_matching_template() {
+        let templates = templates();
+        let worldbuilding_index = templates
+            .iter()
+            .position(|t| t.id == "worldbuilding")
+            .expect("worldbuilding is a built-in template");
+        let mut state = NewProjectTemplatePromptState::default();
+
+        state.request_open_preferring("worldbuilding", &templates);
+
+        assert!(state.open);
+        assert_eq!(state.selected, worldbuilding_index);
+    }
+
+    #[test]
+    fn request_open_preferring_falls_back_to_blank_for_an_unknown_id() {
+        let templates = templates();
+        let mut state = NewProjectTemplatePromptState::default();
+
+        state.request_open_preferring("does-not-exist", &templates);
+
+        assert_eq!(state.selected, 0);
+    }
+
+    #[test]
+    fn request_open_always_resets_to_blank() {
+        let templates = templates();
+        let mut state = NewProjectTemplatePromptState::default();
+        state.request_open_preferring("worldbuilding", &templates);
+
+        state.request_open();
+
+        assert_eq!(state.selected, 0);
+    }
 }

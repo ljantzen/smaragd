@@ -17,6 +17,13 @@ pub(super) enum DockAction {
     WordCount(crate::ui::word_count_panel::WordCountEvent),
     Collab(CollabPanelEvent),
     Streak(crate::ui::streak_panel::StreakEvent),
+    /// Raised by the Binder tab's empty state (no project open) when the user
+    /// clicks "New Project" / "Open Project" — routed through `DockAction`
+    /// like every other tab-originated request rather than reaching for
+    /// `self.app` directly, since `AppTabViewer` only ever borrows app state,
+    /// it doesn't own a way to mutate it (see this struct's own doc comment).
+    RequestNewProject,
+    RequestOpenProject,
 }
 
 /// A short-lived `egui_dock::TabViewer` impl, constructed fresh each frame right
@@ -108,7 +115,18 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     }
                 }
                 None => {
-                    ui.label("Open a project folder to get started.");
+                    ui.add_space(12.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label("No project open.");
+                        ui.add_space(8.0);
+                        if ui.button("New Project…").clicked() {
+                            self.actions.push(DockAction::RequestNewProject);
+                        }
+                        ui.add_space(4.0);
+                        if ui.button("Open Project…").clicked() {
+                            self.actions.push(DockAction::RequestOpenProject);
+                        }
+                    });
                 }
             },
             DockTab::Backlinks => {

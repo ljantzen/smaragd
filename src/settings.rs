@@ -242,6 +242,16 @@ impl Settings {
         self.recent_project_paths.truncate(MAX_RECENT_PROJECTS);
     }
 
+    /// Whether smaragd has never opened a project before — no `last_project_path`
+    /// and no `recent_project_paths` entries. Both are set together in
+    /// `SmaragdApp::set_project`, so either alone suffices, but checking both
+    /// guards against a hand-edited settings file clearing just one. Used to
+    /// decide whether "New Project" should default to the richer World-Building
+    /// template instead of Blank (see `SmaragdApp::start_new_project`).
+    pub fn is_first_launch(&self) -> bool {
+        self.last_project_path.is_none() && self.recent_project_paths.is_empty()
+    }
+
     /// Resolve `ui_scale`'s blank-means-unset (`0.0`) convention to an actual
     /// `egui::Context::set_zoom_factor` multiplier — same shape as
     /// `editor_font::resolve_size`/`pomodoro::resolve_durations`.
@@ -319,6 +329,27 @@ mod tests {
         assert!(!settings.reopen_last_project);
         assert_eq!(settings.last_project_path, None);
         assert!(settings.recent_project_paths.is_empty());
+    }
+
+    #[test]
+    fn is_first_launch_is_true_only_before_any_project_has_ever_been_opened() {
+        let mut settings = Settings::default();
+        assert!(settings.is_first_launch());
+
+        settings.record_recent_project(Path::new("/home/author/first"));
+        assert!(
+            !settings.is_first_launch(),
+            "recording a recent project should end first-launch status even without last_project_path set"
+        );
+    }
+
+    #[test]
+    fn is_first_launch_is_false_once_last_project_path_is_set() {
+        let settings = Settings {
+            last_project_path: Some(PathBuf::from("/home/author/first")),
+            ..Default::default()
+        };
+        assert!(!settings.is_first_launch());
     }
 
     #[test]
