@@ -18,6 +18,7 @@ This manual covers what the app does and how to use it. For internals (source la
 - [Wikilinks](#wikilinks)
 - [Backlinks](#backlinks)
 - [Document Metadata (Frontmatter)](#document-metadata-frontmatter)
+- [Project Metadata](#project-metadata)
 - [Tags](#tags)
 - [Folder Roles: Research, Trash, Templates, Manuscript](#folder-roles-research-trash-templates-manuscript)
 - [Export](#export)
@@ -147,6 +148,7 @@ The left-hand panel is the **binder** — a tree view of your project folder, on
   - **Restore** (on a trashed item) — moves it back to its original folder, offering to recreate that folder if it's gone since
   - **Folder Role** / **Dropdown Source** / **Empty Trash** (folders only) — see [Folder Roles](#folder-roles-research-trash-templates-manuscript) and [Dropdown Source Folders](#dropdown-source-folders)
 - A folder with a role assigned shows a leading icon instead of a text label: 🔍 Research, 🗑 Trash, 📋 Templates, 📖 Manuscript
+- **Click the root row** (the project itself, at the very top of the tree) to switch the Metadata dock over to project-wide fields — see [Project Metadata](#project-metadata). The row gets the same persistent highlight a selected document gets, and clicking it also toggles the whole tree open/closed, the same as clicking any other folder row does
 
 ## Writing and the Editor
 
@@ -242,6 +244,18 @@ A few things worth knowing:
 - **"(none)"** is always the first dropdown entry, for clearing the field.
 - Not recursive: only documents placed directly inside the assigned folder count, the same limitation [Templates](#folder-roles-research-trash-templates-manuscript) has.
 
+## Project Metadata
+
+Alongside per-document frontmatter, a project itself carries a handful of project-wide fields — a Title/Subtitle/Author, a one-line **Logline**, a **What if** premise question, and a longer **Synopsis** — for the book as a whole rather than any one document.
+
+Rather than opening yet another dock tab, these reuse the same Metadata dock [Document Metadata](#document-metadata-frontmatter) already uses: click the root row at the very top of the [Binder](#the-binder) (the project itself) and the Metadata dock switches over to this form instead of a document's frontmatter. Clicking any document row switches it back.
+
+- **Title** and **Author** are the same fields the [Export](#export) dialog's Title/Author use — editing them here or there keeps both in sync.
+- **Subtitle** feeds into export the same way — see [Export](#export) for exactly where it shows up in each output format.
+- **Logline**, **What if**, and **Synopsis** are new fields with no other home yet; they don't currently appear anywhere in an exported DOCX/EPUB/PDF.
+
+Like Document Metadata, there's no Save/Cancel step — edits apply as you type. Logline/What if/Synopsis evenly split whatever vertical space is left in the tab below Title/Subtitle/Author; Synopsis (the field most likely to run long) keeps its scrollbar always visible, while Logline/What if only show theirs once there's actually more text than fits.
+
 ## Tags
 
 Beyond the `tags:` list in [Document Metadata](#document-metadata-frontmatter), you can tag a document by writing `#tag` directly in its body — e.g. "Alice discovers the #mystery behind her mother's disappearance." A tag needs at least one letter (so `#42`, a footnote- or issue-style reference, is never mistaken for one), can include digits/`_`/`-`/`/` after the first letter, and ends at the first character outside that set — `/` lets you nest tags, e.g. `#projects/smaragd`.
@@ -305,9 +319,15 @@ Right-click any folder in the binder and choose **Export…** to compile it — 
 
 The export dialog has:
 
-- **Title** / **Author** — plain book metadata, remembered for next time.
+- **Title** / **Subtitle** / **Author** — plain book metadata, remembered for next time (the same fields shown in [Project Metadata](#project-metadata) — editing them in either place keeps both in sync). Subtitle is optional; leave it blank if your book doesn't have one.
 - **Style** — a dropdown of typesetting styles (see below). Fonts, page size, running headers, and drop caps all come from whichever style is selected, not from anything typed into this dialog.
-- **Export as DOCX…** / **Export as EPUB…** / **Export as Print PDF…** — each opens a native "Save As" dialog, then compiles.
+- **Export as DOCX…** / **Export as EPUB…** / **Export as Print PDF…** — each opens a native "Save As" dialog (defaulting to a filename built from Title/Subtitle — `"Title - Subtitle.docx"`, falling back to whichever one is set, or `manuscript.docx` if neither is), then compiles.
+
+Title/Subtitle/Author show up differently per format:
+
+- **DOCX/PDF** get a centered title page before the manuscript — Title, then Subtitle (if set), then Author.
+- **EPUB** has no title-page concept (it's reflowable text, not paginated), so Subtitle instead folds into the book's title metadata as `"Title: Subtitle"` — that's what shows up as the book's title in a reader/library view.
+- A custom style's **running header** (see below) can reference `{subtitle}` alongside `{title}`/`{author}`/`{chapter}`.
 
 All three formats read from the *same* style, so switching styles changes DOCX, EPUB, and PDF output alike — closer to how a book-design tool like Deckle Studio treats "one style set drives every output" than to a plain markdown-to-Word converter.
 
@@ -368,7 +388,7 @@ left = "{author}"
 right = "{chapter}"
 ```
 
-`{title}`/`{author}` are substituted with whatever's typed into the export dialog; `{chapter}` (supported as a whole side's content, not mixed with other text) shows the current chapter on the print PDF specifically — DOCX and EPUB don't have a per-page "current chapter" concept, so a `{chapter}` token is just left blank there.
+`{title}`/`{subtitle}`/`{author}` are substituted with whatever's typed into the export dialog; `{chapter}` (supported as a whole side's content, not mixed with other text) shows the current chapter on the print PDF specifically — DOCX and EPUB don't have a per-page "current chapter" concept, so a `{chapter}` token is just left blank there.
 
 **"Libertinus Serif" and "DejaVu Sans Mono"** (the built-in styles' fonts) aren't arbitrary choices — they're guaranteed available to the PDF renderer specifically, bundled with smaragd itself rather than depending on what's installed on your system. A custom style naming some other font still works for DOCX/EPUB (which just reference a font by name, the same way any other document does — Word/an e-reader substitutes if it's not installed), and for PDF too if that font happens to be installed locally; if not, the PDF falls back to *some* available font rather than failing the export.
 
