@@ -80,10 +80,11 @@ pub struct DropCapStyle {
 }
 
 /// A running header's left/right content, each a template string supporting
-/// `{title}`/`{author}`/`{chapter}` tokens (substituted per-renderer — PDF can
-/// do a real per-page "current chapter" lookback, DOCX/EPUB use the book
-/// title/author since neither format renders our running header per-chapter
-/// the same dynamic way — see each renderer for exactly what it fills in).
+/// `{title}`/`{subtitle}`/`{author}`/`{chapter}` tokens (substituted
+/// per-renderer — PDF can do a real per-page "current chapter" lookback,
+/// DOCX/EPUB use the book title/author since neither format renders our
+/// running header per-chapter the same dynamic way — see each renderer for
+/// exactly what it fills in).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunningHeaderStyle {
     pub left: String,

@@ -7,6 +7,7 @@ use super::*;
 pub(super) enum DockAction {
     OpenDocument(PathBuf),
     Binder(BinderEvent),
+    ProjectMeta(crate::ui::metadata_panel::ProjectMetaEvent),
     RefreshBacklinks,
     RefreshTags,
     EditorSaveError(String),
@@ -46,6 +47,10 @@ pub(super) struct AppTabViewer<'a> {
     pub(super) tags_search_text: &'a mut String,
     pub(super) tag_search_results: &'a [(PathBuf, String)],
     pub(super) metadata_draft: &'a mut MetadataDraft,
+    /// See `SmaragdApp`'s `MetadataState::project_selected` — when true, the
+    /// Metadata dock shows `ui::metadata_panel::show_project` (the binder's
+    /// root project row) instead of the open document's frontmatter.
+    pub(super) project_metadata_selected: bool,
     pub(super) editor: &'a mut EditorState,
     pub(super) settings: &'a Settings,
     pub(super) color_themes: &'a [crate::color_theme::ColorTheme],
@@ -110,6 +115,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         project,
                         self.selected_path,
                         self.focus_binder_requested,
+                        self.project_metadata_selected,
                     ) {
                         self.actions.push(DockAction::Binder(event));
                     }
@@ -159,6 +165,16 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     }
                 }
             }
+            DockTab::Metadata if self.project_metadata_selected => match self.project {
+                Some(project) => {
+                    if let Some(event) = ui::metadata_panel::show_project(ui, project) {
+                        self.actions.push(DockAction::ProjectMeta(event));
+                    }
+                }
+                None => {
+                    ui.label("Open a project to edit its metadata.");
+                }
+            },
             DockTab::Metadata => {
                 let project = self.project;
                 let picklist_titles = |field: crate::project::PicklistField| -> Vec<String> {

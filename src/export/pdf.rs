@@ -44,6 +44,7 @@ pub fn export_pdf(
     out_path: &Path,
 ) -> Result<f32, ExportError> {
     let mut source = generate_preamble(meta, style);
+    source.push_str(&title_page_typst(meta, style));
     for doc in docs {
         source.push_str("#pagebreak()\n");
         let doc_dir = doc.source_path.parent().unwrap_or(project_root);
@@ -150,6 +151,45 @@ fn generate_preamble(meta: &BookMeta, style: &TypesetStyle) -> String {
     s
 }
 
+/// A centered Title/Subtitle/Author page rendered before the manuscript —
+/// mirrors `docx::export_docx`'s equivalent title-page paragraphs. Empty when
+/// none of the three fields are set, so a never-filled-in `BookMeta` (the
+/// common case before a project's Export dialog has been used even once)
+/// changes nothing about the resulting PDF versus before this existed; the
+/// loop in `export_pdf` supplies the `#pagebreak()` that separates it from
+/// the first chapter, same as it already does between every other pair of
+/// chapters, so this doesn't add one of its own.
+fn title_page_typst(meta: &BookMeta, style: &TypesetStyle) -> String {
+    if meta.title.is_empty() && meta.subtitle.is_empty() && meta.author.is_empty() {
+        return String::new();
+    }
+    let mut s = String::new();
+    s.push_str("#align(center + horizon)[\n");
+    if !meta.title.is_empty() {
+        s.push_str(&format!(
+            "#text(font: \"{}\", size: 28pt, weight: \"bold\")[{}]\n\n",
+            escape_typst(&style.headings.font),
+            escape_typst(&meta.title)
+        ));
+    }
+    if !meta.subtitle.is_empty() {
+        s.push_str(&format!(
+            "#v(0.8em)\n#text(font: \"{}\", size: 16pt, style: \"italic\")[{}]\n\n",
+            escape_typst(&style.body.font),
+            escape_typst(&meta.subtitle)
+        ));
+    }
+    if !meta.author.is_empty() {
+        s.push_str(&format!(
+            "#v(2em)\n#text(font: \"{}\", size: 14pt)[{}]\n",
+            escape_typst(&style.body.font),
+            escape_typst(&meta.author)
+        ));
+    }
+    s.push_str("]\n");
+    s
+}
+
 fn running_header_body(rh: &RunningHeaderStyle, meta: &BookMeta) -> String {
     format!(
         "  let elems = query(selector(heading.where(level: 1)).before(here()))\n  \
@@ -172,6 +212,7 @@ fn header_side(template: &str, meta: &BookMeta) -> String {
         escape_typst(
             &template
                 .replace("{title}", &meta.title)
+                .replace("{subtitle}", &meta.subtitle)
                 .replace("{author}", &meta.author),
         )
     }
@@ -407,6 +448,37 @@ mod tests {
     }
 
     #[test]
+    fn title_page_typst_is_empty_for_a_default_book_meta() {
+        assert_eq!(
+            title_page_typst(&BookMeta::default(), &manuscript_style()),
+            ""
+        );
+    }
+
+    #[test]
+    fn title_page_typst_includes_title_subtitle_and_author_when_set() {
+        let meta = BookMeta {
+            title: "My Book".to_string(),
+            subtitle: "A Subtitle".to_string(),
+            author: "Jane Doe".to_string(),
+        };
+        let page = title_page_typst(&meta, &manuscript_style());
+        assert!(page.contains("My Book"));
+        assert!(page.contains("A Subtitle"));
+        assert!(page.contains("Jane Doe"));
+    }
+
+    #[test]
+    fn header_side_substitutes_the_subtitle_token() {
+        let meta = BookMeta {
+            title: "My Book".to_string(),
+            subtitle: "A Subtitle".to_string(),
+            author: "Jane Doe".to_string(),
+        };
+        assert_eq!(header_side("{subtitle}", &meta), "A Subtitle");
+    }
+
+    #[test]
     fn escape_typst_escapes_markup_trigger_characters() {
         assert_eq!(
             escape_typst("a*b_c`d#e$f[g]h<i>j@k"),
@@ -425,6 +497,7 @@ mod tests {
         }];
         let meta = BookMeta {
             title: "My Book".to_string(),
+            subtitle: "A Subtitle".to_string(),
             author: "Jane Doe".to_string(),
         };
         let out = dir.path().join("out.pdf");
@@ -450,6 +523,7 @@ mod tests {
         ];
         let meta = BookMeta {
             title: "My Book".to_string(),
+            subtitle: "A Subtitle".to_string(),
             author: "Jane Doe".to_string(),
         };
         let out = dir.path().join("out.pdf");

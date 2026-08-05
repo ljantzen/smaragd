@@ -120,6 +120,33 @@ impl SmaragdApp {
             BinderEvent::MoveItem { path, new_parent } => self.move_item(&path, &new_parent),
             BinderEvent::MoveItemBefore { path, before } => self.move_item_before(&path, &before),
             BinderEvent::Export { path } => self.open_export(path),
+            BinderEvent::SelectProject => self.metadata.project_selected = true,
+        }
+    }
+
+    /// Persist a live edit to the project-wide metadata fields (Title/Author/
+    /// Logline/Synopsis/What If) shown by `ui::metadata_panel::show_project`
+    /// — see `DockAction::ProjectMeta`. A no-op if no project is open, which
+    /// can't actually happen (the panel that raises these events isn't shown
+    /// without one), but `self.project` is still an `Option` here.
+    pub(super) fn handle_project_meta_event(
+        &mut self,
+        event: ui::metadata_panel::ProjectMetaEvent,
+    ) {
+        use ui::metadata_panel::ProjectMetaEvent;
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        let result = match event {
+            ProjectMetaEvent::SetTitle(title) => project.set_book_title(title),
+            ProjectMetaEvent::SetSubtitle(subtitle) => project.set_book_subtitle(subtitle),
+            ProjectMetaEvent::SetAuthor(author) => project.set_book_author(author),
+            ProjectMetaEvent::SetLogline(logline) => project.set_logline(logline),
+            ProjectMetaEvent::SetSynopsis(synopsis) => project.set_synopsis(synopsis),
+            ProjectMetaEvent::SetWhatIf(what_if) => project.set_what_if(what_if),
+        };
+        if let Err(err) = result {
+            self.push_error_toast(format!("Couldn't save project metadata: {err}"));
         }
     }
 

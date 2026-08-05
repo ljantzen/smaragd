@@ -16,6 +16,12 @@ pub(super) struct MetadataState {
     /// `draft.to_meta()` each frame to notice a live edit without re-writing the
     /// buffer when nothing changed.
     pub(super) last_applied: DocumentMeta,
+    /// Whether the Metadata dock is showing the project-wide fields (see
+    /// `ui::metadata_panel::show_project`) instead of the open document's
+    /// frontmatter — set by `BinderEvent::SelectProject` (clicking the
+    /// binder's root row) and cleared whenever a document is opened or the
+    /// project changes.
+    pub(super) project_selected: bool,
 }
 
 /// Every `[[wikilink]]` elsewhere in the project pointing at the open document,

@@ -62,6 +62,12 @@ pub enum BinderEvent {
     Export {
         path: PathBuf,
     },
+    /// The project's own root row was clicked — show project-wide metadata
+    /// (title/logline/synopsis/etc., see `ui::metadata_panel::show_project`)
+    /// in the Metadata dock instead of a document's frontmatter. Only ever
+    /// raised for the root folder, matching how `Selected` is only ever
+    /// raised for a document.
+    SelectProject,
 }
 
 /// Keyboard filter claimed on every focused binder row: all four arrow keys are ours
@@ -82,6 +88,7 @@ pub fn show(
     project: &Project,
     selected: Option<&Path>,
     focus_requested: bool,
+    project_selected: bool,
 ) -> Option<BinderEvent> {
     let mut event = None;
     let mut visible_rows: Vec<(PathBuf, egui::Id)> = Vec::new();
@@ -93,6 +100,7 @@ pub fn show(
         &mut event,
         true,
         &mut visible_rows,
+        project_selected,
     );
 
     // Up/Down move the keyboard cursor between rows, in the same top-to-bottom order
@@ -188,6 +196,7 @@ fn folder_header(
     id: egui::Id,
     label: &str,
     default_open: bool,
+    is_selected: bool,
 ) -> (
     egui::Response,
     egui::containers::collapsing_header::CollapsingState,
@@ -220,12 +229,17 @@ fn folder_header(
     let openness = state.openness(ui.ctx());
 
     if ui.is_rect_visible(rect) {
-        let visuals = ui.style().interact_selectable(&header_response, false);
+        let visuals = ui
+            .style()
+            .interact_selectable(&header_response, is_selected);
         // Unlike `CollapsingHeader` (which only paints this when explicitly made
         // `.selectable(true)`, which we never do), always show it on hover/focus —
         // otherwise there'd be no visual sign of which row the Up/Down keyboard
-        // cursor is currently on.
-        if header_response.hovered() || header_response.has_focus() {
+        // cursor is currently on. `is_selected` (only ever true for the project
+        // root, once its metadata is showing in the Metadata dock — see
+        // `BinderEvent::SelectProject`) paints the same way regardless of
+        // hover/focus, matching a document row's persistent selection highlight.
+        if is_selected || header_response.hovered() || header_response.has_focus() {
             ui.painter().rect(
                 header_response.rect.expand(visuals.expansion),
                 visuals.corner_radius,
@@ -247,6 +261,7 @@ fn folder_header(
     (header_response, state)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn show_node(
     ui: &mut egui::Ui,
     project: &Project,
@@ -255,16 +270,21 @@ fn show_node(
     event: &mut Option<BinderEvent>,
     is_root: bool,
     visible_rows: &mut Vec<(PathBuf, egui::Id)>,
+    project_selected: bool,
 ) {
     match &node.kind {
         BinderNodeKind::Folder { children } => {
             let role = project.folder_role(&node.path);
             let label = format!("{}{}", role_prefix(role), node.name);
             let id = ui.make_persistent_id(&node.path);
-            let (header_response, mut state) = folder_header(ui, id, &label, true);
+            let (header_response, mut state) =
+                folder_header(ui, id, &label, true, is_root && project_selected);
             visible_rows.push((node.path.clone(), header_response.id));
 
             if header_response.clicked() {
+                if is_root {
+                    *event = Some(BinderEvent::SelectProject);
+                }
                 state.toggle(ui);
                 // `request_focus` unconditionally resets the target's focus-lock
                 // filter (see the comment on the equivalent guard in `show`) — skip
@@ -453,7 +473,16 @@ fn show_node(
 
             state.show_body_indented(&header_response, ui, |ui| {
                 for child in children {
-                    show_node(ui, project, child, selected, event, false, visible_rows);
+                    show_node(
+                        ui,
+                        project,
+                        child,
+                        selected,
+                        event,
+                        false,
+                        visible_rows,
+                        project_selected,
+                    );
                 }
             });
         }
@@ -593,7 +622,7 @@ mod tests {
             };
             let mut event = None;
             let _ = self.ctx.run_ui(input, |ui| {
-                event = show(ui, project, selected, focus_requested);
+                event = show(ui, project, selected, focus_requested, false);
             });
             event
         }
@@ -858,6 +887,41 @@ mod tests {
 
         let event = harness.press(&project, egui::Key::Enter);
         assert_eq!(event, Some(BinderEvent::Selected(doc)));
+    }
+
+    #[test]
+    fn clicking_the_root_row_raises_select_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = crate::project::Project::initialize(dir.path()).unwrap();
+
+        let harness = Harness::default();
+        harness.settle(&project);
+
+        // The root row is always the very first row (see `click_first_row`'s doc
+        // comment) — clicking it should raise `SelectProject` on top of its
+        // existing expand/collapse toggle, the same way clicking a document row
+        // raises `Selected` on top of granting it focus.
+        let event = harness.click(&project, egui::pos2(20.0, 8.0));
+        assert_eq!(event, Some(BinderEvent::SelectProject));
+    }
+
+    #[test]
+    fn activating_a_non_root_folder_row_does_not_raise_select_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = crate::project::Project::initialize(dir.path()).unwrap();
+        project.create_folder(dir.path(), "Chapter 1").unwrap();
+
+        let harness = Harness::default();
+        harness.settle(&project);
+        harness.click_first_row(&project); // focuses the root header
+        harness.idle(&project);
+        harness.press(&project, egui::Key::ArrowDown); // -> Chapter 1
+        harness.idle(&project);
+
+        // Activating (Enter) a non-root folder should just toggle expand/collapse,
+        // never raise `SelectProject` — that's reserved for the root row.
+        let event = harness.press(&project, egui::Key::Enter);
+        assert_eq!(event, None);
     }
 
     #[test]

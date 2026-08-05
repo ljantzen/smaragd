@@ -69,6 +69,10 @@ pub struct ProjectMeta {
     /// `project.json` doesn't grow two empty-string keys for no reason.
     #[serde(default)]
     pub book_title: Option<String>,
+    /// Optional subtitle — not every book has one, so this stays `None` rather
+    /// than defaulting to an empty string shown alongside `book_title`.
+    #[serde(default)]
+    pub book_subtitle: Option<String>,
     #[serde(default)]
     pub book_author: Option<String>,
     /// The chosen `export::style::TypesetStyle` id, same reuse-across-exports
@@ -156,4 +160,21 @@ pub struct ProjectMeta {
     /// convention `pomodoro_work_minutes` (`settings.rs`) uses.
     #[serde(default)]
     pub streak_red_threshold_weeks: u32,
+    /// One-line pitch/premise (Save the Cat-style logline), edited in the
+    /// Metadata dock when the binder's root project row is selected — see
+    /// `ui::metadata_panel::show_project`. Independent of `book_title`, which
+    /// is reused as-is for the project's display name rather than duplicated
+    /// here under a different key.
+    #[serde(default)]
+    pub logline: String,
+    /// Longer project-wide synopsis, same editing location as `logline`.
+    #[serde(default)]
+    pub synopsis: String,
+    /// The story's inciting "what if" premise question (Save the Cat/Story
+    /// Genius vocabulary), same editing location as `logline`. Deliberately
+    /// separate from `protagonist_desire`/`protagonist_misbelief` (the
+    /// Corkboard's scene-level Third Rail) — this is the project pitch, not
+    /// the protagonist's arc.
+    #[serde(default)]
+    pub what_if: String,
 }

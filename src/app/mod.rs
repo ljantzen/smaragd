@@ -1298,6 +1298,7 @@ impl eframe::App for SmaragdApp {
                     tags_search_text: &mut self.tags.search_text,
                     tag_search_results: &self.tags.search_results,
                     metadata_draft: &mut self.metadata.draft,
+                    project_metadata_selected: self.metadata.project_selected,
                     editor: &mut self.editor,
                     settings: &self.settings,
                     color_themes: &self.color_themes,
@@ -1319,6 +1320,7 @@ impl eframe::App for SmaragdApp {
                     match action {
                         DockAction::OpenDocument(path) => self.open_document(&path),
                         DockAction::Binder(event) => self.handle_binder_event(ui.ctx(), event),
+                        DockAction::ProjectMeta(event) => self.handle_project_meta_event(event),
                         DockAction::RefreshBacklinks => self.recompute_backlinks(),
                         DockAction::RefreshTags => self.recompute_tags(),
                         DockAction::EditorSaveError(err) => self.push_error_toast(err),

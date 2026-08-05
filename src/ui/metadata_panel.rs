@@ -7,6 +7,7 @@
 //! this module only renders the fields and mutates the draft.
 
 use crate::frontmatter::DocumentMeta;
+use crate::project::Project;
 
 /// Plain-text editing buffers for a `DocumentMeta`'s fields, owned by `app.rs` for as
 /// long as the modal is open. Deriving `Default` gives exactly the same blank state
@@ -177,6 +178,160 @@ fn picklist_or_text_row(
             });
     }
     ui.end_row();
+}
+
+/// Outcomes of editing the project-wide fields `show_project` renders — the same
+/// "mutate a local copy, raise an event on change" pattern `corkboard_panel`'s
+/// Desire/Misbelief fields use, rather than `MetadataDraft`'s buffer-diff
+/// machinery: these are plain `ProjectMeta` fields with no document-frontmatter
+/// text to round-trip through, so there's nothing for a draft to stay in sync
+/// with beyond the project itself.
+pub enum ProjectMetaEvent {
+    SetTitle(String),
+    SetSubtitle(String),
+    SetAuthor(String),
+    SetLogline(String),
+    SetSynopsis(String),
+    SetWhatIf(String),
+}
+
+/// Renders the project-wide metadata form shown in place of `show` (a
+/// document's frontmatter) when the binder's root project row is selected
+/// instead of a document — see `app::MetadataState::project_selected`. Title/
+/// Author reuse `ProjectMeta::book_title`/`book_author` (the Export dialog's
+/// own fields) rather than duplicating them under project-specific keys.
+///
+/// No `Grid` here (unlike `show`'s Type/Status/POV rows): a label-column-plus-
+/// field-column layout would leave each field narrower than the tab, and every
+/// field here is meant to fill it — so each is a label directly above a
+/// full-width field instead. Logline/What if/Synopsis then evenly split
+/// whatever vertical space is left after Title/Author, rather than Synopsis
+/// alone getting a fixed height while the other two stay single-line.
+pub fn show_project(ui: &mut egui::Ui, project: &Project) -> Option<ProjectMetaEvent> {
+    let mut event = None;
+    ui.heading("Project");
+    ui.separator();
+
+    let width = ui.available_width();
+
+    ui.label("Title:");
+    let mut title = project.meta.book_title.clone().unwrap_or_default();
+    if ui
+        .add(egui::TextEdit::singleline(&mut title).desired_width(width))
+        .changed()
+    {
+        event = Some(ProjectMetaEvent::SetTitle(title));
+    }
+
+    ui.label("Subtitle:");
+    let mut subtitle = project.meta.book_subtitle.clone().unwrap_or_default();
+    if ui
+        .add(egui::TextEdit::singleline(&mut subtitle).desired_width(width))
+        .changed()
+    {
+        event = Some(ProjectMetaEvent::SetSubtitle(subtitle));
+    }
+
+    ui.label("Author:");
+    let mut author = project.meta.book_author.clone().unwrap_or_default();
+    if ui
+        .add(egui::TextEdit::singleline(&mut author).desired_width(width))
+        .changed()
+    {
+        event = Some(ProjectMetaEvent::SetAuthor(author));
+    }
+
+    // Split whatever vertical space Title/Author left behind three ways.
+    // `row_height` doubles as the label line-height estimate and the
+    // multiline boxes' own row height, since both render in the default
+    // `TextStyle::Body`.
+    let row_height = ui.text_style_height(&egui::TextStyle::Body);
+    let spacing = ui.spacing().item_spacing.y;
+    let section_height = ((ui.available_height() - 3.0 * (row_height + spacing)) / 3.0).max(0.0);
+
+    ui.label("Logline:");
+    let mut logline = project.meta.logline.clone();
+    if project_text_area(
+        ui,
+        "logline",
+        &mut logline,
+        width,
+        section_height,
+        row_height,
+        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+    ) {
+        event = Some(ProjectMetaEvent::SetLogline(logline));
+    }
+
+    ui.label("What if:");
+    let mut what_if = project.meta.what_if.clone();
+    if project_text_area(
+        ui,
+        "what_if",
+        &mut what_if,
+        width,
+        section_height,
+        row_height,
+        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+    ) {
+        event = Some(ProjectMetaEvent::SetWhatIf(what_if));
+    }
+
+    ui.label("Synopsis:");
+    let mut synopsis = project.meta.synopsis.clone();
+    // Always-visible (not just when overflowing, like Logline/What if above):
+    // Synopsis is the field most likely to run past its box, so the scrollbar
+    // stays a visible affordance rather than only appearing after the fact.
+    if project_text_area(
+        ui,
+        "synopsis",
+        &mut synopsis,
+        width,
+        section_height,
+        row_height,
+        egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+    ) {
+        event = Some(ProjectMetaEvent::SetSynopsis(synopsis));
+    }
+
+    event
+}
+
+/// One Logline/What-if/Synopsis box: a fixed-`height`, always-scrollable
+/// region (rather than letting the `TextEdit` grow with its content, the way
+/// `show`'s old single `Synopsis` field used to) so the three boxes stay
+/// exactly evenly split regardless of how much text is in any one of them.
+/// `desired_rows` is sized to `height`, not left at `TextEdit`'s own default,
+/// for the same reason `editor_panel::show` sizes the main editor's: the
+/// widget's actual clickable area needs to match what it visually looks like
+/// it covers, all the way to the bottom of its third of the panel.
+fn project_text_area(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    value: &mut String,
+    width: f32,
+    height: f32,
+    row_height: f32,
+    scroll_bar_visibility: egui::scroll_area::ScrollBarVisibility,
+) -> bool {
+    let desired_rows = ((height / row_height).floor() as usize).max(1);
+    let mut changed = false;
+    ui.allocate_ui(egui::vec2(width, height), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt(id_salt)
+            .auto_shrink([false, false])
+            .scroll_bar_visibility(scroll_bar_visibility)
+            .show(ui, |ui| {
+                changed = ui
+                    .add(
+                        egui::TextEdit::multiline(value)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(desired_rows),
+                    )
+                    .changed();
+            });
+    });
+    changed
 }
 
 #[cfg(test)]

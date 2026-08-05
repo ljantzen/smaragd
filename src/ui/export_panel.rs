@@ -12,7 +12,7 @@ pub enum ExportAction {
 }
 
 /// Renders the Export modal: the folder being compiled (read-only), editable
-/// Title/Author fields, a Style picker (built-in + loaded custom
+/// Title/Subtitle/Author fields, a Style picker (built-in + loaded custom
 /// `TypesetStyle`s, selection-only — same files-only-authoring convention as
 /// `View > Theme`, no in-app style editor), and the action buttons. Returns
 /// `Some` the frame a button is pressed; the caller (`app.rs`) decides what
@@ -37,6 +37,10 @@ pub fn show(
             .show(ui, |ui| {
                 ui.label("Title");
                 ui.text_edit_singleline(&mut meta.title);
+                ui.end_row();
+
+                ui.label("Subtitle");
+                ui.text_edit_singleline(&mut meta.subtitle);
                 ui.end_row();
 
                 ui.label("Author");

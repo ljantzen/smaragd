@@ -220,18 +220,60 @@ impl Project {
         self.save_metadata()
     }
 
-    /// Set the book-level title/author/typesetting-style shown in the Export
-    /// dialog — see `ProjectMeta::book_title`/`book_author`/`book_style`. An
-    /// empty title/author is stored as `None` rather than `Some(String::new())`.
+    /// Set the book-level title/subtitle/author/typesetting-style shown in the
+    /// Export dialog — see `ProjectMeta::book_title`/`book_subtitle`/
+    /// `book_author`/`book_style`. An empty title/subtitle/author is stored as
+    /// `None` rather than `Some(String::new())`.
     pub fn set_book_meta(
         &mut self,
         title: String,
+        subtitle: String,
         author: String,
         style_id: String,
     ) -> io::Result<()> {
         self.meta.book_title = (!title.is_empty()).then_some(title);
+        self.meta.book_subtitle = (!subtitle.is_empty()).then_some(subtitle);
         self.meta.book_author = (!author.is_empty()).then_some(author);
         self.meta.book_style = (!style_id.is_empty()).then_some(style_id);
+        self.save_metadata()
+    }
+
+    /// Set just `book_title`, leaving `book_author`/`book_style` untouched —
+    /// used by the Metadata dock's project-wide fields (see
+    /// `ui::metadata_panel::show_project`), which edit the title live and
+    /// have no style selection of their own the way the Export dialog does.
+    pub fn set_book_title(&mut self, title: String) -> io::Result<()> {
+        self.meta.book_title = (!title.is_empty()).then_some(title);
+        self.save_metadata()
+    }
+
+    /// Same as `set_book_title`, for `book_author`.
+    pub fn set_book_author(&mut self, author: String) -> io::Result<()> {
+        self.meta.book_author = (!author.is_empty()).then_some(author);
+        self.save_metadata()
+    }
+
+    /// Same as `set_book_title`, for `book_subtitle`.
+    pub fn set_book_subtitle(&mut self, subtitle: String) -> io::Result<()> {
+        self.meta.book_subtitle = (!subtitle.is_empty()).then_some(subtitle);
+        self.save_metadata()
+    }
+
+    /// See `ProjectMeta::logline`.
+    pub fn set_logline(&mut self, logline: String) -> io::Result<()> {
+        self.meta.logline = logline;
+        self.save_metadata()
+    }
+
+    /// See `ProjectMeta::synopsis`.
+    pub fn set_synopsis(&mut self, synopsis: String) -> io::Result<()> {
+        self.meta.synopsis = synopsis;
+        self.save_metadata()
+    }
+
+    /// See `ProjectMeta::what_if`.
+    pub fn set_what_if(&mut self, what_if: String) -> io::Result<()> {
+        self.meta.what_if = what_if;
         self.save_metadata()
     }
 }
@@ -607,6 +649,7 @@ mod tests {
         project
             .set_book_meta(
                 "My Book".to_string(),
+                "A Subtitle".to_string(),
                 "Jane Doe".to_string(),
                 "trade_paperback".to_string(),
             )
@@ -614,6 +657,7 @@ mod tests {
 
         let reloaded = Project::load_from_folder(dir.path()).unwrap();
         assert_eq!(reloaded.meta.book_title, Some("My Book".to_string()));
+        assert_eq!(reloaded.meta.book_subtitle, Some("A Subtitle".to_string()));
         assert_eq!(reloaded.meta.book_author, Some("Jane Doe".to_string()));
         assert_eq!(
             reloaded.meta.book_style,
@@ -629,17 +673,83 @@ mod tests {
         project
             .set_book_meta(
                 "My Book".to_string(),
+                "A Subtitle".to_string(),
                 "Jane Doe".to_string(),
                 "trade_paperback".to_string(),
             )
             .unwrap();
         project
-            .set_book_meta(String::new(), String::new(), String::new())
+            .set_book_meta(String::new(), String::new(), String::new(), String::new())
             .unwrap();
 
         assert_eq!(project.meta.book_title, None);
+        assert_eq!(project.meta.book_subtitle, None);
         assert_eq!(project.meta.book_author, None);
         assert_eq!(project.meta.book_style, None);
+    }
+
+    #[test]
+    fn set_book_subtitle_persists_and_empty_stores_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        assert_eq!(project.meta.book_subtitle, None);
+
+        project
+            .set_book_subtitle("A Tale of Two Cities".to_string())
+            .unwrap();
+        let reloaded = Project::load_from_folder(dir.path()).unwrap();
+        assert_eq!(
+            reloaded.meta.book_subtitle,
+            Some("A Tale of Two Cities".to_string())
+        );
+
+        project.set_book_subtitle(String::new()).unwrap();
+        assert_eq!(project.meta.book_subtitle, None);
+    }
+
+    #[test]
+    fn set_book_title_leaves_author_and_style_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        project
+            .set_book_meta(
+                "Old Title".to_string(),
+                "Old Subtitle".to_string(),
+                "Jane Doe".to_string(),
+                "trade_paperback".to_string(),
+            )
+            .unwrap();
+
+        project.set_book_title("New Title".to_string()).unwrap();
+
+        assert_eq!(project.meta.book_title, Some("New Title".to_string()));
+        assert_eq!(project.meta.book_subtitle, Some("Old Subtitle".to_string()));
+        assert_eq!(project.meta.book_author, Some("Jane Doe".to_string()));
+        assert_eq!(project.meta.book_style, Some("trade_paperback".to_string()));
+    }
+
+    #[test]
+    fn project_wide_pitch_fields_persist_across_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        assert_eq!(project.meta.logline, "");
+        assert_eq!(project.meta.synopsis, "");
+        assert_eq!(project.meta.what_if, "");
+
+        project
+            .set_logline("A thief steals time itself.".to_string())
+            .unwrap();
+        project
+            .set_synopsis("A longer summary of the plot.".to_string())
+            .unwrap();
+        project
+            .set_what_if("What if memories could be stolen?".to_string())
+            .unwrap();
+
+        let reloaded = Project::load_from_folder(dir.path()).unwrap();
+        assert_eq!(reloaded.meta.logline, "A thief steals time itself.");
+        assert_eq!(reloaded.meta.synopsis, "A longer summary of the plot.");
+        assert_eq!(reloaded.meta.what_if, "What if memories could be stolen?");
     }
 
     #[test]

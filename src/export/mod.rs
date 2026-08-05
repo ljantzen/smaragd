@@ -35,13 +35,60 @@ pub struct ExportDoc {
     pub source_path: PathBuf,
 }
 
-/// Book-level metadata entered once in the export dialog — title/author only;
-/// everything typographic (fonts, sizes, page setup) lives in
+/// Book-level metadata entered once in the export dialog — title/subtitle/
+/// author only; everything typographic (fonts, sizes, page setup) lives in
 /// [`style::TypesetStyle`] instead, since a style isn't book-specific.
 #[derive(Debug, Clone, Default)]
 pub struct BookMeta {
     pub title: String,
+    /// Optional — not every book has one. Rendered on the DOCX/PDF title
+    /// page under `title` (blank when empty, same as `title`/`author`) and
+    /// available to a custom style's running-header template as `{subtitle}`.
+    pub subtitle: String,
     pub author: String,
+}
+
+impl BookMeta {
+    /// A filesystem-safe base filename (no extension) for the save dialog's
+    /// default `set_file_name` — `"Title - Subtitle"` when both are set,
+    /// whichever one is when only one is, or `"manuscript"` (the old
+    /// hardcoded default, kept as the fallback) when neither is.
+    pub fn filename_stem(&self) -> String {
+        let title = self.title.trim();
+        let subtitle = self.subtitle.trim();
+        let combined = match (title.is_empty(), subtitle.is_empty()) {
+            (true, true) => return "manuscript".to_string(),
+            (true, false) => subtitle.to_string(),
+            (false, true) => title.to_string(),
+            (false, false) => format!("{title} - {subtitle}"),
+        };
+        sanitize_filename_component(&combined)
+    }
+}
+
+/// Replace characters illegal in a Windows filename (`< > : " / \ | ? *` and
+/// ASCII control characters) with `_`, and trim trailing dots/spaces (also a
+/// Windows-specific restriction) — the union of what's actually illegal
+/// across Linux/macOS/Windows, since this app ships on all three and a book
+/// title/subtitle is free text a user could type any of these into.
+fn sanitize_filename_component(s: &str) -> String {
+    let replaced: String = s
+        .chars()
+        .map(|ch| {
+            if ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            {
+                '_'
+            } else {
+                ch
+            }
+        })
+        .collect();
+    let trimmed = replaced.trim_end_matches(['.', ' ']).trim();
+    if trimmed.is_empty() {
+        "manuscript".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 #[derive(Debug)]
@@ -140,6 +187,57 @@ mod tests {
     use super::*;
     use crate::project::model::BinderTree;
     use std::path::Path;
+
+    #[test]
+    fn filename_stem_falls_back_to_manuscript_when_neither_is_set() {
+        assert_eq!(BookMeta::default().filename_stem(), "manuscript");
+    }
+
+    #[test]
+    fn filename_stem_joins_title_and_subtitle_with_a_dash() {
+        let meta = BookMeta {
+            title: "My Book".to_string(),
+            subtitle: "A Subtitle".to_string(),
+            ..BookMeta::default()
+        };
+        assert_eq!(meta.filename_stem(), "My Book - A Subtitle");
+    }
+
+    #[test]
+    fn filename_stem_falls_back_to_whichever_of_title_or_subtitle_is_set() {
+        let title_only = BookMeta {
+            title: "My Book".to_string(),
+            ..BookMeta::default()
+        };
+        assert_eq!(title_only.filename_stem(), "My Book");
+
+        let subtitle_only = BookMeta {
+            subtitle: "A Subtitle".to_string(),
+            ..BookMeta::default()
+        };
+        assert_eq!(subtitle_only.filename_stem(), "A Subtitle");
+    }
+
+    #[test]
+    fn filename_stem_replaces_characters_illegal_in_a_windows_filename() {
+        let meta = BookMeta {
+            title: "Who: What/Why? \"Really\" <Now> | *Then*".to_string(),
+            ..BookMeta::default()
+        };
+        assert_eq!(
+            meta.filename_stem(),
+            "Who_ What_Why_ _Really_ _Now_ _ _Then_"
+        );
+    }
+
+    #[test]
+    fn filename_stem_trims_trailing_dots_and_spaces() {
+        let meta = BookMeta {
+            title: "Trailing dots... ".to_string(),
+            ..BookMeta::default()
+        };
+        assert_eq!(meta.filename_stem(), "Trailing dots");
+    }
 
     fn write(dir: &Path, rel: &str, contents: &str) -> PathBuf {
         let path = dir.join(rel);

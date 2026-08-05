@@ -76,6 +76,19 @@ pub fn export_docx(
                 .align(AlignmentType::Center),
         );
     }
+    if !meta.subtitle.is_empty() {
+        docx = docx.add_paragraph(
+            Paragraph::new()
+                .add_run(
+                    Run::new()
+                        .add_text(meta.subtitle.clone())
+                        .italic()
+                        .size(36)
+                        .fonts(RunFonts::new().ascii(&style.body.font)),
+                )
+                .align(AlignmentType::Center),
+        );
+    }
     if !meta.author.is_empty() {
         docx = docx.add_paragraph(
             Paragraph::new()
@@ -124,6 +137,7 @@ fn mm_to_twips(mm: f32) -> u32 {
 fn fill_running_header_template(template: &str, meta: &BookMeta) -> String {
     template
         .replace("{title}", &meta.title)
+        .replace("{subtitle}", &meta.subtitle)
         .replace("{author}", &meta.author)
         // DOCX has no per-page "current chapter" query the way Typst does
         // (that needs a field/REF mechanism far more involved than this v1
@@ -321,6 +335,19 @@ mod tests {
     }
 
     #[test]
+    fn fill_running_header_template_substitutes_the_subtitle_token() {
+        let meta = BookMeta {
+            title: "My Book".to_string(),
+            subtitle: "A Subtitle".to_string(),
+            author: "Jane Doe".to_string(),
+        };
+        assert_eq!(
+            fill_running_header_template("{subtitle}", &meta),
+            "A Subtitle"
+        );
+    }
+
+    #[test]
     fn export_docx_does_not_panic_on_every_block_kind() {
         let dir = tempfile::tempdir().unwrap();
         let docs = vec![ExportDoc {
@@ -330,6 +357,7 @@ mod tests {
         }];
         let meta = BookMeta {
             title: "My Book".to_string(),
+            subtitle: "A Subtitle".to_string(),
             author: "Jane Doe".to_string(),
         };
         let out = dir.path().join("out.docx");
@@ -347,6 +375,7 @@ mod tests {
         }];
         let meta = BookMeta {
             title: "My Book".to_string(),
+            subtitle: "A Subtitle".to_string(),
             author: "Jane Doe".to_string(),
         };
         let out = dir.path().join("out.docx");

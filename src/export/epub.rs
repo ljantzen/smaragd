@@ -33,8 +33,9 @@ pub fn export_epub(
         .collect();
 
     let mut builder = EpubBuilder::new(ZipLibrary::new()?)?;
-    if !meta.title.is_empty() {
-        builder.metadata("title", meta.title.clone())?;
+    let opf_title = combined_title(meta);
+    if !opf_title.is_empty() {
+        builder.metadata("title", opf_title)?;
     }
     if !meta.author.is_empty() {
         builder.metadata("author", meta.author.clone())?;
@@ -81,6 +82,23 @@ pub fn export_epub(
     let file = fs::File::create(out_path)?;
     builder.generate(file)?;
     Ok(())
+}
+
+/// The EPUB `dc:title` value: `"{title}: {subtitle}"` when both are set, or
+/// whichever one is. `epub_builder`'s `content.opf` template renders `<dc:
+/// title>` without an `id` attribute (see its `templates/v2|v3/content.opf`),
+/// so there's no element to `refines="#..."` a proper EPUB3 `title-type:
+/// subtitle` `<meta>` against from outside the crate — the colon-joined
+/// single title is what actually shows up in a reader's title display,
+/// unlike a second, unlinked `<dc:title>` or an inert custom `<meta>` tag
+/// that no reader is looking for.
+fn combined_title(meta: &BookMeta) -> String {
+    match (meta.title.is_empty(), meta.subtitle.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => meta.subtitle.clone(),
+        (false, true) => meta.title.clone(),
+        (false, false) => format!("{}: {}", meta.title, meta.subtitle),
+    }
 }
 
 fn stylesheet(style: &TypesetStyle) -> String {
@@ -363,6 +381,33 @@ mod tests {
     }
 
     #[test]
+    fn combined_title_joins_title_and_subtitle_with_a_colon() {
+        let meta = BookMeta {
+            title: "My Book".to_string(),
+            subtitle: "A Subtitle".to_string(),
+            author: "Jane Doe".to_string(),
+        };
+        assert_eq!(combined_title(&meta), "My Book: A Subtitle");
+    }
+
+    #[test]
+    fn combined_title_falls_back_to_whichever_of_title_or_subtitle_is_set() {
+        let title_only = BookMeta {
+            title: "My Book".to_string(),
+            ..BookMeta::default()
+        };
+        assert_eq!(combined_title(&title_only), "My Book");
+
+        let subtitle_only = BookMeta {
+            subtitle: "A Subtitle".to_string(),
+            ..BookMeta::default()
+        };
+        assert_eq!(combined_title(&subtitle_only), "A Subtitle");
+
+        assert_eq!(combined_title(&BookMeta::default()), "");
+    }
+
+    #[test]
     fn export_epub_does_not_panic_on_every_block_kind() {
         let dir = tempfile::tempdir().unwrap();
         let docs = vec![ExportDoc {
@@ -372,6 +417,7 @@ mod tests {
         }];
         let meta = BookMeta {
             title: "My Book".to_string(),
+            subtitle: "A Subtitle".to_string(),
             author: "Jane Doe".to_string(),
         };
         let out = dir.path().join("out.epub");

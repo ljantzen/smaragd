@@ -31,6 +31,7 @@ impl SmaragdApp {
         self.project = Some(project);
         self.editor = EditorState::default();
         self.selected_path = None;
+        self.metadata.project_selected = false;
         self.clear_status_message();
         self.settings.last_project_path = Some(path.to_path_buf());
         self.settings.record_recent_project(path);
@@ -246,7 +247,10 @@ impl SmaragdApp {
     /// its new name) should call this directly.
     pub(super) fn open_document_internal(&mut self, path: &Path) {
         match self.editor.open(path) {
-            Ok(()) => self.selected_path = Some(path.to_path_buf()),
+            Ok(()) => {
+                self.selected_path = Some(path.to_path_buf());
+                self.metadata.project_selected = false;
+            }
             Err(err) => {
                 self.push_error_toast(format!("Couldn't open {}: {err}", path.display()));
             }

@@ -2,7 +2,7 @@ use super::*;
 
 /// State for the open Export dialog (`ui::export_panel`), from the binder's
 /// "Export…" context-menu entry — which folder to compile and the book
-/// title/author fields being edited live.
+/// title/subtitle/author fields being edited live.
 pub(super) struct ExportState {
     pub(super) source: PathBuf,
     pub(super) source_label: String,
@@ -12,10 +12,10 @@ pub(super) struct ExportState {
 
 impl SmaragdApp {
     /// Open the Export dialog for `path` (a binder folder) — pre-fills the
-    /// Title/Author fields from `ProjectMeta::book_title`/`book_author` and
-    /// the Style choice from `ProjectMeta::book_style`, falling back to the
-    /// first loaded style (built-in "Manuscript") if unset or no longer
-    /// resolves.
+    /// Title/Subtitle/Author fields from `ProjectMeta::book_title`/
+    /// `book_subtitle`/`book_author` and the Style choice from
+    /// `ProjectMeta::book_style`, falling back to the first loaded style
+    /// (built-in "Manuscript") if unset or no longer resolves.
     pub(super) fn open_export(&mut self, path: PathBuf) {
         let Some(project) = &self.project else {
             return;
@@ -37,6 +37,7 @@ impl SmaragdApp {
             source_label,
             meta: crate::export::BookMeta {
                 title: project.meta.book_title.clone().unwrap_or_default(),
+                subtitle: project.meta.book_subtitle.clone().unwrap_or_default(),
                 author: project.meta.book_author.clone().unwrap_or_default(),
             },
             style_id,
@@ -45,9 +46,9 @@ impl SmaragdApp {
 
     /// Handle an outcome from the export dialog: Docx/Epub/Pdf opens a native
     /// save dialog and runs the export; Reload re-scans custom styles; Close
-    /// dismisses it. Title/Author/Style edits are persisted to the project
-    /// regardless of which button was pressed, since the fields may have
-    /// changed even if the user just closes the dialog.
+    /// dismisses it. Title/Subtitle/Author/Style edits are persisted to the
+    /// project regardless of which button was pressed, since the fields may
+    /// have changed even if the user just closes the dialog.
     pub(super) fn finish_export(&mut self, action: ui::export_panel::ExportAction) {
         let Some(state) = &self.export else {
             return;
@@ -57,8 +58,12 @@ impl SmaragdApp {
         let style_id = state.style_id.clone();
 
         if let Some(project) = &mut self.project
-            && let Err(err) =
-                project.set_book_meta(meta.title.clone(), meta.author.clone(), style_id.clone())
+            && let Err(err) = project.set_book_meta(
+                meta.title.clone(),
+                meta.subtitle.clone(),
+                meta.author.clone(),
+                style_id.clone(),
+            )
         {
             self.push_error_toast(format!("Couldn't save settings: {err}"));
         }
@@ -82,7 +87,7 @@ impl SmaragdApp {
             }
             ui::export_panel::ExportAction::Docx => {
                 if let Some(out_path) = rfd::FileDialog::new()
-                    .set_file_name("manuscript.docx")
+                    .set_file_name(format!("{}.docx", meta.filename_stem()))
                     .add_filter("Word Document", &["docx"])
                     .save_file()
                 {
@@ -91,7 +96,7 @@ impl SmaragdApp {
             }
             ui::export_panel::ExportAction::Epub => {
                 if let Some(out_path) = rfd::FileDialog::new()
-                    .set_file_name("manuscript.epub")
+                    .set_file_name(format!("{}.epub", meta.filename_stem()))
                     .add_filter("EPUB", &["epub"])
                     .save_file()
                 {
@@ -100,7 +105,7 @@ impl SmaragdApp {
             }
             ui::export_panel::ExportAction::Pdf => {
                 if let Some(out_path) = rfd::FileDialog::new()
-                    .set_file_name("manuscript.pdf")
+                    .set_file_name(format!("{}.pdf", meta.filename_stem()))
                     .add_filter("PDF", &["pdf"])
                     .save_file()
                 {
