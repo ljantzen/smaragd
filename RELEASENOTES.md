@@ -5,6 +5,16 @@ this file.
 
 ## Unreleased
 
+- New Project: picking an already-empty folder now creates the project
+  directly in it instead of also prompting for a name to nest a subfolder
+  under (a non-empty folder still prompts for a name, as before). Added a
+  built-in "World-Building" template (Manuscript, Research, a World folder
+  for characters/locations/items, and starter document Templates). The
+  Binder panel's "no project open" placeholder now offers New Project /
+  Open Project buttons, and — the first time the app has ever opened a
+  project — New Project defaults to World-Building instead of Blank. The
+  default dock layout also gained a Metadata/Backlinks column alongside
+  Binder/Editor (affects a fresh install and "Restore Default Layout").
 - Exiting with unsaved edits — the open document, or an open story card
   editor's draft — now prompts to Save, Discard, or Cancel instead of closing
   (or silently autosaving/losing them) right away.

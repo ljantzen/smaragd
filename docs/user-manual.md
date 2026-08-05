@@ -71,22 +71,26 @@ chmod +x Smaragd-*.AppImage
 
 A **project** is just a folder on disk containing `.md` files and subfolders, marked with a `.smaragd/project.json` file. There's no proprietary bundle format — you can open the folder in any other editor, sync it with any tool, and everything still works.
 
-- **`File > New Project`** opens a [template picker](#project-templates), then a native folder picker and name prompt; it creates the folder, marks it as a project, and scaffolds in whatever the chosen template provides.
+- **`File > New Project`** opens a [template picker](#project-templates), then a native folder picker; it creates the folder, marks it as a project, and scaffolds in whatever the chosen template provides. If the folder you pick is already empty, the project is created directly in it — there's no separate name prompt, since the folder's own name already says what the project is called. Pick a non-empty folder instead (to hold the new project as a subfolder of it) and you'll get the usual name prompt.
 - **`File > Open Project`** opens a native folder picker. If you point it at a folder smaragd hasn't used before, it offers to adopt the folder in place (writing the `.smaragd` marker) rather than refusing.
+- With no project open, the Binder panel shows **New Project** / **Open Project** buttons in place of the empty binder — the first time you've ever opened a project in smaragd, New Project defaults to the **World-Building** template (see below) instead of Blank.
 - `.smaragd/project.json` stores things the filesystem can't express on its own — manuscript ordering, folder roles, whether plugins/git are enabled for this project. If that file's *contents* ever get corrupted, smaragd falls back to defaults rather than erroring; only a missing marker means "this isn't a project yet."
 
 `File > Settings` has a **"Reopen project on launch"** option, and a separate **"Ensure Research and Trash folders exist in every project"** option (off by default) that creates those two role folders automatically whenever you open a project, recreating them at their original path if they were deleted since.
 
 ## Project Templates
 
-**`File > New Project`** shows a template picker before the usual folder/name prompt — pick a starting scaffold, then name and locate the new project as before. Four templates ship built-in:
+**`File > New Project`** shows a template picker before the usual folder picker (and name prompt, for a non-empty folder) — pick a starting scaffold, then locate the new project as before. Five templates ship built-in:
 
 | Template | What it scaffolds |
 |---|---|
-| **Blank** (default) | Nothing — an empty project, exactly like `File > New Project` behaved before templates existed |
+| **Blank** (default*) | Nothing — an empty project, exactly like `File > New Project` behaved before templates existed |
 | **Novel** | A `Manuscript` folder with two starter chapters, a `Characters` folder with a Protagonist document (Desire/Misbelief/Arc headings), plus Research and Trash folders (roles already assigned) |
 | **Nonfiction** | A `Manuscript` folder with an Introduction and a "Part One" subfolder containing a first chapter, plus Research and Trash |
 | **Screenplay** | A `Screenplay` folder with Act One/Two/Three starter documents, plus Research and Trash. Smaragd's editor is plain Markdown, not Fountain — this reproduces a screenplay draft's *look* with headings, not a real screenplay-format pipeline |
+| **World-Building** | A `Manuscript` folder with a starter chapter, Research, a `World` folder (`Characters` with Main/Supporting subfolders, `Locations`, `Items`), and a Templates folder with Character/Location stationery documents (`${{name}}` placeholder, "New From Template" — see [Template Variables](#template-variables)), plus Trash — all roles already assigned |
+
+\* The very first time you've ever opened a project in smaragd, the picker instead starts on **World-Building** — see [Projects](#projects).
 
 **`File > Save Project as Template…`** turns your *current* project's own folder/document structure into a reusable custom template, prompting for a name. It excludes:
 - Whatever's currently inside the project's Trash folder (if one's configured)
@@ -124,7 +128,7 @@ The whole arrangement — which tabs are open, how they're split or floated, and
 
 - **Save Current Layout…** — names and saves the current arrangement
 - **Layouts** — lists saved layouts; pick one to switch to it
-- **Restore Default Layout** — resets to the original Binder-left/Editor-right split, with the Editor occupying the majority of the space
+- **Restore Default Layout** — resets to the default layout: Binder on the left, Editor in the center (occupying the majority of the space), and Metadata/Backlinks stacked on the right
 
 ## The Binder
 
