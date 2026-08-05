@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v0.6.2 — 2026-08-05
+
 - New Project: picking an already-empty folder now creates the project
   directly in it instead of also prompting for a name to nest a subfolder
   under (a non-empty folder still prompts for a name, as before). Added a
