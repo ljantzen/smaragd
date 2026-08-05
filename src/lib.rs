@@ -9,6 +9,7 @@ pub mod frontmatter;
 pub mod fuzzy;
 pub mod git;
 pub mod markdown;
+pub mod notifications;
 pub mod plugins;
 pub mod pomodoro;
 pub mod project;

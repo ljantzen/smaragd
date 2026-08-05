@@ -25,6 +25,16 @@ impl PomodoroPhase {
     }
 }
 
+/// Reported by [`PomodoroState::tick`] the one frame a phase actually
+/// completes on its own — never on `skip` (a deliberate user action, not
+/// something they need to be told about) — so a caller can react (e.g. an OS
+/// notification, see `notifications`/`app::pomodoro::tick_pomodoro`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PhaseTransition {
+    pub completed: PomodoroPhase,
+    pub next: PomodoroPhase,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PomodoroDurations {
     pub work: Duration,
@@ -136,23 +146,31 @@ impl PomodoroState {
     /// `start`, for the first tick of a run) into `remaining`. A no-op while
     /// paused. When `remaining` reaches zero, advances to the next phase and
     /// pauses — each completed phase is an explicit checkpoint the user
-    /// acknowledges with Start, not an unattended auto-cycling loop.
-    pub fn tick(&mut self, now: Instant, durations: &PomodoroDurations) {
+    /// acknowledges with Start, not an unattended auto-cycling loop. Returns
+    /// the transition on the one frame that happens, `None` every other
+    /// frame (including every no-op case above).
+    pub fn tick(&mut self, now: Instant, durations: &PomodoroDurations) -> Option<PhaseTransition> {
         if !self.running {
-            return;
+            return None;
         }
         let Some(last_tick) = self.last_tick else {
             self.last_tick = Some(now);
-            return;
+            return None;
         };
         let elapsed = now.saturating_duration_since(last_tick);
         self.last_tick = Some(now);
         if elapsed >= self.remaining {
+            let completed = self.phase;
             self.advance_phase(durations);
             self.running = false;
             self.last_tick = None;
+            Some(PhaseTransition {
+                completed,
+                next: self.phase,
+            })
         } else {
             self.remaining -= elapsed;
+            None
         }
     }
 
@@ -234,6 +252,25 @@ mod tests {
         assert_eq!(state.remaining(), d.short_break);
         assert!(!state.is_running());
         assert_eq!(state.completed_work_sessions(), 1);
+    }
+
+    #[test]
+    fn tick_reports_a_phase_transition_only_the_frame_it_completes() {
+        let d = durations();
+        let mut state = PomodoroState::new(&d);
+        let t0 = Instant::now();
+        state.start(t0);
+
+        assert_eq!(state.tick(t0 + Duration::from_secs(60), &d), None);
+
+        let transition = state.tick(t0 + d.work + Duration::from_secs(1), &d);
+        assert_eq!(
+            transition,
+            Some(PhaseTransition {
+                completed: PomodoroPhase::Work,
+                next: PomodoroPhase::ShortBreak,
+            })
+        );
     }
 
     #[test]

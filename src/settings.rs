@@ -123,6 +123,12 @@ pub struct Settings {
     pub pomodoro_short_break_minutes: u32,
     pub pomodoro_long_break_minutes: u32,
     pub pomodoro_cycles_before_long_break: u32,
+    /// Show an OS-level desktop notification (`notifications::show`) whenever
+    /// a Pomodoro phase completes on its own — see
+    /// `app::pomodoro::tick_pomodoro`. Off by default, same as every other
+    /// field here (this whole struct's container-level `#[serde(default)]`
+    /// above covers an old settings file predating this key).
+    pub pomodoro_notifications_enabled: bool,
     /// Rewrite straight typewriter punctuation (`"`, `'`, `--`, `...`) into curly
     /// quotes, an em dash, and an ellipsis wherever markdown is rendered from —
     /// the Preview pane and every export format (see
@@ -541,6 +547,7 @@ mod tests {
             pomodoro_short_break_minutes: 10,
             pomodoro_long_break_minutes: 30,
             pomodoro_cycles_before_long_break: 3,
+            pomodoro_notifications_enabled: true,
             typewriter_quotes: true,
             toast_duration_secs: 10,
             status_message_duration_secs: 12,

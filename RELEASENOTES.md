@@ -28,6 +28,9 @@ this file.
   its empty, no-project state. No save/discard/cancel prompt, matching Close
   Document's silent-autosave convention. Also clears `last_project_path`, so
   "Reopen project on launch" doesn't bring a deliberately closed project back.
+- Added an optional desktop notification when a Pomodoro phase completes on
+  its own (`File > Settings > Pomodoro`, off by default) — fixes #53. Never
+  fires on a manual Skip, only an automatic completion. No audible chime yet.
 
 ## v0.6.2 — 2026-08-05
 

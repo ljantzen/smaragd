@@ -481,7 +481,7 @@ Any `:` command a loaded plugin has registered also works here (see below) — p
 
 - **Start** / **Pause** / **Skip** / **Reset** control the current phase. Skip jumps to the next phase immediately, whatever's left on the clock; Reset returns to a fresh Work phase (it keeps your completed-session count for the day, it just stops the clock and rewinds the current phase).
 - When a phase's time runs out, smaragd automatically switches to the next one — Work leads to a Short Break, except every *n*th Work session (configurable, default every 4th) leads to a Long Break instead — **and pauses**, rather than continuing to run unattended. Starting the next phase is always a deliberate action, not something that happens silently while you're away from the keyboard.
-- There's no sound or OS notification when a phase ends — purely visual for now.
+- **"Show a desktop notification when a phase completes"** ([Settings](#settings) > Pomodoro, off by default) fires an OS-level desktop notification the moment a phase ends on its own — useful if the app isn't in focus. It only fires on an automatic completion, never on a manual Skip, since you already know about that one. There's still no audible chime.
 
 The timer keeps running whether or not its dock tab is open or visible (it's part of the app's state, not something tied to a window being shown), and a compact countdown — `⏱ Work 12:34` — shows in the status bar at the bottom of the window any time a session has been started, so it's visible at a glance without needing to switch tabs. It doesn't appear during [Focus Mode](#focus-mode), which hides the whole status bar; the dock tab itself is unaffected and still works there.
 
@@ -756,7 +756,7 @@ Both durations are configurable — see **Notifications** under [Settings](#sett
 - **Appearance**: Dark/Light/System and Color Theme (see [Themes](#themes-and-appearance)), plus **UI Scale** — a manual multiplier (50%–300%, default 100%) on top of whatever scaling your OS/display server already reports, for the rare case that comes back wrong (some Wayland compositors don't report a scale winit picks up, leaving the whole UI tiny with no apparent way to fix it). Takes effect immediately; **Reset** clears it back to 100%
 - **Editor**: font + size (see [Editor and Preview Font](#editor-and-preview-font)) and **Typewriter quotes in Preview and export** (off by default; see [Typewriter Quotes](#typewriter-quotes))
 - **Templates**: date format for `${{date}}` — see [Template Variables](#template-variables)
-- **Pomodoro**: durations (work/short break/long break minutes, and sessions before a long break) — see [Pomodoro Timer](#pomodoro-timer)
+- **Pomodoro**: durations (work/short break/long break minutes, and sessions before a long break), plus a desktop-notification toggle for automatic phase completions — see [Pomodoro Timer](#pomodoro-timer)
 - **Shortcuts**: remap or unbind any action, including a fullscreen toggle
 
 If the settings file is missing or its contents can't be parsed, smaragd falls back to defaults rather than failing to start.

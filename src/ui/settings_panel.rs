@@ -401,6 +401,13 @@ fn show_pomodoro_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
             changed = true;
         }
     });
+    ui.add_space(12.0);
+    changed |= ui
+        .checkbox(
+            &mut settings.pomodoro_notifications_enabled,
+            "Show a desktop notification when a phase completes",
+        )
+        .changed();
     changed
 }
 

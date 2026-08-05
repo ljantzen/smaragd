@@ -19,9 +19,26 @@ impl SmaragdApp {
     /// even while the tab is closed. Schedules another repaint a second out
     /// while running, since egui's default reactive mode otherwise only
     /// repaints on input/events and the countdown would freeze on screen.
+    ///
+    /// If a phase just completed (never on a manual Skip — see
+    /// `PhaseTransition`'s doc comment) and desktop notifications are turned
+    /// on in Settings > Pomodoro, fires one via `notifications::show`. A
+    /// failure there (no notification daemon running, permission denied,
+    /// etc.) is silently ignored rather than surfaced as a toast — a missed
+    /// notification isn't worth nagging about every time a phase ends.
     pub(super) fn tick_pomodoro(&mut self, ctx: &egui::Context) {
         let durations = crate::pomodoro::resolve_durations(&self.settings);
-        self.pomodoro.tick(std::time::Instant::now(), &durations);
+        let transition = self.pomodoro.tick(std::time::Instant::now(), &durations);
+        if let Some(transition) = transition
+            && self.settings.pomodoro_notifications_enabled
+        {
+            let body = format!(
+                "{} complete — {} started",
+                transition.completed.label(),
+                transition.next.label()
+            );
+            let _ = crate::notifications::show("Pomodoro Timer", &body);
+        }
         if self.pomodoro.is_running() {
             ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
