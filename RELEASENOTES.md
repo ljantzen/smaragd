@@ -22,6 +22,12 @@ this file.
   Metadata dock), grouped with Title/Subtitle/Author above Logline — a
   single-line field, unlike the multiline Logline/What if/Synopsis boxes
   below it.
+- Implemented `File > Close Project` (`Ctrl+Shift+W`, previously a disabled
+  placeholder): saves the open document and any open Story Card draft if
+  dirty, ends an active collaboration session, and returns every dock tab to
+  its empty, no-project state. No save/discard/cancel prompt, matching Close
+  Document's silent-autosave convention. Also clears `last_project_path`, so
+  "Reopen project on launch" doesn't bring a deliberately closed project back.
 
 ## v0.6.2 — 2026-08-05
 

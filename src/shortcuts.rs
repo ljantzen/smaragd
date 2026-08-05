@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 pub enum ShortcutAction {
     NewProject,
     OpenProject,
+    CloseProject,
     OpenSettings,
     Exit,
     TogglePreview,
@@ -58,6 +59,7 @@ impl ShortcutAction {
     pub const ALL: &'static [ShortcutAction] = &[
         Self::NewProject,
         Self::OpenProject,
+        Self::CloseProject,
         Self::OpenSettings,
         Self::Exit,
         Self::TogglePreview,
@@ -95,6 +97,7 @@ impl ShortcutAction {
         match self {
             Self::NewProject => "New Project",
             Self::OpenProject => "Open Project",
+            Self::CloseProject => "Close Project",
             Self::OpenSettings => "Settings",
             Self::Exit => "Exit",
             Self::TogglePreview => "Toggle Preview",
@@ -137,6 +140,7 @@ impl ShortcutAction {
         match self {
             Self::NewProject => "new_project",
             Self::OpenProject => "open_project",
+            Self::CloseProject => "close_project",
             Self::OpenSettings => "open_settings",
             Self::Exit => "exit",
             Self::TogglePreview => "toggle_preview",
@@ -180,7 +184,7 @@ impl ShortcutAction {
     pub fn category(&self) -> ShortcutCategory {
         match self {
             Self::OpenSettings | Self::Exit => ShortcutCategory::Application,
-            Self::NewProject | Self::OpenProject => ShortcutCategory::Project,
+            Self::NewProject | Self::OpenProject | Self::CloseProject => ShortcutCategory::Project,
             Self::NewFile
             | Self::NewFolder
             | Self::Rename
@@ -222,6 +226,9 @@ impl ShortcutAction {
         match self {
             Self::NewProject => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::N),
             Self::OpenProject => KeyboardShortcut::new(Modifiers::COMMAND, Key::O),
+            Self::CloseProject => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::W)
+            }
             Self::OpenSettings => KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma),
             Self::Exit => KeyboardShortcut::new(Modifiers::COMMAND, Key::Q),
             Self::TogglePreview => {

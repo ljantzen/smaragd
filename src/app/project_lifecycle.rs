@@ -229,6 +229,45 @@ impl SmaragdApp {
         }
     }
 
+    /// Close the currently open project (`File > Close Project` / `Ctrl+Shift+W`).
+    /// Saves the open document and any open story-card draft first — same silent
+    /// autosave convention as `open_document`/`close_document`, no Save/Discard/
+    /// Cancel prompt — then ends an active collaboration session (it's scoped to
+    /// whatever document was open) and resets every project-scoped bit of app
+    /// state back to its "no project" default. Deliberately clears
+    /// `settings.last_project_path` too: having just chosen to close it, a later
+    /// "reopen last project on launch" shouldn't bring it right back. A no-op if
+    /// no project is open.
+    pub(super) fn close_project(&mut self, ctx: &egui::Context) {
+        if self.project.is_none() {
+            return;
+        }
+        if self.collab.is_some() {
+            self.end_collab_session("Collaboration session ended: project closed");
+        }
+        if let Err(err) = self.editor.close() {
+            self.push_error_toast(format!("Couldn't save before closing project: {err}"));
+            return;
+        }
+        if self.card_draft.is_some() {
+            self.finish_card_editor(CardEditorOutcome::Save);
+        }
+        self.export = None;
+        if self.focus_mode {
+            self.set_focus_mode(ctx, false);
+        }
+        self.project = None;
+        self.selected_path = None;
+        self.metadata = MetadataState::default();
+        self.backlinks = BacklinksState::default();
+        self.tags = TagsState::default();
+        self.word_count = WordCountState::default();
+        self.settings.last_project_path = None;
+        self.persist_settings();
+        self.clear_status_message();
+        self.reload_plugins();
+    }
+
     /// Open `path` as a genuine switch to a different document. Every call
     /// site *except* `rename_node`'s post-rename reopen goes through here: a
     /// rename keeps the same logical document open (see
@@ -453,6 +492,51 @@ mod tests {
 
         app.create_project(&ctx, location.path(), "My Novel", "blank");
 
+        assert!(app.project.is_none());
+    }
+
+    #[test]
+    fn close_project_resets_project_state_and_forgets_last_project_path() {
+        let dir = tempfile::tempdir().unwrap();
+        Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+        app.open_project(&ctx, dir.path());
+        assert!(app.project.is_some());
+        assert!(app.settings.last_project_path.is_some());
+
+        app.close_project(&ctx);
+
+        assert!(app.project.is_none());
+        assert!(app.settings.last_project_path.is_none());
+    }
+
+    #[test]
+    fn close_project_is_a_no_op_with_no_project_open() {
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+
+        app.close_project(&ctx);
+
+        assert!(app.project.is_none());
+    }
+
+    #[test]
+    fn close_project_saves_a_dirty_open_document_before_closing() {
+        let dir = tempfile::tempdir().unwrap();
+        Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+        app.open_project(&ctx, dir.path());
+        let doc_path = dir.path().join("doc.md");
+        fs::write(&doc_path, "original").unwrap();
+        app.open_document_internal(&doc_path);
+        app.editor.buffer = "edited".to_string();
+        app.editor.mark_dirty();
+
+        app.close_project(&ctx);
+
+        assert_eq!(fs::read_to_string(&doc_path).unwrap(), "edited");
         assert!(app.project.is_none());
     }
 

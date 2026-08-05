@@ -74,6 +74,7 @@ A **project** is just a folder on disk containing `.md` files and subfolders, ma
 
 - **`File > New Project`** opens a [template picker](#project-templates), then a native folder picker; it creates the folder, marks it as a project, and scaffolds in whatever the chosen template provides. If the folder you pick is already empty, the project is created directly in it — there's no separate name prompt, since the folder's own name already says what the project is called. Pick a non-empty folder instead (to hold the new project as a subfolder of it) and you'll get the usual name prompt.
 - **`File > Open Project`** opens a native folder picker. If you point it at a folder smaragd hasn't used before, it offers to adopt the folder in place (writing the `.smaragd` marker) rather than refusing.
+- **`File > Close Project`** (or **`Ctrl+Shift+W`**) saves the current document (and any open Story Card draft) if it has unsaved changes, then closes the project entirely — no save/discard/cancel prompt, same silent-autosave convention as Close Document. The Binder and every other dock tab return to their empty, no-project state, and a later "Reopen project on launch" won't bring this project back, since closing it is a deliberate choice to leave it behind. Only enabled while a project is open.
 - With no project open, the Binder panel shows **New Project** / **Open Project** buttons in place of the empty binder — the first time you've ever opened a project in smaragd, New Project defaults to the **World-Building** template (see below) instead of Blank.
 - `.smaragd/project.json` stores things the filesystem can't express on its own — manuscript ordering, folder roles, whether plugins/git are enabled for this project. If that file's *contents* ever get corrupted, smaragd falls back to defaults rather than erroring; only a missing marker means "this isn't a project yet."
 
@@ -705,6 +706,7 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 |---|---|
 | New Project | `Ctrl+Alt+N` |
 | Open Project | `Ctrl+O` |
+| Close Project | `Ctrl+Shift+W` |
 | Settings | `Ctrl+,` |
 | Exit | `Ctrl+Q` |
 | Toggle Preview | `Ctrl+Shift+P` |

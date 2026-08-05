@@ -65,7 +65,16 @@ impl SmaragdApp {
                             }
                         });
                         nav.track(ui, &recent_trigger);
-                        ui.add_enabled(false, egui::Button::new("Close Project"));
+                        let close_project_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::CloseProject);
+                        ui.add_enabled_ui(self.project.is_some(), |ui| {
+                            if nav
+                                .shortcut_button(ui, "Close Project", close_project_shortcut)
+                                .clicked()
+                            {
+                                self.close_project(ui.ctx());
+                            }
+                        });
                         ui.separator();
                         if nav
                             .shortcut_button(ui, "Open Document…", open_document_shortcut)

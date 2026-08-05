@@ -480,6 +480,7 @@ impl SmaragdApp {
         match action {
             ShortcutAction::NewProject => self.start_new_project(),
             ShortcutAction::OpenProject => self.browse_for_project(ctx),
+            ShortcutAction::CloseProject => self.close_project(ctx),
             ShortcutAction::OpenSettings => self.show_settings = true,
             ShortcutAction::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             ShortcutAction::TogglePreview => {
