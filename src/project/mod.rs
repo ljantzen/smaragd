@@ -265,6 +265,12 @@ impl Project {
         self.save_metadata()
     }
 
+    /// See `ProjectMeta::point`.
+    pub fn set_point(&mut self, point: String) -> io::Result<()> {
+        self.meta.point = point;
+        self.save_metadata()
+    }
+
     /// See `ProjectMeta::synopsis`.
     pub fn set_synopsis(&mut self, synopsis: String) -> io::Result<()> {
         self.meta.synopsis = synopsis;

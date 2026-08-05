@@ -18,6 +18,10 @@ this file.
   shared document open and the session running. Closing the current
   document, either side, is unchanged and still ends the session
   immediately.
+- Added a **Point** field to the project-wide metadata (binder root row's
+  Metadata dock), grouped with Title/Subtitle/Author above Logline — a
+  single-line field, unlike the multiline Logline/What if/Synopsis boxes
+  below it.
 
 ## v0.6.2 — 2026-08-05
 

@@ -125,7 +125,7 @@ impl SmaragdApp {
     }
 
     /// Persist a live edit to the project-wide metadata fields (Title/Author/
-    /// Logline/Synopsis/What If) shown by `ui::metadata_panel::show_project`
+    /// Point/Logline/Synopsis/What If) shown by `ui::metadata_panel::show_project`
     /// — see `DockAction::ProjectMeta`. A no-op if no project is open, which
     /// can't actually happen (the panel that raises these events isn't shown
     /// without one), but `self.project` is still an `Option` here.
@@ -142,6 +142,7 @@ impl SmaragdApp {
             ProjectMetaEvent::SetSubtitle(subtitle) => project.set_book_subtitle(subtitle),
             ProjectMetaEvent::SetAuthor(author) => project.set_book_author(author),
             ProjectMetaEvent::SetLogline(logline) => project.set_logline(logline),
+            ProjectMetaEvent::SetPoint(point) => project.set_point(point),
             ProjectMetaEvent::SetSynopsis(synopsis) => project.set_synopsis(synopsis),
             ProjectMetaEvent::SetWhatIf(what_if) => project.set_what_if(what_if),
         };

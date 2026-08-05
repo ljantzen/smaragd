@@ -191,6 +191,7 @@ pub enum ProjectMetaEvent {
     SetSubtitle(String),
     SetAuthor(String),
     SetLogline(String),
+    SetPoint(String),
     SetSynopsis(String),
     SetWhatIf(String),
 }
@@ -205,8 +206,11 @@ pub enum ProjectMetaEvent {
 /// field-column layout would leave each field narrower than the tab, and every
 /// field here is meant to fill it — so each is a label directly above a
 /// full-width field instead. Logline/What if/Synopsis then evenly split
-/// whatever vertical space is left after Title/Author, rather than Synopsis
-/// alone getting a fixed height while the other two stay single-line.
+/// whatever vertical space is left after Title/Subtitle/Author/Point, rather
+/// than Synopsis alone getting a fixed height while the other two stay
+/// single-line. Point, like Title/Subtitle/Author before it, is always a
+/// single line, so it's grouped with them rather than counted as a fourth
+/// even share of the split.
 pub fn show_project(ui: &mut egui::Ui, project: &Project) -> Option<ProjectMetaEvent> {
     let mut event = None;
     ui.heading("Project");
@@ -241,10 +245,19 @@ pub fn show_project(ui: &mut egui::Ui, project: &Project) -> Option<ProjectMetaE
         event = Some(ProjectMetaEvent::SetAuthor(author));
     }
 
-    // Split whatever vertical space Title/Author left behind three ways.
-    // `row_height` doubles as the label line-height estimate and the
-    // multiline boxes' own row height, since both render in the default
-    // `TextStyle::Body`.
+    ui.label("Point:");
+    let mut point = project.meta.point.clone();
+    if ui
+        .add(egui::TextEdit::singleline(&mut point).desired_width(width))
+        .changed()
+    {
+        event = Some(ProjectMetaEvent::SetPoint(point));
+    }
+
+    // Split whatever vertical space Title/Subtitle/Author/Point left behind
+    // three ways for Logline/What if/Synopsis. `row_height` doubles as the
+    // label line-height estimate and the multiline boxes' own row height,
+    // since both render in the default `TextStyle::Body`.
     let row_height = ui.text_style_height(&egui::TextStyle::Body);
     let spacing = ui.spacing().item_spacing.y;
     let section_height = ((ui.available_height() - 3.0 * (row_height + spacing)) / 3.0).max(0.0);

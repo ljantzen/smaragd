@@ -167,6 +167,11 @@ pub struct ProjectMeta {
     /// here under a different key.
     #[serde(default)]
     pub logline: String,
+    /// A single-line note on the story's thematic point/takeaway, same editing
+    /// location as `logline` — unlike `logline`/`what_if`/`synopsis`, always a
+    /// one-line field rather than a multiline box.
+    #[serde(default)]
+    pub point: String,
     /// Longer project-wide synopsis, same editing location as `logline`.
     #[serde(default)]
     pub synopsis: String,
