@@ -41,12 +41,15 @@ pub(super) fn default_dock_state() -> egui_dock::DockState<DockTab> {
     // leaves Metadata the narrow remainder — passing the same 0.25 as above
     // would have swapped their proportions (Metadata mistakenly getting the
     // majority) rather than mirroring it.
-    let [editor, _binder] = state
-        .main_surface_mut()
-        .split_left(egui_dock::NodeIndex::root(), 0.22, vec![DockTab::Binder]);
-    let [_editor, metadata] = state
-        .main_surface_mut()
-        .split_right(editor, 0.75, vec![DockTab::Metadata]);
+    let [editor, _binder] = state.main_surface_mut().split_left(
+        egui_dock::NodeIndex::root(),
+        0.22,
+        vec![DockTab::Binder],
+    );
+    let [_editor, metadata] =
+        state
+            .main_surface_mut()
+            .split_right(editor, 0.75, vec![DockTab::Metadata]);
     state
         .main_surface_mut()
         .split_below(metadata, 0.5, vec![DockTab::Backlinks]);

@@ -369,4 +369,3 @@ mod dock_layout_persistence_tests {
         );
     }
 }
-
