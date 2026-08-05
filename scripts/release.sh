@@ -53,8 +53,15 @@ if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     exit 1
 fi
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$repo_root"
+# Deliberately not `repo_root="$(cd ... && pwd)"`: in at least one sandboxed
+# environment this script has been run in, a `dirname` command substitution
+# (an external process) followed by a `$(cd ... && pwd)` substitution
+# reliably duplicated pwd's output onto two lines, turning repo_root into an
+# unusable multi-line path and breaking the very next `cd`. Reading `$PWD`
+# after a plain `cd` avoids spawning `pwd` as a subprocess entirely, since
+# bash already tracks it as ordinary shell state.
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+repo_root="$PWD"
 
 if [ ! -f Cargo.toml ] || ! grep -q '^name = "smaragd"' Cargo.toml; then
     echo "error: expected to find the smaragd Cargo.toml at $repo_root" >&2
