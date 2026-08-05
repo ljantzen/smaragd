@@ -90,7 +90,7 @@ fi
 # this script should block on.
 echo "Checking the current commit is a descendant of main@origin..."
 if origin_main_id="$(jj log -r 'main@origin' --no-graph -T 'commit_id' 2>/dev/null)"; then
-    if [ -z "$(jj log -r "${origin_main_id}::@" --no-graph -T 'commit_id' -l 1 2>/dev/null)" ]; then
+    if [ -z "$(jj log -r "${origin_main_id}::@" --no-graph -T 'commit_id' --limit 1 2>/dev/null)" ]; then
         echo "error: the current commit is not a descendant of main@origin ($origin_main_id) — refusing to move main onto unrelated history. Rebase onto main@origin first." >&2
         exit 1
     fi
