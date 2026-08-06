@@ -208,7 +208,10 @@ pub fn global_themes_dir() -> Option<PathBuf> {
 }
 
 /// Parse a `"#RRGGBB"` (or `"RRGGBB"`, the `#` is optional) hex color.
-fn parse_hex_color(s: &str) -> Option<Color32> {
+/// `pub(crate)` (not just this module's own `RawTheme` parsing) since
+/// `project::status_colors` reuses it too, to turn a persisted
+/// `ProjectMeta::status_colors` hex string back into a paintable `Color32`.
+pub(crate) fn parse_hex_color(s: &str) -> Option<Color32> {
     let s = s.strip_prefix('#').unwrap_or(s);
     if s.len() != 6 || !s.is_ascii() {
         return None;
@@ -217,6 +220,13 @@ fn parse_hex_color(s: &str) -> Option<Color32> {
     let g = u8::from_str_radix(&s[2..4], 16).ok()?;
     let b = u8::from_str_radix(&s[4..6], 16).ok()?;
     Some(Color32::from_rgb(r, g, b))
+}
+
+/// `parse_hex_color`'s inverse — used by the Metadata dock's status
+/// color-picker to turn a user-picked `Color32` into the `"#RRGGBB"` string
+/// `ProjectMeta::status_colors` persists.
+pub(crate) fn to_hex_string(color: Color32) -> String {
+    format!("#{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
 }
 
 /// The `[preview]` table of a custom theme's TOML file — every field optional,

@@ -31,7 +31,9 @@ impl SmaragdApp {
         self.project = Some(project);
         self.editor = EditorState::default();
         self.selected_path = None;
-        self.metadata.project_selected = false;
+        self.metadata.target = MetadataTarget::Document;
+        self.metadata.folder_computed_for = None;
+        self.document_status_cache.clear();
         self.clear_status_message();
         self.settings.last_project_path = Some(path.to_path_buf());
         self.settings.record_recent_project(path);
@@ -312,10 +314,17 @@ impl SmaragdApp {
     /// `open_document` and `rename_node` (reopening the same document under
     /// its new name) should call this directly.
     pub(super) fn open_document_internal(&mut self, path: &Path) {
+        // Captured before `editor.open` runs (which may autosave a dirty
+        // outgoing document first) — invalidated after, so its cached status
+        // reflects whatever it was just saved as, not what it was before.
+        let previous = self.editor.open_path.clone();
         match self.editor.open(path) {
             Ok(()) => {
                 self.selected_path = Some(path.to_path_buf());
-                self.metadata.project_selected = false;
+                self.metadata.target = MetadataTarget::Document;
+                if let Some(previous) = previous {
+                    self.document_status_cache.invalidate(&previous);
+                }
             }
             Err(err) => {
                 self.push_error_toast(format!("Couldn't open {}: {err}", path.display()));
@@ -329,9 +338,13 @@ impl SmaragdApp {
         if self.collab.is_some() {
             self.end_collab_session("Collaboration session ended: document closed");
         }
+        let previous = self.editor.open_path.clone();
         if let Err(err) = self.editor.close() {
             self.push_error_toast(format!("Couldn't save before closing: {err}"));
             return;
+        }
+        if let Some(previous) = previous {
+            self.document_status_cache.invalidate(&previous);
         }
         self.selected_path = None;
         if self.focus_mode {
@@ -363,6 +376,13 @@ impl SmaragdApp {
                 if let Some(rebased) = self.editor.open_path.as_deref().and_then(rebase) {
                     self.editor.open_path = Some(rebased);
                 }
+                if let MetadataTarget::Folder(target) = &self.metadata.target
+                    && let Some(rebased) = rebase(target)
+                {
+                    self.metadata.target = MetadataTarget::Folder(rebased);
+                    self.metadata.folder_computed_for = None;
+                }
+                self.document_status_cache.clear();
             }
             Err(err) => {
                 self.push_error_toast(format!("Couldn't move {}: {err}", path.display()));
@@ -388,6 +408,13 @@ impl SmaragdApp {
                 if let Some(rebased) = self.editor.open_path.as_deref().and_then(rebase) {
                     self.editor.open_path = Some(rebased);
                 }
+                if let MetadataTarget::Folder(target) = &self.metadata.target
+                    && let Some(rebased) = rebase(target)
+                {
+                    self.metadata.target = MetadataTarget::Folder(rebased);
+                    self.metadata.folder_computed_for = None;
+                }
+                self.document_status_cache.clear();
             }
             Err(err) => {
                 self.push_error_toast(format!("Couldn't move {}: {err}", path.display()));

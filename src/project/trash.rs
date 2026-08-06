@@ -100,6 +100,7 @@ impl Project {
             self.meta.node_order.retain(|k, _| !under_prefix(k));
             self.meta.folder_roles.retain(|k, _| !under_prefix(k));
             self.meta.trashed_origins.retain(|k, _| !under_prefix(k));
+            self.meta.folder_meta.retain(|k, _| !under_prefix(k));
         } else {
             self.meta.folder_roles.remove(&key);
             self.meta.trashed_origins.remove(&key);
@@ -110,18 +111,21 @@ impl Project {
         Ok(())
     }
 
-    /// Rewrite every `node_order`/`folder_roles`/`trashed_origins` key under
-    /// `old_prefix` (the folder itself and all its descendants) to sit under
-    /// `new_prefix` instead, following a folder rename or move — so a role (Research/
-    /// Trash) assigned to the moved folder or something inside it, or a trashed
-    /// item's current-location bookkeeping, keeps pointing at where the thing
-    /// actually is instead of a now-nonexistent path. `trashed_origins`' *values*
-    /// (each item's pre-trash location) are deliberately left untouched: they're
-    /// history, not a reference to something that just moved.
+    /// Rewrite every `node_order`/`folder_roles`/`trashed_origins`/`folder_meta`
+    /// key under `old_prefix` (the folder itself and all its descendants) to sit
+    /// under `new_prefix` instead, following a folder rename or move — so a role
+    /// (Research/Trash) or folder metadata (status/type/...) assigned to the
+    /// moved folder or something inside it, or a trashed item's current-location
+    /// bookkeeping, keeps pointing at where the thing actually is instead of a
+    /// now-nonexistent path. `trashed_origins`' *values* (each item's pre-trash
+    /// location) are deliberately left untouched: they're history, not a
+    /// reference to something that just moved. `status_colors` needs no
+    /// rewriting here — it's keyed by status text, not by path.
     pub(super) fn rewrite_relative_key_prefix(&mut self, old_prefix: &str, new_prefix: &str) {
         rewrite_prefix_in(&mut self.meta.node_order, old_prefix, new_prefix);
         rewrite_prefix_in(&mut self.meta.folder_roles, old_prefix, new_prefix);
         rewrite_prefix_in(&mut self.meta.trashed_origins, old_prefix, new_prefix);
+        rewrite_prefix_in(&mut self.meta.folder_meta, old_prefix, new_prefix);
     }
 }
 

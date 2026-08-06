@@ -68,6 +68,11 @@ pub enum BinderEvent {
     /// raised for the root folder, matching how `Selected` is only ever
     /// raised for a document.
     SelectProject,
+    /// A non-root folder row was clicked — show its own metadata (Type/
+    /// Status/POV/Word Count Target/Tags, see `ui::metadata_panel::show_folder`)
+    /// in the Metadata dock. Kept separate from `SelectProject`: the Project
+    /// form and a plain folder's metadata form have entirely different fields.
+    SelectFolder(PathBuf),
 }
 
 /// Keyboard filter claimed on every focused binder row: all four arrow keys are ours
@@ -83,12 +88,15 @@ const ARROW_KEYS_FILTER: egui::EventFilter = egui::EventFilter {
     escape: false,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
     project: &Project,
     selected: Option<&Path>,
     focus_requested: bool,
     project_selected: bool,
+    selected_folder: Option<&Path>,
+    document_status_color: &dyn Fn(&Path) -> Option<egui::Color32>,
 ) -> Option<BinderEvent> {
     let mut event = None;
     let mut visible_rows: Vec<(PathBuf, egui::Id)> = Vec::new();
@@ -101,6 +109,8 @@ pub fn show(
         true,
         &mut visible_rows,
         project_selected,
+        selected_folder,
+        document_status_color,
     );
 
     // Up/Down move the keyboard cursor between rows, in the same top-to-bottom order
@@ -153,6 +163,25 @@ pub fn show(
     event
 }
 
+/// Whether a folder row should paint as persistently selected: the root row
+/// selects on `project_selected` (the Project form is showing), any other
+/// folder on whether `selected_folder` names it — see
+/// `BinderEvent::SelectProject`/`SelectFolder`. Its own pure function (rather
+/// than inlined at the one call site) so the two-way branch is directly unit
+/// testable without driving a full `egui::Ui` frame.
+fn folder_row_is_selected(
+    is_root: bool,
+    project_selected: bool,
+    selected_folder: Option<&Path>,
+    node_path: &Path,
+) -> bool {
+    if is_root {
+        project_selected
+    } else {
+        selected_folder == Some(node_path)
+    }
+}
+
 fn role_prefix(role: Option<FolderRole>) -> &'static str {
     match role {
         Some(FolderRole::Research) => "🔍 ",
@@ -169,6 +198,43 @@ fn role_prefix(role: Option<FolderRole>) -> &'static str {
 /// extension, Scrivener/Ulysses-style.
 pub(crate) fn document_label(name: &str) -> &str {
     name.strip_suffix(".md").unwrap_or(name)
+}
+
+/// Paint a row's background: `status_color` (if any — see `ProjectMeta::status_colors`)
+/// as an always-on base fill, then the usual hover/focus/selection highlight
+/// layered on top when any of those apply. Interaction feedback always wins
+/// over the status tint (painted after, not blended) rather than being hidden
+/// by it, so a hovered/selected/focused row is never harder to spot than an
+/// unpainted one — the status color just stays visible whenever the row isn't
+/// being interacted with, which is the common case. Shared by `folder_header`
+/// and `document_row`, which need identical layering: this is also the reason
+/// `document_row` can't just be `egui::Button::selectable(...).fill(color)` —
+/// `Button::fill`'s override is unconditional (its own doc comment: "this
+/// will override any on-hover effects"), so it can't layer a base color under
+/// a separate highlight the way this does.
+fn paint_row_background(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    is_selected: bool,
+    status_color: Option<egui::Color32>,
+) -> egui::style::WidgetVisuals {
+    let visuals = ui.style().interact_selectable(response, is_selected);
+    if ui.is_rect_visible(response.rect) {
+        if let Some(color) = status_color {
+            ui.painter()
+                .rect_filled(response.rect, visuals.corner_radius, color);
+        }
+        if is_selected || response.hovered() || response.has_focus() {
+            ui.painter().rect(
+                response.rect.expand(visuals.expansion),
+                visuals.corner_radius,
+                visuals.weak_bg_fill,
+                visuals.bg_stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    visuals
 }
 
 /// A hand-built stand-in for `egui::CollapsingHeader::new(label).id_salt(id).show(...)`'s
@@ -197,6 +263,7 @@ fn folder_header(
     label: &str,
     default_open: bool,
     is_selected: bool,
+    status_color: Option<egui::Color32>,
 ) -> (
     egui::Response,
     egui::containers::collapsing_header::CollapsingState,
@@ -229,25 +296,16 @@ fn folder_header(
     let openness = state.openness(ui.ctx());
 
     if ui.is_rect_visible(rect) {
-        let visuals = ui
-            .style()
-            .interact_selectable(&header_response, is_selected);
-        // Unlike `CollapsingHeader` (which only paints this when explicitly made
-        // `.selectable(true)`, which we never do), always show it on hover/focus —
-        // otherwise there'd be no visual sign of which row the Up/Down keyboard
-        // cursor is currently on. `is_selected` (only ever true for the project
-        // root, once its metadata is showing in the Metadata dock — see
-        // `BinderEvent::SelectProject`) paints the same way regardless of
-        // hover/focus, matching a document row's persistent selection highlight.
-        if is_selected || header_response.hovered() || header_response.has_focus() {
-            ui.painter().rect(
-                header_response.rect.expand(visuals.expansion),
-                visuals.corner_radius,
-                visuals.weak_bg_fill,
-                visuals.bg_stroke,
-                egui::StrokeKind::Inside,
-            );
-        }
+        // `is_selected` (true for the project root once its metadata is
+        // showing in the Metadata dock, or for whichever other folder's own
+        // metadata is — see `BinderEvent::SelectProject`/`SelectFolder`)
+        // paints the same way regardless of hover/focus, matching a document
+        // row's persistent selection highlight. Unlike `CollapsingHeader`
+        // (which only paints hover/focus when explicitly made
+        // `.selectable(true)`, which we never do), always show it — otherwise
+        // there'd be no visual sign of which row the Up/Down keyboard cursor
+        // is currently on.
+        let visuals = paint_row_background(ui, &header_response, is_selected, status_color);
         let (mut icon_rect, _) = ui.spacing().icon_rectangles(header_response.rect);
         icon_rect.set_center(egui::pos2(
             header_response.rect.left() + ui.spacing().indent / 2.0,
@@ -261,6 +319,47 @@ fn folder_header(
     (header_response, state)
 }
 
+/// A hand-built stand-in for `ui.add(egui::Button::selectable(is_selected,
+/// label).sense(Sense::click_and_drag()))`, needed for the same reason
+/// `folder_header` is hand-built: `Button::fill` can't layer a status color
+/// underneath the usual hover/selection highlight — see
+/// `paint_row_background`'s doc comment. Matches `Button::selectable`'s
+/// size/padding so switching to this doesn't shift the binder's layout.
+fn document_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    is_selected: bool,
+    status_color: Option<egui::Color32>,
+) -> egui::Response {
+    use egui::NumExt as _;
+
+    let button_padding = ui.spacing().button_padding;
+    let wrap_width = ui.available_width() - 2.0 * button_padding.x;
+    let galley = egui::WidgetText::from(label).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        wrap_width,
+        egui::TextStyle::Button,
+    );
+    let desired_size = egui::vec2(
+        ui.available_width(),
+        galley.size().y + 2.0 * button_padding.y,
+    )
+    .at_least(ui.spacing().interact_size);
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
+
+    if ui.is_rect_visible(rect) {
+        let visuals = paint_row_background(ui, &response, is_selected, status_color);
+        let text_pos = egui::pos2(
+            rect.min.x + button_padding.x,
+            rect.center().y - galley.size().y / 2.0,
+        );
+        ui.painter().galley(text_pos, galley, visuals.text_color());
+    }
+
+    response
+}
+
 #[allow(clippy::too_many_arguments)]
 fn show_node(
     ui: &mut egui::Ui,
@@ -271,20 +370,32 @@ fn show_node(
     is_root: bool,
     visible_rows: &mut Vec<(PathBuf, egui::Id)>,
     project_selected: bool,
+    selected_folder: Option<&Path>,
+    document_status_color: &dyn Fn(&Path) -> Option<egui::Color32>,
 ) {
     match &node.kind {
         BinderNodeKind::Folder { children } => {
             let role = project.folder_role(&node.path);
             let label = format!("{}{}", role_prefix(role), node.name);
             let id = ui.make_persistent_id(&node.path);
+            let is_selected =
+                folder_row_is_selected(is_root, project_selected, selected_folder, &node.path);
+            let status_color = project
+                .folder_meta(&node.path)
+                .status
+                .as_deref()
+                .and_then(|status| project.status_color_hex(status))
+                .and_then(crate::color_theme::parse_hex_color);
             let (header_response, mut state) =
-                folder_header(ui, id, &label, true, is_root && project_selected);
+                folder_header(ui, id, &label, true, is_selected, status_color);
             visible_rows.push((node.path.clone(), header_response.id));
 
             if header_response.clicked() {
-                if is_root {
-                    *event = Some(BinderEvent::SelectProject);
-                }
+                *event = Some(if is_root {
+                    BinderEvent::SelectProject
+                } else {
+                    BinderEvent::SelectFolder(node.path.clone())
+                });
                 state.toggle(ui);
                 // `request_focus` unconditionally resets the target's focus-lock
                 // filter (see the comment on the equivalent guard in `show`) — skip
@@ -482,22 +593,16 @@ fn show_node(
                         false,
                         visible_rows,
                         project_selected,
+                        selected_folder,
+                        document_status_color,
                     );
                 }
             });
         }
         BinderNodeKind::Document => {
             let is_selected = selected == Some(node.path.as_path());
-            // `ui.selectable_label` (a `Button` under the hood) only senses clicks by
-            // default; `dnd_set_drag_payload` needs the widget itself to sense drags
-            // too (`Response::drag_started` — and thus this — is only ever true for a
-            // widget built with drag sensing), so a plain `selectable_label` never
-            // actually starts a drag no matter how it's dragged. `click_and_drag`
-            // keeps the exact same clickable/selectable look and behavior.
-            let response = ui.add(
-                egui::Button::selectable(is_selected, document_label(&node.name))
-                    .sense(egui::Sense::click_and_drag()),
-            );
+            let status_color = document_status_color(&node.path);
+            let response = document_row(ui, document_label(&node.name), is_selected, status_color);
             visible_rows.push((node.path.clone(), response.id));
             if response.clicked() {
                 *event = Some(BinderEvent::Selected(node.path.clone()));
@@ -589,6 +694,30 @@ mod tests {
         assert_eq!(document_label("notes.md.bak"), "notes.md.bak");
     }
 
+    #[test]
+    fn folder_row_is_selected_for_root_follows_project_selected_only() {
+        let unrelated = Path::new("/project/Chapter 1");
+        assert!(folder_row_is_selected(true, true, None, unrelated));
+        assert!(folder_row_is_selected(
+            true,
+            true,
+            Some(Path::new("/project/Other")),
+            unrelated
+        ));
+        assert!(!folder_row_is_selected(true, false, None, unrelated));
+    }
+
+    #[test]
+    fn folder_row_is_selected_for_a_non_root_folder_follows_selected_folder_only() {
+        let chapter = Path::new("/project/Chapter 1");
+        let other = Path::new("/project/Other");
+        assert!(folder_row_is_selected(false, true, Some(chapter), chapter));
+        assert!(!folder_row_is_selected(false, true, Some(other), chapter));
+        assert!(!folder_row_is_selected(false, true, None, chapter));
+        // `project_selected` is irrelevant for a non-root row.
+        assert!(folder_row_is_selected(false, false, Some(chapter), chapter));
+    }
+
     /// Drives `show` with synthetic input across frames, so keyboard-navigation
     /// behavior can be checked without a running window — worth the extra machinery
     /// specifically because this exact class of bug (a click that silently fails to
@@ -622,7 +751,9 @@ mod tests {
             };
             let mut event = None;
             let _ = self.ctx.run_ui(input, |ui| {
-                event = show(ui, project, selected, focus_requested, false);
+                event = show(ui, project, selected, focus_requested, false, None, &|_| {
+                    None
+                });
             });
             event
         }
@@ -906,10 +1037,10 @@ mod tests {
     }
 
     #[test]
-    fn activating_a_non_root_folder_row_does_not_raise_select_project() {
+    fn activating_a_non_root_folder_row_raises_select_folder_not_select_project() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = crate::project::Project::initialize(dir.path()).unwrap();
-        project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
 
         let harness = Harness::default();
         harness.settle(&project);
@@ -918,10 +1049,11 @@ mod tests {
         harness.press(&project, egui::Key::ArrowDown); // -> Chapter 1
         harness.idle(&project);
 
-        // Activating (Enter) a non-root folder should just toggle expand/collapse,
-        // never raise `SelectProject` — that's reserved for the root row.
+        // Activating (Enter) a non-root folder toggles expand/collapse (same as
+        // before) and now also raises `SelectFolder` — never `SelectProject`,
+        // which is reserved for the root row.
         let event = harness.press(&project, egui::Key::Enter);
-        assert_eq!(event, None);
+        assert_eq!(event, Some(BinderEvent::SelectFolder(chapter)));
     }
 
     #[test]

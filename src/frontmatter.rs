@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// has no representation for either. `Serialize` is derived for parity with
 /// `ProjectMeta`/`Settings` and round-trip unit test convenience, not because
 /// `DocumentMeta` itself is ever serialized directly to produce a frontmatter block.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DocumentMeta {
     /// Free-form section type ("Chapter", "Scene", "Part", or any user-defined

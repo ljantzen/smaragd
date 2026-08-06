@@ -1,4 +1,5 @@
 mod create;
+mod folder_meta;
 mod meta;
 pub mod model;
 mod picklists;
@@ -6,6 +7,7 @@ mod queries;
 mod rename_move_delete;
 mod roles;
 mod scan;
+mod status_colors;
 mod story_cards;
 mod streak;
 mod trash;
@@ -1320,6 +1322,88 @@ mod tests {
 
         assert_eq!(project.folder_role(&new_path), Some(FolderRole::Trash));
         assert_eq!(project.folder_role(&trash), None);
+    }
+
+    #[test]
+    fn rename_of_a_folder_with_metadata_keeps_it_pointing_at_the_new_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let meta = crate::frontmatter::DocumentMeta {
+            status: Some("draft".to_string()),
+            ..Default::default()
+        };
+        project.set_folder_meta(&chapter, meta.clone()).unwrap();
+
+        let new_path = project.rename(&chapter, "Chapter One").unwrap();
+
+        assert_eq!(project.folder_meta(&new_path), meta);
+        assert_eq!(
+            project.folder_meta(&chapter),
+            crate::frontmatter::DocumentMeta::default()
+        );
+    }
+
+    #[test]
+    fn move_item_of_a_folder_with_metadata_keeps_it_pointing_at_the_new_location() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_folder(dir.path(), "Target").unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let meta = crate::frontmatter::DocumentMeta {
+            status: Some("draft".to_string()),
+            ..Default::default()
+        };
+        project.set_folder_meta(&chapter, meta.clone()).unwrap();
+
+        let new_path = project.move_item(&chapter, &target).unwrap();
+
+        assert_eq!(project.folder_meta(&new_path), meta);
+        assert_eq!(
+            project.folder_meta(&chapter),
+            crate::frontmatter::DocumentMeta::default()
+        );
+    }
+
+    #[test]
+    fn permanently_delete_removes_folder_meta_under_the_deleted_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        project
+            .set_folder_meta(
+                &chapter,
+                crate::frontmatter::DocumentMeta {
+                    status: Some("draft".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        project.delete(&chapter).unwrap();
+
+        assert!(project.meta.folder_meta.is_empty());
+    }
+
+    #[test]
+    fn permanently_delete_of_a_single_document_does_not_touch_folder_meta() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        project
+            .set_folder_meta(
+                &chapter,
+                crate::frontmatter::DocumentMeta {
+                    status: Some("draft".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let doc = project.create_document(&chapter, "Scene 1").unwrap();
+
+        project.delete(&doc).unwrap();
+
+        assert!(!project.meta.folder_meta.is_empty());
     }
 
     #[test]

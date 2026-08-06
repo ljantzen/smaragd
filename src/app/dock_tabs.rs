@@ -120,7 +120,8 @@ impl SmaragdApp {
             BinderEvent::MoveItem { path, new_parent } => self.move_item(&path, &new_parent),
             BinderEvent::MoveItemBefore { path, before } => self.move_item_before(&path, &before),
             BinderEvent::Export { path } => self.open_export(path),
-            BinderEvent::SelectProject => self.metadata.project_selected = true,
+            BinderEvent::SelectProject => self.metadata.target = MetadataTarget::Project,
+            BinderEvent::SelectFolder(path) => self.metadata.target = MetadataTarget::Folder(path),
         }
     }
 
@@ -148,6 +149,25 @@ impl SmaragdApp {
         };
         if let Err(err) = result {
             self.push_error_toast(format!("Couldn't save project metadata: {err}"));
+        }
+    }
+
+    /// Persist a status-color assignment from either the document or folder
+    /// metadata form's Status-field swatch — see `DockAction::Metadata`. A
+    /// no-op without an open project, same reasoning as
+    /// `handle_project_meta_event`.
+    pub(super) fn handle_metadata_form_event(
+        &mut self,
+        event: ui::metadata_panel::MetadataFormEvent,
+    ) {
+        let ui::metadata_panel::MetadataFormEvent::SetStatusColor { status, color } = event;
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        if let Err(err) =
+            project.set_status_color_hex(&status, crate::color_theme::to_hex_string(color))
+        {
+            self.push_error_toast(format!("Couldn't save status color: {err}"));
         }
     }
 
@@ -254,6 +274,53 @@ mod tests {
         app.handle_corkboard_event(CorkboardEvent::SetProtagonistMisbelief(
             "Unworthy of the crown".to_string(),
         ));
+
+        assert!(app.project.is_none());
+    }
+
+    #[test]
+    fn select_folder_event_sets_the_metadata_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+
+        app.handle_binder_event(
+            &egui::Context::default(),
+            BinderEvent::SelectFolder(chapter.clone()),
+        );
+
+        assert_eq!(app.metadata.target, MetadataTarget::Folder(chapter));
+    }
+
+    #[test]
+    fn set_status_color_event_persists_it_on_the_open_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+
+        app.handle_metadata_form_event(ui::metadata_panel::MetadataFormEvent::SetStatusColor {
+            status: "draft".to_string(),
+            color: egui::Color32::from_rgb(0xff, 0x88, 0x00),
+        });
+
+        assert_eq!(
+            app.project.as_ref().unwrap().status_color_hex("draft"),
+            Some("#ff8800")
+        );
+    }
+
+    #[test]
+    fn set_status_color_event_is_a_no_op_without_an_open_project() {
+        let mut app = SmaragdApp::test_fixture();
+
+        // Must not panic when there's nothing to apply the edit to.
+        app.handle_metadata_form_event(ui::metadata_panel::MetadataFormEvent::SetStatusColor {
+            status: "draft".to_string(),
+            color: egui::Color32::from_rgb(0xff, 0x88, 0x00),
+        });
 
         assert!(app.project.is_none());
     }

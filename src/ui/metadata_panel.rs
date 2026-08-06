@@ -100,52 +100,103 @@ pub fn show(
     draft: &mut MetadataDraft,
     picklists: &MetadataPicklists,
     word_count: usize,
-) {
+    status_color: Option<egui::Color32>,
+) -> Option<MetadataFormEvent> {
     ui.heading("Metadata");
     ui.separator();
 
     if open_path.is_none() {
         ui.label("Open a document to edit its metadata.");
-        return;
+        return None;
     }
 
-    egui::Grid::new("document_metadata_grid")
-        .num_columns(2)
-        .show(ui, |ui| {
-            picklist_or_text_row(
-                ui,
-                "Type:",
-                "metadata_type_combo",
-                &mut draft.section_type,
-                picklists.types,
-            );
-            picklist_or_text_row(
-                ui,
-                "Status:",
-                "metadata_status_combo",
-                &mut draft.status,
-                picklists.statuses,
-            );
-            picklist_or_text_row(
-                ui,
-                "POV:",
-                "metadata_pov_combo",
-                &mut draft.pov,
-                picklists.povs,
-            );
+    metadata_fields_grid(
+        ui,
+        "document_metadata_grid",
+        draft,
+        picklists,
+        status_color,
+        Some(word_count),
+    )
+}
 
+/// The Type/Status/POV/Word-Count-Target/Tags `egui::Grid` body shared by
+/// `show` (a document's frontmatter, which also shows a live "Word count:"
+/// readout — `word_count: Some(_)`) and `show_folder` (a folder's own
+/// metadata, which has no single open buffer to compute one from —
+/// `word_count: None`). `id_salt` must be unique per caller (egui's `Grid`/
+/// `ComboBox` id requirement), so each passes its own literal.
+fn metadata_fields_grid(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    draft: &mut MetadataDraft,
+    picklists: &MetadataPicklists,
+    status_color: Option<egui::Color32>,
+    word_count: Option<usize>,
+) -> Option<MetadataFormEvent> {
+    let mut event = None;
+    egui::Grid::new(id_salt).num_columns(2).show(ui, |ui| {
+        picklist_or_text_row(
+            ui,
+            "Type:",
+            &format!("{id_salt}_type_combo"),
+            &mut draft.section_type,
+            picklists.types,
+        );
+        event = status_row(
+            ui,
+            &format!("{id_salt}_status_combo"),
+            &mut draft.status,
+            picklists.statuses,
+            status_color,
+        );
+        picklist_or_text_row(
+            ui,
+            "POV:",
+            &format!("{id_salt}_pov_combo"),
+            &mut draft.pov,
+            picklists.povs,
+        );
+
+        if let Some(word_count) = word_count {
             ui.label("Word count:");
             ui.label(word_count.to_string());
             ui.end_row();
+        }
 
-            ui.label("Word count target:");
-            ui.text_edit_singleline(&mut draft.word_count_target_text);
-            ui.end_row();
+        ui.label("Word count target:");
+        ui.text_edit_singleline(&mut draft.word_count_target_text);
+        ui.end_row();
 
-            ui.label("Tags:");
-            ui.text_edit_singleline(&mut draft.tags_text);
-            ui.end_row();
-        });
+        ui.label("Tags:");
+        ui.text_edit_singleline(&mut draft.tags_text);
+        ui.end_row();
+    });
+    event
+}
+
+/// Renders a folder's own metadata form — structurally identical to `show`
+/// minus the "Word count:" live readout (a folder has no single open buffer
+/// to compute one from, unlike a document; `word_count_target` itself is
+/// still kept, only the live count is dropped). Shown in place of `show` when
+/// the binder's non-root folder row is selected — see
+/// `app::MetadataState::target`/`ui::binder_panel::BinderEvent::SelectFolder`.
+pub fn show_folder(
+    ui: &mut egui::Ui,
+    draft: &mut MetadataDraft,
+    picklists: &MetadataPicklists,
+    status_color: Option<egui::Color32>,
+) -> Option<MetadataFormEvent> {
+    ui.heading("Folder Metadata");
+    ui.separator();
+    metadata_fields_grid(
+        ui,
+        "folder_metadata_grid",
+        draft,
+        picklists,
+        status_color,
+        None,
+    )
 }
 
 /// One `Type:`/`Status:`/`POV:`-style grid row: a free-text field when `options` is
@@ -178,6 +229,70 @@ fn picklist_or_text_row(
             });
     }
     ui.end_row();
+}
+
+/// Outcomes of editing a Status field's color swatch — see `status_row`.
+/// Separate from `ProjectMetaEvent`/`MetadataDraft`'s own buffer-diff
+/// mechanism: a color assignment lives on `Project::meta.status_colors`
+/// directly (keyed by status text, not by document/folder path), with no
+/// draft of its own to round-trip through — raised the moment the swatch is
+/// used, same as `ProjectMetaEvent`.
+pub enum MetadataFormEvent {
+    SetStatusColor {
+        status: String,
+        color: egui::Color32,
+    },
+}
+
+/// The "Status:" row: the same free-text-vs-dropdown toggle
+/// `picklist_or_text_row` gives Type/POV, plus a small color swatch button
+/// (disabled when the field is blank — there'd be nothing to key a color by)
+/// that opens a popup to assign/edit whatever status is currently typed or
+/// selected. Its own function rather than a `picklist_or_text_row` call
+/// because that one unconditionally ends the row after exactly two widgets;
+/// this needs a third.
+fn status_row(
+    ui: &mut egui::Ui,
+    combo_id: &str,
+    value: &mut String,
+    options: &[String],
+    current_color: Option<egui::Color32>,
+) -> Option<MetadataFormEvent> {
+    ui.label("Status:");
+    if options.is_empty() {
+        ui.text_edit_singleline(value);
+    } else {
+        let selected_text = if value.is_empty() {
+            "(none)"
+        } else {
+            value.as_str()
+        };
+        egui::ComboBox::new(combo_id, "")
+            .selected_text(selected_text)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(value, String::new(), "(none)");
+                for option in options {
+                    ui.selectable_value(value, option.clone(), option);
+                }
+            });
+    }
+
+    let mut event = None;
+    let status = value.trim().to_string();
+    ui.add_enabled_ui(!status.is_empty(), |ui| {
+        let mut color = current_color.unwrap_or(ui.visuals().weak_text_color());
+        if egui::color_picker::color_edit_button_srgba(
+            ui,
+            &mut color,
+            egui::color_picker::Alpha::Opaque,
+        )
+        .changed()
+        {
+            event = Some(MetadataFormEvent::SetStatusColor { status, color });
+        }
+    });
+    ui.end_row();
+    event
 }
 
 /// Outcomes of editing the project-wide fields `show_project` renders — the same

@@ -22,6 +22,30 @@ pub struct ProjectMeta {
     /// doesn't carry that.
     #[serde(default)]
     pub trashed_origins: HashMap<String, String>,
+    /// Full document-style metadata (type/status/pov/word_count_target/tags)
+    /// assigned directly to a folder — unlike a document's, never parsed from
+    /// YAML frontmatter (a folder has no file of its own to hold one), so this
+    /// is the only place it lives. Only `status` currently drives anything
+    /// (the binder row's background color — see `Project::status_color_hex`);
+    /// `type`/`pov`/`word_count_target`/`tags` are carried along purely for
+    /// parity with `DocumentMeta`, so the same form/fields work for both.
+    /// Keyed the same `/`-joined-relative-path way `folder_roles` is (`""` =
+    /// the root folder itself). `#[serde(default)]` for the same reason as
+    /// `folder_roles`: older `project.json` files predate this field.
+    #[serde(default)]
+    pub folder_meta: HashMap<String, crate::frontmatter::DocumentMeta>,
+    /// A user-assigned background color for each `status` value — matched
+    /// against both a document's frontmatter `status` and a folder's
+    /// `folder_meta`'s `status` — painted behind that row in the binder (see
+    /// `ui::binder_panel`). Stored as `"#RRGGBB"` hex strings rather than
+    /// `egui::Color32`: `Color32` has no `Serialize`/`Deserialize` impl, and
+    /// hex-string round-tripping through text is already `color_theme.rs`'s
+    /// convention for persisting a user-picked color. Keyed by the raw status
+    /// string exactly as typed (trimmed, case-sensitive) — deliberately not
+    /// tied to `status_picklist_folder`'s dropdown options, so a color can be
+    /// assigned to a status that isn't (or is no longer) one of them.
+    #[serde(default)]
+    pub status_colors: HashMap<String, String>,
     /// Lisa Cron-style story/plotting cards, deliberately *not* tied to the binder
     /// tree or `node_order`: a card may exist with no linked document at all (a pure
     /// plotting artifact, drafted before any scene exists) and its position in this

@@ -1,4 +1,19 @@
 use super::*;
+use std::collections::HashMap;
+
+/// Which form the Metadata dock currently shows — the open document's own
+/// frontmatter (the default), the project-wide fields (`BinderEvent::SelectProject`,
+/// the binder's root row), or a specific folder's own metadata
+/// (`BinderEvent::SelectFolder`, any other folder row). Replaces what used to
+/// be a bare `project_selected: bool`, now that a folder is a third possible
+/// target alongside "the project" and "no folder at all."
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) enum MetadataTarget {
+    #[default]
+    Document,
+    Project,
+    Folder(PathBuf),
+}
 
 /// Live editing buffers for the open document's frontmatter, and the bookkeeping
 /// needed to keep them in sync with whichever document is open — grouped out of
@@ -16,12 +31,70 @@ pub(super) struct MetadataState {
     /// `draft.to_meta()` each frame to notice a live edit without re-writing the
     /// buffer when nothing changed.
     pub(super) last_applied: DocumentMeta,
-    /// Whether the Metadata dock is showing the project-wide fields (see
-    /// `ui::metadata_panel::show_project`) instead of the open document's
-    /// frontmatter — set by `BinderEvent::SelectProject` (clicking the
-    /// binder's root row) and cleared whenever a document is opened or the
-    /// project changes.
-    pub(super) project_selected: bool,
+    /// Which form the Metadata dock shows right now — see `MetadataTarget`.
+    pub(super) target: MetadataTarget,
+    /// `MetadataDraft` for whichever folder `target` currently names — the
+    /// same buffer-diff mechanism as `draft`/`last_applied` above, but kept
+    /// as its own pair rather than reused: a folder's and the open
+    /// document's in-progress edits can coexist (switching the Metadata
+    /// dock's target doesn't "commit" whichever form you're leaving).
+    pub(super) folder_draft: MetadataDraft,
+    /// The `DocumentMeta` last written to `Project::folder_meta` for
+    /// `target`'s folder — compared against `folder_draft.to_meta()` each
+    /// frame, mirroring `last_applied`.
+    pub(super) folder_last_applied: DocumentMeta,
+    /// Which folder path `folder_draft`/`folder_last_applied` were last
+    /// computed for, mirroring `computed_for`. `None` until a folder's ever
+    /// been selected.
+    pub(super) folder_computed_for: Option<PathBuf>,
+}
+
+/// Lazily-populated, disk-backed cache of each *closed* document's frontmatter
+/// `status`, keyed by absolute path — avoids a per-frame disk read for every
+/// visible binder row (the binder re-renders every frame; see
+/// `WordCountState`'s doc comment above for why this codebase avoids that
+/// class of I/O elsewhere too). The currently *open* document's status is
+/// read live from `metadata.draft.status` instead (already in memory, and may
+/// include unsaved edits) — this cache is never consulted for it, only for
+/// every other document a binder row might show. `RefCell` because it's
+/// populated from inside `binder_panel::show`, which only gets `&Project` and
+/// plain closures, not `&mut SmaragdApp`.
+#[derive(Default)]
+pub(super) struct DocumentStatusCache {
+    cache: std::cell::RefCell<HashMap<PathBuf, Option<String>>>,
+}
+
+impl DocumentStatusCache {
+    /// `path`'s cached status, reading it from disk (`Project::document_meta`)
+    /// only the first time `path` is looked up since the last invalidation.
+    pub(super) fn status(&self, project: &Project, path: &Path) -> Option<String> {
+        if let Some(cached) = self.cache.borrow().get(path) {
+            return cached.clone();
+        }
+        let status = project.document_meta(path).ok().and_then(|m| m.status);
+        self.cache
+            .borrow_mut()
+            .insert(path.to_path_buf(), status.clone());
+        status
+    }
+
+    /// Drop `path`'s cached entry so the next `status()` call re-reads it
+    /// from disk — call whenever `path` might have changed since it was last
+    /// cached (e.g. it was just autosaved on close).
+    pub(super) fn invalidate(&mut self, path: &Path) {
+        self.cache.get_mut().remove(path);
+    }
+
+    /// Drop every cached entry — call whenever the project tree may have
+    /// shifted (a new project opened, or any rename/move/delete/restore).
+    /// Simpler and safer than surgically rewriting keys the way
+    /// `Project::rewrite_relative_key_prefix` does for *persisted*
+    /// `ProjectMeta` maps: this cache is a purely in-memory, ephemeral perf
+    /// optimization, so a full clear costs at most one disk re-read per
+    /// subsequently-visible row, not a project-wide walk.
+    pub(super) fn clear(&mut self) {
+        self.cache.get_mut().clear();
+    }
 }
 
 /// Every `[[wikilink]]` elsewhere in the project pointing at the open document,
@@ -149,6 +222,47 @@ impl SmaragdApp {
         self.editor.buffer = crate::frontmatter::write_back(&self.editor.buffer, &current);
         self.editor.mark_dirty();
         self.metadata.last_applied = current;
+    }
+
+    /// `refresh_metadata_if_needed`'s equivalent for `MetadataTarget::Folder`:
+    /// refresh `metadata.folder_draft` from `Project::folder_meta` whenever
+    /// `target` names a folder `folder_computed_for` doesn't match yet.
+    /// Unlike a document's frontmatter, this needs no disk read or YAML
+    /// validation — `folder_meta` is already plain in-memory `ProjectMeta`.
+    pub(super) fn refresh_folder_metadata_if_needed(&mut self) {
+        let MetadataTarget::Folder(path) = self.metadata.target.clone() else {
+            return;
+        };
+        if self.metadata.folder_computed_for.as_deref() == Some(path.as_path()) {
+            return;
+        }
+        let meta = self
+            .project
+            .as_ref()
+            .map(|project| project.folder_meta(&path))
+            .unwrap_or_default();
+        self.metadata.folder_draft = MetadataDraft::from_meta(&meta);
+        self.metadata.folder_last_applied = meta;
+        self.metadata.folder_computed_for = Some(path);
+    }
+
+    /// `apply_metadata_edits_if_changed`'s equivalent for
+    /// `MetadataTarget::Folder`: persist a live edit to `metadata.folder_draft`
+    /// via `Project::set_folder_meta` instead of rewriting `editor.buffer`.
+    pub(super) fn apply_folder_metadata_edits_if_changed(&mut self) {
+        let MetadataTarget::Folder(path) = self.metadata.target.clone() else {
+            return;
+        };
+        let current = self.metadata.folder_draft.to_meta();
+        if current == self.metadata.folder_last_applied {
+            return;
+        }
+        if let Some(project) = &mut self.project
+            && let Err(err) = project.set_folder_meta(&path, current.clone())
+        {
+            self.push_error_toast(format!("Couldn't save folder metadata: {err}"));
+        }
+        self.metadata.folder_last_applied = current;
     }
 
     /// Refresh `backlinks` from the project whenever the open document has changed
@@ -441,5 +555,132 @@ mod word_count_refresh_tests {
         app.refresh_word_count_if_needed(&ctx);
 
         assert!(app.word_count.pending.is_none());
+    }
+}
+
+#[cfg(test)]
+mod document_status_cache_tests {
+    use super::*;
+
+    #[test]
+    fn status_reads_from_disk_only_once_per_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let path = project.create_document(dir.path(), "Scene").unwrap();
+        std::fs::write(&path, "---\nstatus: draft\n---\nBody.").unwrap();
+        let cache = DocumentStatusCache::default();
+
+        assert_eq!(cache.status(&project, &path), Some("draft".to_string()));
+
+        // Change the file on disk without invalidating — a second lookup
+        // should still return the *cached* value, proving it didn't re-read.
+        std::fs::write(&path, "---\nstatus: final\n---\nBody.").unwrap();
+        assert_eq!(
+            cache.status(&project, &path),
+            Some("draft".to_string()),
+            "a second lookup without invalidation should return the cached value"
+        );
+    }
+
+    #[test]
+    fn invalidate_forces_a_fresh_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let path = project.create_document(dir.path(), "Scene").unwrap();
+        std::fs::write(&path, "---\nstatus: draft\n---\nBody.").unwrap();
+        let mut cache = DocumentStatusCache::default();
+        cache.status(&project, &path);
+
+        std::fs::write(&path, "---\nstatus: final\n---\nBody.").unwrap();
+        cache.invalidate(&path);
+
+        assert_eq!(cache.status(&project, &path), Some("final".to_string()));
+    }
+
+    #[test]
+    fn clear_forces_a_fresh_read_for_every_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let path = project.create_document(dir.path(), "Scene").unwrap();
+        std::fs::write(&path, "---\nstatus: draft\n---\nBody.").unwrap();
+        let mut cache = DocumentStatusCache::default();
+        cache.status(&project, &path);
+
+        std::fs::write(&path, "---\nstatus: final\n---\nBody.").unwrap();
+        cache.clear();
+
+        assert_eq!(cache.status(&project, &path), Some("final".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod folder_metadata_refresh_tests {
+    use super::*;
+
+    #[test]
+    fn refresh_loads_the_selected_folders_meta() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        project
+            .set_folder_meta(
+                &chapter,
+                DocumentMeta {
+                    status: Some("draft".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.metadata.target = MetadataTarget::Folder(chapter);
+
+        app.refresh_folder_metadata_if_needed();
+
+        assert_eq!(app.metadata.folder_draft.status, "draft");
+    }
+
+    #[test]
+    fn refresh_is_a_no_op_when_the_target_is_not_a_folder() {
+        let mut app = SmaragdApp::test_fixture();
+        app.metadata.folder_draft.status = "untouched".to_string();
+
+        app.refresh_folder_metadata_if_needed();
+
+        assert_eq!(app.metadata.folder_draft.status, "untouched");
+    }
+
+    #[test]
+    fn apply_persists_a_live_edit_to_the_targeted_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.metadata.target = MetadataTarget::Folder(chapter.clone());
+        app.metadata.folder_draft.status = "draft".to_string();
+
+        app.apply_folder_metadata_edits_if_changed();
+
+        assert_eq!(
+            app.project.as_ref().unwrap().folder_meta(&chapter).status,
+            Some("draft".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_is_a_no_op_when_nothing_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.metadata.target = MetadataTarget::Folder(chapter);
+        // `folder_draft`/`folder_last_applied` both default to an empty
+        // `MetadataDraft`/`DocumentMeta` — nothing to persist.
+
+        app.apply_folder_metadata_edits_if_changed();
+
+        assert!(app.project.as_ref().unwrap().meta.folder_meta.is_empty());
     }
 }

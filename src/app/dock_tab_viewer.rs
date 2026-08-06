@@ -8,6 +8,11 @@ pub(super) enum DockAction {
     OpenDocument(PathBuf),
     Binder(BinderEvent),
     ProjectMeta(crate::ui::metadata_panel::ProjectMetaEvent),
+    /// A status color was assigned/edited from the Status field's swatch —
+    /// see `ui::metadata_panel::MetadataFormEvent`. Raised by both `show`
+    /// (document metadata) and `show_folder` (folder metadata), so it isn't
+    /// specific to either `DockAction::Binder` nor `ProjectMeta`.
+    Metadata(crate::ui::metadata_panel::MetadataFormEvent),
     RefreshBacklinks,
     RefreshTags,
     EditorSaveError(String),
@@ -47,10 +52,14 @@ pub(super) struct AppTabViewer<'a> {
     pub(super) tags_search_text: &'a mut String,
     pub(super) tag_search_results: &'a [(PathBuf, String)],
     pub(super) metadata_draft: &'a mut MetadataDraft,
-    /// See `SmaragdApp`'s `MetadataState::project_selected` — when true, the
-    /// Metadata dock shows `ui::metadata_panel::show_project` (the binder's
-    /// root project row) instead of the open document's frontmatter.
-    pub(super) project_metadata_selected: bool,
+    /// See `MetadataTarget` — which of Document/Project/Folder(path) the
+    /// Metadata dock currently shows.
+    pub(super) metadata_target: MetadataTarget,
+    /// The draft for `metadata_target`'s `Folder(path)`, when that's what it
+    /// is — see `MetadataState::folder_draft`.
+    pub(super) folder_metadata_draft: &'a mut MetadataDraft,
+    /// See `SmaragdApp::document_status_cache`.
+    pub(super) document_status_cache: &'a DocumentStatusCache,
     pub(super) editor: &'a mut EditorState,
     pub(super) settings: &'a Settings,
     pub(super) color_themes: &'a [crate::color_theme::ColorTheme],
@@ -110,12 +119,34 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
         match tab {
             DockTab::Binder => match self.project {
                 Some(project) => {
+                    let project_selected = self.metadata_target == MetadataTarget::Project;
+                    let selected_folder = match &self.metadata_target {
+                        MetadataTarget::Folder(path) => Some(path.as_path()),
+                        _ => None,
+                    };
+                    // The currently-open document's status comes straight from
+                    // `metadata_draft` (already in memory, reflects unsaved
+                    // edits) rather than the cache, which is only for every
+                    // *other* document — see `DocumentStatusCache`'s doc comment.
+                    let document_status_color = |path: &Path| -> Option<egui::Color32> {
+                        let status = if Some(path) == self.open_path.as_deref() {
+                            let status = self.metadata_draft.status.trim();
+                            (!status.is_empty()).then(|| status.to_string())
+                        } else {
+                            self.document_status_cache.status(project, path)
+                        };
+                        status
+                            .and_then(|s| project.status_color_hex(&s))
+                            .and_then(crate::color_theme::parse_hex_color)
+                    };
                     if let Some(event) = ui::binder_panel::show(
                         ui,
                         project,
                         self.selected_path,
                         self.focus_binder_requested,
-                        self.project_metadata_selected,
+                        project_selected,
+                        selected_folder,
+                        &document_status_color,
                     ) {
                         self.actions.push(DockAction::Binder(event));
                     }
@@ -165,16 +196,6 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     }
                 }
             }
-            DockTab::Metadata if self.project_metadata_selected => match self.project {
-                Some(project) => {
-                    if let Some(event) = ui::metadata_panel::show_project(ui, project) {
-                        self.actions.push(DockAction::ProjectMeta(event));
-                    }
-                }
-                None => {
-                    ui.label("Open a project to edit its metadata.");
-                }
-            },
             DockTab::Metadata => {
                 let project = self.project;
                 let picklist_titles = |field: crate::project::PicklistField| -> Vec<String> {
@@ -198,14 +219,52 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     statuses: &statuses,
                     povs: &povs,
                 };
-                let word_count = crate::frontmatter::count_words(&self.editor.buffer);
-                ui::metadata_panel::show(
-                    ui,
-                    self.open_path.as_deref(),
-                    self.metadata_draft,
-                    &picklists,
-                    word_count,
-                );
+                match &self.metadata_target {
+                    MetadataTarget::Project => match project {
+                        Some(project) => {
+                            if let Some(event) = ui::metadata_panel::show_project(ui, project) {
+                                self.actions.push(DockAction::ProjectMeta(event));
+                            }
+                        }
+                        None => {
+                            ui.label("Open a project to edit its metadata.");
+                        }
+                    },
+                    MetadataTarget::Folder(_) => match project {
+                        Some(project) => {
+                            let status_color = project
+                                .status_color_hex(&self.folder_metadata_draft.status)
+                                .and_then(crate::color_theme::parse_hex_color);
+                            if let Some(event) = ui::metadata_panel::show_folder(
+                                ui,
+                                self.folder_metadata_draft,
+                                &picklists,
+                                status_color,
+                            ) {
+                                self.actions.push(DockAction::Metadata(event));
+                            }
+                        }
+                        None => {
+                            ui.label("Open a project to edit folder metadata.");
+                        }
+                    },
+                    MetadataTarget::Document => {
+                        let word_count = crate::frontmatter::count_words(&self.editor.buffer);
+                        let status_color = project
+                            .and_then(|p| p.status_color_hex(&self.metadata_draft.status))
+                            .and_then(crate::color_theme::parse_hex_color);
+                        if let Some(event) = ui::metadata_panel::show(
+                            ui,
+                            self.open_path.as_deref(),
+                            self.metadata_draft,
+                            &picklists,
+                            word_count,
+                            status_color,
+                        ) {
+                            self.actions.push(DockAction::Metadata(event));
+                        }
+                    }
+                }
             }
             DockTab::Editor => {
                 let note_titles = self

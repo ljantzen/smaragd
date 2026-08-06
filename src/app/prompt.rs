@@ -138,7 +138,7 @@ impl SmaragdApp {
             return;
         };
         match project.restore_from_trash(path, false) {
-            Ok(_) => {}
+            Ok(_) => self.document_status_cache.clear(),
             Err(RestoreError::OriginalFolderMissing(folder)) => {
                 let recreate = rfd::MessageDialog::new()
                     .set_title("Restore")
@@ -151,9 +151,13 @@ impl SmaragdApp {
                     .show();
                 if recreate == rfd::MessageDialogResult::Yes
                     && let Some(project) = &mut self.project
-                    && let Err(err) = project.restore_from_trash(path, true)
                 {
-                    self.push_error_toast(format!("Couldn't restore: {err}"));
+                    match project.restore_from_trash(path, true) {
+                        Ok(_) => self.document_status_cache.clear(),
+                        Err(err) => {
+                            self.push_error_toast(format!("Couldn't restore: {err}"));
+                        }
+                    }
                 }
             }
             Err(err) => self.push_error_toast(format!("Couldn't restore: {err}")),
@@ -208,6 +212,7 @@ impl SmaragdApp {
             self.push_error_toast(format!("Couldn't empty Trash: {err}"));
             return;
         }
+        self.document_status_cache.clear();
         if self
             .selected_path
             .as_deref()
@@ -270,6 +275,11 @@ impl SmaragdApp {
         };
         match project.rename(path, new_name) {
             Ok(new_path) => {
+                if self.metadata.target == MetadataTarget::Folder(path.to_path_buf()) {
+                    self.metadata.target = MetadataTarget::Folder(new_path.clone());
+                    self.metadata.folder_computed_for = None;
+                }
+                self.document_status_cache.clear();
                 if self.selected_path.as_deref() == Some(path) {
                     self.open_document_internal(&new_path);
                 } else if !self.editor.dirty
@@ -331,6 +341,13 @@ impl SmaragdApp {
                     self.editor = EditorState::default();
                     self.selected_path = None;
                 }
+                if let MetadataTarget::Folder(target) = &self.metadata.target
+                    && (target.as_path() == path || target.starts_with(path))
+                {
+                    self.metadata.target = MetadataTarget::Document;
+                    self.metadata.folder_computed_for = None;
+                }
+                self.document_status_cache.clear();
             }
             Err(err) => {
                 self.push_error_toast(format!("Couldn't delete {}: {err}", path.display()));

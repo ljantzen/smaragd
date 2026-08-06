@@ -28,7 +28,9 @@ use export::ExportState;
 use git::GitOperation;
 use menu_nav::top_menu_button;
 use prompt::{PendingPrompt, PromptAction};
-use refresh::{BacklinksState, MetadataState, TagsState, WordCountState};
+use refresh::{
+    BacklinksState, DocumentStatusCache, MetadataState, MetadataTarget, TagsState, WordCountState,
+};
 use toast::Toast;
 
 use crate::collab::{CollabRole, CollabSession, SessionUpdate};
@@ -119,6 +121,10 @@ pub struct SmaragdApp {
     /// there's no "closed" state to represent here, since the Metadata dock
     /// tab's own presence in `dock_state` is what tracks visibility.
     metadata: MetadataState,
+    /// A closed document's cached frontmatter `status`, keyed by path — see
+    /// `DocumentStatusCache`'s doc comment for why this exists (avoiding a
+    /// disk read for every visible binder row every frame).
+    document_status_cache: DocumentStatusCache,
     /// Every `[[wikilink]]` elsewhere in the project pointing at the open
     /// document, kept in sync with whichever document is open (see
     /// `refresh_backlinks_if_needed`).
@@ -245,6 +251,7 @@ impl SmaragdApp {
             new_project_template_prompt:
                 ui::new_project_template_prompt::NewProjectTemplatePromptState::default(),
             metadata: MetadataState::default(),
+            document_status_cache: DocumentStatusCache::default(),
             backlinks: BacklinksState::default(),
             tags: TagsState::default(),
             word_count: WordCountState::default(),
@@ -332,6 +339,7 @@ impl SmaragdApp {
             new_project_template_prompt:
                 ui::new_project_template_prompt::NewProjectTemplatePromptState::default(),
             metadata: MetadataState::default(),
+            document_status_cache: DocumentStatusCache::default(),
             backlinks: BacklinksState::default(),
             tags: TagsState::default(),
             word_count: WordCountState::default(),
@@ -1206,6 +1214,7 @@ impl eframe::App for SmaragdApp {
         self.refresh_backlinks_if_needed();
         self.refresh_tags_if_needed();
         self.refresh_metadata_if_needed();
+        self.refresh_folder_metadata_if_needed();
         self.refresh_word_count_if_needed(ui.ctx());
 
         if self.focus_mode {
@@ -1299,7 +1308,9 @@ impl eframe::App for SmaragdApp {
                     tags_search_text: &mut self.tags.search_text,
                     tag_search_results: &self.tags.search_results,
                     metadata_draft: &mut self.metadata.draft,
-                    project_metadata_selected: self.metadata.project_selected,
+                    metadata_target: self.metadata.target.clone(),
+                    folder_metadata_draft: &mut self.metadata.folder_draft,
+                    document_status_cache: &self.document_status_cache,
                     editor: &mut self.editor,
                     settings: &self.settings,
                     color_themes: &self.color_themes,
@@ -1322,6 +1333,7 @@ impl eframe::App for SmaragdApp {
                         DockAction::OpenDocument(path) => self.open_document(&path),
                         DockAction::Binder(event) => self.handle_binder_event(ui.ctx(), event),
                         DockAction::ProjectMeta(event) => self.handle_project_meta_event(event),
+                        DockAction::Metadata(event) => self.handle_metadata_form_event(event),
                         DockAction::RefreshBacklinks => self.recompute_backlinks(),
                         DockAction::RefreshTags => self.recompute_tags(),
                         DockAction::EditorSaveError(err) => self.push_error_toast(err),
@@ -1344,6 +1356,7 @@ impl eframe::App for SmaragdApp {
         }
 
         self.apply_metadata_edits_if_changed();
+        self.apply_folder_metadata_edits_if_changed();
         self.sync_local_collab_edit();
         self.track_char_activity();
         self.refresh_tag_search_if_needed();
