@@ -53,6 +53,11 @@ pub enum ShortcutAction {
     RefreshWordCount,
     ToggleCollabPanel,
     ToggleStreak,
+    /// Advance `ProjectMeta::binder_color_mode` to the next of Status/POV/
+    /// Word Count Progress — see `SmaragdApp::cycle_binder_color_mode`. The
+    /// same three options are also directly selectable from `View > Color
+    /// Binder By`.
+    CycleBinderColorMode,
 }
 
 impl ShortcutAction {
@@ -90,6 +95,7 @@ impl ShortcutAction {
         Self::RefreshWordCount,
         Self::ToggleCollabPanel,
         Self::ToggleStreak,
+        Self::CycleBinderColorMode,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -128,6 +134,7 @@ impl ShortcutAction {
             Self::RefreshWordCount => "Refresh Word Count",
             Self::ToggleCollabPanel => "Toggle Collaboration Panel",
             Self::ToggleStreak => "Toggle Streak Tracking",
+            Self::CycleBinderColorMode => "Cycle Binder Color Mode",
         }
     }
 
@@ -171,6 +178,7 @@ impl ShortcutAction {
             Self::RefreshWordCount => "refresh_word_count",
             Self::ToggleCollabPanel => "toggle_collab_panel",
             Self::ToggleStreak => "toggle_streak",
+            Self::CycleBinderColorMode => "cycle_binder_color_mode",
         }
     }
 
@@ -203,7 +211,8 @@ impl ShortcutAction {
             | Self::ToggleDarkMode
             | Self::ToggleFullscreen
             | Self::ToggleBinderFocus
-            | Self::ToggleFocusMode => ShortcutCategory::View,
+            | Self::ToggleFocusMode
+            | Self::CycleBinderColorMode => ShortcutCategory::View,
             Self::GitCommit | Self::GitPush => ShortcutCategory::Git,
             Self::CommandPrompt
             | Self::TogglePomodoro
@@ -286,6 +295,9 @@ impl ShortcutAction {
             }
             Self::ToggleStreak => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::S)
+            }
+            Self::CycleBinderColorMode => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::C)
             }
         }
     }

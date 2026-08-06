@@ -1,8 +1,10 @@
+mod binder_color_mode;
 mod create;
 mod folder_meta;
 mod meta;
 pub mod model;
 mod picklists;
+mod pov_colors;
 mod queries;
 mod rename_move_delete;
 mod roles;
@@ -13,6 +15,7 @@ mod streak;
 mod trash;
 mod word_count;
 
+pub use binder_color_mode::BinderColorMode;
 pub use meta::ProjectMeta;
 pub use picklists::PicklistField;
 pub use queries::{BacklinkEntry, TagGroup};

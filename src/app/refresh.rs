@@ -49,38 +49,78 @@ pub(super) struct MetadataState {
     pub(super) folder_computed_for: Option<PathBuf>,
 }
 
-/// Lazily-populated, disk-backed cache of each *closed* document's frontmatter
-/// `status`, keyed by absolute path — avoids a per-frame disk read for every
-/// visible binder row (the binder re-renders every frame; see
-/// `WordCountState`'s doc comment above for why this codebase avoids that
-/// class of I/O elsewhere too). The currently *open* document's status is
-/// read live from `metadata.draft.status` instead (already in memory, and may
-/// include unsaved edits) — this cache is never consulted for it, only for
-/// every other document a binder row might show. `RefCell` because it's
-/// populated from inside `binder_panel::show`, which only gets `&Project` and
-/// plain closures, not `&mut SmaragdApp`.
+/// One closed document's cached frontmatter-derived fields, read together
+/// from a single `fs::read_to_string` — `status` (the original reason
+/// `DocumentStatusCache` exists), plus `pov` and `word_count`/
+/// `word_count_target` (added for `BinderColorMode::Pov`/
+/// `WordCountProgress`) — so supporting two more color modes costs no
+/// additional per-row disk reads over what status-coloring already paid for.
+#[derive(Clone, Default)]
+struct CachedDocumentRow {
+    status: Option<String>,
+    pov: Option<String>,
+    word_count_target: Option<u32>,
+    word_count: usize,
+}
+
+/// Lazily-populated, disk-backed cache of each *closed* document's
+/// frontmatter-derived fields (see `CachedDocumentRow`), keyed by absolute
+/// path — avoids a per-frame disk read for every visible binder row (the
+/// binder re-renders every frame; see `WordCountState`'s doc comment above
+/// for why this codebase avoids that class of I/O elsewhere too). The
+/// currently *open* document's fields are read live instead (from
+/// `metadata.draft`/the editor buffer, already in memory and may include
+/// unsaved edits) — this cache is never consulted for it, only for every
+/// other document a binder row might show. `RefCell` because it's populated
+/// from inside `binder_panel::show`, which only gets `&Project` and plain
+/// closures, not `&mut SmaragdApp`.
 #[derive(Default)]
 pub(super) struct DocumentStatusCache {
-    cache: std::cell::RefCell<HashMap<PathBuf, Option<String>>>,
+    cache: std::cell::RefCell<HashMap<PathBuf, CachedDocumentRow>>,
 }
 
 impl DocumentStatusCache {
-    /// `path`'s cached status, reading it from disk (`Project::document_meta`)
+    /// `path`'s cached row, reading it from disk (a single
+    /// `fs::read_to_string` + `frontmatter::parse` + `frontmatter::count_words`)
     /// only the first time `path` is looked up since the last invalidation.
-    pub(super) fn status(&self, project: &Project, path: &Path) -> Option<String> {
+    fn row(&self, path: &Path) -> CachedDocumentRow {
         if let Some(cached) = self.cache.borrow().get(path) {
             return cached.clone();
         }
-        let status = project.document_meta(path).ok().and_then(|m| m.status);
+        let contents = std::fs::read_to_string(path).unwrap_or_default();
+        let meta = crate::frontmatter::parse(&contents);
+        let row = CachedDocumentRow {
+            status: meta.status,
+            pov: meta.pov,
+            word_count_target: meta.word_count_target,
+            word_count: crate::frontmatter::count_words(&contents),
+        };
         self.cache
             .borrow_mut()
-            .insert(path.to_path_buf(), status.clone());
-        status
+            .insert(path.to_path_buf(), row.clone());
+        row
     }
 
-    /// Drop `path`'s cached entry so the next `status()` call re-reads it
-    /// from disk — call whenever `path` might have changed since it was last
-    /// cached (e.g. it was just autosaved on close).
+    /// `path`'s cached status — see `row`.
+    pub(super) fn status(&self, path: &Path) -> Option<String> {
+        self.row(path).status
+    }
+
+    /// `path`'s cached POV — see `row`.
+    pub(super) fn pov(&self, path: &Path) -> Option<String> {
+        self.row(path).pov
+    }
+
+    /// `(word_count, word_count_target)` — the pair
+    /// `BinderColorMode::WordCountProgress` needs — see `row`.
+    pub(super) fn word_count_progress(&self, path: &Path) -> (usize, Option<u32>) {
+        let row = self.row(path);
+        (row.word_count, row.word_count_target)
+    }
+
+    /// Drop `path`'s cached entry so the next lookup re-reads it from disk —
+    /// call whenever `path` might have changed since it was last cached
+    /// (e.g. it was just autosaved on close).
     pub(super) fn invalidate(&mut self, path: &Path) {
         self.cache.get_mut().remove(path);
     }
@@ -130,6 +170,13 @@ pub(super) struct TagsState {
     pub(super) search_computed_for: String,
 }
 
+/// The two values `spawn_word_count_recompute`'s background thread produces
+/// in one pass — see `WordCountState::cache`/`folder_totals`.
+pub(super) struct WordCountRecomputeResult {
+    pub(super) total: usize,
+    pub(super) folder_totals: HashMap<PathBuf, usize>,
+}
+
 /// The open project's word count, its background-recompute machinery, and the
 /// characters-typed activity counter — grouped out of `SmaragdApp` (2026-07-31
 /// code-quality review) since all six always change together, driven by
@@ -142,12 +189,18 @@ pub(super) struct WordCountState {
     /// background thread, never every frame — unlike `metadata_panel`'s live
     /// per-document count from the open buffer, which is unrelated to this.
     pub(super) cache: usize,
+    /// Every folder's combined descendant word count, as of the last
+    /// completed recompute — see `Project::folder_word_counts`. Populated by
+    /// the same background thread/trigger as `cache`, for the same reason
+    /// `cache` itself is never computed synchronously on the UI thread; feeds
+    /// `BinderColorMode::WordCountProgress`'s folder rows.
+    pub(super) folder_totals: HashMap<PathBuf, usize>,
     /// A word-count recompute currently running on a background thread, if any —
     /// walking every tracked document's content from disk could be slow for a
     /// large project, so (like `pending_git`'s push/pull) this never runs
     /// synchronously on the UI thread. `None` once `poll_word_count` has picked
     /// up its result.
-    pub(super) pending: Option<std::sync::mpsc::Receiver<usize>>,
+    pub(super) pending: Option<std::sync::mpsc::Receiver<WordCountRecomputeResult>>,
     /// `editor.dirty` as of the previous frame — compared against its current
     /// value in `refresh_word_count_if_needed` to edge-detect "a save just
     /// happened" (dirty went `true` -> `false`), the moment any of the three
@@ -399,7 +452,11 @@ impl SmaragdApp {
         std::thread::spawn(move || {
             let snapshot = crate::project::Project { root, tree, meta };
             let total = snapshot.word_count(scope);
-            let _ = sender.send(total);
+            let folder_totals = snapshot.folder_word_counts();
+            let _ = sender.send(WordCountRecomputeResult {
+                total,
+                folder_totals,
+            });
             repaint_ctx.request_repaint();
         });
         self.word_count.pending = Some(receiver);
@@ -415,8 +472,8 @@ impl SmaragdApp {
         let Some(receiver) = &self.word_count.pending else {
             return;
         };
-        let total = match receiver.try_recv() {
-            Ok(total) => total,
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.word_count.pending = None;
@@ -424,9 +481,10 @@ impl SmaragdApp {
             }
         };
         self.word_count.pending = None;
-        self.word_count.cache = total;
+        self.word_count.cache = result.total;
+        self.word_count.folder_totals = result.folder_totals;
         if let Some(project) = &mut self.project {
-            let _ = project.maybe_roll_over_session(total);
+            let _ = project.maybe_roll_over_session(result.total);
         }
     }
 }
@@ -556,6 +614,53 @@ mod word_count_refresh_tests {
 
         assert!(app.word_count.pending.is_none());
     }
+
+    #[test]
+    fn spawn_word_count_recompute_also_populates_folder_totals() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let root = project.root.clone();
+        let doc = project.create_document(dir.path(), "Scene").unwrap();
+        fs::write(&doc, "one two three").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        let ctx = egui::Context::default();
+
+        app.spawn_word_count_recompute(&ctx);
+        // The background thread should finish quickly for a project this
+        // small; poll with a bounded retry loop rather than blocking forever.
+        for _ in 0..200 {
+            app.poll_word_count();
+            if app.word_count.pending.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        assert_eq!(app.word_count.cache, 3);
+        assert_eq!(app.word_count.folder_totals.get(&root), Some(&3));
+    }
+
+    #[test]
+    fn poll_word_count_applies_both_the_total_and_folder_totals_together() {
+        let mut app = SmaragdApp::test_fixture();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut folder_totals = HashMap::new();
+        folder_totals.insert(PathBuf::from("/project/Chapter 1"), 42);
+        sender
+            .send(WordCountRecomputeResult {
+                total: 100,
+                folder_totals: folder_totals.clone(),
+            })
+            .unwrap();
+        app.word_count.pending = Some(receiver);
+
+        app.poll_word_count();
+
+        assert_eq!(app.word_count.cache, 100);
+        assert_eq!(app.word_count.folder_totals, folder_totals);
+        assert!(app.word_count.pending.is_none());
+    }
 }
 
 #[cfg(test)]
@@ -570,13 +675,13 @@ mod document_status_cache_tests {
         std::fs::write(&path, "---\nstatus: draft\n---\nBody.").unwrap();
         let cache = DocumentStatusCache::default();
 
-        assert_eq!(cache.status(&project, &path), Some("draft".to_string()));
+        assert_eq!(cache.status(&path), Some("draft".to_string()));
 
         // Change the file on disk without invalidating — a second lookup
         // should still return the *cached* value, proving it didn't re-read.
         std::fs::write(&path, "---\nstatus: final\n---\nBody.").unwrap();
         assert_eq!(
-            cache.status(&project, &path),
+            cache.status(&path),
             Some("draft".to_string()),
             "a second lookup without invalidation should return the cached value"
         );
@@ -589,12 +694,12 @@ mod document_status_cache_tests {
         let path = project.create_document(dir.path(), "Scene").unwrap();
         std::fs::write(&path, "---\nstatus: draft\n---\nBody.").unwrap();
         let mut cache = DocumentStatusCache::default();
-        cache.status(&project, &path);
+        cache.status(&path);
 
         std::fs::write(&path, "---\nstatus: final\n---\nBody.").unwrap();
         cache.invalidate(&path);
 
-        assert_eq!(cache.status(&project, &path), Some("final".to_string()));
+        assert_eq!(cache.status(&path), Some("final".to_string()));
     }
 
     #[test]
@@ -604,12 +709,62 @@ mod document_status_cache_tests {
         let path = project.create_document(dir.path(), "Scene").unwrap();
         std::fs::write(&path, "---\nstatus: draft\n---\nBody.").unwrap();
         let mut cache = DocumentStatusCache::default();
-        cache.status(&project, &path);
+        cache.status(&path);
 
         std::fs::write(&path, "---\nstatus: final\n---\nBody.").unwrap();
         cache.clear();
 
-        assert_eq!(cache.status(&project, &path), Some("final".to_string()));
+        assert_eq!(cache.status(&path), Some("final".to_string()));
+    }
+
+    #[test]
+    fn pov_and_word_count_are_cached_from_a_single_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let path = project.create_document(dir.path(), "Scene").unwrap();
+        std::fs::write(
+            &path,
+            "---\npov: Alice\nword_count_target: 100\n---\none two three",
+        )
+        .unwrap();
+        let cache = DocumentStatusCache::default();
+
+        assert_eq!(cache.pov(&path), Some("Alice".to_string()));
+        assert_eq!(cache.word_count_progress(&path), (3, Some(100)));
+
+        // Change the file after the first lookup — both accessors should
+        // still return the pre-change cached values, proving they came from
+        // one shared cached read rather than two independent ones.
+        std::fs::write(&path, "---\npov: Bob\n---\nsomething else entirely").unwrap();
+        assert_eq!(cache.pov(&path), Some("Alice".to_string()));
+        assert_eq!(cache.word_count_progress(&path), (3, Some(100)));
+    }
+
+    #[test]
+    fn pov_is_none_for_a_document_with_no_pov_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let path = project.create_document(dir.path(), "Scene").unwrap();
+        std::fs::write(&path, "Just a plain document.").unwrap();
+        let cache = DocumentStatusCache::default();
+
+        assert_eq!(cache.pov(&path), None);
+    }
+
+    #[test]
+    fn invalidate_drops_the_cached_pov_and_word_count_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let path = project.create_document(dir.path(), "Scene").unwrap();
+        std::fs::write(&path, "---\npov: Alice\n---\none two").unwrap();
+        let mut cache = DocumentStatusCache::default();
+        cache.pov(&path);
+
+        std::fs::write(&path, "---\npov: Bob\n---\none two three").unwrap();
+        cache.invalidate(&path);
+
+        assert_eq!(cache.pov(&path), Some("Bob".to_string()));
+        assert_eq!(cache.word_count_progress(&path).0, 3);
     }
 }
 

@@ -46,6 +46,21 @@ pub struct ProjectMeta {
     /// assigned to a status that isn't (or is no longer) one of them.
     #[serde(default)]
     pub status_colors: HashMap<String, String>,
+    /// Which value currently drives a binder row's background color —
+    /// applied uniformly to both document and folder rows, not a separate
+    /// toggle per row kind (they're rendered as one shared list — see
+    /// `ui::binder_panel`). `#[default] Status` preserves the only behavior
+    /// that existed before this setting did, for `project.json` files
+    /// written before it. See `BinderColorMode`.
+    #[serde(default)]
+    pub binder_color_mode: crate::project::BinderColorMode,
+    /// A user-assigned background color for each `pov` value — the exact
+    /// POV counterpart of `status_colors` above (see its doc comment for the
+    /// hex-string-not-`Color32` rationale and the trim/case-sensitive
+    /// matching convention), consulted only when `binder_color_mode` is
+    /// `BinderColorMode::Pov`.
+    #[serde(default)]
+    pub pov_colors: HashMap<String, String>,
     /// Lisa Cron-style story/plotting cards, deliberately *not* tied to the binder
     /// tree or `node_order`: a card may exist with no linked document at all (a pure
     /// plotting artifact, drafted before any scene exists) and its position in this

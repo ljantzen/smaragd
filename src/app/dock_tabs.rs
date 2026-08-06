@@ -160,15 +160,45 @@ impl SmaragdApp {
         &mut self,
         event: ui::metadata_panel::MetadataFormEvent,
     ) {
-        let ui::metadata_panel::MetadataFormEvent::SetStatusColor { status, color } = event;
+        use ui::metadata_panel::MetadataFormEvent;
         let Some(project) = &mut self.project else {
             return;
         };
-        if let Err(err) =
-            project.set_status_color_hex(&status, crate::color_theme::to_hex_string(color))
-        {
-            self.push_error_toast(format!("Couldn't save status color: {err}"));
+        let result = match event {
+            MetadataFormEvent::SetStatusColor { status, color } => {
+                project.set_status_color_hex(&status, crate::color_theme::to_hex_string(color))
+            }
+            MetadataFormEvent::SetPovColor { pov, color } => {
+                project.set_pov_color_hex(&pov, crate::color_theme::to_hex_string(color))
+            }
+        };
+        if let Err(err) = result {
+            self.push_error_toast(format!("Couldn't save color: {err}"));
         }
+    }
+
+    /// Directly select which value drives a binder row's background color —
+    /// see `BinderColorMode`. Used by `View > Color Binder By`'s radio items;
+    /// `cycle_binder_color_mode` below is the shortcut-bound alternative. A
+    /// no-op without an open project.
+    pub(super) fn set_binder_color_mode(&mut self, mode: BinderColorMode) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        if let Err(err) = project.set_binder_color_mode(mode) {
+            self.push_error_toast(format!("Couldn't set binder color mode: {err}"));
+        }
+    }
+
+    /// Advance `ProjectMeta::binder_color_mode` to the next of Off → Status →
+    /// POV → Word Count Progress → Off — see
+    /// `ShortcutAction::CycleBinderColorMode`/`BinderColorMode::next`. A no-op
+    /// without an open project.
+    pub(super) fn cycle_binder_color_mode(&mut self) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        self.set_binder_color_mode(project.meta.binder_color_mode.next());
     }
 
     pub(super) fn handle_corkboard_event(&mut self, event: CorkboardEvent) {
@@ -321,6 +351,52 @@ mod tests {
             status: "draft".to_string(),
             color: egui::Color32::from_rgb(0xff, 0x88, 0x00),
         });
+
+        assert!(app.project.is_none());
+    }
+
+    #[test]
+    fn cycle_binder_color_mode_advances_off_status_pov_word_count_progress_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        assert_eq!(
+            app.project.as_ref().unwrap().meta.binder_color_mode,
+            BinderColorMode::Off
+        );
+
+        app.cycle_binder_color_mode();
+        assert_eq!(
+            app.project.as_ref().unwrap().meta.binder_color_mode,
+            BinderColorMode::Status
+        );
+
+        app.cycle_binder_color_mode();
+        assert_eq!(
+            app.project.as_ref().unwrap().meta.binder_color_mode,
+            BinderColorMode::Pov
+        );
+
+        app.cycle_binder_color_mode();
+        assert_eq!(
+            app.project.as_ref().unwrap().meta.binder_color_mode,
+            BinderColorMode::WordCountProgress
+        );
+
+        app.cycle_binder_color_mode();
+        assert_eq!(
+            app.project.as_ref().unwrap().meta.binder_color_mode,
+            BinderColorMode::Off
+        );
+    }
+
+    #[test]
+    fn cycle_binder_color_mode_is_a_no_op_without_an_open_project() {
+        let mut app = SmaragdApp::test_fixture();
+
+        // Must not panic when there's no project to cycle the mode on.
+        app.cycle_binder_color_mode();
 
         assert!(app.project.is_none());
     }

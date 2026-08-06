@@ -294,6 +294,39 @@ impl SmaragdApp {
                                 }
                             });
                         nav.track(ui, &theme_trigger);
+
+                        // Only meaningful with a project open — `BinderColorMode`
+                        // lives on `ProjectMeta`, not `Settings`. Read before the
+                        // submenu closure, same reasoning as `Theme`'s own
+                        // `current`/`themes` clones above: the radio click handlers
+                        // need `&mut self`, which a live borrow of `self.project`
+                        // held across the closure would conflict with.
+                        if let Some(current_mode) = self
+                            .project
+                            .as_ref()
+                            .map(|project| project.meta.binder_color_mode)
+                        {
+                            let (color_mode_trigger, _) =
+                                egui::containers::menu::SubMenuButton::new("Color Binder By").ui(
+                                    ui,
+                                    |ui| {
+                                        for mode in [
+                                            BinderColorMode::Off,
+                                            BinderColorMode::Status,
+                                            BinderColorMode::Pov,
+                                            BinderColorMode::WordCountProgress,
+                                        ] {
+                                            if ui
+                                                .radio(current_mode == mode, mode.label())
+                                                .clicked()
+                                            {
+                                                self.set_binder_color_mode(mode);
+                                            }
+                                        }
+                                    },
+                                );
+                            nav.track(ui, &color_mode_trigger);
+                        }
                     });
                     top_menu_button(ui, "Tools", egui::Key::T, |ui, nav| {
                         if nav.button(ui, "Focus Mode").clicked() {

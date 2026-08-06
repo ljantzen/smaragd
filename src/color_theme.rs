@@ -229,6 +229,39 @@ pub(crate) fn to_hex_string(color: Color32) -> String {
     format!("#{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
 }
 
+// Same red/yellow/green anchors as `ui::streak_panel::status_color`, for
+// visual consistency with that feature's own traffic-light vocabulary —
+// duplicated as local consts rather than imported, since this module sits
+// below `ui/` in the dependency graph and can't import from it.
+const PROGRESS_RED: Color32 = Color32::from_rgb(200, 60, 60);
+const PROGRESS_YELLOW: Color32 = Color32::from_rgb(230, 180, 30);
+const PROGRESS_GREEN: Color32 = Color32::from_rgb(60, 180, 75);
+
+/// A red→yellow→green gradient for `BinderColorMode::WordCountProgress` —
+/// `fraction` is `word_count as f32 / target as f32`, clamped to `[0.0, 1.0]`
+/// before interpolating: pure red at 0%, yellow at 50%, pure green at 100%
+/// *and beyond* (a row past its target reads as "done," not as something
+/// that keeps escalating the further over it goes). Whether a target is even
+/// set at all (`None`/`0` meaning "no color") is the caller's job — this
+/// only ever receives an already-valid fraction.
+pub(crate) fn word_count_progress_color(fraction: f32) -> Color32 {
+    let fraction = fraction.clamp(0.0, 1.0);
+    let (from, to, t) = if fraction < 0.5 {
+        (PROGRESS_RED, PROGRESS_YELLOW, fraction / 0.5)
+    } else {
+        (PROGRESS_YELLOW, PROGRESS_GREEN, (fraction - 0.5) / 0.5)
+    };
+    Color32::from_rgb(
+        lerp_u8(from.r(), to.r(), t),
+        lerp_u8(from.g(), to.g(), t),
+        lerp_u8(from.b(), to.b(), t),
+    )
+}
+
+fn lerp_u8(from: u8, to: u8, t: f32) -> u8 {
+    (from as f32 + (to as f32 - from as f32) * t).round() as u8
+}
+
 /// The `[preview]` table of a custom theme's TOML file — every field optional,
 /// matching `ColorTheme::preview_*`.
 #[derive(Deserialize, Default)]
@@ -503,6 +536,31 @@ mod tests {
     #[test]
     fn parse_hex_color_rejects_non_hex_characters() {
         assert_eq!(parse_hex_color("#zzzzzz"), None);
+    }
+
+    #[test]
+    fn word_count_progress_color_at_zero_is_red() {
+        assert_eq!(word_count_progress_color(0.0), PROGRESS_RED);
+    }
+
+    #[test]
+    fn word_count_progress_color_at_fifty_percent_is_yellow() {
+        assert_eq!(word_count_progress_color(0.5), PROGRESS_YELLOW);
+    }
+
+    #[test]
+    fn word_count_progress_color_at_full_is_green() {
+        assert_eq!(word_count_progress_color(1.0), PROGRESS_GREEN);
+    }
+
+    #[test]
+    fn word_count_progress_color_clamps_past_full_to_green() {
+        assert_eq!(word_count_progress_color(2.5), PROGRESS_GREEN);
+    }
+
+    #[test]
+    fn word_count_progress_color_clamps_negative_to_red() {
+        assert_eq!(word_count_progress_color(-1.0), PROGRESS_RED);
     }
 
     fn write_theme(dir: &std::path::Path, filename: &str, contents: &str) {

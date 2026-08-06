@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 /// Requests raised by `AppTabViewer::ui` for the caller to apply once the dock has
 /// finished rendering for the frame — `egui_dock::TabViewer::ui` only gets `&mut
@@ -60,6 +61,9 @@ pub(super) struct AppTabViewer<'a> {
     pub(super) folder_metadata_draft: &'a mut MetadataDraft,
     /// See `SmaragdApp::document_status_cache`.
     pub(super) document_status_cache: &'a DocumentStatusCache,
+    /// See `WordCountState::folder_totals` — the data source for
+    /// `BinderColorMode::WordCountProgress`'s folder rows.
+    pub(super) folder_word_counts: &'a HashMap<PathBuf, usize>,
     pub(super) editor: &'a mut EditorState,
     pub(super) settings: &'a Settings,
     pub(super) color_themes: &'a [crate::color_theme::ColorTheme],
@@ -124,20 +128,54 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         MetadataTarget::Folder(path) => Some(path.as_path()),
                         _ => None,
                     };
-                    // The currently-open document's status comes straight from
-                    // `metadata_draft` (already in memory, reflects unsaved
-                    // edits) rather than the cache, which is only for every
-                    // *other* document — see `DocumentStatusCache`'s doc comment.
-                    let document_status_color = |path: &Path| -> Option<egui::Color32> {
-                        let status = if Some(path) == self.open_path.as_deref() {
-                            let status = self.metadata_draft.status.trim();
-                            (!status.is_empty()).then(|| status.to_string())
-                        } else {
-                            self.document_status_cache.status(project, path)
-                        };
-                        status
-                            .and_then(|s| project.status_color_hex(&s))
-                            .and_then(crate::color_theme::parse_hex_color)
+                    // The currently-open document's fields come straight from
+                    // `metadata_draft`/the live editor buffer (already in
+                    // memory, reflects unsaved edits) rather than the cache,
+                    // which is only for every *other* document — see
+                    // `DocumentStatusCache`'s doc comment.
+                    let document_row_color = |path: &Path| -> Option<egui::Color32> {
+                        let is_open = Some(path) == self.open_path.as_deref();
+                        match project.meta.binder_color_mode {
+                            BinderColorMode::Off => None,
+                            BinderColorMode::Status => {
+                                let status = if is_open {
+                                    non_empty(&self.metadata_draft.status)
+                                } else {
+                                    self.document_status_cache.status(path)
+                                };
+                                status
+                                    .and_then(|s| project.status_color_hex(&s))
+                                    .and_then(crate::color_theme::parse_hex_color)
+                            }
+                            BinderColorMode::Pov => {
+                                let pov = if is_open {
+                                    non_empty(&self.metadata_draft.pov)
+                                } else {
+                                    self.document_status_cache.pov(path)
+                                };
+                                pov.and_then(|p| project.pov_color_hex(&p))
+                                    .and_then(crate::color_theme::parse_hex_color)
+                            }
+                            BinderColorMode::WordCountProgress => {
+                                let (word_count, target) = if is_open {
+                                    (
+                                        crate::frontmatter::count_words(&self.editor.buffer),
+                                        self.metadata_draft
+                                            .word_count_target_text
+                                            .trim()
+                                            .parse()
+                                            .ok(),
+                                    )
+                                } else {
+                                    self.document_status_cache.word_count_progress(path)
+                                };
+                                target.filter(|&t| t > 0).map(|target| {
+                                    crate::color_theme::word_count_progress_color(
+                                        word_count as f32 / target as f32,
+                                    )
+                                })
+                            }
+                        }
                     };
                     if let Some(event) = ui::binder_panel::show(
                         ui,
@@ -146,7 +184,8 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         self.focus_binder_requested,
                         project_selected,
                         selected_folder,
-                        &document_status_color,
+                        &document_row_color,
+                        self.folder_word_counts,
                     ) {
                         self.actions.push(DockAction::Binder(event));
                     }
@@ -235,11 +274,15 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             let status_color = project
                                 .status_color_hex(&self.folder_metadata_draft.status)
                                 .and_then(crate::color_theme::parse_hex_color);
+                            let pov_color = project
+                                .pov_color_hex(&self.folder_metadata_draft.pov)
+                                .and_then(crate::color_theme::parse_hex_color);
                             if let Some(event) = ui::metadata_panel::show_folder(
                                 ui,
                                 self.folder_metadata_draft,
                                 &picklists,
                                 status_color,
+                                pov_color,
                             ) {
                                 self.actions.push(DockAction::Metadata(event));
                             }
@@ -253,6 +296,9 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         let status_color = project
                             .and_then(|p| p.status_color_hex(&self.metadata_draft.status))
                             .and_then(crate::color_theme::parse_hex_color);
+                        let pov_color = project
+                            .and_then(|p| p.pov_color_hex(&self.metadata_draft.pov))
+                            .and_then(crate::color_theme::parse_hex_color);
                         if let Some(event) = ui::metadata_panel::show(
                             ui,
                             self.open_path.as_deref(),
@@ -260,6 +306,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             &picklists,
                             word_count,
                             status_color,
+                            pov_color,
                         ) {
                             self.actions.push(DockAction::Metadata(event));
                         }
@@ -387,4 +434,14 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             },
         }
     }
+}
+
+/// `Some(s.trim())` unless that's empty — the same "blank field means unset,
+/// not an empty string" convention `ui::metadata_panel::MetadataDraft::to_meta`
+/// already uses, needed here too since `document_row_color`'s live (open-
+/// document) branch reads straight from the draft's raw text buffers instead
+/// of a parsed `DocumentMeta`.
+fn non_empty(s: &str) -> Option<String> {
+    let trimmed = s.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }

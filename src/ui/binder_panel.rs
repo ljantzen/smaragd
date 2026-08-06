@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::project::model::{BinderNode, BinderNodeKind};
-use crate::project::{FolderRole, PicklistField, Project};
+use crate::project::{BinderColorMode, FolderRole, PicklistField, Project};
 
 /// Outcomes of user interaction with the binder tree, handled by the caller (`app.rs`)
 /// rather than mutated here — keeps this module a pure rendering layer over `&Project`.
@@ -96,7 +97,8 @@ pub fn show(
     focus_requested: bool,
     project_selected: bool,
     selected_folder: Option<&Path>,
-    document_status_color: &dyn Fn(&Path) -> Option<egui::Color32>,
+    document_row_color: &dyn Fn(&Path) -> Option<egui::Color32>,
+    folder_word_counts: &HashMap<PathBuf, usize>,
 ) -> Option<BinderEvent> {
     let mut event = None;
     let mut visible_rows: Vec<(PathBuf, egui::Id)> = Vec::new();
@@ -110,7 +112,8 @@ pub fn show(
         &mut visible_rows,
         project_selected,
         selected_folder,
-        document_status_color,
+        document_row_color,
+        folder_word_counts,
     );
 
     // Up/Down move the keyboard cursor between rows, in the same top-to-bottom order
@@ -179,6 +182,42 @@ fn folder_row_is_selected(
         project_selected
     } else {
         selected_folder == Some(node_path)
+    }
+}
+
+/// A folder row's background color under whichever `BinderColorMode` is
+/// currently active — see `ProjectMeta::binder_color_mode`. Status/Pov each
+/// look up the folder's own `folder_meta` value against the matching
+/// project-wide color map; WordCountProgress needs `folder_word_counts`
+/// (computed off the UI thread — see `app::spawn_word_count_recompute`)
+/// rather than anything `Project` alone can answer, since summing a folder's
+/// descendant word counts would mean a full subtree disk read on every
+/// frame otherwise.
+fn folder_row_color(
+    project: &Project,
+    path: &Path,
+    folder_word_counts: &HashMap<PathBuf, usize>,
+) -> Option<egui::Color32> {
+    let folder_meta = project.folder_meta(path);
+    match project.meta.binder_color_mode {
+        BinderColorMode::Off => None,
+        BinderColorMode::Status => folder_meta
+            .status
+            .as_deref()
+            .and_then(|status| project.status_color_hex(status))
+            .and_then(crate::color_theme::parse_hex_color),
+        BinderColorMode::Pov => folder_meta
+            .pov
+            .as_deref()
+            .and_then(|pov| project.pov_color_hex(pov))
+            .and_then(crate::color_theme::parse_hex_color),
+        BinderColorMode::WordCountProgress => {
+            let target = folder_meta.word_count_target.filter(|&t| t > 0)?;
+            let count = *folder_word_counts.get(path)?;
+            Some(crate::color_theme::word_count_progress_color(
+                count as f32 / target as f32,
+            ))
+        }
     }
 }
 
@@ -371,7 +410,8 @@ fn show_node(
     visible_rows: &mut Vec<(PathBuf, egui::Id)>,
     project_selected: bool,
     selected_folder: Option<&Path>,
-    document_status_color: &dyn Fn(&Path) -> Option<egui::Color32>,
+    document_row_color: &dyn Fn(&Path) -> Option<egui::Color32>,
+    folder_word_counts: &HashMap<PathBuf, usize>,
 ) {
     match &node.kind {
         BinderNodeKind::Folder { children } => {
@@ -380,12 +420,7 @@ fn show_node(
             let id = ui.make_persistent_id(&node.path);
             let is_selected =
                 folder_row_is_selected(is_root, project_selected, selected_folder, &node.path);
-            let status_color = project
-                .folder_meta(&node.path)
-                .status
-                .as_deref()
-                .and_then(|status| project.status_color_hex(status))
-                .and_then(crate::color_theme::parse_hex_color);
+            let status_color = folder_row_color(project, &node.path, folder_word_counts);
             let (header_response, mut state) =
                 folder_header(ui, id, &label, true, is_selected, status_color);
             visible_rows.push((node.path.clone(), header_response.id));
@@ -594,14 +629,15 @@ fn show_node(
                         visible_rows,
                         project_selected,
                         selected_folder,
-                        document_status_color,
+                        document_row_color,
+                        folder_word_counts,
                     );
                 }
             });
         }
         BinderNodeKind::Document => {
             let is_selected = selected == Some(node.path.as_path());
-            let status_color = document_status_color(&node.path);
+            let status_color = document_row_color(&node.path);
             let response = document_row(ui, document_label(&node.name), is_selected, status_color);
             visible_rows.push((node.path.clone(), response.id));
             if response.clicked() {
@@ -718,6 +754,90 @@ mod tests {
         assert!(folder_row_is_selected(false, false, Some(chapter), chapter));
     }
 
+    #[test]
+    fn folder_row_color_reads_status_or_pov_or_word_count_progress_depending_on_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = crate::project::Project::initialize(dir.path()).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        project
+            .set_folder_meta(
+                &chapter,
+                crate::frontmatter::DocumentMeta {
+                    status: Some("draft".to_string()),
+                    pov: Some("Alice".to_string()),
+                    word_count_target: Some(100),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        project
+            .set_status_color_hex("draft", "#ff0000".to_string())
+            .unwrap();
+        project
+            .set_pov_color_hex("Alice", "#00ff00".to_string())
+            .unwrap();
+        let mut folder_word_counts = HashMap::new();
+        folder_word_counts.insert(chapter.clone(), 50);
+
+        project
+            .set_binder_color_mode(crate::project::BinderColorMode::Status)
+            .unwrap();
+        assert_eq!(
+            folder_row_color(&project, &chapter, &folder_word_counts),
+            Some(egui::Color32::from_rgb(0xff, 0x00, 0x00))
+        );
+
+        project
+            .set_binder_color_mode(crate::project::BinderColorMode::Pov)
+            .unwrap();
+        assert_eq!(
+            folder_row_color(&project, &chapter, &folder_word_counts),
+            Some(egui::Color32::from_rgb(0x00, 0xff, 0x00))
+        );
+
+        project
+            .set_binder_color_mode(crate::project::BinderColorMode::WordCountProgress)
+            .unwrap();
+        assert_eq!(
+            folder_row_color(&project, &chapter, &folder_word_counts),
+            Some(crate::color_theme::word_count_progress_color(0.5))
+        );
+
+        project
+            .set_binder_color_mode(crate::project::BinderColorMode::Off)
+            .unwrap();
+        assert_eq!(
+            folder_row_color(&project, &chapter, &folder_word_counts),
+            None
+        );
+    }
+
+    #[test]
+    fn folder_row_color_is_none_for_word_count_progress_without_a_target_or_a_cached_total() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = crate::project::Project::initialize(dir.path()).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        project
+            .set_binder_color_mode(crate::project::BinderColorMode::WordCountProgress)
+            .unwrap();
+
+        // No word_count_target set on the folder at all.
+        assert_eq!(folder_row_color(&project, &chapter, &HashMap::new()), None);
+
+        // A target is set, but `folder_word_counts` has no entry for this path
+        // (e.g. the background recompute hasn't completed yet).
+        project
+            .set_folder_meta(
+                &chapter,
+                crate::frontmatter::DocumentMeta {
+                    word_count_target: Some(100),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(folder_row_color(&project, &chapter, &HashMap::new()), None);
+    }
+
     /// Drives `show` with synthetic input across frames, so keyboard-navigation
     /// behavior can be checked without a running window — worth the extra machinery
     /// specifically because this exact class of bug (a click that silently fails to
@@ -751,9 +871,16 @@ mod tests {
             };
             let mut event = None;
             let _ = self.ctx.run_ui(input, |ui| {
-                event = show(ui, project, selected, focus_requested, false, None, &|_| {
-                    None
-                });
+                event = show(
+                    ui,
+                    project,
+                    selected,
+                    focus_requested,
+                    false,
+                    None,
+                    &|_| None,
+                    &HashMap::new(),
+                );
             });
             event
         }

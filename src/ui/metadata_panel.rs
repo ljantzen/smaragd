@@ -94,6 +94,7 @@ pub struct MetadataPicklists<'a> {
 /// buffer (not necessarily saved yet), recomputed by the caller every frame — so it's
 /// a read-only label, not another `draft` buffer, and stays current as the user types
 /// with no extra plumbing beyond this whole panel already re-rendering each frame.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
     open_path: Option<&std::path::Path>,
@@ -101,6 +102,7 @@ pub fn show(
     picklists: &MetadataPicklists,
     word_count: usize,
     status_color: Option<egui::Color32>,
+    pov_color: Option<egui::Color32>,
 ) -> Option<MetadataFormEvent> {
     ui.heading("Metadata");
     ui.separator();
@@ -116,6 +118,7 @@ pub fn show(
         draft,
         picklists,
         status_color,
+        pov_color,
         Some(word_count),
     )
 }
@@ -126,12 +129,14 @@ pub fn show(
 /// metadata, which has no single open buffer to compute one from —
 /// `word_count: None`). `id_salt` must be unique per caller (egui's `Grid`/
 /// `ComboBox` id requirement), so each passes its own literal.
+#[allow(clippy::too_many_arguments)]
 fn metadata_fields_grid(
     ui: &mut egui::Ui,
     id_salt: &str,
     draft: &mut MetadataDraft,
     picklists: &MetadataPicklists,
     status_color: Option<egui::Color32>,
+    pov_color: Option<egui::Color32>,
     word_count: Option<usize>,
 ) -> Option<MetadataFormEvent> {
     let mut event = None;
@@ -150,13 +155,18 @@ fn metadata_fields_grid(
             picklists.statuses,
             status_color,
         );
-        picklist_or_text_row(
+        // Only one of the two swatches can be clicked in a given frame, so
+        // overwriting `event` here whenever `pov_row` fires safely combines
+        // whichever one (if either) did — there's never a real collision.
+        if let Some(pov_event) = pov_row(
             ui,
-            "POV:",
             &format!("{id_salt}_pov_combo"),
             &mut draft.pov,
             picklists.povs,
-        );
+            pov_color,
+        ) {
+            event = Some(pov_event);
+        }
 
         if let Some(word_count) = word_count {
             ui.label("Word count:");
@@ -186,6 +196,7 @@ pub fn show_folder(
     draft: &mut MetadataDraft,
     picklists: &MetadataPicklists,
     status_color: Option<egui::Color32>,
+    pov_color: Option<egui::Color32>,
 ) -> Option<MetadataFormEvent> {
     ui.heading("Folder Metadata");
     ui.separator();
@@ -195,6 +206,7 @@ pub fn show_folder(
         draft,
         picklists,
         status_color,
+        pov_color,
         None,
     )
 }
@@ -240,6 +252,10 @@ fn picklist_or_text_row(
 pub enum MetadataFormEvent {
     SetStatusColor {
         status: String,
+        color: egui::Color32,
+    },
+    SetPovColor {
+        pov: String,
         color: egui::Color32,
     },
 }
@@ -289,6 +305,56 @@ fn status_row(
         .changed()
         {
             event = Some(MetadataFormEvent::SetStatusColor { status, color });
+        }
+    });
+    ui.end_row();
+    event
+}
+
+/// The "POV:" row — an exact structural mirror of `status_row`, just keyed by
+/// `ProjectMeta::pov_colors` instead of `status_colors` and raising
+/// `SetPovColor` instead of `SetStatusColor`. Kept as its own function rather
+/// than parameterizing `status_row` over the field/label/event-constructor:
+/// the two are small and simple enough that a shared abstraction would cost
+/// more to read than the duplication it removes.
+fn pov_row(
+    ui: &mut egui::Ui,
+    combo_id: &str,
+    value: &mut String,
+    options: &[String],
+    current_color: Option<egui::Color32>,
+) -> Option<MetadataFormEvent> {
+    ui.label("POV:");
+    if options.is_empty() {
+        ui.text_edit_singleline(value);
+    } else {
+        let selected_text = if value.is_empty() {
+            "(none)"
+        } else {
+            value.as_str()
+        };
+        egui::ComboBox::new(combo_id, "")
+            .selected_text(selected_text)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(value, String::new(), "(none)");
+                for option in options {
+                    ui.selectable_value(value, option.clone(), option);
+                }
+            });
+    }
+
+    let mut event = None;
+    let pov = value.trim().to_string();
+    ui.add_enabled_ui(!pov.is_empty(), |ui| {
+        let mut color = current_color.unwrap_or(ui.visuals().weak_text_color());
+        if egui::color_picker::color_edit_button_srgba(
+            ui,
+            &mut color,
+            egui::color_picker::Alpha::Opaque,
+        )
+        .changed()
+        {
+            event = Some(MetadataFormEvent::SetPovColor { pov, color });
         }
     });
     ui.end_row();

@@ -36,7 +36,7 @@ use toast::Toast;
 use crate::collab::{CollabRole, CollabSession, SessionUpdate};
 use crate::editor::EditorState;
 use crate::frontmatter::DocumentMeta;
-use crate::project::{BacklinkEntry, LoadError, Project, RestoreError};
+use crate::project::{BacklinkEntry, BinderColorMode, LoadError, Project, RestoreError};
 use crate::search::{self, SearchScope};
 use crate::settings::PluginShortcutOverride;
 use crate::settings::Settings;
@@ -601,6 +601,7 @@ impl SmaragdApp {
             ShortcutAction::RefreshWordCount => self.spawn_word_count_recompute(ctx),
             ShortcutAction::ToggleCollabPanel => self.toggle_dock_tab(DockTab::Collab),
             ShortcutAction::ToggleStreak => self.toggle_dock_tab(DockTab::Streak),
+            ShortcutAction::CycleBinderColorMode => self.cycle_binder_color_mode(),
         }
     }
 
@@ -959,6 +960,7 @@ impl SmaragdApp {
             // those closures would conflict with the immutable `self.*`
             // reads happening in the same scope.
             let mut streak_glyph_clicked = false;
+            let mut color_mode_clicked = false;
             egui::Panel::bottom("status_bar").show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if let Some(path) = &self.editor.open_path {
@@ -999,7 +1001,14 @@ impl SmaragdApp {
                         .project
                         .as_ref()
                         .is_some_and(|project| project.meta.streak_enabled);
-                    if self.pomodoro.has_started() || draft_target_set || streak_visible {
+                    let color_mode_visible = self.project.as_ref().is_some_and(|project| {
+                        project.meta.binder_color_mode != BinderColorMode::Off
+                    });
+                    if self.pomodoro.has_started()
+                        || draft_target_set
+                        || streak_visible
+                        || color_mode_visible
+                    {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             // A running/paused-mid-session Pomodoro timer needs a
                             // segment of its own that survives `status_message`
@@ -1094,12 +1103,42 @@ impl SmaragdApp {
                                     }
                                 }
                             }
+
+                            // The active Binder coloring mode — added last in
+                            // this shared right_to_left layout, so it lands
+                            // at the left edge of this cluster of indicators
+                            // (see this fn's opening comment on why one
+                            // shared `with_layout` is used instead of a
+                            // second sibling call). Click to cycle, same
+                            // action as the `CycleBinderColorMode` shortcut.
+                            // Hidden entirely while `Off` — nothing to
+                            // indicate, and it'd otherwise sit in the status
+                            // bar as dead weight for the (now default) case
+                            // where binder coloring is disabled.
+                            if color_mode_visible && let Some(project) = &self.project {
+                                ui.separator();
+                                let mode = project.meta.binder_color_mode;
+                                let response = ui.add(
+                                    egui::Label::new(format!("\u{1F3A8} {}", mode.label()))
+                                        .sense(egui::Sense::click()),
+                                );
+                                let response = response.on_hover_text(format!(
+                                    "Binder color mode: {} — click to cycle",
+                                    mode.label()
+                                ));
+                                if response.clicked() {
+                                    color_mode_clicked = true;
+                                }
+                            }
                         });
                     }
                 });
             });
             if streak_glyph_clicked {
                 self.toggle_dock_tab(DockTab::Streak);
+            }
+            if color_mode_clicked {
+                self.cycle_binder_color_mode();
             }
         }
     }
@@ -1311,6 +1350,7 @@ impl eframe::App for SmaragdApp {
                     metadata_target: self.metadata.target.clone(),
                     folder_metadata_draft: &mut self.metadata.folder_draft,
                     document_status_cache: &self.document_status_cache,
+                    folder_word_counts: &self.word_count.folder_totals,
                     editor: &mut self.editor,
                     settings: &self.settings,
                     color_themes: &self.color_themes,

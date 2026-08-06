@@ -64,6 +64,58 @@ impl Project {
         }
     }
 
+    /// Every folder's combined descendant word count, keyed by that folder's
+    /// absolute path (the project root included) — the data source for
+    /// `BinderColorMode::WordCountProgress`'s folder rows (see
+    /// `ProjectMeta::binder_color_mode`). A fresh recursive walk rather than a
+    /// reuse of `word_count_from`: that one is shaped around a *single*,
+    /// `WordCountScope`-dependent root selection, whereas this always wants
+    /// *every* folder's own subtree total unconditionally. Deliberately
+    /// scoped by `WordCountScope::EverythingExceptTrash` regardless of
+    /// `ProjectMeta::word_count_scope` — the same "never aggregated together"
+    /// reasoning `ProjectMeta::draft_target_words`'s own doc comment gives for
+    /// staying independent of a document's own `word_count_target` — via
+    /// [`Project::is_path_tracked`] rather than re-deriving the Trash/
+    /// Templates exclusion here. Like [`Project::word_count`], reads every
+    /// tracked document from disk, so callers must run this off the UI thread
+    /// — see `app::spawn_word_count_recompute`, which computes this in the
+    /// same background pass as the Draft Target total.
+    pub fn folder_word_counts(&self) -> HashMap<PathBuf, usize> {
+        let mut totals = HashMap::new();
+        self.folder_word_counts_from(&self.tree.root, &mut totals);
+        totals
+    }
+
+    /// Recursive worker behind [`Project::folder_word_counts`]: returns this
+    /// node's own word count (a document's, or a folder's summed-from-
+    /// children total) and, for a folder, additionally records that total
+    /// into `totals` as a side effect — so one bottom-up walk populates every
+    /// folder's entry in a single pass.
+    fn folder_word_counts_from(
+        &self,
+        node: &BinderNode,
+        totals: &mut HashMap<PathBuf, usize>,
+    ) -> usize {
+        match &node.kind {
+            BinderNodeKind::Document => {
+                if !self.is_path_tracked(&node.path, WordCountScope::EverythingExceptTrash) {
+                    return 0;
+                }
+                fs::read_to_string(&node.path)
+                    .map(|contents| crate::frontmatter::count_words(&contents))
+                    .unwrap_or(0)
+            }
+            BinderNodeKind::Folder { children } => {
+                let total = children
+                    .iter()
+                    .map(|child| self.folder_word_counts_from(child, totals))
+                    .sum();
+                totals.insert(node.path.clone(), total);
+                total
+            }
+        }
+    }
+
     /// Whether the document at `path` would count toward [`Project::word_count`]
     /// under `scope` — a cheap, no-disk-I/O predicate (just path/role
     /// comparisons) used to gate the live "characters typed this session"
@@ -418,5 +470,83 @@ mod tests {
         project.reset_session(400).unwrap();
 
         assert_eq!(project.meta.session_baseline_words, 400);
+    }
+
+    #[test]
+    fn folder_word_counts_sums_direct_and_nested_descendant_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let scene = project.create_folder(&chapter, "Scene 1").unwrap();
+        let doc_a = project.create_document(&chapter, "A").unwrap();
+        fs::write(&doc_a, "one two three").unwrap();
+        let doc_b = project.create_document(&scene, "B").unwrap();
+        fs::write(&doc_b, "four five").unwrap();
+
+        let totals = project.folder_word_counts();
+
+        assert_eq!(totals.get(&scene), Some(&2));
+        assert_eq!(totals.get(&chapter), Some(&5));
+    }
+
+    #[test]
+    fn folder_word_counts_excludes_trash_and_templates_subtrees() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let trashed_doc = project.create_document(&trash, "Old Scene").unwrap();
+        fs::write(&trashed_doc, "one two three four five").unwrap();
+
+        let totals = project.folder_word_counts();
+
+        assert_eq!(totals.get(&trash), Some(&0));
+    }
+
+    #[test]
+    fn folder_word_counts_includes_the_project_root_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Scene").unwrap();
+        fs::write(&doc, "one two three").unwrap();
+
+        let totals = project.folder_word_counts();
+
+        assert_eq!(totals.get(&project.root.clone()), Some(&3));
+    }
+
+    #[test]
+    fn folder_word_counts_gives_a_leaf_folder_with_no_documents_a_total_of_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let empty = project.create_folder(dir.path(), "Empty").unwrap();
+
+        let totals = project.folder_word_counts();
+
+        assert_eq!(totals.get(&empty), Some(&0));
+    }
+
+    #[test]
+    fn folder_word_counts_is_unaffected_by_manuscript_only_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let manuscript = project.create_folder(dir.path(), "Manuscript").unwrap();
+        project
+            .set_folder_role(&manuscript, Some(FolderRole::Manuscript))
+            .unwrap();
+        project
+            .set_word_count_scope(WordCountScope::ManuscriptOnly)
+            .unwrap();
+        // Outside the Manuscript-role folder — `word_count(ManuscriptOnly)`
+        // would exclude this, but `folder_word_counts` always sums every
+        // tracked document regardless of `word_count_scope`.
+        let doc = project.create_document(dir.path(), "Outtake").unwrap();
+        fs::write(&doc, "one two three").unwrap();
+
+        let totals = project.folder_word_counts();
+
+        assert_eq!(totals.get(&project.root.clone()), Some(&3));
     }
 }
