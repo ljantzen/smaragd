@@ -896,19 +896,15 @@ mod tests {
         let target = project.create_document(dir.path(), "Old Name").unwrap();
 
         let mut card = StoryCard::new();
-        card.linked_document_stem = Some("Old Name".to_string());
+        card.linked_document_stems = vec!["Old Name".to_string()];
         let id = card.id;
         project.upsert_story_card(card).unwrap();
 
         project.rename(&target, "New Name").unwrap();
 
         assert_eq!(
-            project
-                .story_card(id)
-                .unwrap()
-                .linked_document_stem
-                .as_deref(),
-            Some("New Name")
+            project.story_card(id).unwrap().linked_document_stems,
+            vec!["New Name".to_string()]
         );
     }
 
@@ -919,19 +915,34 @@ mod tests {
         let target = project.create_document(dir.path(), "Old Name").unwrap();
 
         let mut card = StoryCard::new();
-        card.linked_document_stem = Some("Something Else".to_string());
+        card.linked_document_stems = vec!["Something Else".to_string()];
         let id = card.id;
         project.upsert_story_card(card).unwrap();
 
         project.rename(&target, "New Name").unwrap();
 
         assert_eq!(
-            project
-                .story_card(id)
-                .unwrap()
-                .linked_document_stem
-                .as_deref(),
-            Some("Something Else")
+            project.story_card(id).unwrap().linked_document_stems,
+            vec!["Something Else".to_string()]
+        );
+    }
+
+    #[test]
+    fn rename_document_updates_only_the_matching_stem_in_a_multi_linked_story_card() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let target = project.create_document(dir.path(), "Old Name").unwrap();
+
+        let mut card = StoryCard::new();
+        card.linked_document_stems = vec!["Old Name".to_string(), "Something Else".to_string()];
+        let id = card.id;
+        project.upsert_story_card(card).unwrap();
+
+        project.rename(&target, "New Name").unwrap();
+
+        assert_eq!(
+            project.story_card(id).unwrap().linked_document_stems,
+            vec!["New Name".to_string(), "Something Else".to_string()]
         );
     }
 

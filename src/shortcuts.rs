@@ -31,6 +31,7 @@ pub enum ShortcutAction {
     FindReplace,
     ToggleCorkboard,
     ToggleStoryGrid,
+    ToggleBeliefTimeline,
     ToggleBacklinks,
     ToggleTags,
     CommandPrompt,
@@ -79,6 +80,7 @@ impl ShortcutAction {
         Self::FindReplace,
         Self::ToggleCorkboard,
         Self::ToggleStoryGrid,
+        Self::ToggleBeliefTimeline,
         Self::ToggleBacklinks,
         Self::ToggleTags,
         Self::CommandPrompt,
@@ -118,6 +120,7 @@ impl ShortcutAction {
             Self::FindReplace => "Find and Replace",
             Self::ToggleCorkboard => "Toggle Corkboard",
             Self::ToggleStoryGrid => "Toggle Story Grid",
+            Self::ToggleBeliefTimeline => "Toggle Belief Timeline",
             Self::ToggleBacklinks => "Toggle Backlinks",
             Self::ToggleTags => "Toggle Tags",
             Self::CommandPrompt => "Command Prompt",
@@ -162,6 +165,7 @@ impl ShortcutAction {
             Self::FindReplace => "find_replace",
             Self::ToggleCorkboard => "toggle_corkboard",
             Self::ToggleStoryGrid => "toggle_story_grid",
+            Self::ToggleBeliefTimeline => "toggle_belief_timeline",
             Self::ToggleBacklinks => "toggle_backlinks",
             Self::ToggleTags => "toggle_tags",
             Self::CommandPrompt => "command_prompt",
@@ -206,6 +210,7 @@ impl ShortcutAction {
             Self::TogglePreview
             | Self::ToggleCorkboard
             | Self::ToggleStoryGrid
+            | Self::ToggleBeliefTimeline
             | Self::ToggleBacklinks
             | Self::ToggleTags
             | Self::ToggleDarkMode
@@ -261,6 +266,9 @@ impl ShortcutAction {
             }
             Self::ToggleStoryGrid => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::G)
+            }
+            Self::ToggleBeliefTimeline => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::E)
             }
             Self::ToggleBacklinks => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::B)

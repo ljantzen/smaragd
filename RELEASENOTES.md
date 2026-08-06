@@ -5,6 +5,28 @@ this file.
 
 ## Unreleased
 
+- Story Cards now track a character's belief arc, not just plot mechanics.
+  Each card gained a **POV Character**, **Prior Belief**, **New Belief**,
+  **Value Shift** (e.g. "Trust -> Distrust"), and **Knowledge Gained**, and
+  can link to more than one manuscript document (previously one at most —
+  a card spanning several scenes, or several cards sharing one scene, is
+  now representable). The card editor is restructured below its always-visible
+  Scene #/Alpha Point/Subplots/POV/Linked-documents header into three tabs —
+  **Plot** (Cause/Effect), **Belief and Knowledge** (the new fields), and
+  **Third Rail** (Why It Matters/Realization/And So?). The "Linked documents"
+  field now only suggests documents under a Manuscript-role folder (falling
+  back to every non-Trash/Templates document if none is designated yet),
+  and picking a suggestion auto-appends a comma so adding several is
+  discoverable.
+- Story Grid gained matching **Prior Belief**/**New Belief**/**Value Shift**
+  columns and now shows every one of a card's linked documents (with a
+  summed word count across them) instead of just one. Its POV column now
+  prefers a card's own POV Character when set, falling back to the linked
+  document's frontmatter POV as before.
+- Added a **Belief Timeline** view (`View > Belief Timeline`,
+  `Ctrl+Shift+E`): pick a POV character and see their story cards chained
+  in manuscript order as Prior Belief → New Belief, skipping a belief that
+  just repeats the previous card's, so the arc reads as a continuous chain.
 - Moved Metadata from the Edit menu to View (`View > Metadata`, reordered
   alongside the other dock tabs: Editor, Preview, Corkboard, Story Grid,
   Binder, Metadata, Backlinks, Tags, Theme), and moved Focus Mode from View

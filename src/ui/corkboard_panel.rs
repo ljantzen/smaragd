@@ -150,19 +150,45 @@ fn show_card(
                     ));
                 }
 
-                if let Some(stem) = &card.linked_document_stem {
-                    let resolved = project.tree.find_document_by_stem(stem);
+                if !card.pov_character.is_empty() {
+                    ui.horizontal(|ui| {
+                        if let Some(color) = resolve_pov_color(project, &card.pov_character) {
+                            let (rect, _response) = ui
+                                .allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                            ui.painter().circle_filled(rect.center(), 4.0, color);
+                        }
+                        ui.label(&card.pov_character);
+                    });
+                }
+                if !card.prior_belief.is_empty() || !card.new_belief.is_empty() {
+                    // Plain ASCII "->", not a Unicode arrow glyph: egui's bundled
+                    // default font has no glyph for U+2192 (unlike 🔗/⚠, which are
+                    // covered by its emoji-icon fallback), so it rendered as a tofu
+                    // box.
+                    ui.label(format!(
+                        "{} -> {}",
+                        truncate(&card.prior_belief, 40),
+                        truncate(&card.new_belief, 40)
+                    ));
+                }
+
+                if !card.linked_document_stems.is_empty() {
                     ui.add_space(4.0);
-                    let label = match resolved {
-                        Some(_) => format!("\u{1F517} {stem}"),
-                        None => format!("\u{26A0} {stem} (not found)"),
-                    };
-                    let response = ui.small_button(label);
-                    if response.clicked()
-                        && let Some(node) = resolved
-                    {
-                        event = Some(CorkboardEvent::OpenLinkedDocument(node.path.clone()));
-                    }
+                    ui.horizontal_wrapped(|ui| {
+                        for stem in &card.linked_document_stems {
+                            let resolved = project.tree.find_document_by_stem(stem);
+                            let label = match resolved {
+                                Some(_) => format!("\u{1F517} {stem}"),
+                                None => format!("\u{26A0} {stem} (not found)"),
+                            };
+                            let response = ui.small_button(label);
+                            if response.clicked()
+                                && let Some(node) = resolved
+                            {
+                                event = Some(CorkboardEvent::OpenLinkedDocument(node.path.clone()));
+                            }
+                        }
+                    });
                 }
 
                 ui.add_space(6.0);
@@ -180,6 +206,15 @@ fn show_card(
     event
 }
 
+/// The POV character's dot color, if that name has one assigned in
+/// `ProjectMeta::pov_colors` — same lookup `story_grid_panel::resolve_pov_color` uses,
+/// duplicated rather than shared (it's two lines, same precedent as `truncate` below).
+fn resolve_pov_color(project: &Project, pov_character: &str) -> Option<egui::Color32> {
+    project
+        .pov_color_hex(pov_character)
+        .and_then(crate::color_theme::parse_hex_color)
+}
+
 fn truncate(text: &str, max_chars: usize) -> String {
     let first_line = text.lines().next().unwrap_or("");
     if first_line.chars().count() <= max_chars {
@@ -191,21 +226,43 @@ fn truncate(text: &str, max_chars: usize) -> String {
     }
 }
 
+/// Which of the card editor's three inner tabs is showing, below the always-visible
+/// Scene#/Alpha Point/Subplots/POV/Linked-documents header — same "mini `egui_dock`"
+/// idiom `ui::streak_panel::StreakSubTab` uses for its Streak/Configure tabs.
+/// `And So` lives on `ThirdRail`, not `Plot`: it's the decision that falls out of
+/// Realization, the same internal/psychological throughline Why It Matters and
+/// Realization are part of, not an external plot beat like Cause/Effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardEditorTab {
+    Plot,
+    BeliefAndKnowledge,
+    ThirdRail,
+}
+
 /// Editing state for the card-editor modal — a form matching Lisa Cron's scene-card
 /// schema field-for-field, not a raw YAML/frontmatter editor.
-/// `subplot_tags_text`/`linked_document_text` are plain-text editing buffers for the
-/// underlying `Vec<String>`/`Option<String>` fields, folded back in on save.
+/// `subplot_tags_text`/`linked_documents_text`/`knowledge_text` are plain-text editing
+/// buffers for the underlying `Vec<String>` fields, folded back in on save.
 pub struct CardDraft {
     pub story_card: StoryCard,
     pub subplot_tags_text: String,
-    pub linked_document_text: String,
+    /// Comma-separated linked document stems — same convention as
+    /// `subplot_tags_text`, now that a card can link to more than one document.
+    pub linked_documents_text: String,
+    /// Comma-separated `StoryCard::new_knowledge` entries, same convention.
+    pub knowledge_text: String,
+    /// Which inner tab is showing — purely UI navigation state, not part of
+    /// `StoryCard` itself, so it isn't touched by `finalize`. Always starts on
+    /// `Plot`: both `new()` and `from_card()` open the editor fresh, so there's no
+    /// "last tab you were on" to restore.
+    pub active_tab: CardEditorTab,
     /// Whether this draft is a brand new card that hasn't been saved yet — controls
     /// whether the editor offers a "Delete" button.
     pub is_new: bool,
-    /// Autocomplete state for `linked_document_text`, private to this module (unlike
+    /// Autocomplete state for `linked_documents_text`, private to this module (unlike
     /// the fields above, `app.rs` never needs to read these).
     ///
-    /// Whether the linked-document field had focus as of the end of last frame —
+    /// Whether the linked-documents field had focus as of the end of last frame —
     /// scopes Tab/arrow key-stealing to that field alone, so pressing Tab while
     /// editing a different field (e.g. Cause) isn't hijacked by a suggestion list
     /// left over from a previously-filled-in link.
@@ -224,7 +281,9 @@ impl CardDraft {
         Self {
             story_card: StoryCard::new(),
             subplot_tags_text: String::new(),
-            linked_document_text: String::new(),
+            linked_documents_text: String::new(),
+            knowledge_text: String::new(),
+            active_tab: CardEditorTab::Plot,
             is_new: true,
             linked_document_focused: false,
             linked_document_selected: 0,
@@ -235,7 +294,9 @@ impl CardDraft {
         Self {
             story_card: card.clone(),
             subplot_tags_text: card.subplot_tags.join(", "),
-            linked_document_text: card.linked_document_stem.clone().unwrap_or_default(),
+            linked_documents_text: card.linked_document_stems.join(", "),
+            knowledge_text: card.new_knowledge.join(", "),
+            active_tab: CardEditorTab::Plot,
             is_new: false,
             linked_document_focused: false,
             linked_document_selected: 0,
@@ -244,21 +305,22 @@ impl CardDraft {
 
     /// Fold the editing buffers back into `story_card`, ready to persist.
     pub fn finalize(mut self) -> StoryCard {
-        self.story_card.subplot_tags = self
-            .subplot_tags_text
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect();
-        let linked = self.linked_document_text.trim();
-        self.story_card.linked_document_stem = if linked.is_empty() {
-            None
-        } else {
-            Some(linked.to_string())
-        };
+        self.story_card.subplot_tags = split_comma_list(&self.subplot_tags_text);
+        self.story_card.new_knowledge = split_comma_list(&self.knowledge_text);
+        self.story_card.linked_document_stems = split_comma_list(&self.linked_documents_text);
         self.story_card
     }
+}
+
+/// Splits a comma-separated editing buffer into a trimmed, non-empty-entry list —
+/// the shared shape `subplot_tags_text`/`knowledge_text`/`linked_documents_text` all
+/// fold back into their underlying `Vec<String>` fields with.
+fn split_comma_list(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 pub enum CardEditorOutcome {
@@ -290,19 +352,51 @@ fn steal_popup_key(ctx: &egui::Context) -> Option<PopupAction> {
     })
 }
 
+/// Splits a comma-separated editing buffer into the text before (and including) its
+/// last comma, and the segment after it — the piece currently being typed. `prefix`
+/// is `""` when there's no comma yet (a single, still-untyped entry).
+fn last_comma_segment(text: &str) -> (&str, &str) {
+    match text.rfind(',') {
+        Some(idx) => (&text[..=idx], &text[idx + 1..]),
+        None => ("", text),
+    }
+}
+
+/// Replaces the comma-segment currently being typed in `linked_documents_text` with
+/// `candidate`, and appends a trailing ", " — so accepting a suggestion (by keyboard
+/// or by click) leaves the field immediately ready to type a second linked document,
+/// rather than requiring the user to notice on their own that this field takes a
+/// comma-separated list.
+fn accept_linked_document_candidate(draft: &mut CardDraft, candidate: &str) {
+    let (prefix, _) = last_comma_segment(&draft.linked_documents_text);
+    let prefix = prefix.to_string();
+    draft.linked_documents_text = if prefix.is_empty() {
+        format!("{candidate}, ")
+    } else {
+        format!("{prefix} {candidate}, ")
+    };
+    draft.linked_document_selected = 0;
+}
+
 /// Renders the card-editor modal. Returns `Some` once the user confirms, deletes, or
-/// cancels this frame.
+/// cancels this frame. `pov_titles` are the picklist-folder-sourced POV options (see
+/// `ui::metadata_panel`'s `MetadataPicklists` for the parallel Metadata-panel usage);
+/// an empty list falls back to a plain text field, same as `metadata_panel::pov_row`.
 pub fn show_card_editor(
     ctx: &egui::Context,
     draft: &mut CardDraft,
     note_titles: &[String],
+    pov_titles: &[String],
 ) -> Option<CardEditorOutcome> {
     let mut outcome = None;
 
-    // Computed from last frame's `linked_document_text`/focus, before this frame's
+    // Computed from last frame's `linked_documents_text`/focus, before this frame's
     // `TextEdit` is built — same "steal before building" ordering `editor_panel.rs`
-    // and `command_prompt.rs` use for their own popups.
-    let query = draft.linked_document_text.trim();
+    // and `command_prompt.rs` use for their own popups. Only the comma-segment
+    // currently being typed drives suggestions, since the field can hold several
+    // linked documents.
+    let (_, last_segment) = last_comma_segment(&draft.linked_documents_text);
+    let query = last_segment.trim();
     let all_candidates = if query.is_empty() {
         Vec::new()
     } else {
@@ -325,8 +419,8 @@ pub fn show_card_editor(
                 (draft.linked_document_selected + candidates.len() - 1) % candidates.len();
         }
         Some(PopupAction::Accept) => {
-            draft.linked_document_text = candidates[draft.linked_document_selected].to_string();
-            draft.linked_document_selected = 0;
+            let candidate = candidates[draft.linked_document_selected].to_string();
+            accept_linked_document_candidate(draft, &candidate);
         }
         None => {}
     }
@@ -374,11 +468,52 @@ pub fn show_card_editor(
                 ));
                 ui.end_row();
 
-                ui.label("Linked document:");
+                ui.label("POV Character:");
+                let width = ui.available_width();
+                if pov_titles.is_empty() {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.story_card.pov_character)
+                            .desired_width(width),
+                    );
+                } else {
+                    let selected_text = if draft.story_card.pov_character.is_empty() {
+                        "(none)"
+                    } else {
+                        draft.story_card.pov_character.as_str()
+                    };
+                    // No `.width(width)` here: a `ComboBox`'s rendered width (button +
+                    // dropdown arrow + padding) runs slightly wider than whatever width
+                    // it's asked for, and this sits inside a `Grid` cell whose column
+                    // width only ever grows to fit the widest content seen, never
+                    // shrinks — feeding `available_width()` back in as the requested
+                    // width would grow the column a little every frame, then the next
+                    // frame's `available_width()` a little more, forever. Same
+                    // size-to-content convention `metadata_panel.rs`'s `pov_row`/
+                    // `status_row` combo boxes already use for exactly this reason.
+                    egui::ComboBox::new("story_card_editor_pov_combo", "")
+                        .selected_text(selected_text)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut draft.story_card.pov_character,
+                                String::new(),
+                                "(none)",
+                            );
+                            for option in pov_titles {
+                                ui.selectable_value(
+                                    &mut draft.story_card.pov_character,
+                                    option.clone(),
+                                    option,
+                                );
+                            }
+                        });
+                }
+                ui.end_row();
+
+                ui.label("Linked documents (comma-separated):");
                 let width = ui.available_width();
                 linked_document_response = Some(
                     ui.add(
-                        egui::TextEdit::singleline(&mut draft.linked_document_text)
+                        egui::TextEdit::singleline(&mut draft.linked_documents_text)
                             .desired_width(width),
                     ),
                 );
@@ -408,8 +543,8 @@ pub fn show_card_editor(
                     .selectable_label(index == draft.linked_document_selected, *candidate)
                     .clicked()
                 {
-                    draft.linked_document_text = candidate.to_string();
-                    draft.linked_document_selected = 0;
+                    let candidate = candidate.to_string();
+                    accept_linked_document_candidate(draft, &candidate);
                 }
             }
         }
@@ -422,31 +557,81 @@ pub fn show_card_editor(
         let field_width = ui.available_width();
 
         ui.separator();
-        ui.label(egui::RichText::new("Plot").strong().size(16.0));
-        ui.label("Cause (what happens):");
-        ui.add(egui::TextEdit::multiline(&mut draft.story_card.cause).desired_width(field_width));
-        ui.add_space(6.0);
-        ui.label("Effect (external and internal consequence):");
-        ui.add(egui::TextEdit::multiline(&mut draft.story_card.effect).desired_width(field_width));
-
-        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            for (tab, label) in [
+                (CardEditorTab::Plot, "Plot"),
+                (CardEditorTab::BeliefAndKnowledge, "Belief and Knowledge"),
+                (CardEditorTab::ThirdRail, "Third Rail"),
+            ] {
+                if ui
+                    .selectable_label(draft.active_tab == tab, label)
+                    .clicked()
+                {
+                    draft.active_tab = tab;
+                }
+            }
+        });
         ui.separator();
-        ui.label(egui::RichText::new("Third rail").strong().size(16.0));
-        ui.label("Why it matters (the link to the protagonist's Desire/Misbelief):");
-        ui.add(
-            egui::TextEdit::multiline(&mut draft.story_card.why_it_matters)
-                .desired_width(field_width),
-        );
-        ui.add_space(6.0);
-        ui.label("Realization:");
-        ui.add(
-            egui::TextEdit::multiline(&mut draft.story_card.realization).desired_width(field_width),
-        );
 
-        ui.add_space(8.0);
-        ui.separator();
-        ui.label("And so? (what they do next):");
-        ui.add(egui::TextEdit::multiline(&mut draft.story_card.and_so).desired_width(field_width));
+        match draft.active_tab {
+            CardEditorTab::Plot => {
+                ui.label("Cause (what happens):");
+                ui.add(
+                    egui::TextEdit::multiline(&mut draft.story_card.cause)
+                        .desired_width(field_width),
+                );
+                ui.add_space(6.0);
+                ui.label("Effect (external and internal consequence):");
+                ui.add(
+                    egui::TextEdit::multiline(&mut draft.story_card.effect)
+                        .desired_width(field_width),
+                );
+            }
+            CardEditorTab::ThirdRail => {
+                ui.label("Why it matters (the link to the protagonist's Desire/Misbelief):");
+                ui.add(
+                    egui::TextEdit::multiline(&mut draft.story_card.why_it_matters)
+                        .desired_width(field_width),
+                );
+                ui.add_space(6.0);
+                ui.label("Realization:");
+                ui.add(
+                    egui::TextEdit::multiline(&mut draft.story_card.realization)
+                        .desired_width(field_width),
+                );
+                ui.add_space(6.0);
+                ui.label("And so? (what they do next):");
+                ui.add(
+                    egui::TextEdit::multiline(&mut draft.story_card.and_so)
+                        .desired_width(field_width),
+                );
+            }
+            CardEditorTab::BeliefAndKnowledge => {
+                ui.label("Prior belief (going into this card):");
+                ui.add(
+                    egui::TextEdit::singleline(&mut draft.story_card.prior_belief)
+                        .desired_width(field_width),
+                );
+                ui.add_space(6.0);
+                ui.label("New belief (coming out of it):");
+                ui.add(
+                    egui::TextEdit::singleline(&mut draft.story_card.new_belief)
+                        .desired_width(field_width),
+                );
+                ui.add_space(6.0);
+                ui.label("Value shift (e.g. \"Trust -> Distrust\"):");
+                ui.add(
+                    egui::TextEdit::singleline(&mut draft.story_card.value_shift)
+                        .desired_width(field_width),
+                );
+                ui.add_space(6.0);
+                ui.label("Knowledge gained (comma-separated):");
+                ui.add(
+                    egui::TextEdit::singleline(&mut draft.knowledge_text)
+                        .desired_width(field_width),
+                );
+            }
+        }
 
         ui.add_space(8.0);
         ui.horizontal(|ui| {
@@ -479,20 +664,24 @@ mod tests {
         let draft = CardDraft::new();
         assert!(draft.is_new);
         assert_eq!(draft.subplot_tags_text, "");
-        assert_eq!(draft.linked_document_text, "");
+        assert_eq!(draft.linked_documents_text, "");
+        assert_eq!(draft.knowledge_text, "");
+        assert_eq!(draft.active_tab, CardEditorTab::Plot);
     }
 
     #[test]
     fn card_draft_from_card_is_not_new_and_joins_subplot_tags() {
         let mut card = StoryCard::new();
         card.subplot_tags = vec!["heist".to_string(), "betrayal".to_string()];
-        card.linked_document_stem = Some("Chapter 3".to_string());
+        card.linked_document_stems = vec!["Chapter 3".to_string(), "Chapter 4".to_string()];
+        card.new_knowledge = vec!["the letter exists".to_string()];
 
         let draft = CardDraft::from_card(&card);
 
         assert!(!draft.is_new);
         assert_eq!(draft.subplot_tags_text, "heist, betrayal");
-        assert_eq!(draft.linked_document_text, "Chapter 3");
+        assert_eq!(draft.linked_documents_text, "Chapter 3, Chapter 4");
+        assert_eq!(draft.knowledge_text, "the letter exists");
     }
 
     #[test]
@@ -506,23 +695,33 @@ mod tests {
     }
 
     #[test]
-    fn finalize_treats_a_blank_linked_document_field_as_unlinked() {
+    fn finalize_treats_a_blank_linked_documents_field_as_unlinked() {
         let mut draft = CardDraft::new();
-        draft.linked_document_text = "   ".to_string();
+        draft.linked_documents_text = "   ".to_string();
 
         let card = draft.finalize();
 
-        assert_eq!(card.linked_document_stem, None);
+        assert!(card.linked_document_stems.is_empty());
     }
 
     #[test]
-    fn finalize_trims_a_linked_document_stem() {
+    fn finalize_splits_trims_and_filters_linked_document_stems() {
         let mut draft = CardDraft::new();
-        draft.linked_document_text = "  Chapter 3  ".to_string();
+        draft.linked_documents_text = "  Chapter 3 , Chapter 4 ,".to_string();
 
         let card = draft.finalize();
 
-        assert_eq!(card.linked_document_stem, Some("Chapter 3".to_string()));
+        assert_eq!(card.linked_document_stems, vec!["Chapter 3", "Chapter 4"]);
+    }
+
+    #[test]
+    fn finalize_splits_trims_and_filters_new_knowledge() {
+        let mut draft = CardDraft::new();
+        draft.knowledge_text = " the letter exists ,, she's alive ,".to_string();
+
+        let card = draft.finalize();
+
+        assert_eq!(card.new_knowledge, vec!["the letter exists", "she's alive"]);
     }
 
     #[test]
@@ -569,7 +768,7 @@ mod tests {
         };
         let mut outcome = None;
         let _ = ctx.run_ui(input, |ui| {
-            outcome = show_card_editor(ui.ctx(), draft, note_titles);
+            outcome = show_card_editor(ui.ctx(), draft, note_titles, &[]);
         });
         outcome
     }
@@ -596,5 +795,35 @@ mod tests {
         let outcome = run_show_card_editor(&ctx, &mut draft, &[], vec![]);
 
         assert!(outcome.is_none());
+    }
+
+    #[test]
+    fn last_comma_segment_splits_the_segment_being_typed() {
+        assert_eq!(
+            last_comma_segment("Chapter 3, Chap"),
+            ("Chapter 3,", " Chap")
+        );
+        assert_eq!(last_comma_segment("Chapter 3"), ("", "Chapter 3"));
+        assert_eq!(last_comma_segment(""), ("", ""));
+    }
+
+    #[test]
+    fn accept_linked_document_candidate_appends_a_trailing_comma_for_the_first_entry() {
+        let mut draft = CardDraft::new();
+        draft.linked_documents_text = "Chap".to_string();
+
+        accept_linked_document_candidate(&mut draft, "Chapter 3");
+
+        assert_eq!(draft.linked_documents_text, "Chapter 3, ");
+    }
+
+    #[test]
+    fn accept_linked_document_candidate_appends_a_second_entry_after_the_first() {
+        let mut draft = CardDraft::new();
+        draft.linked_documents_text = "Chapter 3, Chap".to_string();
+
+        accept_linked_document_candidate(&mut draft, "Chapter 4");
+
+        assert_eq!(draft.linked_documents_text, "Chapter 3, Chapter 4, ");
     }
 }

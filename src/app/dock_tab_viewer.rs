@@ -20,6 +20,7 @@ pub(super) enum DockAction {
     Wikilink(WikilinkActivation),
     Corkboard(CorkboardEvent),
     StoryGrid(crate::ui::story_grid_panel::StoryGridEvent),
+    BeliefTimeline(crate::ui::belief_timeline_panel::BeliefTimelineEvent),
     Pomodoro(crate::ui::pomodoro_panel::PomodoroEvent),
     WordCount(crate::ui::word_count_panel::WordCountEvent),
     Collab(CollabPanelEvent),
@@ -80,6 +81,12 @@ pub(super) struct AppTabViewer<'a> {
     /// Which of the Streak tab's two inner tabs is showing — see
     /// `SmaragdApp::streak_sub_tab`.
     pub(super) streak_sub_tab: &'a mut crate::ui::streak_panel::StreakSubTab,
+    /// The Belief Timeline tab's currently selected POV character — see
+    /// `SmaragdApp::belief_timeline_character`. Mutated in place by
+    /// `ui::belief_timeline_panel::show`, the same direct-mutation convention
+    /// `streak_sub_tab` above uses, rather than round-tripping through a
+    /// `DockAction` for something that's pure tab-local UI state.
+    pub(super) belief_timeline_character: &'a mut String,
     pub(super) actions: Vec<DockAction>,
     /// See `SmaragdApp::focus_binder_requested`.
     pub(super) focus_binder_requested: bool,
@@ -103,6 +110,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::Preview => "Preview".into(),
             DockTab::Corkboard => "Corkboard".into(),
             DockTab::StoryGrid => "Story Grid".into(),
+            DockTab::BeliefTimeline => "Belief Timeline".into(),
             DockTab::Pomodoro => "Pomodoro".into(),
             DockTab::WordCount => "Word Count".into(),
             DockTab::Collab => "Collaborate".into(),
@@ -384,6 +392,18 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         self.settings.unplaced_story_cards_position,
                     ) {
                         self.actions.push(DockAction::StoryGrid(event));
+                    }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
+            DockTab::BeliefTimeline => match self.project {
+                Some(project) => {
+                    if let Some(event) =
+                        ui::belief_timeline_panel::show(ui, project, self.belief_timeline_character)
+                    {
+                        self.actions.push(DockAction::BeliefTimeline(event));
                     }
                 }
                 None => {

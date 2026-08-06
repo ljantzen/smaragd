@@ -91,6 +91,12 @@ pub struct SmaragdApp {
     /// (`project_lifecycle.rs`) every time a project is opened; the user can
     /// freely switch away from that default afterward.
     streak_sub_tab: ui::streak_panel::StreakSubTab,
+    /// The Belief Timeline tab's currently selected POV character — starts blank
+    /// (defaults to the first known character the panel finds, see
+    /// `ui::belief_timeline_panel::show`) and isn't reset by `set_project`, unlike
+    /// `streak_sub_tab`: there's no per-project "sensible default" character to
+    /// reset it to.
+    belief_timeline_character: String,
     /// Where `persist_settings` writes, in place of the real
     /// `settings::config_file_path()` — always `None` in `new()` (the real
     /// app), always `Some` (a throwaway path) in `test_fixture()`. Exists
@@ -242,6 +248,7 @@ impl SmaragdApp {
             recording_shortcut: None,
             settings_category: ui::settings_panel::SettingsCategory::General,
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
+            belief_timeline_character: String::new(),
             settings_path_override: None,
             is_test_fixture: false,
             find_replace: FindReplaceState::default(),
@@ -323,6 +330,7 @@ impl SmaragdApp {
             recording_shortcut: None,
             settings_category: ui::settings_panel::SettingsCategory::General,
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
+            belief_timeline_character: String::new(),
             // Always set, unconditionally — see this field's doc comment.
             // Any test built on `test_fixture` must never be able to reach
             // the developer's real `~/.config/smaragd/smaragd.toml`, even
@@ -499,6 +507,9 @@ impl SmaragdApp {
             }
             ShortcutAction::ToggleStoryGrid => {
                 self.toggle_dock_tab_near(DockTab::StoryGrid, DockTab::Editor)
+            }
+            ShortcutAction::ToggleBeliefTimeline => {
+                self.toggle_dock_tab_near(DockTab::BeliefTimeline, DockTab::Editor)
             }
             ShortcutAction::Save => {
                 if let Err(err) = self.save_editor() {
@@ -1360,6 +1371,7 @@ impl eframe::App for SmaragdApp {
                     char_activity: self.word_count.char_activity,
                     today_words_so_far,
                     streak_sub_tab: &mut self.streak_sub_tab,
+                    belief_timeline_character: &mut self.belief_timeline_character,
                     actions: Vec::new(),
                     focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
                     collab_status,
@@ -1380,6 +1392,9 @@ impl eframe::App for SmaragdApp {
                         DockAction::Wikilink(activation) => self.activate_wikilink(activation),
                         DockAction::Corkboard(event) => self.handle_corkboard_event(event),
                         DockAction::StoryGrid(event) => self.handle_story_grid_event(event),
+                        DockAction::BeliefTimeline(event) => {
+                            self.handle_belief_timeline_event(event)
+                        }
                         DockAction::Pomodoro(event) => self.handle_pomodoro_event(event),
                         DockAction::WordCount(event) => {
                             self.handle_word_count_event(ui.ctx(), event)
@@ -1404,13 +1419,27 @@ impl eframe::App for SmaragdApp {
         if let Some(draft) = &mut self.card_draft {
             // Only walk the document tree for titles while the card editor (and its
             // linked-document completion) is actually open, rather than every frame.
+            // Restricted to manuscript documents (see
+            // `Project::manuscript_document_stems`), unlike the wikilink/`:open`
+            // completions elsewhere in the app, which suggest every document.
             let note_titles = self
                 .project
                 .as_ref()
-                .map(|project| project.tree.document_names())
+                .map(|project| project.manuscript_document_stems())
+                .unwrap_or_default();
+            let pov_titles: Vec<String> = self
+                .project
+                .as_ref()
+                .map(|project| {
+                    project
+                        .picklist_documents(crate::project::PicklistField::Pov)
+                        .iter()
+                        .map(|node| ui::binder_panel::document_label(&node.name).to_string())
+                        .collect()
+                })
                 .unwrap_or_default();
             if let Some(outcome) =
-                ui::corkboard_panel::show_card_editor(ui.ctx(), draft, &note_titles)
+                ui::corkboard_panel::show_card_editor(ui.ctx(), draft, &note_titles, &pov_titles)
             {
                 self.finish_card_editor(outcome);
             }

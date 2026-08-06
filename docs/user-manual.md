@@ -2,7 +2,7 @@
 
 Smaragd is a desktop writing tool for long-form fiction and other manuscripts organized as a folder of Markdown files. It borrows ideas from Scrivener (binder, folder roles, templates), Longform/Obsidian (frontmatter metadata, wikilinks), Lisa Cron's *Story Genius* (structured story cards), and Helix (color themes, `:` command prompt).
 
-This manual covers what the app does and how to use it. For internals (source layout, build/test commands), see the main [README](../README.md).
+This manual covers what the app does and how to use it. For internals (source layout, build/test commands), see the main [README](../README.md) and [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ## Contents
 
@@ -116,7 +116,7 @@ The top menu bar — File, Edit, View, Tools, Versions, Window, Help — can be 
 
 ## Dockable Tool Windows
 
-The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Preview**, **Corkboard**, **Pomodoro**, **Word Count**, **Collaborate**, and **Streak** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
+The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Preview**, **Corkboard**, **Story Grid**, **Belief Timeline**, **Pomodoro**, **Word Count**, **Collaborate**, and **Streak** views are all one shared dockable layout — similar to the Properties window in Visual Basic's IDE — rather than a mix of fixed panels, modals, and mutually-exclusive view modes. You can:
 
 - **Drag a tab's title** onto empty space to pop it out into its own floating window
 - **Drag a floating window's title back** onto the dock area to re-dock it
@@ -124,7 +124,7 @@ The **Binder**, **Backlinks**, **Tags**, **Document Metadata**, **Editor**, **Pr
 - **Drag a tab to an edge** of another tab or the dock area to split the layout and place it side by side
 - **Resize** the dock area, or a floating window, by dragging its edge
 
-Binder and Editor are present from the moment a project is open; Backlinks, Tags, Metadata, Preview, Corkboard, Pomodoro, Word Count, Collaborate, and Streak start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Tags`**, **`View > Preview`**, **`View > Corkboard`**, **`View > Metadata`**, **`Collaborate > Collaboration Panel`**, or (for Pomodoro, Word Count, and Streak) **`Tools > Pomodoro Timer`**/**`Tools > Word Count`**/**`Tools > Streak`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview or Corkboard just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
+Binder and Editor are present from the moment a project is open; Backlinks, Tags, Metadata, Preview, Corkboard, Story Grid, Belief Timeline, Pomodoro, Word Count, Collaborate, and Streak start closed. Any tab can be closed via its × button, and reopened again from **`View > Binder`**, **`View > Backlinks`**, **`View > Tags`**, **`View > Preview`**, **`View > Corkboard`**, **`View > Story Grid`**, **`View > Belief Timeline`**, **`View > Metadata`**, **`Collaborate > Collaboration Panel`**, or (for Pomodoro, Word Count, and Streak) **`Tools > Pomodoro Timer`**/**`Tools > Word Count`**/**`Tools > Streak`** (most also have shortcuts — see [Keyboard Shortcuts](#keyboard-shortcuts)). Toggling Preview, Corkboard, Story Grid, or Belief Timeline just opens or closes that tab next to the Editor rather than switching to an exclusive "view mode" — any combination of tabs can be open and arranged at once.
 
 The whole arrangement — which tabs are open, how they're split or floated, and window position/size — persists across restarts. **`Window`** menu:
 
@@ -427,37 +427,48 @@ After a successful PDF export, the status bar reports an estimated spine width f
 
 ## Story Cards (Corkboard)
 
-**`View > Corkboard`** opens a wrapping grid of scene cards, modeled on Lisa Cron's *Story Genius* method — a structured cause-and-effect breakdown rather than a freeform synopsis.
+**`View > Corkboard`** opens a wrapping grid of scene cards. A card isn't just a Lisa Cron *Story Genius*-style cause-and-effect breakdown — it also tracks the psychological change a scene represents: a character's belief going in, and what it becomes coming out.
 
 At the top of the Corkboard, two project-wide fields capture what Cron calls the "Third Rail" — the protagonist's driving force, not tied to any one scene:
 
 - **Desire** — the external/internal want the protagonist is pursuing
 - **Misbelief** — the flawed, usually childhood-formed belief standing in its way
 
-Every scene card below is meant to test or advance this pair. Each card has:
+Every scene card below is meant to test or advance this pair. Each card has a header, always visible, and three tabs underneath it for everything else.
 
+The header:
+
+- **Scene #** — a free-text label, independent of manuscript order
 - **Alpha Point** — the scene's core moment
-- **Cause** — the external event that occurs
-- **Effect** — the external and internal consequence of the cause
-- **Why It Matters** — the scene's link back to the protagonist's Desire/Misbelief — why these events matter to them personally
-- **Realization** — what the protagonist comes to understand
-- **And so?** — what the protagonist does next, as a result of that realization
-- Optional **subplot tags**
-- An optional soft link to a manuscript document, by title
+- **Subplots** — optional, comma-separated tags
+- **POV Character** — becomes a dropdown once you've designated a Dropdown Source folder for POV (see [Dropdown Source Folders](#dropdown-source-folders)), otherwise free text
+- **Linked documents** — comma-separated, with autocomplete as you type. A card can link to more than one manuscript document (spanning several scenes), and more than one card can link to the same document. Only documents under a Manuscript-role folder are suggested (see [Folder Roles](#folder-roles-research-trash-templates-manuscript)) — falling back to every non-Trash/Templates document if the project has no Manuscript folder designated yet. Picking a suggestion appends a comma automatically, so it's clear you can keep typing to add another
+
+The three tabs:
+
+- **Plot** — **Cause** (the external event that occurs) and **Effect** (its external and internal consequence)
+- **Belief and Knowledge** — **Prior Belief** (what the POV Character believes going into this card), **New Belief** (what they believe as a result of it), **Value Shift** (a short label for the value at stake, e.g. "Trust -> Distrust"), and **Knowledge Gained** (comma-separated facts the character learns)
+- **Third Rail** — **Why It Matters** (the scene's link back to the protagonist's Desire/Misbelief — why these events matter to them personally), **Realization** (what the protagonist comes to understand), and **And So?** (what they do next, as a result of that realization)
 
 Cards are independent of the binder tree: you can reorder them freely, create a card with no linked document yet (pure plotting, before you've drafted the scene), or link a card to a document that later gets renamed or deleted — the link just resolves to "not found" rather than breaking anything, the same way a dangling `[[wikilink]]` behaves.
 
 ### Story Grid
 
-**`View > Story Grid`** opens a second, read-only view of the same cards as a table — one row per card, in whatever order their linked document sits in the binder today, rather than the freeform order you set on the Corkboard.
+**`View > Story Grid`** opens a second, read-only view of the same cards as a table — one row per card, in whatever order its earliest linked document sits in the binder today, rather than the freeform order you set on the Corkboard.
 
-Each row shows a computed manuscript position (`#`), the card's own `Scene #` label (unchanged, shown alongside rather than replaced), the linked document's title, its POV and word count (read live from the document, the same way the Metadata and Word Count panels do), and every Story Genius field — Cause, Effect, Why It Matters, Realization, And So, and subplot tags.
+Each row shows a computed manuscript position (`#`), the card's own `Scene #` label (unchanged, shown alongside rather than replaced), every one of its linked documents' titles, POV, and a word count summed across all of them (read live from disk, the same way the Metadata and Word Count panels do), and every field from the card — Cause, Effect, Why It Matters, Realization, And So, Prior Belief, New Belief, Value Shift, and subplot tags. The POV column prefers the card's own POV Character when it's set, falling back to the linked document's frontmatter POV otherwise.
 
-Cards with no linked document, or a link that no longer resolves, group into an **Unplaced** section — a toggle at the top of the panel puts that section above or below the placed rows. Unlike everything else on this page, that toggle is an app-wide preference, not a per-project one: it's remembered across every project you open, the same way UI Scale or your theme choice is. Clicking a linked document's title opens it in the Editor, same as Corkboard's own 🔗 link; clicking a row's Scene # opens the card editor.
+Cards with no linked document, or where every link is stale, group into an **Unplaced** section — a toggle at the top of the panel puts that section above or below the placed rows. Unlike everything else on this page, that toggle is an app-wide preference, not a per-project one: it's remembered across every project you open, the same way UI Scale or your theme choice is. Clicking a linked document's title opens it in the Editor, same as Corkboard's own 🔗 link; clicking a row's Scene # opens the card editor.
 
-The **POV** and **Words** columns are colored the same way the [Binder](#binder-background-coloring) colors its own rows: a colored dot next to the POV name whenever that POV has an assigned color, and the word count itself tinted along the same red→yellow→green gradient toward the document's word count target. Unlike the Binder, this coloring isn't mode-switched — it's always on, independent of whatever `Color Binder By` mode is currently active.
+The **POV** and **Words** columns are colored the same way the [Binder](#binder-background-coloring) colors its own rows: a colored dot next to the POV name whenever that POV has an assigned color, and the word count itself tinted along the same red→yellow→green gradient toward the (first resolved) document's word count target. Unlike the Binder, this coloring isn't mode-switched — it's always on, independent of whatever `Color Binder By` mode is currently active.
 
 The Story Grid never reorders the manuscript itself — its row order is always a reflection of the binder, not something you can drag to change from here. To reorder scenes, reorder the documents in the Binder.
+
+### Belief Timeline
+
+**`View > Belief Timeline`** (`Ctrl+Shift+E`) shows one character's arc across the whole manuscript: pick a POV Character from the dropdown (populated from whatever names story cards have set in their own POV Character field — not the Metadata panel's POV dropdown source, since a card can describe a belief shift before any scene exists for it) and see their cards, in manuscript order, chained as Prior Belief → New Belief. A repeated belief that just restates the previous card's New Belief is skipped, so the chain reads as one continuous arc rather than restating itself. Cards with no resolvable linked document trail at the end. Clicking a card's linked scene opens it in the Editor, same as Story Grid.
+
+If no story card has a POV Character set yet, the panel just says so — set one from the Corkboard card editor's header to start populating this view.
 
 ## Find and Replace
 
@@ -739,6 +750,7 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Find and Replace | `Ctrl+F` |
 | Toggle Corkboard | `Ctrl+Shift+K` |
 | Toggle Story Grid | `Ctrl+Shift+G` |
+| Toggle Belief Timeline | `Ctrl+Shift+E` |
 | Cycle Binder Color Mode | `Ctrl+Shift+C` |
 | Toggle Backlinks | `Ctrl+Shift+B` |
 | Toggle Tags | `Ctrl+Shift+T` |

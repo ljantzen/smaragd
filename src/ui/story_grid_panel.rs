@@ -18,55 +18,71 @@ pub enum StoryGridEvent {
     SetUnplacedPosition(UnplacedCardsPosition),
 }
 
-/// One story card resolved against the current manuscript order, ready to render
-/// as a row.
-struct ResolvedRow<'a> {
-    card: &'a StoryCard,
-    /// The card's position among `Project::manuscript_document_order` (1-based,
-    /// for display), if its linked document resolves to one. `None` — an
-    /// "unplaced" card — covers three cases alike: no link at all, a stale link
-    /// (the document was deleted or renamed), and a link that resolves but to a
-    /// document outside manuscript order (e.g. now under Trash/Templates).
-    position: Option<usize>,
-    resolved_path: Option<PathBuf>,
-    /// A `linked_document_stem` is set but doesn't resolve to any document —
-    /// mirrors Corkboard's ⚠ treatment of the same state.
-    stale_link: bool,
+/// One of a card's `linked_document_stems`, resolved against the binder tree.
+pub(crate) struct ResolvedLink {
+    pub(crate) stem: String,
+    /// `None` — a stale link — mirrors Corkboard's ⚠ treatment of the same state.
+    pub(crate) path: Option<PathBuf>,
+    /// The document's 1-based position in `Project::manuscript_document_order`, if
+    /// it resolves to one (e.g. not `None` if the document now lives under
+    /// Trash/Templates, outside manuscript order).
+    pub(crate) position: Option<usize>,
 }
 
-fn resolve_row<'a>(
+/// One story card resolved against the current manuscript order, ready to render
+/// as a row. `pub(crate)`, along with `resolve_row`/`ResolvedLink` below: shared with
+/// `ui::belief_timeline_panel`, the other view that resolves cards against
+/// manuscript order, rather than duplicating this resolution logic a second time.
+pub(crate) struct ResolvedRow<'a> {
+    pub(crate) card: &'a StoryCard,
+    pub(crate) links: Vec<ResolvedLink>,
+}
+
+impl ResolvedRow<'_> {
+    /// The row's manuscript position for sorting/placement purposes: the earliest
+    /// position among its links, if any resolves to one. `None` — an "unplaced"
+    /// row — covers no links at all, every link stale, and every resolved link
+    /// falling outside manuscript order, alike.
+    pub(crate) fn min_position(&self) -> Option<usize> {
+        self.links.iter().filter_map(|link| link.position).min()
+    }
+
+    pub(crate) fn resolved_paths(&self) -> Vec<&Path> {
+        self.links
+            .iter()
+            .filter_map(|link| link.path.as_deref())
+            .collect()
+    }
+}
+
+pub(crate) fn resolve_row<'a>(
     project: &Project,
     manuscript_order: &[PathBuf],
     card: &'a StoryCard,
 ) -> ResolvedRow<'a> {
-    let Some(stem) = card.linked_document_stem.as_deref() else {
-        return ResolvedRow {
-            card,
-            position: None,
-            resolved_path: None,
-            stale_link: false,
-        };
-    };
-    match project.tree.find_document_by_stem(stem) {
-        Some(node) => {
-            let position = manuscript_order
-                .iter()
-                .position(|path| path == &node.path)
-                .map(|index| index + 1);
-            ResolvedRow {
-                card,
-                position,
-                resolved_path: Some(node.path.clone()),
-                stale_link: false,
+    let links = card
+        .linked_document_stems
+        .iter()
+        .map(|stem| match project.tree.find_document_by_stem(stem) {
+            Some(node) => {
+                let position = manuscript_order
+                    .iter()
+                    .position(|path| path == &node.path)
+                    .map(|index| index + 1);
+                ResolvedLink {
+                    stem: stem.clone(),
+                    path: Some(node.path.clone()),
+                    position,
+                }
             }
-        }
-        None => ResolvedRow {
-            card,
-            position: None,
-            resolved_path: None,
-            stale_link: true,
-        },
-    }
+            None => ResolvedLink {
+                stem: stem.clone(),
+                path: None,
+                position: None,
+            },
+        })
+        .collect();
+    ResolvedRow { card, links }
 }
 
 /// A document's POV, word count, and word count target, read live from disk —
@@ -82,6 +98,33 @@ fn document_summary(path: &Path) -> (Option<String>, Option<usize>, Option<u32>)
         Some(crate::frontmatter::count_words(&contents)),
         meta.word_count_target,
     )
+}
+
+/// Aggregates `document_summary` across every one of a row's resolved linked
+/// documents, since a card can now span several scenes: word counts are summed
+/// (a card's total length across all its scenes), while POV and word-count target
+/// are taken from the first resolved document that has one set — multiple linked
+/// documents rarely disagree on POV, and summing per-scene targets across scenes
+/// wouldn't mean anything.
+fn aggregate_document_summary(paths: &[&Path]) -> (Option<String>, Option<usize>, Option<u32>) {
+    let mut pov = None;
+    let mut target = None;
+    let mut total_words = 0usize;
+    let mut any_words = false;
+    for path in paths {
+        let (doc_pov, words, doc_target) = document_summary(path);
+        if pov.is_none() {
+            pov = doc_pov;
+        }
+        if target.is_none() {
+            target = doc_target;
+        }
+        if let Some(words) = words {
+            total_words += words;
+            any_words = true;
+        }
+    }
+    (pov, any_words.then_some(total_words), target)
 }
 
 /// Renders the Story Grid: a read-only, manuscript-ordered table view of the same
@@ -119,9 +162,10 @@ pub fn show(
         .iter()
         .map(|card| resolve_row(project, &manuscript_order, card))
         .collect();
-    let (mut placed, unplaced): (Vec<_>, Vec<_>) =
-        rows.into_iter().partition(|row| row.position.is_some());
-    placed.sort_by_key(|row| row.position);
+    let (mut placed, unplaced): (Vec<_>, Vec<_>) = rows
+        .into_iter()
+        .partition(|row| row.min_position().is_some());
+    placed.sort_by_key(|row| row.min_position());
 
     let ordered: Vec<ResolvedRow> = match unplaced_position {
         UnplacedCardsPosition::Top => unplaced.into_iter().chain(placed).collect(),
@@ -143,6 +187,9 @@ pub fn show(
             .column(Column::initial(160.0).at_least(80.0)) // Why It Matters
             .column(Column::initial(160.0).at_least(80.0)) // Realization
             .column(Column::initial(160.0).at_least(80.0)) // And So
+            .column(Column::initial(140.0).at_least(80.0)) // Prior Belief
+            .column(Column::initial(140.0).at_least(80.0)) // New Belief
+            .column(Column::initial(140.0).at_least(80.0)) // Value Shift
             .column(Column::remainder().at_least(80.0)) // Subplot tags
             .header(20.0, |mut header| {
                 for label in [
@@ -156,6 +203,9 @@ pub fn show(
                     "Why It Matters",
                     "Realization",
                     "And So",
+                    "Prior Belief",
+                    "New Belief",
+                    "Value Shift",
                     "Tags",
                 ] {
                     header.col(|ui| {
@@ -182,18 +232,24 @@ fn show_row(
 ) -> Option<StoryGridEvent> {
     let mut event = None;
     let card = row.card;
-    let (pov, words, word_count_target) = row
-        .resolved_path
-        .as_deref()
-        .map(document_summary)
-        .unwrap_or((None, None, None));
+    let paths = row.resolved_paths();
+    let (doc_pov, words, word_count_target) = aggregate_document_summary(&paths);
+    // A card's own `pov_character` (added alongside multi-scene linking) takes
+    // precedence over the linked documents' frontmatter POV — but falls back to it
+    // for cards that haven't set one, so existing cards' rows don't change until
+    // edited.
+    let pov = if card.pov_character.trim().is_empty() {
+        doc_pov
+    } else {
+        Some(card.pov_character.clone())
+    };
     let pov_color = resolve_pov_color(project, pov.as_deref());
     let word_count_color = resolve_word_count_color(words, word_count_target);
 
     body.row(22.0, |mut table_row| {
         table_row.col(|ui| {
             ui.label(
-                row.position
+                row.min_position()
                     .map(|position| position.to_string())
                     .unwrap_or_else(|| "\u{2014}".to_string()),
             );
@@ -204,16 +260,24 @@ fn show_row(
             }
         });
         table_row.col(|ui| {
-            if let Some(path) = &row.resolved_path {
-                let label = document_label(path);
-                if ui.link(format!("\u{1F517} {label}")).clicked() {
-                    event = Some(StoryGridEvent::OpenLinkedDocument(path.clone()));
-                }
-            } else if row.stale_link {
-                let stem = card.linked_document_stem.as_deref().unwrap_or("");
-                ui.label(format!("\u{26A0} {stem} (not found)"));
-            } else {
+            if row.links.is_empty() {
                 ui.weak("(no document)");
+            } else {
+                ui.horizontal_wrapped(|ui| {
+                    for link in &row.links {
+                        match &link.path {
+                            Some(path) => {
+                                let label = document_label(path);
+                                if ui.link(format!("\u{1F517} {label}")).clicked() {
+                                    event = Some(StoryGridEvent::OpenLinkedDocument(path.clone()));
+                                }
+                            }
+                            None => {
+                                ui.label(format!("\u{26A0} {} (not found)", link.stem));
+                            }
+                        }
+                    }
+                });
             }
         });
         table_row.col(|ui| match (pov.as_deref(), pov_color) {
@@ -259,6 +323,15 @@ fn show_row(
         });
         table_row.col(|ui| {
             ui.label(truncate(&card.and_so));
+        });
+        table_row.col(|ui| {
+            ui.label(truncate(&card.prior_belief));
+        });
+        table_row.col(|ui| {
+            ui.label(truncate(&card.new_belief));
+        });
+        table_row.col(|ui| {
+            ui.label(truncate(&card.value_shift));
         });
         table_row.col(|ui| {
             ui.label(card.subplot_tags.join(", "));
@@ -321,9 +394,8 @@ mod tests {
 
         let row = resolve_row(&project, &[], &card);
 
-        assert_eq!(row.position, None);
-        assert_eq!(row.resolved_path, None);
-        assert!(!row.stale_link);
+        assert_eq!(row.min_position(), None);
+        assert!(row.resolved_paths().is_empty());
     }
 
     #[test]
@@ -331,12 +403,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let project = Project::initialize(dir.path()).unwrap();
         let mut card = StoryCard::new();
-        card.linked_document_stem = Some("Missing Scene".to_string());
+        card.linked_document_stems = vec!["Missing Scene".to_string()];
 
         let row = resolve_row(&project, &[], &card);
 
-        assert_eq!(row.position, None);
-        assert!(row.stale_link);
+        assert_eq!(row.min_position(), None);
+        assert_eq!(row.links.len(), 1);
+        assert!(row.links[0].path.is_none());
     }
 
     #[test]
@@ -345,14 +418,47 @@ mod tests {
         let mut project = Project::initialize(dir.path()).unwrap();
         let doc = project.create_document(dir.path(), "Scene 1").unwrap();
         let mut card = StoryCard::new();
-        card.linked_document_stem = Some("Scene 1".to_string());
+        card.linked_document_stems = vec!["Scene 1".to_string()];
         let order = vec![doc.clone()];
 
         let row = resolve_row(&project, &order, &card);
 
-        assert_eq!(row.position, Some(1));
-        assert_eq!(row.resolved_path, Some(doc));
-        assert!(!row.stale_link);
+        assert_eq!(row.min_position(), Some(1));
+        assert_eq!(row.resolved_paths(), vec![doc.as_path()]);
+    }
+
+    #[test]
+    fn resolve_row_min_position_is_the_earliest_of_several_linked_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let first = project.create_document(dir.path(), "Scene 1").unwrap();
+        let second = project.create_document(dir.path(), "Scene 2").unwrap();
+        let mut card = StoryCard::new();
+        card.linked_document_stems = vec!["Scene 2".to_string(), "Scene 1".to_string()];
+        let order = vec![first.clone(), second.clone()];
+
+        let row = resolve_row(&project, &order, &card);
+
+        assert_eq!(row.min_position(), Some(1));
+    }
+
+    #[test]
+    fn aggregate_document_summary_sums_word_counts_across_resolved_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        let b = dir.path().join("b.md");
+        std::fs::write(&a, "one two three").unwrap();
+        std::fs::write(&b, "four five").unwrap();
+
+        let (_, words, _) = aggregate_document_summary(&[&a, &b]);
+
+        assert_eq!(words, Some(5));
+    }
+
+    #[test]
+    fn aggregate_document_summary_is_none_words_when_no_paths_resolve() {
+        let (_, words, _) = aggregate_document_summary(&[]);
+        assert_eq!(words, None);
     }
 
     #[test]

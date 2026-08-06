@@ -80,14 +80,16 @@ impl Project {
 
     /// Follow a document rename in any story card linked to it by its old stem — the
     /// same "keep soft references working" job `rename_wikilinks_everywhere` does for
-    /// `[[wikilinks]]`, just for `StoryCard::linked_document_stem`. A no-op (and no
+    /// `[[wikilinks]]`, just for `StoryCard::linked_document_stems`. A no-op (and no
     /// extra write) if no card was linked to `old_stem`.
     fn relink_story_cards(&mut self, old_stem: &str, new_stem: &str) -> io::Result<()> {
         let mut changed = false;
         for card in self.meta.story_cards.iter_mut() {
-            if card.linked_document_stem.as_deref() == Some(old_stem) {
-                card.linked_document_stem = Some(new_stem.to_string());
-                changed = true;
+            for stem in card.linked_document_stems.iter_mut() {
+                if stem == old_stem {
+                    *stem = new_stem.to_string();
+                    changed = true;
+                }
             }
         }
         if changed {

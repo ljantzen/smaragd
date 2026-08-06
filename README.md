@@ -28,8 +28,9 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
   - Manuscript designates a folder as primary manuscript content, mirroring Scrivener's Draft folder. `File > Export Manuscript…` compiles straight from it — from the whole project if none is assigned yet, or via a submenu to pick among them when more than one folder holds the role
 - Per-document YAML frontmatter (`type`/`status`/`pov`/`word_count_target`/`tags` — Longform/Scrivener-style manuscript metadata): parsed on demand, stripped from the markdown preview so it doesn't render as a garbled paragraph, and editable live through a dockable form (`View > Metadata`) that only ever touches those five keys — any other hand-added YAML key in the block survives a save. Edits apply as you type, no Save/Cancel step. The `Type`/`Status`/`POV` fields switch from free text to a dropdown once a folder is checked as that field's "Dropdown Source" (any folder's right-click menu) — its direct child documents' titles become the options, independently per field and independent of `FolderRole` (a folder keeps whatever role, or none, it already has, and stays in export exactly as before). The panel also shows a live word count, recomputed every frame from the open buffer (not just the last save). Folders carry the same five fields (minus the live word count, since a folder has no body of its own) — click any non-root folder row in the binder and the same dockable form switches to a "Folder Metadata" heading instead. The `Status`/`POV` rows, in both forms, each have an inline color-swatch button next to their combo box that assigns that status/POV value a project-wide binder background color (see the Binder bullet above)
 - Project-wide metadata (Title/Subtitle/Author/Logline/What if/Synopsis): clicking the binder's root project row switches that same Metadata dock over to these fields instead of a document's frontmatter, rather than adding a separate dock tab — the row gets the same persistent selection highlight a selected document row does. Title/Author are the same `ProjectMeta::book_title`/`book_author` fields the Export dialog uses (and feed into it); Logline/What if/Synopsis are new, edited live with no Save step, and evenly split whatever vertical space is left in the tab once Title/Subtitle/Author are laid out above them (Synopsis's scrollbar stays always visible, since it's the field most likely to run past its box; Logline/What if only show theirs once they actually overflow)
-- Story cards (`View > Corkboard`, Lisa Cron "Story Genius" style): a wrapping grid of scene cards, each with an Alpha Point, Cause, Effect, Why It Matters, Realization, and "And so?", plus optional subplot tags and an optional soft link to a manuscript document by title. Cards are independent of the binder tree — reorderable on their own, and a card can exist with no linked document yet (a pure plotting artifact) or be linked to a document that's since been renamed or deleted without breaking. The Corkboard also has a project-wide Desire/Misbelief pair (Cron's "Third Rail") that every card's Why It Matters is meant to test or advance
-- Story Grid (`View > Story Grid`): a second, read-only view of the same cards as a table, one row per card sorted by wherever its linked document sits in the binder today — a manuscript position column alongside the free-text Scene # label, POV and word count read live from the linked document, and every Story Genius field as its own column. Cards with no (or a dangling) link group into an "Unplaced" section, top or bottom per a toggle in the panel. Doesn't reorder the manuscript itself — that still happens from the Binder. The POV and Words columns reuse the Binder's own coloring: a colored dot next to the POV name when that POV has an assigned color, and the word count tinted along the same red-to-green word-count-progress gradient toward the document's target
+- Story cards (`View > Corkboard`): each tracks both the Lisa Cron "Story Genius"-style plot mechanics (Cause, Effect, Why It Matters, Realization, "And so?") and a character's psychological change (POV Character, Prior Belief, New Belief, Value Shift, Knowledge Gained) — organized as an always-visible Scene #/Alpha Point/Subplots/POV/Linked-documents header plus three tabs (Plot, Belief and Knowledge, Third Rail). A card can link to more than one manuscript document (and vice versa), suggested from Manuscript-role folders only. Cards are independent of the binder tree — reorderable on their own, and a card can exist with no linked document yet (a pure plotting artifact) or be linked to a document that's since been renamed or deleted without breaking. The Corkboard also has a project-wide Desire/Misbelief pair (Cron's "Third Rail") that every card's Why It Matters is meant to test or advance
+- Story Grid (`View > Story Grid`): a second, read-only view of the same cards as a table, one row per card sorted by wherever its earliest linked document sits in the binder today — a manuscript position column alongside the free-text Scene # label, every linked document, POV and a summed word count read live from them, and every card field (plot and belief alike) as its own column. Cards with no (or every) link stale group into an "Unplaced" section, top or bottom per a toggle in the panel. Doesn't reorder the manuscript itself — that still happens from the Binder. The POV and Words columns reuse the Binder's own coloring: a colored dot next to the POV name when that POV has an assigned color, and the word count tinted along the same red-to-green word-count-progress gradient toward the document's target
+- Belief Timeline (`View > Belief Timeline`): pick a POV Character and see their story cards chained in manuscript order as Prior Belief → New Belief — the character's arc across the whole manuscript, read off directly from Story Card data
 - Glow-CLI-styled markdown preview (`View > Preview`): colored heading hierarchy, barred blockquotes, boxed code blocks, striped GFM tables, and images — both standard `![alt](src)` and Obsidian-style `![[image.png]]` embeds — loaded via `egui_extras` (relative paths resolve against the open document's folder and are required to stay inside the project; remote `http(s)://` images aren't fetched)
 - Obsidian-style `[[Topic]]` / `[[Topic|Alias]]` wikilinks: rendered as clickable links in preview, resolved by filename within the project. Ctrl+Click a link in preview (or place the cursor on one and press the remappable "Activate Wikilink" shortcut, `Ctrl+Enter` by default, in the editor) to create the missing document, in the same folder as the note the link was in
 - Wikilink autocomplete while typing `[[`: filtered suggestions, arrow-key/Tab/Enter navigation, mouse click
@@ -90,78 +91,7 @@ All three, plus a `SHA256SUMS` file per platform, are published to a GitHub rele
 
 ## Project layout
 
-Pure, unit-tested logic is kept separate from egui rendering code, which is verified manually rather than with automated tests:
-
-```
-src/
-  main.rs                 entry point
-  app.rs                  SmaragdApp: dock layout, menu bar, event routing
-  build.rs                (repo root) captures git commit/build date as compile-time env vars for Help > About, and rasterizes assets/smaragd-icon.svg into the compiled-in window icon
-  markdown.rs             markdown -> Block/Span parser (pulldown-cmark + wikilinks + inline #tag scanning)
-  frontmatter.rs          YAML frontmatter parsing (DocumentMeta) + write-back + stripping for preview
-  autocomplete.rs         wikilink-autocomplete query/filter/completion logic (plain prefix/substring match)
-  fuzzy.rs                fzf-style subsequence fuzzy matching (nucleo-matcher) for the Open Document quick-switcher
-  search.rs               plain-text find/replace across a chosen SearchScope
-  git.rs                  thin wrapper over the system `git` binary (init/commit/push/pull)
-  plugins.rs              loads/runs .rhai plugins: custom : commands + the on_save hook
-  pomodoro.rs             Pomodoro work/break state machine (pure, ticked once per frame regardless of dock-tab visibility)
-  notifications.rs        thin wrapper over notify-rust for OS-level desktop notifications (currently just Pomodoro phase changes)
-  streak.rs               Writing Streak evaluation (pure): WeeklySchedule, evaluate_streak (judges only completed Mon-Sun weeks), prune_daily_history
-  color_theme.rs          built-in + loaded-from-.toml color themes, egui::Visuals application
-  shortcuts.rs            ShortcutAction <-> egui::KeyboardShortcut map, load/save, guards against binding a shortcut that would make some character untypable
-  settings.rs             app-wide preferences: load/save smaragd.toml
-  templates.rs            `${{name}}`/`${{date}}` substitution for New From Template
-  project_template.rs     Scrivener-style New Project templates: built-in Blank/Novel/Nonfiction/Screenplay/World-Building + loaded-from-disk custom ones, apply()/save_from_project()
-  editor/mod.rs           EditorState: open/close document, dirty tracking, save
-  editor_font.rs          the curated Editor/Preview font set, and registering the two custom ones with egui
-  collab/
-    mod.rs                 CollabSession: the SmaragdApp-facing surface tying crdt/diff to a running net session
-    crdt.rs                 CRDT document (Yjs/yrs), proven convergent against in-process documents
-    diff.rs                 text diffing (old vs. new buffer -> TextChange) + cursor adjustment on remote edits
-    ticket.rs                the pasteable connection code: iroh EndpointAddr + session secret, postcard + base58
-    crypto.rs                app-level end-to-end encryption layered on top of iroh's transport security (directional keys, implicit counter nonces, host identity folded into key derivation)
-    net.rs                   iroh networking on its own background thread/tokio runtime: pairing handshake, encrypted frame exchange
-  export/
-    mod.rs                 gather() (binder walk, Trash/Templates-skipping) + shared ExportDoc/BookMeta/ExportError
-    style.rs                TypesetStyle: built-in + loaded-from-.toml typesetting styles shared by all 3 formats
-    docx.rs                 DOCX rendering (docx_rs)
-    epub.rs                 EPUB rendering (epub_builder)
-    pdf.rs                  print-PDF rendering via the embedded Typst compiler (typst-as-lib)
-  project/
-    model.rs              BinderTree/BinderNode data model
-    scan.rs                folder -> BinderTree via ignore::WalkBuilder
-    mod.rs                 Project: type defs (FolderRole, ProjectMeta, StoryCard, ...) + core lifecycle/CRUD (load/initialize/rescan, create/rename/delete/move)
-    roles.rs               folder-role assignment/lookup, trash_path/deletes_to_trash
-    trash.rs                restore-from-trash/empty-trash/permanent-delete
-    story_cards.rs          story cards + protagonist Desire/Misbelief
-    queries.rs              backlinks + tag index/search
-    word_count.rs           word count (WordCountScope-aware tree walk), is_path_tracked, Draft/Session target persistence, daily_word_counts rollover (feeds Streak)
-    streak.rs                per-project Streak config setters (enable flag, weekly schedule, evaluation mode, red threshold)
-    picklists.rs            Type/Status/POV dropdown-source folders
-  ui/
-    about_panel.rs          Help > About modal: version + build info
-    backlinks_panel.rs      backlinks list rendering (dockable tab)
-    tags_panel.rs           tags list + tag search rendering (dockable tab)
-    binder_panel.rs        binder tree rendering + right-click context menu + drag-and-drop move/reorder (dockable tab)
-    editor_panel.rs         text editor + wikilink autocomplete popup + Focus Mode's paragraph-dimming layouter (dockable tab)
-    markdown_preview.rs     glow-style preview rendering (dockable tab)
-    corkboard_panel.rs      story-card grid + card editor modal (dockable tab)
-    story_grid_panel.rs     read-only, manuscript-ordered table view of the same story cards (dockable tab)
-    metadata_panel.rs       document-metadata form editor, live-binding; also renders the project-wide Title/Subtitle/Author/Logline/What-if/Synopsis form shown when the binder's root row is selected (dockable tab)
-    open_document_prompt.rs fzf-style quick-switcher modal for Open Document
-    find_replace_panel.rs   find/replace panel rendering
-    command_prompt.rs       `:` command parsing, completion, and prompt rendering
-    settings_panel.rs       settings dialog rendering: category nav + per-category content (incl. shortcut remapping)
-    name_prompt.rs          new file/folder/new-from-template/rename/new-project name-prompt modal rendering
-    new_project_template_prompt.rs  template-choice step shown before the New Project name prompt
-    export_panel.rs         export dialog: Title/Subtitle/Author/Style + DOCX/EPUB/Print PDF buttons
-    pomodoro_panel.rs       Pomodoro dock tab: countdown + Start/Pause/Skip/Reset
-    word_count_panel.rs     Word Count dock tab: scope toggle, Draft/Session Target progress bars, characters-typed counter
-    collab_panel.rs         Collaborate dock tab: connection code / peer fingerprint + Host/Join/End
-    streak_panel.rs         Streak dock tab: Streak/Configure inner tabs, traffic-light badge, weekly schedule editing
-```
-
-Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, Story Grid, Pomodoro, Word Count, Collaborate, and Streak all dock together in one shared area via [`egui_dock`](https://github.com/Adanos020/egui_dock), wired up in `app.rs`'s `DockTab`/`AppTabViewer`.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for a full module-by-module map of the codebase and how the dockable UI is wired together.
 
 ## License
 

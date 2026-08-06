@@ -235,6 +235,9 @@ impl SmaragdApp {
                         if nav.button(ui, "Story Grid").clicked() {
                             self.toggle_dock_tab_near(DockTab::StoryGrid, DockTab::Editor);
                         }
+                        if nav.button(ui, "Belief Timeline").clicked() {
+                            self.toggle_dock_tab_near(DockTab::BeliefTimeline, DockTab::Editor);
+                        }
                         ui.separator();
                         if nav.button(ui, "Binder").clicked() {
                             self.toggle_dock_tab(DockTab::Binder);

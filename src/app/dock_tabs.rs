@@ -273,6 +273,17 @@ impl SmaragdApp {
             }
         }
     }
+
+    pub(super) fn handle_belief_timeline_event(
+        &mut self,
+        event: crate::ui::belief_timeline_panel::BeliefTimelineEvent,
+    ) {
+        match event {
+            crate::ui::belief_timeline_panel::BeliefTimelineEvent::OpenLinkedDocument(path) => {
+                self.open_linked_document_and_focus_editor(path, DockTab::BeliefTimeline);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

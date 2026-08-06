@@ -17,6 +17,7 @@ pub(super) enum DockTab {
     Preview,
     Corkboard,
     StoryGrid,
+    BeliefTimeline,
     Pomodoro,
     WordCount,
     Collab,

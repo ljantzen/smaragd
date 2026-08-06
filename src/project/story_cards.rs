@@ -1,11 +1,13 @@
 use super::*;
 
-/// A single Lisa Cron "Story Genius" scene card: a structured cause-and-effect
-/// schema (Cause, Effect, Why It Matters, Realization, And So), not a freeform
-/// synopsis. Optionally soft-linked to a
-/// document by title (see `linked_document_stem`), the same way `[[wikilinks]]`
-/// resolve — never by path or by the document's `BinderNode::id` (which is
-/// regenerated on every rescan and so isn't a durable reference).
+/// A single story card: a structured cause-and-effect schema (Cause, Effect, Why It
+/// Matters, Realization, And So) from Lisa Cron's "Story Genius", extended with an
+/// explicit belief-state transition (Prior Belief, New Belief, Value Shift, New
+/// Knowledge) — the psychological-change unit a scene's events serve, not a freeform
+/// synopsis. Optionally soft-linked to one or more documents by title (see
+/// `linked_document_stems`), the same way `[[wikilinks]]` resolve — never by path or
+/// by the document's `BinderNode::id` (which is regenerated on every rescan and so
+/// isn't a durable reference).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoryCard {
     pub id: Uuid,
@@ -26,12 +28,67 @@ pub struct StoryCard {
     pub realization: String,
     /// What the protagonist does next, as a result of `realization`.
     pub and_so: String,
-    /// The linked document's filename stem (no path, no `.md`), resolved on demand via
-    /// `BinderTree::find_document_by_stem`. `None` means no scene has been drafted for
-    /// this card yet. A stem that no longer resolves (its document was deleted) is a
-    /// normal, passive state — the UI just shows "not found" — mirroring how a
-    /// dangling `[[wikilink]]` already behaves elsewhere in the app.
-    pub linked_document_stem: Option<String>,
+    /// Whose belief/knowledge this card tracks. Free text, like `linked_document_stems`
+    /// — not tied to `ProjectMeta::pov_picklist_folder`, since a card can describe a
+    /// character's arc before any scene (and so any document POV) exists for it.
+    /// `#[serde(default)]`: absent in story cards saved before this field existed.
+    #[serde(default)]
+    pub pov_character: String,
+    /// What `pov_character` believes going into this card.
+    #[serde(default)]
+    pub prior_belief: String,
+    /// What `pov_character` believes as a result of this card — together with
+    /// `prior_belief`, the belief-state transition a Belief Timeline view chains
+    /// across a character's cards in manuscript order.
+    #[serde(default)]
+    pub new_belief: String,
+    /// The value at stake moving from one pole to the other, e.g. `"Trust ->
+    /// Distrust"`. Free text for now, deliberately not a structured from/to pair —
+    /// there's no usage yet to justify that structure.
+    #[serde(default)]
+    pub value_shift: String,
+    /// Facts `pov_character` learns as of this card. Edited as a comma-separated
+    /// list in the card editor, same convention as `subplot_tags`.
+    #[serde(default)]
+    pub new_knowledge: Vec<String>,
+    /// The linked documents' filename stems (no path, no `.md`), resolved on demand
+    /// via `BinderTree::find_document_by_stem` — many-to-many, since one card can span
+    /// several scenes (or several cards can share one scene). An empty list means no
+    /// scene has been drafted for this card yet. A stem that no longer resolves (its
+    /// document was deleted) is a normal, passive state — the UI just shows "not
+    /// found" — mirroring how a dangling `[[wikilink]]` already behaves elsewhere in
+    /// the app.
+    ///
+    /// `#[serde(alias = "linked_document_stem")]` plus the custom deserializer below
+    /// accept story cards saved before this was a list, where the JSON key was
+    /// singular and held `null` or one string rather than an array.
+    #[serde(
+        default,
+        alias = "linked_document_stem",
+        deserialize_with = "deserialize_linked_document_stems"
+    )]
+    pub linked_document_stems: Vec<String>,
+}
+
+/// Accepts the pre-many-to-many shape (`null` or a single JSON string) in addition to
+/// the current `Vec<String>`, so old `project.json` files migrate in place on load —
+/// see `StoryCard::linked_document_stems`'s doc comment.
+fn deserialize_linked_document_stems<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StemsShape {
+        Single(String),
+        Many(Vec<String>),
+    }
+
+    Ok(match Option::<StemsShape>::deserialize(deserializer)? {
+        None => Vec::new(),
+        Some(StemsShape::Single(stem)) => vec![stem],
+        Some(StemsShape::Many(stems)) => stems,
+    })
 }
 
 impl StoryCard {
@@ -46,7 +103,12 @@ impl StoryCard {
             why_it_matters: String::new(),
             realization: String::new(),
             and_so: String::new(),
-            linked_document_stem: None,
+            pov_character: String::new(),
+            prior_belief: String::new(),
+            new_belief: String::new(),
+            value_shift: String::new(),
+            new_knowledge: Vec::new(),
+            linked_document_stems: Vec::new(),
         }
     }
 }
@@ -58,6 +120,30 @@ impl Default for StoryCard {
 }
 
 impl Project {
+    /// The filename stems of every document currently eligible to be linked from a
+    /// story card — the candidate list for the card editor's Linked Documents
+    /// autocomplete. Restricted to documents under a `FolderRole::Manuscript`
+    /// folder (falling back to every document except Trash/Templates content if the
+    /// project has no Manuscript folder yet, the same fallback
+    /// `WordCountScope::ManuscriptOnly` uses): a story card tracks a psychological
+    /// change in the manuscript, not in research notes or character bios, so those
+    /// shouldn't clutter the suggestion list. This only narrows what's *suggested* —
+    /// an already-linked stem that now falls outside Manuscript (e.g. its folder's
+    /// role was removed) still resolves as before, the same tolerant-of-drift
+    /// soft-link behavior `linked_document_stems`'s own doc comment describes.
+    pub fn manuscript_document_stems(&self) -> Vec<String> {
+        self.tree
+            .document_paths()
+            .into_iter()
+            .filter(|path| self.is_path_tracked(path, WordCountScope::ManuscriptOnly))
+            .filter_map(|path| {
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
     /// Set the protagonist's Desire — see `ProjectMeta::protagonist_desire`.
     pub fn set_protagonist_desire(&mut self, desire: String) -> io::Result<()> {
         self.meta.protagonist_desire = desire;
@@ -107,6 +193,37 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manuscript_document_stems_falls_back_to_everything_except_trash_and_templates_when_unassigned()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        project.create_document(&trash, "Old Scene").unwrap();
+        project.create_document(dir.path(), "Scene 1").unwrap();
+
+        assert_eq!(project.manuscript_document_stems(), vec!["Scene 1"]);
+    }
+
+    #[test]
+    fn manuscript_document_stems_is_restricted_to_manuscript_folders_once_one_is_assigned() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let manuscript = project.create_folder(dir.path(), "Book").unwrap();
+        project
+            .set_folder_role(&manuscript, Some(FolderRole::Manuscript))
+            .unwrap();
+        project.create_document(&manuscript, "Scene 1").unwrap();
+        project
+            .create_document(dir.path(), "Character Bio")
+            .unwrap();
+
+        assert_eq!(project.manuscript_document_stems(), vec!["Scene 1"]);
+    }
 
     #[test]
     fn set_protagonist_desire_and_misbelief_persist_across_a_reload() {
@@ -262,7 +379,7 @@ mod tests {
         let mut project = Project::initialize(dir.path()).unwrap();
         let doc = project.create_document(dir.path(), "Scene 1").unwrap();
         let mut card = StoryCard::new();
-        card.linked_document_stem = Some("Scene 1".to_string());
+        card.linked_document_stems = vec!["Scene 1".to_string()];
         let id = card.id;
         project.upsert_story_card(card).unwrap();
 
@@ -270,8 +387,116 @@ mod tests {
 
         // The card survives untouched; only resolution against the (now-gone) tree
         // fails, mirroring how a dangling [[wikilink]] behaves elsewhere.
-        let stem = project.story_card(id).unwrap().linked_document_stem.clone();
-        assert_eq!(stem.as_deref(), Some("Scene 1"));
+        let stems = project
+            .story_card(id)
+            .unwrap()
+            .linked_document_stems
+            .clone();
+        assert_eq!(stems, vec!["Scene 1".to_string()]);
         assert!(project.tree.find_document_by_stem("Scene 1").is_none());
+    }
+
+    #[test]
+    fn story_card_json_with_a_single_old_shape_linked_document_stem_migrates_to_a_list() {
+        // Guards the `#[serde(alias, deserialize_with)]` pair on
+        // `StoryCard::linked_document_stems`: a project.json written before it became
+        // a list has a singular `linked_document_stem` key holding one string.
+        let dir = tempfile::tempdir().unwrap();
+        let meta_dir = dir.path().join(METADATA_DIR);
+        fs::create_dir_all(&meta_dir).unwrap();
+        fs::write(
+            meta_dir.join(METADATA_FILE),
+            r#"{
+                "version": 1,
+                "node_order": {},
+                "story_cards": [{
+                    "id": "3f9e2b1a-0c1d-4a8e-9b2a-2a6f8f7d9c11",
+                    "scene_number": "1",
+                    "alpha_point": "",
+                    "subplot_tags": [],
+                    "cause": "",
+                    "effect": "",
+                    "realization": "",
+                    "and_so": "",
+                    "linked_document_stem": "Scene 1"
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let project = Project::load_from_folder(dir.path()).unwrap();
+
+        assert_eq!(
+            project.meta.story_cards[0].linked_document_stems,
+            vec!["Scene 1".to_string()]
+        );
+    }
+
+    #[test]
+    fn story_card_json_with_a_null_old_shape_linked_document_stem_becomes_an_empty_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let meta_dir = dir.path().join(METADATA_DIR);
+        fs::create_dir_all(&meta_dir).unwrap();
+        fs::write(
+            meta_dir.join(METADATA_FILE),
+            r#"{
+                "version": 1,
+                "node_order": {},
+                "story_cards": [{
+                    "id": "3f9e2b1a-0c1d-4a8e-9b2a-2a6f8f7d9c11",
+                    "scene_number": "1",
+                    "alpha_point": "",
+                    "subplot_tags": [],
+                    "cause": "",
+                    "effect": "",
+                    "realization": "",
+                    "and_so": "",
+                    "linked_document_stem": null
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let project = Project::load_from_folder(dir.path()).unwrap();
+
+        assert!(project.meta.story_cards[0].linked_document_stems.is_empty());
+    }
+
+    #[test]
+    fn story_card_json_without_belief_fields_loads_with_them_blank() {
+        // Guards `#[serde(default)]` on the belief/knowledge fields added alongside
+        // the many-to-many link change, same rationale as the `why_it_matters` test
+        // above.
+        let dir = tempfile::tempdir().unwrap();
+        let meta_dir = dir.path().join(METADATA_DIR);
+        fs::create_dir_all(&meta_dir).unwrap();
+        fs::write(
+            meta_dir.join(METADATA_FILE),
+            r#"{
+                "version": 1,
+                "node_order": {},
+                "story_cards": [{
+                    "id": "3f9e2b1a-0c1d-4a8e-9b2a-2a6f8f7d9c11",
+                    "scene_number": "1",
+                    "alpha_point": "",
+                    "subplot_tags": [],
+                    "cause": "",
+                    "effect": "",
+                    "realization": "",
+                    "and_so": "",
+                    "linked_document_stems": []
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let project = Project::load_from_folder(dir.path()).unwrap();
+
+        let card = &project.meta.story_cards[0];
+        assert_eq!(card.pov_character, "");
+        assert_eq!(card.prior_belief, "");
+        assert_eq!(card.new_belief, "");
+        assert_eq!(card.value_shift, "");
+        assert!(card.new_knowledge.is_empty());
     }
 }
