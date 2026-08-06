@@ -186,6 +186,12 @@ fn picklist_or_text_row(
 /// machinery: these are plain `ProjectMeta` fields with no document-frontmatter
 /// text to round-trip through, so there's nothing for a draft to stay in sync
 /// with beyond the project itself.
+/// Extra vertical gap before every project-metadata field's label except the
+/// very first (Title) — separates one label/field pair from the next a bit
+/// more than `Ui`'s default `item_spacing.y` alone does, without needing a
+/// full `ui.separator()` line between each.
+const LEADING_GAP: f32 = 6.0;
+
 pub enum ProjectMetaEvent {
     SetTitle(String),
     SetSubtitle(String),
@@ -218,51 +224,47 @@ pub fn show_project(ui: &mut egui::Ui, project: &Project) -> Option<ProjectMetaE
 
     let width = ui.available_width();
 
-    ui.label("Title:");
+    ui.label("Title");
     let mut title = project.meta.book_title.clone().unwrap_or_default();
-    if ui
-        .add(egui::TextEdit::singleline(&mut title).desired_width(width))
-        .changed()
-    {
+    if ui.add(project_text_field(&mut title, width)).changed() {
         event = Some(ProjectMetaEvent::SetTitle(title));
     }
 
-    ui.label("Subtitle:");
+    ui.add_space(LEADING_GAP);
+    ui.label("Subtitle");
     let mut subtitle = project.meta.book_subtitle.clone().unwrap_or_default();
-    if ui
-        .add(egui::TextEdit::singleline(&mut subtitle).desired_width(width))
-        .changed()
-    {
+    if ui.add(project_text_field(&mut subtitle, width)).changed() {
         event = Some(ProjectMetaEvent::SetSubtitle(subtitle));
     }
 
-    ui.label("Author:");
+    ui.add_space(LEADING_GAP);
+    ui.label("Author");
     let mut author = project.meta.book_author.clone().unwrap_or_default();
-    if ui
-        .add(egui::TextEdit::singleline(&mut author).desired_width(width))
-        .changed()
-    {
+    if ui.add(project_text_field(&mut author, width)).changed() {
         event = Some(ProjectMetaEvent::SetAuthor(author));
     }
 
-    ui.label("Point:");
+    ui.add_space(LEADING_GAP);
+    ui.label("Point");
     let mut point = project.meta.point.clone();
-    if ui
-        .add(egui::TextEdit::singleline(&mut point).desired_width(width))
-        .changed()
-    {
+    if ui.add(project_text_field(&mut point, width)).changed() {
         event = Some(ProjectMetaEvent::SetPoint(point));
     }
 
     // Split whatever vertical space Title/Subtitle/Author/Point left behind
     // three ways for Logline/What if/Synopsis. `row_height` doubles as the
     // label line-height estimate and the multiline boxes' own row height,
-    // since both render in the default `TextStyle::Body`.
+    // since both render in the default `TextStyle::Body`; `LEADING_GAP` is
+    // subtracted too since each of the three still gets its own leading gap
+    // below, which otherwise wouldn't be accounted for and would push
+    // Synopsis's box past the bottom of the tab.
     let row_height = ui.text_style_height(&egui::TextStyle::Body);
     let spacing = ui.spacing().item_spacing.y;
-    let section_height = ((ui.available_height() - 3.0 * (row_height + spacing)) / 3.0).max(0.0);
+    let section_height =
+        ((ui.available_height() - 3.0 * (row_height + spacing + LEADING_GAP)) / 3.0).max(0.0);
 
-    ui.label("Logline:");
+    ui.add_space(LEADING_GAP);
+    ui.label("Logline");
     let mut logline = project.meta.logline.clone();
     if project_text_area(
         ui,
@@ -276,7 +278,8 @@ pub fn show_project(ui: &mut egui::Ui, project: &Project) -> Option<ProjectMetaE
         event = Some(ProjectMetaEvent::SetLogline(logline));
     }
 
-    ui.label("What if:");
+    ui.add_space(LEADING_GAP);
+    ui.label("What if");
     let mut what_if = project.meta.what_if.clone();
     if project_text_area(
         ui,
@@ -290,7 +293,8 @@ pub fn show_project(ui: &mut egui::Ui, project: &Project) -> Option<ProjectMetaE
         event = Some(ProjectMetaEvent::SetWhatIf(what_if));
     }
 
-    ui.label("Synopsis:");
+    ui.add_space(LEADING_GAP);
+    ui.label("Synopsis");
     let mut synopsis = project.meta.synopsis.clone();
     // Always-visible (not just when overflowing, like Logline/What if above):
     // Synopsis is the field most likely to run past its box, so the scrollbar
@@ -308,6 +312,19 @@ pub fn show_project(ui: &mut egui::Ui, project: &Project) -> Option<ProjectMetaE
     }
 
     event
+}
+
+/// A single-line Title/Subtitle/Author/Point field, flush against the left
+/// edge of the label above it. `TextEdit`'s default inner margin
+/// (`Margin::symmetric(4, 2)`) otherwise indents the displayed text a few
+/// pixels right of the label's own left edge, reading as a misalignment
+/// between header and field even though both widgets start at the same `x`
+/// — zeroing just the horizontal margin (keeping the vertical one, so the
+/// field's height/click area is unchanged) flushes the two to match.
+fn project_text_field(value: &mut String, width: f32) -> egui::TextEdit<'_> {
+    egui::TextEdit::singleline(value)
+        .desired_width(width)
+        .margin(egui::Margin::symmetric(0, 2))
 }
 
 /// One Logline/What-if/Synopsis box: a fixed-`height`, always-scrollable
@@ -339,7 +356,11 @@ fn project_text_area(
                     .add(
                         egui::TextEdit::multiline(value)
                             .desired_width(f32::INFINITY)
-                            .desired_rows(desired_rows),
+                            .desired_rows(desired_rows)
+                            // Same flush-left-margin reasoning as
+                            // `project_text_field` — keeps Logline/What
+                            // if/Synopsis's text aligned with their labels.
+                            .margin(egui::Margin::symmetric(0, 2)),
                     )
                     .changed();
             });
