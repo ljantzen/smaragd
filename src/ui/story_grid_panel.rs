@@ -69,15 +69,19 @@ fn resolve_row<'a>(
     }
 }
 
-/// A document's POV and word count, read live from disk — same on-demand,
-/// never-persisted pattern `word_count.rs`/`metadata_panel.rs` use, reused here
-/// rather than caching anything on `StoryCard` itself.
-fn document_summary(path: &Path) -> (Option<String>, Option<usize>) {
+/// A document's POV, word count, and word count target, read live from disk —
+/// same on-demand, never-persisted pattern `word_count.rs`/`metadata_panel.rs`
+/// use, reused here rather than caching anything on `StoryCard` itself.
+fn document_summary(path: &Path) -> (Option<String>, Option<usize>, Option<u32>) {
     let Ok(contents) = std::fs::read_to_string(path) else {
-        return (None, None);
+        return (None, None, None);
     };
     let meta = crate::frontmatter::parse(&contents);
-    (meta.pov, Some(crate::frontmatter::count_words(&contents)))
+    (
+        meta.pov,
+        Some(crate::frontmatter::count_words(&contents)),
+        meta.word_count_target,
+    )
 }
 
 /// Renders the Story Grid: a read-only, manuscript-ordered table view of the same
@@ -161,7 +165,7 @@ pub fn show(
             })
             .body(|mut body| {
                 for row in &ordered {
-                    if let Some(row_event) = show_row(&mut body, row) {
+                    if let Some(row_event) = show_row(&mut body, project, row) {
                         event = Some(row_event);
                     }
                 }
@@ -171,14 +175,20 @@ pub fn show(
     event
 }
 
-fn show_row(body: &mut egui_extras::TableBody, row: &ResolvedRow) -> Option<StoryGridEvent> {
+fn show_row(
+    body: &mut egui_extras::TableBody,
+    project: &Project,
+    row: &ResolvedRow,
+) -> Option<StoryGridEvent> {
     let mut event = None;
     let card = row.card;
-    let (pov, words) = row
+    let (pov, words, word_count_target) = row
         .resolved_path
         .as_deref()
         .map(document_summary)
-        .unwrap_or((None, None));
+        .unwrap_or((None, None, None));
+    let pov_color = resolve_pov_color(project, pov.as_deref());
+    let word_count_color = resolve_word_count_color(words, word_count_target);
 
     body.row(22.0, |mut table_row| {
         table_row.col(|ui| {
@@ -206,15 +216,34 @@ fn show_row(body: &mut egui_extras::TableBody, row: &ResolvedRow) -> Option<Stor
                 ui.weak("(no document)");
             }
         });
-        table_row.col(|ui| {
-            ui.label(pov.as_deref().unwrap_or("\u{2014}"));
+        table_row.col(|ui| match (pov.as_deref(), pov_color) {
+            (Some(pov), Some(color)) => {
+                ui.horizontal(|ui| {
+                    let (rect, _response) =
+                        ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                    ui.painter().circle_filled(rect.center(), 4.0, color);
+                    ui.label(pov);
+                });
+            }
+            (Some(pov), None) => {
+                ui.label(pov);
+            }
+            (None, _) => {
+                ui.label("\u{2014}");
+            }
         });
         table_row.col(|ui| {
-            ui.label(
-                words
-                    .map(|words| words.to_string())
-                    .unwrap_or_else(|| "\u{2014}".to_string()),
-            );
+            let text = words
+                .map(|words| words.to_string())
+                .unwrap_or_else(|| "\u{2014}".to_string());
+            match word_count_color {
+                Some(color) => {
+                    ui.colored_label(color, text);
+                }
+                None => {
+                    ui.label(text);
+                }
+            }
         });
         table_row.col(|ui| {
             ui.label(truncate(&card.cause));
@@ -237,6 +266,27 @@ fn show_row(body: &mut egui_extras::TableBody, row: &ResolvedRow) -> Option<Stor
     });
 
     event
+}
+
+/// The Words cell's red→yellow→green progress color, if a target is set —
+/// same `color_theme::word_count_progress_color` gradient the Binder uses for
+/// `BinderColorMode::WordCountProgress`, applied here unconditionally (Story
+/// Grid isn't mode-switched). `None` (no color) when there's no target, or
+/// the target is `0` — nothing to measure progress against.
+fn resolve_word_count_color(words: Option<usize>, target: Option<u32>) -> Option<egui::Color32> {
+    let words = words?;
+    let target = target.filter(|&t| t > 0)?;
+    Some(crate::color_theme::word_count_progress_color(
+        words as f32 / target as f32,
+    ))
+}
+
+/// The row's POV dot color, if that POV has one assigned — same
+/// `Project::pov_color_hex` lookup the Binder uses for `BinderColorMode::Pov`,
+/// applied here unconditionally (Story Grid isn't mode-switched).
+fn resolve_pov_color(project: &Project, pov: Option<&str>) -> Option<egui::Color32> {
+    pov.and_then(|pov| project.pov_color_hex(pov))
+        .and_then(crate::color_theme::parse_hex_color)
 }
 
 /// The current document title for `path`, without the `.md` extension — see
@@ -303,6 +353,59 @@ mod tests {
         assert_eq!(row.position, Some(1));
         assert_eq!(row.resolved_path, Some(doc));
         assert!(!row.stale_link);
+    }
+
+    #[test]
+    fn resolve_word_count_color_is_none_without_a_target() {
+        assert_eq!(resolve_word_count_color(Some(500), None), None);
+    }
+
+    #[test]
+    fn resolve_word_count_color_is_none_for_a_zero_target() {
+        assert_eq!(resolve_word_count_color(Some(500), Some(0)), None);
+    }
+
+    #[test]
+    fn resolve_word_count_color_is_none_without_a_word_count() {
+        assert_eq!(resolve_word_count_color(None, Some(1000)), None);
+    }
+
+    #[test]
+    fn resolve_word_count_color_matches_the_progress_gradient() {
+        assert_eq!(
+            resolve_word_count_color(Some(500), Some(1000)),
+            Some(crate::color_theme::word_count_progress_color(0.5))
+        );
+    }
+
+    #[test]
+    fn resolve_pov_color_is_none_without_a_pov() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+
+        assert_eq!(resolve_pov_color(&project, None), None);
+    }
+
+    #[test]
+    fn resolve_pov_color_is_none_for_a_pov_with_no_assigned_color() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+
+        assert_eq!(resolve_pov_color(&project, Some("Alice")), None);
+    }
+
+    #[test]
+    fn resolve_pov_color_reads_the_pov_s_assigned_color() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        project
+            .set_pov_color_hex("Alice", "#8800ff".to_string())
+            .unwrap();
+
+        assert_eq!(
+            resolve_pov_color(&project, Some("Alice")),
+            crate::color_theme::parse_hex_color("#8800ff")
+        );
     }
 
     #[test]
