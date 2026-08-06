@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v0.7.0 — 2026-08-06
+
 - Story Cards now track a character's belief arc, not just plot mechanics.
   Each card gained a **POV Character**, **Prior Belief**, **New Belief**,
   **Value Shift** (e.g. "Trust -> Distrust"), and **Knowledge Gained**, and
