@@ -150,6 +150,20 @@ The left-hand panel is the **binder** — a tree view of your project folder, on
   - **Folder Role** / **Dropdown Source** / **Empty Trash** (folders only) — see [Folder Roles](#folder-roles-research-trash-templates-manuscript) and [Dropdown Source Folders](#dropdown-source-folders)
 - A folder with a role assigned shows a leading icon instead of a text label: 🔍 Research, 🗑 Trash, 📋 Templates, 📖 Manuscript
 - **Click the root row** (the project itself, at the very top of the tree) to switch the Metadata dock over to project-wide fields — see [Project Metadata](#project-metadata). The row gets the same persistent highlight a selected document gets, and clicking it also toggles the whole tree open/closed, the same as clicking any other folder row does
+- **Click any other folder row** to switch the Metadata dock to that folder's own metadata instead — the same `Type`/`Status`/`POV`/`Word Count Target`/`Tags` fields and form documents use (see [Document Metadata](#document-metadata-frontmatter)), just without a live word count of its own since a folder has no body to count. The form's heading reads "Folder Metadata" instead of the document's title, so it's always clear which kind of row you're editing
+
+### Binder Background Coloring
+
+Binder rows — documents and folders alike — can be background-colored to make status, POV, or progress toward a word count target visible at a glance without opening the Metadata dock for each one. Four modes are available, switchable via **`View > Color Binder By`**, the remappable **"Cycle Binder Color Mode"** shortcut (default `Ctrl+Shift+C`, cycling through the modes below in order), or by clicking the mode indicator that appears in the status bar once a mode other than `Off` is active (clicking it cycles too):
+
+- **Off** — no background coloring at all. The default, so a new project's binder starts uncolored until you opt in.
+- **Status** — colors each row by its own `status` value, using whatever color you've assigned that status (see below).
+- **POV** — colors each row by its own `pov` value the same way.
+- **Word Count Progress** — a red→yellow→green gradient toward `word_count_target`: a document uses its own word count against its own target; a folder uses the *combined* word count of every document nested inside it (computed on a background thread alongside the [Word Count](#word-count) panel's own total, so it never blocks the UI) against the folder's own target.
+
+A row with nothing relevant to the active mode — no status/POV assigned, or no target set — simply shows no color; there's no fallback to a different mode.
+
+Status and POV colors themselves are assigned from the Metadata dock: next to the `Status:`/`POV:` row (on both the document and folder forms), a color swatch button appears as soon as that field isn't blank — click it to open a color picker. Each status/POV value's color is shared project-wide, so coloring "draft" or "Alice" once colors every row carrying that value, document or folder alike.
 
 ## Writing and the Editor
 
@@ -233,6 +247,8 @@ Open **`View > Metadata`** (or **`Ctrl+Shift+M`**) to edit these fields through 
 Any other YAML key you've hand-added to the block (or that some other tool wrote) is left alone — Smaragd never round-trips the whole block through its own data model, so unrelated keys survive a save untouched. The frontmatter block is stripped from the Markdown preview so it doesn't render as a garbled paragraph.
 
 The Metadata panel also shows a **Word count** — a live, read-only count of the open document's body (frontmatter excluded), recomputed continuously from whatever's currently in the editor, not just what was last saved.
+
+The `Status:` and `POV:` rows each show a color-swatch button once that field isn't blank — click it to assign that status/POV value a project-wide binder background color. See [Binder Background Coloring](#binder-background-coloring) for what these colors are used for and how to switch which one (if any) the Binder actually displays.
 
 ### Dropdown Source Folders
 
@@ -438,6 +454,8 @@ Cards are independent of the binder tree: you can reorder them freely, create a 
 Each row shows a computed manuscript position (`#`), the card's own `Scene #` label (unchanged, shown alongside rather than replaced), the linked document's title, its POV and word count (read live from the document, the same way the Metadata and Word Count panels do), and every Story Genius field — Cause, Effect, Why It Matters, Realization, And So, and subplot tags.
 
 Cards with no linked document, or a link that no longer resolves, group into an **Unplaced** section — a toggle at the top of the panel puts that section above or below the placed rows. Unlike everything else on this page, that toggle is an app-wide preference, not a per-project one: it's remembered across every project you open, the same way UI Scale or your theme choice is. Clicking a linked document's title opens it in the Editor, same as Corkboard's own 🔗 link; clicking a row's Scene # opens the card editor.
+
+The **POV** and **Words** columns are colored the same way the [Binder](#binder-background-coloring) colors its own rows: a colored dot next to the POV name whenever that POV has an assigned color, and the word count itself tinted along the same red→yellow→green gradient toward the document's word count target. Unlike the Binder, this coloring isn't mode-switched — it's always on, independent of whatever `Color Binder By` mode is currently active.
 
 The Story Grid never reorders the manuscript itself — its row order is always a reflection of the binder, not something you can drag to change from here. To reorder scenes, reorder the documents in the Binder.
 
@@ -720,6 +738,8 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Toggle Full Screen | `F11` |
 | Find and Replace | `Ctrl+F` |
 | Toggle Corkboard | `Ctrl+Shift+K` |
+| Toggle Story Grid | `Ctrl+Shift+G` |
+| Cycle Binder Color Mode | `Ctrl+Shift+C` |
 | Toggle Backlinks | `Ctrl+Shift+B` |
 | Toggle Tags | `Ctrl+Shift+T` |
 | Command Prompt | `Ctrl+:` |

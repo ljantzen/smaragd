@@ -31,6 +31,25 @@ this file.
 - Added an optional desktop notification when a Pomodoro phase completes on
   its own (`File > Settings > Pomodoro`, off by default) — fixes #53. Never
   fires on a manual Skip, only an automatic completion. No audible chime yet.
+- Folders now carry the same Type/Status/POV/Word Count Target/Tags metadata
+  documents already had: click any non-root folder row in the Binder and the
+  Metadata dock switches to a "Folder Metadata" form (the same fields and
+  form documents use, minus a live word count of their own). The Status and
+  POV rows, in both the document and folder forms, each gained an inline
+  color-swatch button that assigns that status/POV value a project-wide
+  binder background color.
+- Binder rows (documents and folders alike) can now be background-colored by
+  **Status**, **POV**, or a red→yellow→green **Word Count Progress**
+  gradient toward each row's word count target — a folder's gradient uses
+  the combined word count of everything nested inside it. Switch modes via
+  `View > Color Binder By`, the remappable "Cycle Binder Color Mode"
+  shortcut (default `Ctrl+Shift+C`), or by clicking the mode indicator that
+  appears in the status bar once a mode other than the default, `Off`, is
+  active.
+- Story Grid's POV and Words columns now reuse that same coloring: a
+  colored dot next to the POV name when that POV has an assigned color, and
+  the word count itself tinted along the same red-to-green gradient toward
+  the document's word count target.
 
 ## v0.6.2 — 2026-08-05
 
