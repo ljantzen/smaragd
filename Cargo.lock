@@ -6429,7 +6429,7 @@ dependencies = [
  "toml 1.1.4+spec-1.1.0",
  "typst-as-lib",
  "typst-pdf",
- "usvg 0.47.0",
+ "usvg 0.48.1",
  "uuid",
  "yrs",
  "zip 8.6.0",
