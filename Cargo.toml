@@ -38,7 +38,7 @@ uuid = { version = "1.24", features = ["v4", "serde"] }
 yrs = "0.27.3"
 
 [build-dependencies]
-resvg = "0.47"
+resvg = "0.48"
 tiny-skia = "0.12"
 usvg = "0.47"
 
