@@ -93,6 +93,26 @@ impl SmaragdApp {
         }
     }
 
+    /// Import a Scrivener project, picked as a folder (a `.scriv` project is
+    /// a directory, not a single file — no `add_filter` applies) via a
+    /// native picker, into the currently open project (see
+    /// `import::scrivener::parse`'s doc comment: the highest-risk of the
+    /// four importers, since it was written without a real sample project to
+    /// validate against).
+    pub(super) fn import_scrivener(&mut self) {
+        if self.project.is_none() {
+            self.push_error_toast("No project open");
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new().pick_folder() else {
+            return;
+        };
+        match crate::import::scrivener::parse(&path) {
+            Ok(nodes) => self.finish_import(nodes, &path.display().to_string()),
+            Err(err) => self.push_error_toast(format!("Import failed: {err}")),
+        }
+    }
+
     /// Writes `nodes` into the currently open project (already checked
     /// `Some` by every `import_*` caller above) and reports the outcome —
     /// shared by every format so the "where does it land, how is success/

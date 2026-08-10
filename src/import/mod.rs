@@ -13,6 +13,7 @@
 pub mod docx;
 pub mod epub;
 pub mod pdf;
+pub mod scrivener;
 
 use std::fmt;
 use std::io;
@@ -66,6 +67,7 @@ pub enum ImportError {
     Docx(docx_rs::ReaderError),
     Epub(epub::EpubImportError),
     Pdf(pdf_extract::OutputError),
+    Scrivener(scrivener::ScrivenerImportError),
 }
 
 impl fmt::Display for ImportError {
@@ -75,6 +77,7 @@ impl fmt::Display for ImportError {
             ImportError::Docx(err) => write!(f, "{err}"),
             ImportError::Epub(err) => write!(f, "{err}"),
             ImportError::Pdf(err) => write!(f, "{err}"),
+            ImportError::Scrivener(err) => write!(f, "{err}"),
         }
     }
 }
@@ -103,6 +106,12 @@ impl From<pdf_extract::OutputError> for ImportError {
     }
 }
 
+impl From<scrivener::ScrivenerImportError> for ImportError {
+    fn from(err: scrivener::ScrivenerImportError) -> Self {
+        ImportError::Scrivener(err)
+    }
+}
+
 /// Writes `nodes` into `project` under `parent`, recursively — the single
 /// shared "commit a parsed import to disk" path every format parser feeds
 /// into. A name collision is resolved the same way `ensure_role_folder`
@@ -112,12 +121,13 @@ impl From<pdf_extract::OutputError> for ImportError {
 /// A `Folder` node carrying a `role` is written via `Project::ensure_role_folder`
 /// instead of `create_folder` — which, notably, always places that folder at
 /// the project *root*, ignoring `parent`. This only matters for Scrivener
-/// imports (the only parser that ever sets a `role`, mapping its Draft/
-/// Research folders onto smaragd's own `FolderRole::Manuscript`/`Research`):
-/// a project-wide-unique role folder living somewhere other than the
-/// project's own root would violate the very invariant `FolderRole` exists to
-/// enforce (see `project::roles`'s doc comment), so this is the correct
-/// behavior, not a limitation to fix.
+/// imports (the only parser that ever sets a `role`, mapping its Draft folder
+/// onto smaragd's own `FolderRole::Manuscript` — see `scrivener`'s doc
+/// comment for why Research isn't similarly mapped): a project-wide-unique
+/// role folder living somewhere other than the project's own root would
+/// violate the very invariant `FolderRole` exists to enforce (see
+/// `project::roles`'s doc comment), so this is the correct behavior, not a
+/// limitation to fix.
 pub fn write_imported_tree(
     project: &mut Project,
     parent: &Path,

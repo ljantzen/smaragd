@@ -21,6 +21,7 @@ This manual covers what the app does and how to use it. For internals (source la
 - [Project Metadata](#project-metadata)
 - [Tags](#tags)
 - [Folder Roles: Research, Trash, Templates, Manuscript](#folder-roles-research-trash-templates-manuscript)
+- [Import](#import)
 - [Export](#export)
 - [Story Cards (Corkboard)](#story-cards-corkboard)
 - [Find and Replace](#find-and-replace)
@@ -329,6 +330,15 @@ The date format is a single format string, shared by every template — it's a [
 | `%Y%m%d` | `20260728` |
 
 A format that isn't a valid strftime pattern falls back to `%Y-%m-%d` automatically, both in a created document and in Settings' own live preview of the format — a typo here never blocks document creation.
+
+## Import
+
+**`File > Import`** brings an existing manuscript into the currently open project as binder documents/folders, landing under whichever folder is selected in the binder (or the project root if nothing is). Four formats are supported, each with a different picker (a single file for the first three, a whole folder for Scrivener) and a different level of fidelity, since the formats themselves differ in how much structure there is to recover:
+
+- **Word Document (.docx)** — split into one document per "Heading 1"-styled paragraph (the standard Word convention for chapter titles), falling back to a single document if the file has none. Bold/italic/strikethrough survive; a table is flattened to one plain paragraph per cell rather than reconstructed as a markdown table.
+- **EPUB** — one document per chapter, in the book's own reading order (its spine, a well-defined boundary unlike DOCX's heading heuristic), titled from each chapter's own first heading. Bold/italic/strikethrough/code survive, along with headings, blockquotes, and lists.
+- **Scrivener Project** — pick the `.scriv` project folder itself (it's a directory, not a single file). Its Draft/manuscript folder maps onto smaragd's own [Manuscript role](#folder-roles-research-trash-templates-manuscript); Trash is skipped entirely rather than imported. Bold/italic survive. This is the newest and least-tested of the four importers — if something looks wrong after importing a real Scrivener project, that's expected territory, not user error.
+- **PDF** — always a single document, plain text only: no formatting, no chapter splitting. A PDF has no semantic markup to recover in the general case (just glyphs positioned on a page), so this is inherently the lowest-fidelity option of the four — reach for it only when nothing better is available.
 
 ## Export
 

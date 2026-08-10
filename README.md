@@ -24,6 +24,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Story cards, Lisa Cron "Story Genius" style
 - Story Grid : A read-only view of the Story Cards as a table
 - Project export to DOCX, EPUB, or PDF, using one of 12 built-in (or your own custom) typesetting styles 
+- Import an existing manuscript from DOCX, EPUB, a Scrivener project, or PDF
 - Live manuscript-styled markdown preview, tied to the selected export typesetting style
 - Obsidian-style `[[Topic]]` / `[[Topic|Alias]]` wikilinks
 - Wikilink autocomplete while typing `[[`: filtered suggestions, arrow-key/Tab/Enter navigation, mouse click

@@ -5,6 +5,18 @@ this file.
 
 ## Unreleased
 
+- A new **File > Import** menu brings an existing manuscript into a project:
+  **Word Document (.docx)** (split into one document per Heading 1, falling
+  back to a single document if there's none), **EPUB** (one document per
+  chapter, using the format's own well-defined spine order), **Scrivener
+  Project** (its Draft/manuscript folder maps to smaragd's own Manuscript
+  role; Trash is skipped rather than imported), and **PDF** (a single
+  document — plain text only, no formatting or chapter structure, the
+  fundamental limit of a format with no semantic markup to recover). Bold/
+  italic/strikethrough formatting is preserved for DOCX/EPUB/Scrivener.
+  Imported content lands under whichever binder folder is currently
+  selected, or the project root.
+
 ## v0.8.0 — 2026-08-10
 
 - The Preview tab now renders in the currently selected export typesetting

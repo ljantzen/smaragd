@@ -104,12 +104,9 @@ impl SmaragdApp {
                             }
                         }
                         ui.separator();
-                        // A submenu from the start, not a single top-level entry,
-                        // even though DOCX/EPUB/PDF are the only formats wired up
-                        // so far — Scrivener is landing here too, needing a
-                        // different `rfd::FileDialog` picker shape (a whole
-                        // folder, since a `.scriv` project is a directory, not a
-                        // single file with its own filter).
+                        // A submenu, since a `.scriv` project needs a whole
+                        // folder picked (it's a directory, not a single file
+                        // with its own filter) unlike the other three formats.
                         let import_outer = ui.menu_button("Import", |ui| {
                             if ui.button("Word Document (.docx)…").clicked() {
                                 self.import_docx();
@@ -121,6 +118,10 @@ impl SmaragdApp {
                             }
                             if ui.button("PDF (.pdf)…").clicked() {
                                 self.import_pdf();
+                                ui.close();
+                            }
+                            if ui.button("Scrivener Project…").clicked() {
+                                self.import_scrivener();
                                 ui.close();
                             }
                         });
