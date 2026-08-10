@@ -60,6 +60,39 @@ impl SmaragdApp {
         }
     }
 
+    /// Import a `.pdf` file, picked via a native file dialog, into the
+    /// currently open project — always a single document, with no formatting
+    /// or chapter structure recovered (see `import::pdf::parse`'s doc
+    /// comment for why: PDF has none to recover in the general case).
+    pub(super) fn import_pdf(&mut self) {
+        if self.project.is_none() {
+            self.push_error_toast("No project open");
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("PDF", &["pdf"])
+            .pick_file()
+        else {
+            return;
+        };
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                self.push_error_toast(format!("Couldn't read {}: {err}", path.display()));
+                return;
+            }
+        };
+        let fallback_title = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Imported Document")
+            .to_string();
+        match crate::import::pdf::parse(&bytes, &fallback_title) {
+            Ok(nodes) => self.finish_import(nodes, &path.display().to_string()),
+            Err(err) => self.push_error_toast(format!("Import failed: {err}")),
+        }
+    }
+
     /// Writes `nodes` into the currently open project (already checked
     /// `Some` by every `import_*` caller above) and reports the outcome —
     /// shared by every format so the "where does it land, how is success/

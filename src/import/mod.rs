@@ -12,6 +12,7 @@
 
 pub mod docx;
 pub mod epub;
+pub mod pdf;
 
 use std::fmt;
 use std::io;
@@ -64,6 +65,7 @@ pub enum ImportError {
     Io(io::Error),
     Docx(docx_rs::ReaderError),
     Epub(epub::EpubImportError),
+    Pdf(pdf_extract::OutputError),
 }
 
 impl fmt::Display for ImportError {
@@ -72,6 +74,7 @@ impl fmt::Display for ImportError {
             ImportError::Io(err) => write!(f, "{err}"),
             ImportError::Docx(err) => write!(f, "{err}"),
             ImportError::Epub(err) => write!(f, "{err}"),
+            ImportError::Pdf(err) => write!(f, "{err}"),
         }
     }
 }
@@ -91,6 +94,12 @@ impl From<docx_rs::ReaderError> for ImportError {
 impl From<epub::EpubImportError> for ImportError {
     fn from(err: epub::EpubImportError) -> Self {
         ImportError::Epub(err)
+    }
+}
+
+impl From<pdf_extract::OutputError> for ImportError {
+    fn from(err: pdf_extract::OutputError) -> Self {
+        ImportError::Pdf(err)
     }
 }
 
