@@ -636,7 +636,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut words = Vec::new();
         append_span_words(&mut words, &span, dir.path(), dir.path());
-        assert_eq!(words, vec!["[*hello*]".to_string(), "[*world*]".to_string()]);
+        assert_eq!(
+            words,
+            vec!["[*hello*]".to_string(), "[*world*]".to_string()]
+        );
     }
 
     #[test]

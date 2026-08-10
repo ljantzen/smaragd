@@ -256,7 +256,10 @@ pub fn show(
             return;
         }
 
-        let mut builder = TableBuilder::new(ui).striped(true).resizable(true).vscroll(true);
+        let mut builder = TableBuilder::new(ui)
+            .striped(true)
+            .resizable(true)
+            .vscroll(true);
         for (index, kind) in visible_columns.iter().enumerate() {
             builder = builder.column(column_size(*kind, index + 1 == visible_columns.len()));
         }
@@ -365,7 +368,11 @@ fn show_row(
 /// same rendering logic the column had when this was a straight-line sequence of
 /// `table_row.col(...)` calls, unchanged, just reachable by column identity now
 /// that columns can be reordered/hidden.
-fn render_cell(ui: &mut egui::Ui, kind: StoryGridColumn, ctx: &RowContext) -> Option<StoryGridEvent> {
+fn render_cell(
+    ui: &mut egui::Ui,
+    kind: StoryGridColumn,
+    ctx: &RowContext,
+) -> Option<StoryGridEvent> {
     let card = ctx.row.card;
     match kind {
         StoryGridColumn::Index => {
