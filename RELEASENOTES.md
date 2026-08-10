@@ -36,6 +36,12 @@ this file.
   generic face. A font file that's missing or invalid is skipped with an
   error message — that one slot falls back gracefully rather than crashing
   or blocking the rest of the style from loading.
+- Story Grid columns can now be reordered and hidden: a **Columns** menu,
+  right-aligned above the table, lists every column with a checkbox (hide/
+  show) and Up/Down buttons (reorder), staying open across clicks so several
+  columns can be adjusted in one go. Both the order and which columns are
+  hidden persist across restarts, like the rest of Story Grid's view
+  preferences.
 
 ## v0.7.0 — 2026-08-06
 
