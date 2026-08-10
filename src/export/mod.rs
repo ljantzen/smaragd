@@ -71,7 +71,10 @@ impl BookMeta {
 /// Windows-specific restriction) — the union of what's actually illegal
 /// across Linux/macOS/Windows, since this app ships on all three and a book
 /// title/subtitle is free text a user could type any of these into.
-fn sanitize_filename_component(s: &str) -> String {
+/// `pub(crate)` so `import::docx` can reuse it for filenames derived from a
+/// document's own (equally free-text) heading text, rather than duplicating
+/// this logic.
+pub(crate) fn sanitize_filename_component(s: &str) -> String {
     let replaced: String = s
         .chars()
         .map(|ch| {

@@ -360,8 +360,11 @@ fn ensure_md_extension(filename: &str) -> String {
 
 /// Resolve a name collision under `parent` by appending " (2)", " (3)", ... before the
 /// extension (or at the end, for an extension-less name/a folder) until it no longer
-/// exists on disk. Returns `desired` unchanged if it's already free.
-fn unique_child_name(parent: &Path, desired: &str) -> String {
+/// exists on disk. Returns `desired` unchanged if it's already free. `pub(crate)`
+/// (not just this module) so `import::write_imported_tree` can dedupe imported
+/// document/folder names the same way `ensure_role_folder` already does, rather
+/// than duplicating this logic.
+pub(crate) fn unique_child_name(parent: &Path, desired: &str) -> String {
     if !parent.join(desired).exists() {
         return desired.to_string();
     }

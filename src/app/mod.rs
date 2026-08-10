@@ -10,6 +10,7 @@ mod dock_tabs;
 mod export;
 mod find_replace;
 mod git;
+mod import;
 mod menu_bar;
 mod menu_nav;
 mod pomodoro;

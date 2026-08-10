@@ -8,6 +8,7 @@ pub mod export;
 pub mod frontmatter;
 pub mod fuzzy;
 pub mod git;
+pub mod import;
 pub mod markdown;
 pub mod notifications;
 pub mod plugins;

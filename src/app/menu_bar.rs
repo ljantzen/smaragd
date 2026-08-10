@@ -103,6 +103,19 @@ impl SmaragdApp {
                                 self.push_error_toast("No project open");
                             }
                         }
+                        ui.separator();
+                        // A submenu from the start, not a single top-level entry,
+                        // even though DOCX is the only format wired up so far —
+                        // EPUB/PDF/Scrivener are landing here too, each needing a
+                        // different `rfd::FileDialog` picker shape (a single file
+                        // with its own filter, vs. a whole folder for Scrivener).
+                        let import_outer = ui.menu_button("Import", |ui| {
+                            if ui.button("Word Document (.docx)…").clicked() {
+                                self.import_docx();
+                                ui.close();
+                            }
+                        });
+                        nav.track(ui, &import_outer.response);
                         // Manuscript isn't an exclusive role — a project can have
                         // several Manuscript folders at once (see
                         // `FolderRole::is_exclusive`) — so this offers a submenu to
