@@ -42,6 +42,12 @@ this file.
   columns can be adjusted in one go. Both the order and which columns are
   hidden persist across restarts, like the rest of Story Grid's view
   preferences.
+- PDF export's drop cap is now a true *sunk* cap: the enlarged first letter
+  with the next couple of lines of body text wrapped narrower beside it,
+  computed with hand-rolled Typst layout math rather than a network-fetched
+  package — no change to smaragd's fully offline export. Previously it was
+  just an oversized inline letter on the first line. The wrapped lines are
+  always ragged-right even in a justified style.
 
 ## v0.7.0 — 2026-08-06
 

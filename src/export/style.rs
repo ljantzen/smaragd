@@ -87,10 +87,21 @@ pub struct BlockStyle {
 
 /// An enlarged initial capital on each chapter's first paragraph. `scale` is a
 /// multiple of `BodyStyle::size_pt` — e.g. `3.0` renders the first letter at
-/// 3x body size. This is a *raised* cap (an oversized glyph sitting inline on
-/// the first line), not a true multi-line-wrapping sunk drop cap — the latter
-/// needs either a Typst package (network fetch, not available offline-only)
-/// or hand-rolled multi-line layout math; out of scope for v1.
+/// 3x body size. PDF export (`export::pdf::append_paragraph_with_drop_cap`)
+/// renders a true *sunk* cap — the next few body-text lines greedily wrapped
+/// narrower next to it — using only core Typst (`context`/`measure`/`place`),
+/// no `@preview` package and so no network fetch. EPUB gets the same effect
+/// for free via CSS `::first-letter { float: left; }`
+/// (`export::epub::stylesheet`); DOCX skips drop caps entirely.
+///
+/// Known limitations of the PDF renderer's manual wrap, both out of scope for
+/// now:
+/// - The wrapped lines are always ragged-right, even if the style justifies
+///   body text — manually justifying custom-measured lines isn't attempted.
+/// - How many lines the cap spans is a heuristic (`scale` ÷
+///   `BodyStyle::line_height`, both relative to the same body size), not
+///   derived from the font's real cap-height metric, so it may run slightly
+///   loose or tight for an unusual custom style.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DropCapStyle {
     pub scale: f32,

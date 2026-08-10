@@ -33,7 +33,7 @@ use std::path::Path;
 use typst_as_lib::TypstEngine;
 use typst_as_lib::typst_kit_options::TypstKitFontOptions;
 
-use super::style::{DropCapStyle, RunningHeaderStyle, TypesetStyle};
+use super::style::{RunningHeaderStyle, TypesetStyle};
 use super::{BookMeta, ExportDoc, ExportError};
 use crate::markdown::{Block, BlockKind, Span};
 use crate::ui::markdown_preview::resolve_image_fs_path;
@@ -168,8 +168,59 @@ fn generate_preamble(meta: &BookMeta, style: &TypesetStyle) -> String {
         escape_typst(&style.code.font),
         style.code.size_pt
     ));
+    if style.drop_cap.is_some() {
+        s.push_str(SUNK_DROP_CAP_HELPER);
+    }
     s
 }
+
+/// A true *sunk* drop cap, emitted once in the preamble (only when the style
+/// actually uses one — see `generate_preamble`) and called once per
+/// drop-capped paragraph from `append_paragraph_with_drop_cap`. No Typst
+/// package (`@preview/...`) is imported — everything here is core stdlib
+/// (`context`, `measure`, `place`), which is what makes this possible without
+/// smaragd's offline-only export ever needing a network fetch.
+///
+/// `letter` is the (already-formatted) drop cap content, `words` an array of
+/// per-word content values (so bold/italic/code formatting survives being
+/// split mid-paragraph — see `append_span_words`), `lines` how many body-text
+/// lines the cap's height spans (a heuristic computed in Rust — see
+/// `DropCapStyle`'s doc comment), `cap-size`/`gutter`/`full-width` lengths.
+///
+/// Greedily measures word-by-word (`measure(content).width` with no width
+/// constraint gives the content's *natural*, unwrapped width — not `measure`
+/// with a `width:` argument, which would instead wrap the text and mostly
+/// report back the constraint itself) against `narrow-width` to fill each of
+/// the first `lines` lines, then places the cap over them and lets the
+/// remaining words flow as a normal, fully-justified-if-the-style-says-so
+/// paragraph afterward. The wrapped lines themselves are always ragged-right
+/// — manually justifying custom-measured lines is out of scope (see
+/// `DropCapStyle`'s doc comment).
+const SUNK_DROP_CAP_HELPER: &str = r#"#let sunk-drop-cap(letter, words, lines, cap-size, gutter, full-width) = context {
+  let cap-w = measure(text(size: cap-size)[#letter]).width
+  let narrow-width = full-width - cap-w - gutter
+  let remaining = words
+  let wrapped = ()
+  for _ in range(lines) {
+    if remaining.len() == 0 { break }
+    let line = ()
+    while remaining.len() > 0 {
+      let candidate = line + (remaining.first(),)
+      if measure(candidate.join([ ])).width > narrow-width and line.len() > 0 {
+        break
+      }
+      line = candidate
+      remaining = remaining.slice(1)
+    }
+    wrapped.push(line)
+  }
+  place(top + left, text(size: cap-size)[#letter])
+  for line in wrapped {
+    pad(left: cap-w + gutter)[#line.join([ ]) #linebreak()]
+  }
+  remaining.join([ ])
+}
+"#;
 
 /// A centered Title/Subtitle/Author page rendered before the manuscript —
 /// mirrors `docx::export_docx`'s equivalent title-page paragraphs. Empty when
@@ -254,14 +305,7 @@ fn blocks_to_typst(
         if matches!(block.kind, BlockKind::Paragraph) {
             first_paragraph_seen = true;
         }
-        append_typst_block(
-            &mut out,
-            block,
-            drop_cap_here,
-            style.drop_cap,
-            doc_dir,
-            project_root,
-        );
+        append_typst_block(&mut out, block, drop_cap_here, style, doc_dir, project_root);
     }
     out
 }
@@ -270,7 +314,7 @@ fn append_typst_block(
     out: &mut String,
     block: &Block,
     drop_cap_here: bool,
-    drop_cap: Option<DropCapStyle>,
+    style: &TypesetStyle,
     doc_dir: &Path,
     project_root: &Path,
 ) {
@@ -289,14 +333,8 @@ fn append_typst_block(
             out.push_str("\n\n");
         }
         BlockKind::Paragraph => {
-            if drop_cap_here && let Some(drop_cap) = drop_cap {
-                append_paragraph_with_drop_cap(
-                    out,
-                    &block.spans,
-                    drop_cap.scale,
-                    doc_dir,
-                    project_root,
-                );
+            if drop_cap_here && style.drop_cap.is_some() {
+                append_paragraph_with_drop_cap(out, &block.spans, style, doc_dir, project_root);
             } else {
                 spans_to_typst(out, &block.spans, doc_dir, project_root);
             }
@@ -348,16 +386,22 @@ fn append_typst_block(
     }
 }
 
-/// Pulls the first character off `spans` and renders it oversized inline —
-/// a *raised* cap, not a true multi-line-wrapping sunk drop cap (see
-/// `DropCapStyle`'s doc comment for why).
+/// Pulls the first character off `spans` and hands the rest to the
+/// `sunk-drop-cap` Typst helper (emitted once in the preamble — see
+/// `generate_preamble`/`SUNK_DROP_CAP_HELPER`) as a per-word content array, so
+/// it can greedily wrap the first few lines narrower next to the enlarged
+/// letter — a true sunk cap, not the raised inline glyph this used to be.
 fn append_paragraph_with_drop_cap(
     out: &mut String,
     spans: &[Span],
-    scale: f32,
+    style: &TypesetStyle,
     doc_dir: &Path,
     project_root: &Path,
 ) {
+    let scale = style
+        .drop_cap
+        .expect("caller only invokes this when style.drop_cap.is_some()")
+        .scale;
     let Some(first_span) = spans
         .iter()
         .find(|s| s.image.is_none() && !s.text.is_empty())
@@ -370,19 +414,87 @@ fn append_paragraph_with_drop_cap(
         spans_to_typst(out, spans, doc_dir, project_root);
         return;
     };
-    let rest_of_span = chars.as_str().to_string();
-    out.push_str(&format!(
-        "#text(size: {scale}em)[{}]",
-        escape_typst(&first_char.to_string())
-    ));
-    out.push_str(&escape_typst(&rest_of_span));
+    // Carries over `first_span`'s own formatting (bold/italic/code/
+    // strikethrough/link/wikilink) rather than dropping it, unlike the old
+    // raised-cap code this replaced.
+    let rest_of_first_span = Span {
+        text: chars.as_str().to_string(),
+        ..first_span.clone()
+    };
+
+    let mut words = Vec::new();
+    append_span_words(&mut words, &rest_of_first_span, doc_dir, project_root);
     let first_span_ptr = first_span as *const Span;
     for span in spans {
         if std::ptr::eq(span, first_span_ptr) {
             continue;
         }
-        append_span_typst(out, span, doc_dir, project_root);
+        append_span_words(&mut words, span, doc_dir, project_root);
     }
+    let words_literal = match words.len() {
+        0 => "()".to_string(),
+        1 => format!("({},)", words[0]),
+        _ => format!("({})", words.join(", ")),
+    };
+
+    // The number of body-text lines the cap's height spans: an approximation
+    // (cap height in ems ÷ line-height multiplier — both relative to the same
+    // body size), not derived from the font's real cap-height metric — see
+    // `DropCapStyle`'s doc comment.
+    let lines = ((scale / style.body.line_height).round() as u32).max(2);
+    let content_width_mm = style.page.width_mm - 2.0 * style.page.margin_mm;
+    // A plain `pt` length, not `em`: Typst can't compare a length with an
+    // unresolved `em` component (relative to the *current* font size, so not
+    // reducible to an absolute value until actually laid out) against the
+    // plain absolute lengths `measure()` returns — confirmed empirically, this
+    // used to fail to compile with "cannot compare Npt with Mpt + -0.15em".
+    // Computed from body size rather than hardcoded so it still scales
+    // sensibly across styles with very different body sizes.
+    let gutter_pt = style.body.size_pt as f32 * 0.15;
+    out.push_str(&format!(
+        "#sunk-drop-cap([{}], {words_literal}, {lines}, {scale}em, {gutter_pt}pt, {content_width_mm}mm)",
+        escape_typst(&first_char.to_string()),
+    ));
+}
+
+/// Splits `span`'s text on whitespace and appends each word to `words` as its
+/// own Typst content literal (e.g. `[*Hello*]`), preserving `span`'s bold/
+/// italic/code/strikethrough formatting per word — the granularity
+/// `append_paragraph_with_drop_cap`'s greedy line-fill needs to consume text
+/// one word at a time. An image span stays a single atomic entry (mirrors
+/// `append_span_typst`'s image short-circuit) rather than being split.
+fn append_span_words(words: &mut Vec<String>, span: &Span, doc_dir: &Path, project_root: &Path) {
+    if let Some(image) = &span.image {
+        let content = match typst_image_path(&image.src, doc_dir, project_root) {
+            Some(reference) => format!("#image(\"{reference}\")"),
+            None => escape_typst(&span.text),
+        };
+        words.push(format!("[{content}]"));
+        return;
+    }
+    for word in span.text.split_whitespace() {
+        words.push(format_word_content(word, span));
+    }
+}
+
+/// One word, formatted (and escaped) exactly the way `append_span_typst`
+/// formats a whole span, then wrapped as its own `[...]` content literal.
+fn format_word_content(word: &str, span: &Span) -> String {
+    let mut text = escape_typst(word);
+    if span.code {
+        text = format!("`{}`", word.replace('`', "'"));
+    } else {
+        if span.bold {
+            text = format!("*{text}*");
+        }
+        if span.italic {
+            text = format!("_{text}_");
+        }
+        if span.strikethrough {
+            text = format!("#strike[{text}]");
+        }
+    }
+    format!("[{text}]")
 }
 
 fn spans_to_typst(out: &mut String, spans: &[Span], doc_dir: &Path, project_root: &Path) {
@@ -507,6 +619,55 @@ mod tests {
         assert_eq!(escape_typst("plain text"), "plain text");
     }
 
+    #[test]
+    fn generate_preamble_includes_the_sunk_drop_cap_helper_only_when_the_style_uses_one() {
+        let meta = BookMeta::default();
+        assert!(generate_preamble(&meta, &trade_paperback_style()).contains("sunk-drop-cap"));
+        assert!(!generate_preamble(&meta, &manuscript_style()).contains("sunk-drop-cap"));
+    }
+
+    #[test]
+    fn append_span_words_splits_on_whitespace_preserving_bold_per_word() {
+        let span = Span {
+            text: "hello world".to_string(),
+            bold: true,
+            ..Span::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut words = Vec::new();
+        append_span_words(&mut words, &span, dir.path(), dir.path());
+        assert_eq!(words, vec!["[*hello*]".to_string(), "[*world*]".to_string()]);
+    }
+
+    #[test]
+    fn append_span_words_keeps_a_code_span_as_raw_typst_not_markup_escaped() {
+        let span = Span {
+            text: "a[b]".to_string(),
+            code: true,
+            ..Span::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut words = Vec::new();
+        append_span_words(&mut words, &span, dir.path(), dir.path());
+        assert_eq!(words, vec!["[`a[b]`]".to_string()]);
+    }
+
+    #[test]
+    fn append_span_words_keeps_an_image_span_as_one_atomic_entry() {
+        let span = Span {
+            text: "alt text with several words".to_string(),
+            image: Some(crate::markdown::ImageRef {
+                src: "missing.png".to_string(),
+                title: String::new(),
+            }),
+            ..Span::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut words = Vec::new();
+        append_span_words(&mut words, &span, dir.path(), dir.path());
+        assert_eq!(words.len(), 1);
+    }
+
     /// `large_print()`'s body/headings/blockquote font is "Atkinson
     /// Hyperlegible" — unlike Libertinus Serif/DejaVu Sans Mono, it isn't part
     /// of `typst-kit`'s own embedded font set, so this specifically exercises
@@ -563,7 +724,13 @@ mod tests {
         let docs = vec![
             ExportDoc {
                 title: "Chapter One".to_string(),
-                blocks: markdown::parse("First paragraph of chapter one.\n\nSecond paragraph."),
+                blocks: markdown::parse(
+                    "First paragraph of chapter one, long enough that its *greedily \
+                     wrapped* first few lines actually have to break across more than \
+                     one line next to the drop cap, exercising the real word-by-word \
+                     measuring loop rather than just a single short line.\n\n\
+                     Second paragraph.",
+                ),
                 source_path: dir.path().join("one.md"),
             },
             ExportDoc {
