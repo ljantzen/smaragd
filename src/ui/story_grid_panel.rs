@@ -1,10 +1,11 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use egui_extras::{Column, TableBuilder};
 use uuid::Uuid;
 
 use crate::project::{Project, StoryCard};
-use crate::settings::UnplacedCardsPosition;
+use crate::settings::{StoryGridColumn, UnplacedCardsPosition};
 
 /// Outcomes of user interaction with the Story Grid, handled by the caller
 /// (`app.rs`) rather than mutated here — same pure-rendering-layer pattern
@@ -16,6 +17,14 @@ pub enum StoryGridEvent {
     OpenLinkedDocument(PathBuf),
     EditCard(Uuid),
     SetUnplacedPosition(UnplacedCardsPosition),
+    /// Show/hide a column via the "Columns" menu.
+    SetColumnHidden(StoryGridColumn, bool),
+    /// The full new column order, after a drag-free "Up"/"Down" reorder in the
+    /// "Columns" menu — same whole-vec-per-move shape as the menu's up/down
+    /// buttons themselves, simpler than an index-based move since there's no
+    /// fallible lookup involved (contrast `CorkboardEvent::MoveCard`, which needs
+    /// a card id because cards live in `Project`, not `Settings`).
+    SetColumnOrder(Vec<StoryGridColumn>),
 }
 
 /// One of a card's `linked_document_stems`, resolved against the binder tree.
@@ -136,6 +145,8 @@ pub fn show(
     ui: &mut egui::Ui,
     project: &Project,
     unplaced_position: UnplacedCardsPosition,
+    column_order: &[StoryGridColumn],
+    hidden_columns: &BTreeSet<StoryGridColumn>,
 ) -> Option<StoryGridEvent> {
     let mut event = None;
 
@@ -152,6 +163,67 @@ pub fn show(
         if position != unplaced_position {
             event = Some(StoryGridEvent::SetUnplacedPosition(position));
         }
+
+        // Pushed to the dock's right edge, away from the left-aligned "Unplaced
+        // cards" control, rather than sitting immediately next to it.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // `egui::menu::MenuButton` directly, not the `ui.menu_button` shorthand:
+            // that shorthand always uses `PopupCloseBehavior`'s default
+            // (`CloseOnClick`, closing on *any* click inside the popup, not just
+            // outside it) — wrong here, since toggling a checkbox or clicking an
+            // Up/Down arrow is meant to be repeatable without reopening the menu
+            // each time.
+            egui::menu::MenuButton::new("Columns")
+                .config(
+                    egui::containers::menu::MenuConfig::new()
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                )
+                .ui(ui, |ui| {
+                    let count = column_order.len();
+                    for (index, kind) in column_order.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            let mut visible = !hidden_columns.contains(kind);
+                            // A fixed-width label column, not flush against the label
+                            // (too cramped, and ragged across rows of differing label
+                            // length) nor pushed to the row's far edge (`Layout::
+                            // right_to_left`, tried first — stretched every row to the
+                            // menu's full available width, leaving a wide gap for every
+                            // label shorter than the longest one, "Why It Matters").
+                            // This keeps a modest, consistent gap and lines the arrows
+                            // up in a column across every row.
+                            let checkbox = ui
+                                .scope(|ui| {
+                                    ui.set_min_width(130.0);
+                                    ui.checkbox(&mut visible, kind.label())
+                                })
+                                .inner;
+                            if checkbox.changed() {
+                                event = Some(StoryGridEvent::SetColumnHidden(*kind, !visible));
+                            }
+                            // `⬆`/`⬇` (U+2B06/U+2B07), not the plain `↑`/`↓` or `▲`/`▼`
+                            // arrows/triangles — none of those are covered by any font in
+                            // egui's default `Proportional` fallback chain (Ubuntu-Light/
+                            // NotoEmoji/emoji-icon-font, see `editor_font::install`, which
+                            // starts from `FontDefinitions::default()` and only adds named
+                            // families, leaving that chain untouched), and render as tofu.
+                            // U+2B06/U+2B07 are the ones both NotoEmoji-Regular and
+                            // emoji-icon-font actually carry glyphs for — checked directly
+                            // against `epaint_default_fonts`' bundled .ttf files with
+                            // `ttf_parser::Face::glyph_index`.
+                            if ui.small_button("\u{2b06}").clicked() && index > 0 {
+                                let mut order = column_order.to_vec();
+                                order.swap(index, index - 1);
+                                event = Some(StoryGridEvent::SetColumnOrder(order));
+                            }
+                            if ui.small_button("\u{2b07}").clicked() && index + 1 < count {
+                                let mut order = column_order.to_vec();
+                                order.swap(index, index + 1);
+                                event = Some(StoryGridEvent::SetColumnOrder(order));
+                            }
+                        });
+                    }
+                });
+        });
     });
     ui.separator();
 
@@ -172,50 +244,33 @@ pub fn show(
         UnplacedCardsPosition::Bottom => placed.into_iter().chain(unplaced).collect(),
     };
 
+    let visible_columns: Vec<StoryGridColumn> = column_order
+        .iter()
+        .copied()
+        .filter(|kind| !hidden_columns.contains(kind))
+        .collect();
+
     egui::ScrollArea::horizontal().show(ui, |ui| {
-        TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .vscroll(true)
-            .column(Column::auto().at_least(28.0)) // #
-            .column(Column::initial(70.0).at_least(40.0)) // Scene
-            .column(Column::initial(150.0).at_least(80.0)) // Document
-            .column(Column::initial(90.0).at_least(60.0)) // POV
-            .column(Column::initial(70.0).at_least(50.0)) // Words
-            .column(Column::initial(160.0).at_least(80.0)) // Cause
-            .column(Column::initial(160.0).at_least(80.0)) // Effect
-            .column(Column::initial(160.0).at_least(80.0)) // Why It Matters
-            .column(Column::initial(160.0).at_least(80.0)) // Realization
-            .column(Column::initial(160.0).at_least(80.0)) // And So
-            .column(Column::initial(140.0).at_least(80.0)) // Prior Belief
-            .column(Column::initial(140.0).at_least(80.0)) // New Belief
-            .column(Column::initial(140.0).at_least(80.0)) // Value Shift
-            .column(Column::remainder().at_least(80.0)) // Subplot tags
+        if visible_columns.is_empty() {
+            ui.weak("All columns are hidden — use the Columns menu above to show one.");
+            return;
+        }
+
+        let mut builder = TableBuilder::new(ui).striped(true).resizable(true).vscroll(true);
+        for (index, kind) in visible_columns.iter().enumerate() {
+            builder = builder.column(column_size(*kind, index + 1 == visible_columns.len()));
+        }
+        builder
             .header(20.0, |mut header| {
-                for label in [
-                    "#",
-                    "Scene",
-                    "Document",
-                    "POV",
-                    "Words",
-                    "Cause",
-                    "Effect",
-                    "Why It Matters",
-                    "Realization",
-                    "And So",
-                    "Prior Belief",
-                    "New Belief",
-                    "Value Shift",
-                    "Tags",
-                ] {
+                for kind in &visible_columns {
                     header.col(|ui| {
-                        ui.strong(label);
+                        ui.strong(kind.label());
                     });
                 }
             })
             .body(|mut body| {
                 for row in &ordered {
-                    if let Some(row_event) = show_row(&mut body, project, row) {
+                    if let Some(row_event) = show_row(&mut body, project, row, &visible_columns) {
                         event = Some(row_event);
                     }
                 }
@@ -225,10 +280,50 @@ pub fn show(
     event
 }
 
+/// Sizing for one `StoryGridColumn` — carried over 1:1 from the previous
+/// hardcoded per-column widths, except the last *visible* column always claims
+/// remaining width (`Column::remainder()`) regardless of which column it is, so
+/// hiding/moving `SubplotTags` (formerly the sole `remainder()` column) doesn't
+/// leave the table failing to fill available space.
+fn column_size(kind: StoryGridColumn, is_last_visible: bool) -> Column {
+    if is_last_visible {
+        return Column::remainder().at_least(80.0);
+    }
+    match kind {
+        StoryGridColumn::Index => Column::auto().at_least(28.0),
+        StoryGridColumn::Scene => Column::initial(70.0).at_least(40.0),
+        StoryGridColumn::Document => Column::initial(150.0).at_least(80.0),
+        StoryGridColumn::Pov => Column::initial(90.0).at_least(60.0),
+        StoryGridColumn::Words => Column::initial(70.0).at_least(50.0),
+        StoryGridColumn::Cause
+        | StoryGridColumn::Effect
+        | StoryGridColumn::WhyItMatters
+        | StoryGridColumn::Realization
+        | StoryGridColumn::AndSo => Column::initial(160.0).at_least(80.0),
+        StoryGridColumn::PriorBelief | StoryGridColumn::NewBelief | StoryGridColumn::ValueShift => {
+            Column::initial(140.0).at_least(80.0)
+        }
+        StoryGridColumn::SubplotTags => Column::initial(80.0).at_least(80.0),
+    }
+}
+
+/// A row's precomputed, column-independent values — resolved once per row rather
+/// than once per visible cell, since several (`pov`, `words`) are already
+/// aggregated across a card's linked documents before any column-specific
+/// rendering happens.
+struct RowContext<'a> {
+    row: &'a ResolvedRow<'a>,
+    pov: Option<String>,
+    pov_color: Option<egui::Color32>,
+    words: Option<usize>,
+    word_count_color: Option<egui::Color32>,
+}
+
 fn show_row(
     body: &mut egui_extras::TableBody,
     project: &Project,
     row: &ResolvedRow,
+    visible_columns: &[StoryGridColumn],
 ) -> Option<StoryGridEvent> {
     let mut event = None;
     let card = row.card;
@@ -245,26 +340,57 @@ fn show_row(
     };
     let pov_color = resolve_pov_color(project, pov.as_deref());
     let word_count_color = resolve_word_count_color(words, word_count_target);
+    let ctx = RowContext {
+        row,
+        pov,
+        pov_color,
+        words,
+        word_count_color,
+    };
 
     body.row(22.0, |mut table_row| {
-        table_row.col(|ui| {
+        for kind in visible_columns {
+            table_row.col(|ui| {
+                if let Some(cell_event) = render_cell(ui, *kind, &ctx) {
+                    event = Some(cell_event);
+                }
+            });
+        }
+    });
+
+    event
+}
+
+/// Renders one cell, dispatched by `StoryGridColumn` — each arm's body is the
+/// same rendering logic the column had when this was a straight-line sequence of
+/// `table_row.col(...)` calls, unchanged, just reachable by column identity now
+/// that columns can be reordered/hidden.
+fn render_cell(ui: &mut egui::Ui, kind: StoryGridColumn, ctx: &RowContext) -> Option<StoryGridEvent> {
+    let card = ctx.row.card;
+    match kind {
+        StoryGridColumn::Index => {
             ui.label(
-                row.min_position()
+                ctx.row
+                    .min_position()
                     .map(|position| position.to_string())
                     .unwrap_or_else(|| "\u{2014}".to_string()),
             );
-        });
-        table_row.col(|ui| {
+            None
+        }
+        StoryGridColumn::Scene => {
             if ui.link(&card.scene_number).clicked() {
-                event = Some(StoryGridEvent::EditCard(card.id));
+                Some(StoryGridEvent::EditCard(card.id))
+            } else {
+                None
             }
-        });
-        table_row.col(|ui| {
-            if row.links.is_empty() {
+        }
+        StoryGridColumn::Document => {
+            let mut event = None;
+            if ctx.row.links.is_empty() {
                 ui.weak("(no document)");
             } else {
                 ui.horizontal_wrapped(|ui| {
-                    for link in &row.links {
+                    for link in &ctx.row.links {
                         match &link.path {
                             Some(path) => {
                                 let label = document_label(path);
@@ -279,28 +405,33 @@ fn show_row(
                     }
                 });
             }
-        });
-        table_row.col(|ui| match (pov.as_deref(), pov_color) {
-            (Some(pov), Some(color)) => {
-                ui.horizontal(|ui| {
-                    let (rect, _response) =
-                        ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-                    ui.painter().circle_filled(rect.center(), 4.0, color);
+            event
+        }
+        StoryGridColumn::Pov => {
+            match (ctx.pov.as_deref(), ctx.pov_color) {
+                (Some(pov), Some(color)) => {
+                    ui.horizontal(|ui| {
+                        let (rect, _response) =
+                            ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                        ui.painter().circle_filled(rect.center(), 4.0, color);
+                        ui.label(pov);
+                    });
+                }
+                (Some(pov), None) => {
                     ui.label(pov);
-                });
+                }
+                (None, _) => {
+                    ui.label("\u{2014}");
+                }
             }
-            (Some(pov), None) => {
-                ui.label(pov);
-            }
-            (None, _) => {
-                ui.label("\u{2014}");
-            }
-        });
-        table_row.col(|ui| {
-            let text = words
+            None
+        }
+        StoryGridColumn::Words => {
+            let text = ctx
+                .words
                 .map(|words| words.to_string())
                 .unwrap_or_else(|| "\u{2014}".to_string());
-            match word_count_color {
+            match ctx.word_count_color {
                 Some(color) => {
                     ui.colored_label(color, text);
                 }
@@ -308,37 +439,45 @@ fn show_row(
                     ui.label(text);
                 }
             }
-        });
-        table_row.col(|ui| {
+            None
+        }
+        StoryGridColumn::Cause => {
             ui.label(truncate(&card.cause));
-        });
-        table_row.col(|ui| {
+            None
+        }
+        StoryGridColumn::Effect => {
             ui.label(truncate(&card.effect));
-        });
-        table_row.col(|ui| {
+            None
+        }
+        StoryGridColumn::WhyItMatters => {
             ui.label(truncate(&card.why_it_matters));
-        });
-        table_row.col(|ui| {
+            None
+        }
+        StoryGridColumn::Realization => {
             ui.label(truncate(&card.realization));
-        });
-        table_row.col(|ui| {
+            None
+        }
+        StoryGridColumn::AndSo => {
             ui.label(truncate(&card.and_so));
-        });
-        table_row.col(|ui| {
+            None
+        }
+        StoryGridColumn::PriorBelief => {
             ui.label(truncate(&card.prior_belief));
-        });
-        table_row.col(|ui| {
+            None
+        }
+        StoryGridColumn::NewBelief => {
             ui.label(truncate(&card.new_belief));
-        });
-        table_row.col(|ui| {
+            None
+        }
+        StoryGridColumn::ValueShift => {
             ui.label(truncate(&card.value_shift));
-        });
-        table_row.col(|ui| {
+            None
+        }
+        StoryGridColumn::SubplotTags => {
             ui.label(card.subplot_tags.join(", "));
-        });
-    });
-
-    event
+            None
+        }
+    }
 }
 
 /// The Words cell's red→yellow→green progress color, if a target is set —

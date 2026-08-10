@@ -271,6 +271,18 @@ impl SmaragdApp {
                 self.settings.unplaced_story_cards_position = position;
                 self.persist_settings();
             }
+            StoryGridEvent::SetColumnHidden(kind, hidden) => {
+                if hidden {
+                    self.settings.story_grid_hidden_columns.insert(kind);
+                } else {
+                    self.settings.story_grid_hidden_columns.remove(&kind);
+                }
+                self.persist_settings();
+            }
+            StoryGridEvent::SetColumnOrder(order) => {
+                self.settings.story_grid_column_order = order;
+                self.persist_settings();
+            }
         }
     }
 

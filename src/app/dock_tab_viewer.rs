@@ -407,6 +407,8 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         ui,
                         project,
                         self.settings.unplaced_story_cards_position,
+                        &self.settings.resolved_story_grid_column_order(),
+                        &self.settings.story_grid_hidden_columns,
                     ) {
                         self.actions.push(DockAction::StoryGrid(event));
                     }

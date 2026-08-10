@@ -56,6 +56,67 @@ impl UnplacedCardsPosition {
     }
 }
 
+/// A Story Grid column (`ui::story_grid_panel`). Lives here rather than in the ui
+/// panel file for the same reason `UnplacedCardsPosition` does: it's a persisted
+/// view preference, and `Settings` is where those live. Column sizing (an
+/// `egui_extras` concern) stays out of this struct — that's resolved in the panel
+/// itself, keyed by variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum StoryGridColumn {
+    Index,
+    Scene,
+    Document,
+    Pov,
+    Words,
+    Cause,
+    Effect,
+    WhyItMatters,
+    Realization,
+    AndSo,
+    PriorBelief,
+    NewBelief,
+    ValueShift,
+    SubplotTags,
+}
+
+impl StoryGridColumn {
+    pub const ALL: [StoryGridColumn; 14] = [
+        Self::Index,
+        Self::Scene,
+        Self::Document,
+        Self::Pov,
+        Self::Words,
+        Self::Cause,
+        Self::Effect,
+        Self::WhyItMatters,
+        Self::Realization,
+        Self::AndSo,
+        Self::PriorBelief,
+        Self::NewBelief,
+        Self::ValueShift,
+        Self::SubplotTags,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Index => "#",
+            Self::Scene => "Scene",
+            Self::Document => "Document",
+            Self::Pov => "POV",
+            Self::Words => "Words",
+            Self::Cause => "Cause",
+            Self::Effect => "Effect",
+            Self::WhyItMatters => "Why It Matters",
+            Self::Realization => "Realization",
+            Self::AndSo => "And So",
+            Self::PriorBelief => "Prior Belief",
+            Self::NewBelief => "New Belief",
+            Self::ValueShift => "Value Shift",
+            Self::SubplotTags => "Tags",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -178,6 +239,14 @@ pub struct Settings {
     /// Where unplaced cards sit in the Story Grid view — see
     /// [`UnplacedCardsPosition`].
     pub unplaced_story_cards_position: UnplacedCardsPosition,
+    /// The user's chosen Story Grid column order — see [`StoryGridColumn`]. Empty
+    /// (this struct's `Default`) means "no custom order yet," resolved to
+    /// `StoryGridColumn::ALL`'s built-in order by `resolved_story_grid_column_order`
+    /// — same blank-means-unset convention `template_date_format` uses.
+    pub story_grid_column_order: Vec<StoryGridColumn>,
+    /// Story Grid columns the user has hidden via its "Columns" menu — a column
+    /// absent from this set is shown. See [`StoryGridColumn`].
+    pub story_grid_hidden_columns: BTreeSet<StoryGridColumn>,
 }
 
 /// The full path to the settings file, e.g. `~/.config/smaragd/smaragd.toml` on
@@ -269,6 +338,22 @@ impl Settings {
         } else {
             DEFAULT_UI_SCALE
         }
+    }
+
+    /// The full Story Grid column order, every `StoryGridColumn` present — the
+    /// "Columns" menu needs to list hidden columns too, only
+    /// `story_grid_hidden_columns` controls visibility. Appends any variant
+    /// missing from the saved order (covers both "never configured," where this
+    /// starts empty and every variant is appended in `StoryGridColumn::ALL`'s
+    /// order, and a column added in a later smaragd version) at the end.
+    pub fn resolved_story_grid_column_order(&self) -> Vec<StoryGridColumn> {
+        let mut order = self.story_grid_column_order.clone();
+        for kind in StoryGridColumn::ALL {
+            if !order.contains(&kind) {
+                order.push(kind);
+            }
+        }
+        order
     }
 
     pub fn save_to_path(&self, path: &Path) -> io::Result<()> {
@@ -492,6 +577,31 @@ mod tests {
     }
 
     #[test]
+    fn resolved_story_grid_column_order_defaults_to_all_columns_when_unconfigured() {
+        let settings = Settings::default();
+
+        assert_eq!(
+            settings.resolved_story_grid_column_order(),
+            StoryGridColumn::ALL.to_vec()
+        );
+    }
+
+    #[test]
+    fn resolved_story_grid_column_order_appends_a_column_added_after_this_file_was_saved() {
+        let mut order = StoryGridColumn::ALL.to_vec();
+        let missing = order.remove(3); // Simulates a column that didn't exist yet.
+        let settings = Settings {
+            story_grid_column_order: order,
+            ..Default::default()
+        };
+
+        let resolved = settings.resolved_story_grid_column_order();
+
+        assert_eq!(resolved.last(), Some(&missing));
+        assert_eq!(resolved.len(), StoryGridColumn::ALL.len());
+    }
+
+    #[test]
     fn settings_file_without_a_color_theme_loads_none() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("smaragd.toml");
@@ -556,6 +666,11 @@ mod tests {
             shortcuts_seen,
             ui_scale: 1.25,
             unplaced_story_cards_position: UnplacedCardsPosition::Bottom,
+            story_grid_column_order: vec![StoryGridColumn::Words, StoryGridColumn::Scene],
+            story_grid_hidden_columns: BTreeSet::from([
+                StoryGridColumn::Cause,
+                StoryGridColumn::Effect,
+            ]),
         };
 
         settings.save_to_path(&path).unwrap();
