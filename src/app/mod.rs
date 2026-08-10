@@ -27,7 +27,7 @@ use dock::{
 use dock_tab_viewer::{AppTabViewer, DockAction};
 use export::ExportState;
 use git::GitOperation;
-use menu_nav::top_menu_button;
+use menu_nav::{nav_submenu, top_menu_button};
 use prompt::{PendingPrompt, PromptAction};
 use refresh::{
     BacklinksState, DocumentStatusCache, MetadataState, MetadataTarget, TagsState, WordCountState,

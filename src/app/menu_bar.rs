@@ -33,12 +33,7 @@ impl SmaragdApp {
                         {
                             self.browse_for_project(ui.ctx());
                         }
-                        // `SubMenuButton`, not `MenuButton` — see the matching comment on
-                        // View's "Theme" submenu for why. Trigger row tracked the same way.
-                        let (recent_trigger, _) = egui::containers::menu::SubMenuButton::new(
-                            "Recent Projects",
-                        )
-                        .ui(ui, |ui| {
+                        nav_submenu(ui, nav, "Recent Projects", |ui, nav| {
                             if self.settings.recent_project_paths.is_empty() {
                                 ui.add_enabled(false, egui::Button::new("No recent projects"));
                             } else {
@@ -53,18 +48,16 @@ impl SmaragdApp {
                                         .file_name()
                                         .map(|name| name.to_string_lossy().into_owned())
                                         .unwrap_or_else(|| path.display().to_string());
-                                    if ui
-                                        .button(label)
-                                        .on_hover_text(path.display().to_string())
-                                        .clicked()
-                                    {
+                                    let response =
+                                        ui.button(label).on_hover_text(path.display().to_string());
+                                    nav.track(ui, &response);
+                                    if response.clicked() {
                                         self.open_project_or_offer_to_adopt(ui.ctx(), &path);
                                         ui.close();
                                     }
                                 }
                             }
                         });
-                        nav.track(ui, &recent_trigger);
                         let close_project_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::CloseProject);
                         ui.add_enabled_ui(self.project.is_some(), |ui| {
@@ -107,25 +100,24 @@ impl SmaragdApp {
                         // A submenu, since a `.scriv` project needs a whole
                         // folder picked (it's a directory, not a single file
                         // with its own filter) unlike the other three formats.
-                        let import_outer = ui.menu_button("Import", |ui| {
-                            if ui.button("Word Document (.docx)…").clicked() {
+                        nav_submenu(ui, nav, "Import", |ui, nav| {
+                            if nav.button(ui, "Word Document (.docx)…").clicked() {
                                 self.import_docx();
                                 ui.close();
                             }
-                            if ui.button("EPUB (.epub)…").clicked() {
+                            if nav.button(ui, "EPUB (.epub)…").clicked() {
                                 self.import_epub();
                                 ui.close();
                             }
-                            if ui.button("PDF (.pdf)…").clicked() {
+                            if nav.button(ui, "PDF (.pdf)…").clicked() {
                                 self.import_pdf();
                                 ui.close();
                             }
-                            if ui.button("Scrivener Project…").clicked() {
+                            if nav.button(ui, "Scrivener Project…").clicked() {
                                 self.import_scrivener();
                                 ui.close();
                             }
                         });
-                        nav.track(ui, &import_outer.response);
                         // Manuscript isn't an exclusive role — a project can have
                         // several Manuscript folders at once (see
                         // `FolderRole::is_exclusive`) — so this offers a submenu to
@@ -160,10 +152,7 @@ impl SmaragdApp {
                                 }
                             }
                             many => {
-                                // Not keyboard-navigable past its own trigger row — see
-                                // the plan's scope note on nested submenus (Theme/
-                                // Layouts/this) staying mouse/hover-only for now.
-                                let outer = ui.menu_button("Export Manuscript", |ui| {
+                                nav_submenu(ui, nav, "Export Manuscript", |ui, nav| {
                                     for path in many {
                                         let label = self
                                             .project
@@ -171,13 +160,12 @@ impl SmaragdApp {
                                             .and_then(|project| project.tree.find_by_path(path))
                                             .map(|node| node.name.clone())
                                             .unwrap_or_else(|| path.display().to_string());
-                                        if ui.button(format!("{label}…")).clicked() {
+                                        if nav.button(ui, &format!("{label}…")).clicked() {
                                             self.open_export(path.clone());
                                             ui.close();
                                         }
                                     }
                                 });
-                                nav.track(ui, &outer.response);
                             }
                         }
                         ui.separator();
@@ -280,46 +268,34 @@ impl SmaragdApp {
                             self.toggle_dock_tab(DockTab::Tags);
                         }
                         ui.separator();
-                        // `SubMenuButton`, not `MenuButton`: this is nested *inside* the
-                        // View menu, and `MenuButton` is for top-level, click-to-open menu
-                        // bar buttons. Using it here meant clicking "Theme" behaved like
-                        // opening a second, independent top-level menu rather than a
-                        // proper submenu — items inside never got a chance to run, since
-                        // the parent popup's own close-on-click handling collapsed it out
-                        // from under `SubMenuButton`'s (hover-to-open, keeps parents open)
-                        // dedicated handling for exactly this case. Its trigger row is
-                        // still tracked (so Up/Down/Left/Right can reach it like any other
-                        // row), but not arrow-navigable past it — the flyout stays
-                        // mouse/hover-only for now (see the arrow-nav plan's scope note).
-                        let (theme_trigger, _) =
-                            egui::containers::menu::SubMenuButton::new("Theme").ui(ui, |ui| {
-                                if ui.button("Reload Custom Themes").clicked() {
-                                    let ctx = ui.ctx().clone();
-                                    self.reload_color_themes(&ctx);
+                        nav_submenu(ui, nav, "Theme", |ui, nav| {
+                            if nav.button(ui, "Reload Custom Themes").clicked() {
+                                let ctx = ui.ctx().clone();
+                                self.reload_color_themes(&ctx);
+                            }
+                            ui.separator();
+                            // Cloned rather than borrowed: `set_color_theme` below needs
+                            // `&mut self`, which a live borrow of `self.settings`/
+                            // `self.color_themes` here would conflict with across loop
+                            // iterations.
+                            let current = self.settings.color_theme.clone();
+                            let themes = self.color_themes.clone();
+                            if nav.radio(ui, current.is_none(), "Default").clicked() {
+                                self.set_color_theme(ui.ctx(), None);
+                            }
+                            for theme in &themes {
+                                if nav
+                                    .radio(
+                                        ui,
+                                        current.as_deref() == Some(theme.id.as_str()),
+                                        &theme.label,
+                                    )
+                                    .clicked()
+                                {
+                                    self.set_color_theme(ui.ctx(), Some(&theme.id));
                                 }
-                                ui.separator();
-                                // Cloned rather than borrowed: `set_color_theme` below needs
-                                // `&mut self`, which a live borrow of `self.settings`/
-                                // `self.color_themes` here would conflict with across loop
-                                // iterations.
-                                let current = self.settings.color_theme.clone();
-                                let themes = self.color_themes.clone();
-                                if ui.radio(current.is_none(), "Default").clicked() {
-                                    self.set_color_theme(ui.ctx(), None);
-                                }
-                                for theme in &themes {
-                                    if ui
-                                        .radio(
-                                            current.as_deref() == Some(theme.id.as_str()),
-                                            &theme.label,
-                                        )
-                                        .clicked()
-                                    {
-                                        self.set_color_theme(ui.ctx(), Some(&theme.id));
-                                    }
-                                }
-                            });
-                        nav.track(ui, &theme_trigger);
+                            }
+                        });
 
                         // Only meaningful with a project open — `BinderColorMode`
                         // lives on `ProjectMeta`, not `Settings`. Read before the
@@ -332,26 +308,18 @@ impl SmaragdApp {
                             .as_ref()
                             .map(|project| project.meta.binder_color_mode)
                         {
-                            let (color_mode_trigger, _) =
-                                egui::containers::menu::SubMenuButton::new("Color Binder By").ui(
-                                    ui,
-                                    |ui| {
-                                        for mode in [
-                                            BinderColorMode::Off,
-                                            BinderColorMode::Status,
-                                            BinderColorMode::Pov,
-                                            BinderColorMode::WordCountProgress,
-                                        ] {
-                                            if ui
-                                                .radio(current_mode == mode, mode.label())
-                                                .clicked()
-                                            {
-                                                self.set_binder_color_mode(mode);
-                                            }
-                                        }
-                                    },
-                                );
-                            nav.track(ui, &color_mode_trigger);
+                            nav_submenu(ui, nav, "Color Binder By", |ui, nav| {
+                                for mode in [
+                                    BinderColorMode::Off,
+                                    BinderColorMode::Status,
+                                    BinderColorMode::Pov,
+                                    BinderColorMode::WordCountProgress,
+                                ] {
+                                    if nav.radio(ui, current_mode == mode, mode.label()).clicked() {
+                                        self.set_binder_color_mode(mode);
+                                    }
+                                }
+                            });
                         }
                     });
                     top_menu_button(ui, "Tools", egui::Key::T, |ui, nav| {
@@ -513,29 +481,25 @@ impl SmaragdApp {
                         if nav.button(ui, "Save Current Layout…").clicked() {
                             self.prompt_save_layout();
                         }
-                        // `SubMenuButton`, not `MenuButton` — see the matching comment on
-                        // View's "Theme" submenu for why. Trigger row tracked the same way.
-                        let (layouts_trigger, _) =
-                            egui::containers::menu::SubMenuButton::new("Layouts").ui(ui, |ui| {
-                                if self.saved_layouts.is_empty() {
-                                    ui.add_enabled(false, egui::Button::new("No saved layouts"));
-                                } else {
-                                    // Collected up front rather than iterating
-                                    // `self.saved_layouts` directly: clicking an entry needs
-                                    // `&mut self.dock_state`, which an active immutable borrow
-                                    // of `self.saved_layouts` (the loop) would conflict with.
-                                    let names: Vec<String> =
-                                        self.saved_layouts.keys().cloned().collect();
-                                    for name in names {
-                                        if ui.button(&name).clicked()
-                                            && let Some(layout) = self.saved_layouts.get(&name)
-                                        {
-                                            self.dock_state = layout.clone();
-                                        }
+                        nav_submenu(ui, nav, "Layouts", |ui, nav| {
+                            if self.saved_layouts.is_empty() {
+                                ui.add_enabled(false, egui::Button::new("No saved layouts"));
+                            } else {
+                                // Collected up front rather than iterating
+                                // `self.saved_layouts` directly: clicking an entry needs
+                                // `&mut self.dock_state`, which an active immutable borrow
+                                // of `self.saved_layouts` (the loop) would conflict with.
+                                let names: Vec<String> =
+                                    self.saved_layouts.keys().cloned().collect();
+                                for name in names {
+                                    if nav.button(ui, &name).clicked()
+                                        && let Some(layout) = self.saved_layouts.get(&name)
+                                    {
+                                        self.dock_state = layout.clone();
                                     }
                                 }
-                            });
-                        nav.track(ui, &layouts_trigger);
+                            }
+                        });
                         ui.separator();
                         if nav.button(ui, "Restore Default Layout").clicked() {
                             self.dock_state = default_dock_state();
