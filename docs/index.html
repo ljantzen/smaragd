@@ -97,7 +97,7 @@
     font-size: 1.5em;
     margin: 0 0 8px;
   }
-  section .lede { color: var(--fg-dim); margin: 0 0 32px; max-width: 680px; }
+  section .lede { color: var(--fg-dim); margin: 0 0 32px; }
 
   .grid {
     display: grid;
@@ -238,9 +238,7 @@
       </svg>
       <h1>A native desktop authoring tool for writers</h1>
       <p class="tagline">
-        Built in Rust with egui — no Electron, no Chromium. Your manuscript stays plain markdown
-        files in plain folders; Smaragd adds the binder, the metadata, and the typesetting on top.
-        A modern and efficient editor built for authors and longform writers. Your manuscript stays in
+         A modern and efficient editor built for authors and longform writers. Keep your manuscript in
         plain markdown files in plain folders; Smaragd adds the binder, the metadata, and the typesetting on top.
       </p>
       <div class="cta-row">
@@ -251,51 +249,47 @@
 
     <section id="features">
       <h2>Everything a manuscript needs, one dockable workspace</h2>
-      <p class="lede">Binder, editor, preview, corkboard, metadata, backlinks, and tags are all tabs in one shared layout — drag, split, float, or dock any of them, and it persists across restarts.</p>
+      <p class="lede">Binder, editor, preview, corkboard, metadata, backlinks, and tags are all tabs in one shared layout. Drag, split, float, or dock any of them, and it persists across restarts.</p>
       <div class="grid">
         <div class="card">
           <h3>Plain files, no lock-in</h3>
-          <p>A project is just a folder of <code>.md</code> files. A small <code>.smaragd/project.json</code> stores ordering and folder roles — delete it and it's still a perfectly readable folder of markdown.</p>
+          <p>A project is just a folder of <code>.md</code> files. A small <code>.smaragd/project.json</code> holds project metadata — delete it and it's still a perfectly readable folder of markdown.</p>
         </div>
         <div class="card">
           <h3>Scrivener-style structure</h3>
-          <p>Research/Trash/Templates folder roles, built-in Blank/Novel/Nonfiction/Screenplay templates, and story cards that track both plot mechanics (Cause, Effect, Why It Matters) and a character's belief arc (Prior Belief, New Belief, Value Shift, Knowledge Gained).</p>
-        </div>
-        <div class="card">
-          <h3>Belief Timeline</h3>
-          <p>Pick a POV character and see their story cards chained in manuscript order as Prior Belief → New Belief — the character's emotional arc, read straight off your story cards, not a separate document to keep in sync.</p>
+          <p>Research/Trash/Templates/Manuscript folder roles, built-in Blank/Novel/Nonfiction/Screenplay/Worldbuilding templates, and Story Genius–style corkboard cards with Alpha Point, Cause, Effect, and Why It Matters.</p>
         </div>
         <div class="card">
           <h3>Wikilinks, backlinks &amp; tags</h3>
-          <p>Obsidian-style <code>[[links]]</code> with autocomplete, a full backlinks panel, and frontmatter + inline <code>#tags</code> — all resolved live across the project.</p>
+          <p>Obsidian-style <code>[[links]]</code> with autocomplete, a full backlinks panel, and frontmatter + inline <code>#tags</code></p>
         </div>
         <div class="card">
           <h3>Real typeset export</h3>
-          <p>DOCX, EPUB, and print-ready PDF from one shared Style. PDF is genuine typesetting via the embedded <a href="https://typst.app">Typst</a> compiler — running headers, drop caps, widow/orphan control, no LaTeX install, no network.</p>
+          <p>DOCX, EPUB, and print-ready PDF from one shared Style. PDF is genuine typesetting via the embedded <a href="https://typst.app">Typst</a> compiler</p>
         </div>
         <div class="card">
           <h3>Focus Mode</h3>
-          <p>Maximizes the window, hides every other tab, and dims every paragraph but the one you're writing — a typewriter, distraction-free view one keypress away (<code>F9</code>).</p>
+          <p>Maximizes the window, hides every other tab, and dims every paragraph but the one you're writing.</p>
         </div>
         <div class="card">
           <h3>15 themes, fully custom</h3>
-          <p>Gruvbox, Dracula, Nord, Catppuccin, Tokyo Night, and more built in — or drop a <code>.toml</code> file into the config directory for your own theme, style, or template.</p>
+          <p>Gruvbox, Dracula, Nord, Catppuccin, Tokyo Night, and more built in — or create your own</p>
         </div>
         <div class="card">
           <h3>Scriptable with Rhai</h3>
-          <p>Plugins in the embedded <a href="https://rhai.rs">Rhai</a> language add custom <code>:</code> commands, keyboard shortcuts, and save-time text transforms — project-local plugins stay opt-in.</p>
+          <p>Plugins in the embedded <a href="https://rhai.rs">Rhai</a> language add custom <code>:</code> commands, keyboard shortcuts, and save-time text transforms</p>
         </div>
         <div class="card">
           <h3>Git-aware</h3>
-          <p>Commit, push, and pull from the Versions menu, modeled on the Obsidian Git plugin — network operations run in the background so the UI never freezes.</p>
+          <p>Commit, push, and pull from the Versions menu</p>
         </div>
         <div class="card">
           <h3>Built-in Pomodoro timer</h3>
-          <p>Work/break cadence with a status-bar countdown that keeps ticking whether or not its tab is open — configurable durations and session count.</p>
+          <p>Work/break cadence with a status-bar countdown that keeps ticking whether or not its tab is open</p>
         </div>
         <div class="card">
           <h3>Word counts and targets</h3>
-        <p>Smaragd keeps track of where you write and how much you write. Set targets on individual files and the whole manuscript. Set session targets</p>
+        <p>Smaragd keeps track of where you write and how much you write. Set targets on session, individual files or the whole manuscript.</p>
         </div>
         <div class="card">
           <h3>Streaks</h3>
@@ -305,12 +299,12 @@
     </section>
 
     <section id="collaboration">
-      <h2>Write together, live — no server involved</h2>
-      <p class="lede">Host a session on the document you have open, share the one-time connection code, and a collaborator pastes it in to start editing with you in real time — no account, no cloud service, no third party ever holding your manuscript.</p>
+      <h2>Write together, live</h2>
+      <p class="lede">Host a session on the document you have open, share the one-time connection code, and a collaborator pastes it in to start editing with you in real time. There is no account, no cloud service, no third party ever holding your manuscript.</p>
       <div class="grid">
         <div class="card">
           <h3>Peer-to-peer, not cloud</h3>
-          <p>Peers connect directly via <a href="https://iroh.computer">iroh</a>. Your text is never uploaded to or stored on a server — it only ever exists on your machine and your collaborator's.</p>
+          <p>Peers connect directly via <a href="https://iroh.computer">iroh</a>. Your text is never uploaded to or stored on a server, it only ever exists on your machine and your collaborator's.</p>
         </div>
         <div class="card">
           <h3>End-to-end encrypted</h3>
@@ -318,18 +312,18 @@
         </div>
         <div class="card">
           <h3>Conflict-free merging</h3>
-          <p>Concurrent edits from both sides — even to the same paragraph — merge automatically via a CRDT, the same category of algorithm behind Google Docs, with no manual conflict resolution.</p>
+          <p>Concurrent edits from both sides — even to the same paragraph — merge automatically using the same category of algorithm behind Google Docs and Cryptpad. Manual conflict resolution is not required.</p>
         </div>
         <div class="card">
           <h3>One code to pair</h3>
-          <p>Host generates a short, pasteable code; join with it from the Collaborate menu or its dockable panel (<code>Ctrl+Shift+L</code>). Whoever holds the code can join — once, for that session only.</p>
+          <p>The host editor generates a short, pasteable code; join with it from the Collaborate menu or its dockable panel. Whoever holds the code can join. The code can be used once, for that session only.</p>
         </div>
       </div>
     </section>
 
     <section id="screenshots">
       <h2>See it in action</h2>
-      <p class="lede">A native workspace — every panel below is a dockable tab you can drag, split, float, or close.</p>
+      <p class="lede">A native workspace. Every panel below is a dockable tab you can drag, split, float, or close.</p>
       <a href="white-desktop.png" target="_blank" rel="noopener">
         <img class="hero-shot" src="white-desktop.png" alt="The full Smaragd workspace: binder tree on the left, editor and preview in the middle, Pomodoro/Metadata/Backlinks/Word Count docked on the right, and a corkboard of story cards below the editor.">
       </a>
@@ -381,12 +375,12 @@
 
     <section id="platforms">
       <h2>Download</h2>
-      <p class="lede">Native builds for Linux, Windows, and macOS — see the <a href="https://github.com/ljantzen/smaragd/releases/latest">latest release</a> for exact filenames.</p>
+      <p class="lede">Native builds for Linux, Windows, and macOS. See the <a href="https://github.com/ljantzen/smaragd/releases/latest">latest release</a> for exact filenames.</p>
       <p class="lede">Remember to check out the installation section of the <a href="https://github.com/ljantzen/smaragd/docs/user-manual.md">user manual</a> before installing</p>
       <div class="platforms">
         <div class="platform">
           <h3>Linux</h3>
-          <p>x86_64 AppImage — runs on most distributions without installation.</p>
+          <p>x86_64 AppImage. Runs on most distributions without installation.</p>
           <a href="https://github.com/ljantzen/smaragd/releases/latest">Get the AppImage →</a>
         </div>
         <div class="platform">
@@ -406,7 +400,7 @@
       <h2>Open source</h2>
       <div class="license-box">
         <p>Smaragd is licensed under the <a href="https://github.com/ljantzen/smaragd/blob/main/LICENSE">GNU GPL-3.0-or-later</a> — free to use, study, modify, and redistribute.</p>
-        <p>Contributions are welcome and go through a short <a href="https://github.com/ljantzen/smaragd/blob/main/CLA.md">Contributor License Agreement</a> — see <a href="https://github.com/ljantzen/smaragd/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> for how to get started. You keep copyright over what you write.</p>
+        <p>Contributions are welcome and go through a short <a href="https://github.com/ljantzen/smaragd/blob/main/CLA.md">Contributor License Agreement.</a>  See <a href="https://github.com/ljantzen/smaragd/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> for how to get started. You keep copyright over what you write.</p>
         </div>
     </section>
   </div>
