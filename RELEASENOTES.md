@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v0.8.0 — 2026-08-10
+
 - The Preview tab now renders in the currently selected export typesetting
   style (fonts, sizes, justification, page proportions, drop cap) instead of
   a fixed Glow-CLI-style dev palette, with an inline Style picker that stays
