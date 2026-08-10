@@ -6415,6 +6415,7 @@ dependencies = [
  "nucleo-matcher",
  "postcard",
  "pulldown-cmark",
+ "quick-xml 0.41.0",
  "rand 0.10.2",
  "resvg 0.48.1",
  "rfd",

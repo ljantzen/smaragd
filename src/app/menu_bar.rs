@@ -105,13 +105,17 @@ impl SmaragdApp {
                         }
                         ui.separator();
                         // A submenu from the start, not a single top-level entry,
-                        // even though DOCX is the only format wired up so far —
-                        // EPUB/PDF/Scrivener are landing here too, each needing a
+                        // even though DOCX/EPUB are the only formats wired up so
+                        // far — PDF/Scrivener are landing here too, each needing a
                         // different `rfd::FileDialog` picker shape (a single file
                         // with its own filter, vs. a whole folder for Scrivener).
                         let import_outer = ui.menu_button("Import", |ui| {
                             if ui.button("Word Document (.docx)…").clicked() {
                                 self.import_docx();
+                                ui.close();
+                            }
+                            if ui.button("EPUB (.epub)…").clicked() {
+                                self.import_epub();
                                 ui.close();
                             }
                         });

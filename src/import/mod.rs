@@ -11,6 +11,7 @@
 //! `BinderTree` directly.
 
 pub mod docx;
+pub mod epub;
 
 use std::fmt;
 use std::io;
@@ -62,6 +63,7 @@ impl ImportSummary {
 pub enum ImportError {
     Io(io::Error),
     Docx(docx_rs::ReaderError),
+    Epub(epub::EpubImportError),
 }
 
 impl fmt::Display for ImportError {
@@ -69,6 +71,7 @@ impl fmt::Display for ImportError {
         match self {
             ImportError::Io(err) => write!(f, "{err}"),
             ImportError::Docx(err) => write!(f, "{err}"),
+            ImportError::Epub(err) => write!(f, "{err}"),
         }
     }
 }
@@ -82,6 +85,12 @@ impl From<io::Error> for ImportError {
 impl From<docx_rs::ReaderError> for ImportError {
     fn from(err: docx_rs::ReaderError) -> Self {
         ImportError::Docx(err)
+    }
+}
+
+impl From<epub::EpubImportError> for ImportError {
+    fn from(err: epub::EpubImportError) -> Self {
+        ImportError::Epub(err)
     }
 }
 

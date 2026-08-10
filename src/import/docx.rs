@@ -7,11 +7,11 @@
 //! `src/reader/`), not just the builder API `export::docx` uses to write.
 
 use docx_rs::{
-    DocumentChild, Docx, ParagraphChild, ParagraphProperty, ReaderError, RunChild,
-    TableCellContent, TableChild, TableRowChild,
+    DocumentChild, Docx, ParagraphChild, ParagraphProperty, RunChild, TableCellContent, TableChild,
+    TableRowChild,
 };
 
-use super::ImportedNode;
+use super::{ImportError, ImportedNode};
 use crate::export::sanitize_filename_component;
 
 /// The paragraph style id `export::docx` (and, empirically, Word itself)
@@ -25,7 +25,7 @@ const HEADING_1_STYLE_ID: &str = "Heading1";
 /// Parses `bytes` (a `.docx` file's contents) into one [`ImportedNode`] per
 /// Heading-1-delimited chapter, titled from that heading's own text — or, if
 /// the document has no Heading 1 at all, a single node named `fallback_title`.
-pub fn parse(bytes: &[u8], fallback_title: &str) -> Result<Vec<ImportedNode>, ReaderError> {
+pub fn parse(bytes: &[u8], fallback_title: &str) -> Result<Vec<ImportedNode>, ImportError> {
     let doc = docx_rs::read_docx(bytes)?;
     Ok(split_into_chapters(&doc, fallback_title))
 }
