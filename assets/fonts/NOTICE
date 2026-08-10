@@ -1,10 +1,17 @@
-Fonts bundled in this directory are the same ones already embedded in
-smaragd via typst-kit's `embedded-fonts` feature (used for print-PDF
-export — see `export::style`), copied here as standalone files so they can
-also be registered directly with egui for on-screen use in the Editor and
-Preview (see `src/editor_font.rs`). No additional license terms apply
-beyond what's already accepted by depending on typst-kit/typst-assets with
-that feature enabled.
+LibertinusSerif-Regular.otf and DejaVuSansMono.ttf are the same files
+already embedded in smaragd via typst-kit's `embedded-fonts` feature (used
+for print-PDF export — see `export::style`), copied here as standalone
+files so they can also be registered directly with egui for on-screen use
+in the Editor and Preview (see `src/editor_font.rs`). No additional
+license terms apply for those two beyond what's already accepted by
+depending on typst-kit/typst-assets with that feature enabled.
+
+AtkinsonHyperlegible-Regular.ttf is *not* part of typst-kit's embedded set
+— it's bundled independently and registered with both egui (via
+`editor_font::install`) and the Typst PDF compiler directly (via
+`TypstEngine::builder().fonts(...)` in `export::pdf`) so styles naming it
+render identically in Preview and PDF, the same guarantee the other two
+fonts have.
 
 * LibertinusSerif-Regular.otf
   Copyright (c) 2012-2024 The Libertinus Project Authors.
@@ -14,3 +21,10 @@ that feature enabled.
 * DejaVuSansMono.ttf
   Based on the Bitstream Vera fonts; DejaVu's changes are in the public
   domain. See https://dejavu-fonts.github.io/License.html
+
+* AtkinsonHyperlegible-Regular.ttf
+  Copyright 2020 Braille Institute of America, Inc.
+  Licensed under the SIL Open Font License, Version 1.1.
+  Designed for readability, particularly for low-vision readers — see
+  https://brailleinstitute.org/freefont and https://openfontlicense.org
+  Source: https://github.com/googlefonts/atkinson-hyperlegible

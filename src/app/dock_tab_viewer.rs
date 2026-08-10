@@ -18,6 +18,11 @@ pub(super) enum DockAction {
     RefreshTags,
     EditorSaveError(String),
     Wikilink(WikilinkActivation),
+    /// The Preview tab's inline Style picker (`ui::markdown_preview::show`)
+    /// was switched to a different style this frame — persisted onto
+    /// `ProjectMeta::book_style` via `Project::set_book_style`, the same
+    /// field the Export dialog reads/writes, so the two always agree.
+    SetBookStyle(String),
     Corkboard(CorkboardEvent),
     StoryGrid(crate::ui::story_grid_panel::StoryGridEvent),
     BeliefTimeline(crate::ui::belief_timeline_panel::BeliefTimelineEvent),
@@ -67,7 +72,20 @@ pub(super) struct AppTabViewer<'a> {
     pub(super) folder_word_counts: &'a HashMap<PathBuf, usize>,
     pub(super) editor: &'a mut EditorState,
     pub(super) settings: &'a Settings,
-    pub(super) color_themes: &'a [crate::color_theme::ColorTheme],
+    /// The selectable typesetting styles (see `SmaragdApp::typeset_styles`) —
+    /// used by the Preview tab's inline Style picker, the same list the
+    /// Export dialog's own Style combo box draws from.
+    pub(super) typeset_styles: &'a [crate::export::style::TypesetStyle],
+    /// The project's currently effective export style id, resolved the same
+    /// way `SmaragdApp::open_export` resolves it (`ProjectMeta::book_style`
+    /// if it still exists in `typeset_styles`, else the first loaded style).
+    pub(super) book_style_id: &'a str,
+    /// Every custom font name successfully registered with egui via a loaded
+    /// style's `font_file` (see `SmaragdApp::custom_font_names`) — the Preview
+    /// tab passes this to `ui::markdown_preview::show` so it knows which
+    /// non-bundled font names are actually safe to render with, rather than
+    /// assuming a style's `font_file` succeeded just because it was set.
+    pub(super) custom_fonts: &'a [String],
     pub(super) pomodoro: &'a crate::pomodoro::PomodoroState,
     pub(super) pomodoro_durations: crate::pomodoro::PomodoroDurations,
     /// See `SmaragdApp::word_count_cache`.
@@ -353,22 +371,21 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                 if self.editor.open_path.is_some() {
                     let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
                     let project_root = self.project.map(|project| project.root.as_path());
-                    let active_theme = self
-                        .settings
-                        .color_theme
-                        .as_deref()
-                        .and_then(|id| crate::color_theme::find(self.color_themes, id));
-                    if let Some(activation) = ui::markdown_preview::show(
+                    let outcome = ui::markdown_preview::show(
                         ui,
                         &self.editor.buffer,
                         base_dir,
                         project_root,
-                        active_theme,
-                        self.settings.editor_font,
-                        crate::editor_font::resolve_size(self.settings.editor_font_size),
+                        self.typeset_styles,
+                        self.book_style_id,
+                        self.custom_fonts,
                         self.settings.typewriter_quotes,
-                    ) {
+                    );
+                    if let Some(activation) = outcome.wikilink {
                         self.actions.push(DockAction::Wikilink(activation));
+                    }
+                    if let Some(style_id) = outcome.style_changed {
+                        self.actions.push(DockAction::SetBookStyle(style_id));
                     }
                 } else {
                     ui.label("Select a file from the binder to preview.");

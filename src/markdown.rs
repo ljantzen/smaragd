@@ -110,7 +110,7 @@ fn current_sink<'a>(
 /// Parse `markdown` into a flat sequence of blocks. Deliberately does not model
 /// arbitrarily deep nesting (e.g. a blockquote inside a list inside a blockquote) or
 /// footnotes — a flat block list with single-level list nesting covers what an author
-/// actually writes, and matches what the glow-style preview renders.
+/// actually writes, and matches what `ui::markdown_preview` renders.
 pub fn parse(markdown: &str) -> Vec<Block> {
     let (markdown, wikilinks) = extract_wikilinks(markdown);
     let markdown = markdown.as_str();

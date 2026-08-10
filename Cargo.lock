@@ -6427,6 +6427,7 @@ dependencies = [
  "tiny-skia 0.12.0",
  "tokio",
  "toml 1.1.4+spec-1.1.0",
+ "ttf-parser",
  "typst-as-lib",
  "typst-pdf",
  "usvg 0.48.1",

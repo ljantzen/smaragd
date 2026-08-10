@@ -10,13 +10,18 @@
 //!
 //! Fonts: `typst-kit`'s embedded fonts (bundled from `typst-assets` at compile
 //! time — no network, no separate install) always include "Libertinus Serif"
-//! and "DejaVu Sans Mono", which is why the built-in styles
-//! (`style::built_in_styles`) default to those names — every built-in style
-//! is guaranteed to render with the exact requested font. System font search
-//! is layered on top (`include_system_fonts(true)`) so a custom style naming
-//! a locally-installed font still works; if neither has the requested name,
-//! Typst falls back to *some* available font rather than erroring — a custom
-//! style with a typo'd font name degrades rather than failing the export.
+//! and "DejaVu Sans Mono", plus "Atkinson Hyperlegible" registered directly
+//! below (it isn't part of `typst-kit`'s own bundle, so it's passed to
+//! `TypstEngine::builder().fonts(...)` explicitly, reusing the exact same
+//! bytes `editor_font::install` registers with egui) — which is why the
+//! built-in styles (`style::built_in_styles`) default to one of these three
+//! names: every built-in style is guaranteed to render with the exact
+//! requested font. System font search is layered on top
+//! (`include_system_fonts(true)`) so a custom style naming a
+//! locally-installed font still works; if none of these has the requested
+//! name, Typst falls back to *some* available font rather than erroring — a
+//! custom style with a typo'd font name degrades rather than failing the
+//! export.
 //!
 //! No remote package resolution (`with_package_file_resolver`) is used
 //! anywhere here — this app is otherwise fully offline-capable, and a print
@@ -51,8 +56,23 @@ pub fn export_pdf(
         source.push_str(&blocks_to_typst(doc, doc_dir, project_root, style));
     }
 
+    // `style`'s own `font_file`s (see `TypesetStyle::body`'s doc comment) —
+    // loaded and embedded directly so PDF export doesn't depend on the font
+    // being separately installed as a system font, the same guarantee the
+    // bundled fonts already have. A file that can't be read is silently
+    // skipped (not an export failure): Typst's own name-based fallback for
+    // "font not found" already covers it, same as a locally-installed font
+    // smaragd doesn't know about ahead of time.
+    let mut embedded_fonts: Vec<Vec<u8>> = vec![crate::editor_font::ATKINSON_HYPERLEGIBLE.to_vec()];
+    embedded_fonts.extend(
+        super::style::custom_font_files(std::slice::from_ref(style))
+            .into_iter()
+            .filter_map(|(_, path)| fs::read(path).ok()),
+    );
+
     let template = TypstEngine::builder()
         .main_file(source)
+        .fonts(embedded_fonts)
         .search_fonts_with(
             TypstKitFontOptions::default()
                 .include_system_fonts(true)
@@ -485,6 +505,37 @@ mod tests {
             "a\\*b\\_c\\`d\\#e\\$f\\[g\\]h\\<i\\>j\\@k"
         );
         assert_eq!(escape_typst("plain text"), "plain text");
+    }
+
+    /// `large_print()`'s body/headings/blockquote font is "Atkinson
+    /// Hyperlegible" — unlike Libertinus Serif/DejaVu Sans Mono, it isn't part
+    /// of `typst-kit`'s own embedded font set, so this specifically exercises
+    /// the `.fonts([ATKINSON_HYPERLEGIBLE])` registration actually reaching
+    /// the Typst compiler (a name-resolution failure there wouldn't panic —
+    /// Typst just silently falls back to a different font — so a successful
+    /// export alone doesn't fully prove the *named* font was found, but a
+    /// failure here would prove registration is broken).
+    #[test]
+    fn export_pdf_with_a_style_using_the_bundled_sans_serif_font_does_not_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let styles = crate::export::style::built_in_styles();
+        let large_print = crate::export::style::find(&styles, "large_print")
+            .unwrap()
+            .clone();
+        let docs = vec![ExportDoc {
+            title: "Chapter One".to_string(),
+            blocks: sample_blocks(),
+            source_path: dir.path().join("chapter1.md"),
+        }];
+        let meta = BookMeta {
+            title: "My Book".to_string(),
+            subtitle: "A Subtitle".to_string(),
+            author: "Jane Doe".to_string(),
+        };
+        let out = dir.path().join("out.pdf");
+        let spine = export_pdf(&docs, &meta, &large_print, dir.path(), &out).unwrap();
+        assert!(out.exists());
+        assert!(spine > 0.0);
     }
 
     #[test]

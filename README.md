@@ -23,7 +23,8 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Project-wide metadata (Title/Subtitle/Author/Logline/What if/Synopsis)
 - Story cards, Lisa Cron "Story Genius" style
 - Story Grid : A read-only view of the Story Cards as a table
-- Glow-CLI-styled markdown preview
+- Project export to DOCX, EPUB, or PDF, using one of 12 built-in (or your own custom) typesetting styles 
+- Live manuscript-styled markdown preview, tied to the selected export typesetting style
 - Obsidian-style `[[Topic]]` / `[[Topic|Alias]]` wikilinks
 - Wikilink autocomplete while typing `[[`: filtered suggestions, arrow-key/Tab/Enter navigation, mouse click
 - Backlinks. A dockable tool window like Binder/Metadata above): every other document that `[[links]]` to the one currently open
@@ -34,7 +35,6 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Support for version control using Git
 - 15 built-in Helix-inspired color themes in addition to your own custom themes 
 - UI Scaling 
-- Project export to DOCX, EPUB, or PDF 
 - A Pomodoro timer 
 - Word Count targets 
 - Writing Streak tracker 

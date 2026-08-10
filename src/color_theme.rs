@@ -13,11 +13,7 @@
 //! Smaragd's editor is a single plain-text `TextEdit` with no tokenizing/syntax
 //! highlighting pipeline (unlike Helix itself), so these themes reproduce each
 //! palette's overall look — background, body text, and one signature accent color
-//! used for selection/links — not full per-token syntax highlighting. A theme can
-//! optionally also override the markdown preview's heading/wikilink/quote-bar
-//! colors (`preview_heading`/`preview_wikilink`/`preview_quote_bar`) — see
-//! `ui::markdown_preview::Palette`; a theme that leaves these `None` renders the
-//! preview exactly as it always has.
+//! used for selection/links — not full per-token syntax highlighting.
 
 use std::path::PathBuf;
 
@@ -37,9 +33,6 @@ pub struct ColorTheme {
     pub background: Color32,
     pub foreground: Color32,
     pub accent: Color32,
-    pub preview_heading: Option<[Color32; 6]>,
-    pub preview_wikilink: Option<Color32>,
-    pub preview_quote_bar: Option<Color32>,
 }
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
@@ -181,8 +174,8 @@ const BUILT_IN: &[BuiltIn] = &[
     },
 ];
 
-/// The 15 built-in themes, as owned `ColorTheme`s (none with a preview-color
-/// override) — the starting point [`load`] appends custom themes onto.
+/// The 15 built-in themes, as owned `ColorTheme`s — the starting point [`load`]
+/// appends custom themes onto.
 pub fn built_in_themes() -> Vec<ColorTheme> {
     BUILT_IN
         .iter()
@@ -193,9 +186,6 @@ pub fn built_in_themes() -> Vec<ColorTheme> {
             background: theme.background,
             foreground: theme.foreground,
             accent: theme.accent,
-            preview_heading: None,
-            preview_wikilink: None,
-            preview_quote_bar: None,
         })
         .collect()
 }
@@ -262,21 +252,11 @@ fn lerp_u8(from: u8, to: u8, t: f32) -> u8 {
     (from as f32 + (to as f32 - from as f32) * t).round() as u8
 }
 
-/// The `[preview]` table of a custom theme's TOML file — every field optional,
-/// matching `ColorTheme::preview_*`.
-#[derive(Deserialize, Default)]
-struct RawPreview {
-    #[serde(default)]
-    heading: Option<[String; 6]>,
-    #[serde(default)]
-    wikilink: Option<String>,
-    #[serde(default)]
-    quote_bar: Option<String>,
-}
-
 /// The on-disk shape of a custom theme `.toml` file, with colors still as hex
 /// strings — converted (and validated) into a real `ColorTheme` by
-/// [`RawTheme::into_theme`].
+/// [`RawTheme::into_theme`]. An unrecognized extra table (e.g. a leftover
+/// `[preview]` from before the markdown preview stopped being independently
+/// themeable) is simply ignored by serde, not an error.
 #[derive(Deserialize)]
 struct RawTheme {
     id: String,
@@ -285,8 +265,6 @@ struct RawTheme {
     background: String,
     foreground: String,
     accent: String,
-    #[serde(default)]
-    preview: RawPreview,
 }
 
 impl RawTheme {
@@ -294,28 +272,6 @@ impl RawTheme {
         let parse = |field: &str, value: &str| {
             parse_hex_color(value).ok_or_else(|| format!("invalid color for {field}: {value:?}"))
         };
-        let preview_heading = match self.preview.heading {
-            Some(hexes) => {
-                let mut colors = [Color32::BLACK; 6];
-                for (i, hex) in hexes.iter().enumerate() {
-                    colors[i] = parse("preview.heading", hex)?;
-                }
-                Some(colors)
-            }
-            None => None,
-        };
-        let preview_wikilink = self
-            .preview
-            .wikilink
-            .as_deref()
-            .map(|hex| parse("preview.wikilink", hex))
-            .transpose()?;
-        let preview_quote_bar = self
-            .preview
-            .quote_bar
-            .as_deref()
-            .map(|hex| parse("preview.quote_bar", hex))
-            .transpose()?;
 
         Ok(ColorTheme {
             id: self.id.to_lowercase(),
@@ -324,9 +280,6 @@ impl RawTheme {
             background: parse("background", &self.background)?,
             foreground: parse("foreground", &self.foreground)?,
             accent: parse("accent", &self.accent)?,
-            preview_heading,
-            preview_wikilink,
-            preview_quote_bar,
         })
     }
 }
@@ -679,33 +632,9 @@ mod tests {
     }
 
     #[test]
-    fn a_custom_theme_without_a_preview_table_has_no_overrides() {
-        let dir = tempfile::tempdir().unwrap();
-        write_theme(
-            dir.path(),
-            "custom.toml",
-            r##"
-                id = "my_theme"
-                label = "My Theme"
-                dark = true
-                background = "#1e1e2e"
-                foreground = "#cdd6f4"
-                accent = "#cba6f7"
-            "##,
-        );
-        let raw: RawTheme =
-            toml::from_str(&std::fs::read_to_string(dir.path().join("custom.toml")).unwrap())
-                .unwrap();
-        let theme = raw.into_theme().unwrap();
-        assert_eq!(theme.id, "my_theme");
-        assert_eq!(theme.background, Color32::from_rgb(0x1e, 0x1e, 0x2e));
-        assert!(theme.preview_heading.is_none());
-        assert!(theme.preview_wikilink.is_none());
-        assert!(theme.preview_quote_bar.is_none());
-    }
-
-    #[test]
-    fn a_custom_theme_with_a_preview_table_has_overrides() {
+    fn a_custom_theme_with_a_leftover_preview_table_still_loads() {
+        // An unrecognized extra table (from before the markdown preview stopped
+        // being independently themeable) is ignored by serde, not an error.
         let source = r##"
             id = "My_Theme"
             label = "My Theme"
@@ -723,25 +652,7 @@ mod tests {
         let theme = raw.into_theme().unwrap();
         // Ids are lowercased, matching how `:theme` lowercases its argument.
         assert_eq!(theme.id, "my_theme");
-        assert_eq!(
-            theme.preview_heading,
-            Some([
-                Color32::from_rgb(0xf3, 0x8b, 0xa8),
-                Color32::from_rgb(0x89, 0xb4, 0xfa),
-                Color32::from_rgb(0xa6, 0xe3, 0xa1),
-                Color32::from_rgb(0xcb, 0xa6, 0xf7),
-                Color32::from_rgb(0xf9, 0xe2, 0xaf),
-                Color32::from_rgb(0xfa, 0xb3, 0x87),
-            ])
-        );
-        assert_eq!(
-            theme.preview_wikilink,
-            Some(Color32::from_rgb(0xa6, 0xe3, 0xa1))
-        );
-        assert_eq!(
-            theme.preview_quote_bar,
-            Some(Color32::from_rgb(0x6c, 0x70, 0x86))
-        );
+        assert_eq!(theme.background, Color32::from_rgb(0x1e, 0x1e, 0x2e));
     }
 
     #[test]

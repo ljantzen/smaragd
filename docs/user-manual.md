@@ -183,7 +183,9 @@ Focus Mode needs an open document to enter — with nothing open there's nothing
 
 ## Markdown Preview
 
-**`View > Preview`** (or the Toggle Preview shortcut) renders the current document in a Glow-CLI-inspired style: a colored heading hierarchy, barred blockquotes, boxed code blocks, striped GFM tables, and images.
+**`View > Preview`** (or the Toggle Preview shortcut) renders the current document the way it will actually look once exported — fonts, sizes, justification, page proportions, and drop cap all come from the currently selected [typesetting style](#typesetting-styles), the same one the [Export](#export) dialog uses. A **Style** picker at the top of the Preview tab lets you switch styles live and see the change immediately; picking a style there updates the project's export style too, so Preview and the Export dialog always agree on what you'll get switching one from the other.
+
+Headings, quotes, code blocks, lists, and tables still render with sensible on-screen formatting, but no longer in the old color-coded "dev preview" palette — book export is effectively monochrome ink on a page, so Preview reads that way too.
 
 Images work two ways:
 - Standard Markdown: `![alt](path/to/image.png)`
@@ -337,7 +339,7 @@ Right-click any folder in the binder and choose **Export…** to compile it — 
 The export dialog has:
 
 - **Title** / **Subtitle** / **Author** — plain book metadata, remembered for next time (the same fields shown in [Project Metadata](#project-metadata) — editing them in either place keeps both in sync). Subtitle is optional; leave it blank if your book doesn't have one.
-- **Style** — a dropdown of typesetting styles (see below). Fonts, page size, running headers, and drop caps all come from whichever style is selected, not from anything typed into this dialog.
+- **Style** — a dropdown of typesetting styles (see below). Fonts, page size, running headers, and drop caps all come from whichever style is selected, not from anything typed into this dialog. The same dropdown appears in the [Preview](#markdown-preview) tab; switching it in either place updates the other.
 - **Export as DOCX…** / **Export as EPUB…** / **Export as Print PDF…** — each opens a native "Save As" dialog (defaulting to a filename built from Title/Subtitle — `"Title - Subtitle.docx"`, falling back to whichever one is set, or `manuscript.docx` if neither is), then compiles.
 
 Title/Subtitle/Author show up differently per format:
@@ -350,12 +352,22 @@ All three formats read from the *same* style, so switching styles changes DOCX, 
 
 ### Typesetting styles
 
-Two built-in styles ship with smaragd:
+Twelve built-in styles ship with smaragd — the first eight follow US/Amazon-KDP trim conventions, the last four follow UK/European ones:
 
 | id | Label | What it looks like |
 |---|---|---|
 | `manuscript` | Manuscript | Plain submission format: US Letter, 1in margins, double-spaced, ragged-right (not justified), no running header or drop cap |
 | `trade_paperback` | Trade Paperback | 6×9in trim, justified body text, a running header (author's name / current chapter), and a drop cap on each chapter's first paragraph |
+| `mass_market` | Mass Market Paperback | 4.25×6.87in trim (the standard mass-market size), small 9pt justified type and tight margins to match, running header, drop cap |
+| `digest` | Digest | 5.5×8.5in trim — between Mass Market and Trade Paperback, common for novellas and shorter literary fiction — justified, running header, drop cap |
+| `hardcover` | Hardcover | 6.14×9.21in trim (KDP's hardcover size), roomier margins and a larger drop cap for a more formal feel, sans-serif (Atkinson Hyperlegible) headings over a serif body, running header shows book title / current chapter |
+| `academic` | Academic | A4, 12pt, ragged-right (not justified — matches APA-style manuscript guidance), no running header or drop cap; for a thesis chapter or paper draft, not a book |
+| `large_print` | Large Print | 7×10in trim, 18pt Atkinson Hyperlegible (a sans-serif designed for low-vision readers) ragged-right body text, no drop cap or running header — accessibility features, not decoration |
+| `chapbook` | Chapbook | 5×8in trim, generous margins, ragged-right (justification would fight a poem's own line breaks), no drop cap, running header shows author/title rather than a chapter |
+| `uk_b_format` | UK B-Format Paperback | 129×198mm — the standard UK trade paperback trim, distinct from (not a rescale of) the US 6×9in Trade Paperback — 10pt justified, running header, drop cap |
+| `uk_a_format` | UK A-Format Paperback | 110×178mm — the UK mass-market paperback trim, smaller and narrower than the US Mass Market Paperback — 9pt justified, running header, drop cap |
+| `a5` | A5 Paperback | ISO 216 A5 (148×210mm exactly) — a common European trade/paperback trim, used as a book size in its own right rather than cut down from a larger sheet — 10pt justified, running header, drop cap |
+| `manuscript_a4` | Manuscript (A4) | `manuscript`'s exact submission conventions (double-spaced, ragged-right, no header or drop cap) on ISO A4 instead of US Letter, for submitting outside North America |
 
 Like [color themes](#custom-themes) and plugins, custom styles are `.toml` files you author or drop into `smaragd/styles/` inside smaragd's config directory (no in-app style editor):
 
@@ -407,7 +419,24 @@ right = "{chapter}"
 
 `{title}`/`{subtitle}`/`{author}` are substituted with whatever's typed into the export dialog; `{chapter}` (supported as a whole side's content, not mixed with other text) shows the current chapter on the print PDF specifically — DOCX and EPUB don't have a per-page "current chapter" concept, so a `{chapter}` token is just left blank there.
 
-**"Libertinus Serif" and "DejaVu Sans Mono"** (the built-in styles' fonts) aren't arbitrary choices — they're guaranteed available to the PDF renderer specifically, bundled with smaragd itself rather than depending on what's installed on your system. A custom style naming some other font still works for DOCX/EPUB (which just reference a font by name, the same way any other document does — Word/an e-reader substitutes if it's not installed), and for PDF too if that font happens to be installed locally; if not, the PDF falls back to *some* available font rather than failing the export.
+**"Libertinus Serif", "DejaVu Sans Mono", and "Atkinson Hyperlegible"** (the built-in styles' fonts) aren't arbitrary choices — they're guaranteed available to the PDF renderer specifically, bundled with smaragd itself rather than depending on what's installed on your system. A custom style naming some other font still works for DOCX/EPUB (which just reference a font by name, the same way any other document does — Word/an e-reader substitutes if it's not installed), and for PDF too if that font happens to be installed locally; if not, the PDF falls back to *some* available font rather than failing the export.
+
+#### Using your own font file
+
+Naming a font that isn't one of those three works for DOCX/EPUB/PDF as above, but the **Preview** tab can't render it — it only knows the fonts actually installed with smaragd, so it falls back to a generic face on-screen even though the exported file uses the real font.
+
+To make Preview (and PDF, without needing the font separately installed as a system font) use your own font file too, add a `font_file` key alongside `font` in any of `[body]`/`[headings]`/`[blockquote]`/`[code]`:
+
+```toml
+[body]
+font = "My Custom Font"
+font_file = "MyCustomFont.ttf"
+size_pt = 11
+```
+
+`font_file` accepts a `.ttf` or `.otf` file, either as an absolute path or (as above) relative to the style's own `.toml` file — so you can keep a style and its font side by side in `smaragd/styles/` and reference it by filename alone. `font` is still what DOCX/EPUB write into the document and what the file is registered under for Preview/PDF, so keep it a real, sensible font name — it's what a reader without the font installed will see substituted. Reload Custom Styles picks up a new or edited `font_file` the same as any other style change; a file that doesn't exist or isn't a valid font is skipped with an error message (that one font slot falls back to a generic face) rather than blocking the rest of the style from loading.
+
+A relative `font_file` resolves against wherever *that particular `.toml` file* lives, which in turn lives in the OS-specific styles folder from the list above (Linux `~/.config/smaragd/styles`, macOS `~/Library/Application Support/smaragd/styles`, Windows `%APPDATA%\smaragd\config\styles`) — so `font_file = "MyFont.ttf"` always means "next to this style file" on every platform, no path syntax to adjust. An *absolute* path, though, is tied to the OS it was written for (`/home/you/Fonts/MyFont.ttf` vs. `C:\Fonts\MyFont.ttf`) and isn't portable if you copy the style file to a different machine running a different OS — a path that isn't recognized as absolute on the machine it's loaded on is silently treated as *relative* instead (almost certainly not the file you meant), rather than erroring. Keeping the font next to the style and using a relative path avoids this entirely, and is the recommended approach if you ever share or sync your `smaragd/styles/` folder across machines. Filesystem case-sensitivity is a related wrinkle: Linux is case-sensitive, macOS and Windows normally aren't, so a `font_file` whose case doesn't exactly match the real filename can still work on macOS/Windows but fail to be found on Linux.
 
 Use **Reload Custom Styles** in the export dialog to pick up a new or edited `.toml` file without restarting. A style file that fails to parse, or whose `id` collides with an already-loaded style (built-in or another custom one — whichever loaded first wins), is skipped with an error message rather than stopping other styles from loading.
 
@@ -701,22 +730,11 @@ accent = "#cba6f7"
 
 `id`, `label`, `dark`, and the three colors are required; colors are `"#RRGGBB"` hex strings (the `#` is optional). `id` is what you'd type as `:theme my_theme` — it's lowercased automatically, so casing in the file doesn't matter.
 
-You can optionally also override the markdown preview's heading-color ladder, wikilink color, and quote-bar color (otherwise a fixed dark/light pair used by every theme, built-in or custom, that doesn't specify its own):
-
-```toml
-[preview]
-heading = ["#f38ba8", "#89b4fa", "#a6e3a1", "#cba6f7", "#f9e2af", "#fab387"]
-wikilink = "#a6e3a1"
-quote_bar = "#6c7086"
-```
-
-`heading` needs all six colors (one per heading level, `h1`–`h6`); `wikilink` and `quote_bar` are independent of each other and of `heading` — include only the ones you want to override.
-
 Use **`View > Theme > Reload Custom Themes`** to pick up a new or edited file without restarting the app. A theme file that fails to parse, has an invalid color, or whose `id` collides with an already-loaded theme (built-in or another custom one — whichever loaded first wins) is skipped with an error message rather than stopping other themes from loading. If the theme you currently have active stops resolving after a reload (for instance, you just introduced a mistake into the file you're editing), smaragd falls back to the default appearance rather than leaving a stale palette applied with nothing in the menu showing as selected.
 
-### Editor and Preview Font
+### Editor Font
 
-**`File > Settings`** has a **Font** section with one shared font and size, used by both the Editor and the Preview — not independent settings for each, so what you write in looks the same as what you preview.
+**`File > Settings`** has a **Font** section with a font and size for the Editor. (The Preview tab's fonts come from the selected [typesetting style](#typesetting-styles) instead — see [Markdown Preview](#markdown-preview) — so this setting no longer affects Preview.)
 
 | Font | What it looks like |
 |---|---|
@@ -724,8 +742,9 @@ Use **`View > Theme > Reload Custom Themes`** to pick up a new or edited file wi
 | Monospace | egui's built-in fixed-width face |
 | Libertinus Serif | A literary serif text font — the same one used by the [Trade Paperback export style](#typesetting-styles) |
 | DejaVu Sans Mono | A fixed-width face — the same one used by the [Manuscript export style](#typesetting-styles) |
+| Atkinson Hyperlegible | A sans-serif designed by the Braille Institute for readability, particularly for low-vision readers — the same one used by the [Large Print export style](#typesetting-styles) |
 
-These four are the only choices — not a live picker over every font installed on your system, so the app looks and behaves identically on every platform. Code blocks in the Preview always render in a fixed-width face regardless of this setting, matching how virtually every other markdown renderer treats code.
+These five are the only choices — not a live picker over every font installed on your system, so the app looks and behaves identically on every platform. A typesetting style naming one of these by name (`"Libertinus Serif"`/`"DejaVu Sans Mono"`/`"Atkinson Hyperlegible"`) renders in Preview with the real font; any other name falls back to a default face for on-screen preview purposes only — the exported DOCX/EPUB/PDF still use the real font name.
 
 ## Keyboard Shortcuts
 
@@ -786,7 +805,7 @@ Both durations are configurable — see **Notifications** under [Settings](#sett
 
 - **General**: **Reopen project on launch** (off by default), **Ensure Research and Trash folders exist in every project** (off by default; see [Projects](#projects)), and a **Notifications** section with **Error toast duration** and **Status bar message duration** (1–60 seconds each, defaulting to 6 and 8 respectively — see [Notifications](#notifications) above)
 - **Appearance**: Dark/Light/System and Color Theme (see [Themes](#themes-and-appearance)), plus **UI Scale** — a manual multiplier (50%–300%, default 100%) on top of whatever scaling your OS/display server already reports, for the rare case that comes back wrong (some Wayland compositors don't report a scale winit picks up, leaving the whole UI tiny with no apparent way to fix it). Takes effect immediately; **Reset** clears it back to 100%
-- **Editor**: font + size (see [Editor and Preview Font](#editor-and-preview-font)) and **Typewriter quotes in Preview and export** (off by default; see [Typewriter Quotes](#typewriter-quotes))
+- **Editor**: font + size (see [Editor Font](#editor-font)) and **Typewriter quotes in Preview and export** (off by default; see [Typewriter Quotes](#typewriter-quotes))
 - **Templates**: date format for `${{date}}` — see [Template Variables](#template-variables)
 - **Pomodoro**: durations (work/short break/long break minutes, and sessions before a long break), plus a desktop-notification toggle for automatic phase completions — see [Pomodoro Timer](#pomodoro-timer)
 - **Shortcuts**: remap or unbind any action, including a fullscreen toggle

@@ -11,6 +11,25 @@ pub(super) struct ExportState {
 }
 
 impl SmaragdApp {
+    /// The project's currently effective export style id: `ProjectMeta::book_style`
+    /// if it still resolves in `self.typeset_styles`, else the first loaded style
+    /// (built-in "Manuscript"), else empty if somehow no styles loaded at all or no
+    /// project is open. Shared by `open_export` (pre-filling the Export dialog's
+    /// Style field) and the Preview tab's inline Style picker (`ui::markdown_preview`),
+    /// so both always start from the same resolved style.
+    pub(super) fn resolve_book_style_id(&self) -> String {
+        let Some(project) = &self.project else {
+            return String::new();
+        };
+        project
+            .meta
+            .book_style
+            .clone()
+            .filter(|id| crate::export::style::find(&self.typeset_styles, id).is_some())
+            .or_else(|| self.typeset_styles.first().map(|s| s.id.clone()))
+            .unwrap_or_default()
+    }
+
     /// Open the Export dialog for `path` (a binder folder) — pre-fills the
     /// Title/Subtitle/Author fields from `ProjectMeta::book_title`/
     /// `book_subtitle`/`book_author` and the Style choice from
@@ -25,13 +44,7 @@ impl SmaragdApp {
             .find_by_path(&path)
             .map(|node| node.name.clone())
             .unwrap_or_else(|| path.display().to_string());
-        let style_id = project
-            .meta
-            .book_style
-            .clone()
-            .filter(|id| crate::export::style::find(&self.typeset_styles, id).is_some())
-            .or_else(|| self.typeset_styles.first().map(|s| s.id.clone()))
-            .unwrap_or_default();
+        let style_id = self.resolve_book_style_id();
         self.export = Some(ExportState {
             source: path,
             source_label,
@@ -49,7 +62,11 @@ impl SmaragdApp {
     /// dismisses it. Title/Subtitle/Author/Style edits are persisted to the
     /// project regardless of which button was pressed, since the fields may
     /// have changed even if the user just closes the dialog.
-    pub(super) fn finish_export(&mut self, action: ui::export_panel::ExportAction) {
+    pub(super) fn finish_export(
+        &mut self,
+        ctx: &egui::Context,
+        action: ui::export_panel::ExportAction,
+    ) {
         let Some(state) = &self.export else {
             return;
         };
@@ -72,7 +89,7 @@ impl SmaragdApp {
         else {
             match action {
                 ui::export_panel::ExportAction::Close => self.export = None,
-                ui::export_panel::ExportAction::ReloadStyles => self.reload_typeset_styles(),
+                ui::export_panel::ExportAction::ReloadStyles => self.reload_typeset_styles(ctx),
                 _ => self.push_error_toast("No typesetting style selected"),
             }
             return;
@@ -83,7 +100,7 @@ impl SmaragdApp {
                 self.export = None;
             }
             ui::export_panel::ExportAction::ReloadStyles => {
-                self.reload_typeset_styles();
+                self.reload_typeset_styles(ctx);
             }
             ui::export_panel::ExportAction::Docx => {
                 if let Some(out_path) = rfd::FileDialog::new()

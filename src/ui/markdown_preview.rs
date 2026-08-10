@@ -3,43 +3,19 @@ use std::path::Path;
 use egui::{Color32, FontId, RichText, TextFormat, text::LayoutJob};
 
 use crate::editor_font::EditorFont;
+use crate::export::style::{self, DropCapStyle, TypesetStyle};
 use crate::markdown::{self, Block, BlockKind, ImageRef, Span};
 use crate::ui::WikilinkActivation;
 
-// Approximates the "dark"/dracula-family palette glow (charmbracelet/glow) renders
-// markdown with in a terminal: pink/cyan/green/purple heading hierarchy, a muted
-// blue-gray blockquote bar, and a dark panel for code. Kept as the *dark*-mode half
-// of `Palette` below — used verbatim when `ui.visuals().dark_mode` is true.
-const HEADING_COLORS_DARK: [Color32; 6] = [
-    Color32::from_rgb(0xFF, 0x79, 0xC6), // h1 - pink
-    Color32::from_rgb(0x8B, 0xE9, 0xFD), // h2 - cyan
-    Color32::from_rgb(0x50, 0xFA, 0x7B), // h3 - green
-    Color32::from_rgb(0xBD, 0x93, 0xF9), // h4 - purple
-    Color32::from_rgb(0xF1, 0xFA, 0x8C), // h5 - yellow
-    Color32::from_rgb(0xFF, 0xB8, 0x6C), // h6 - orange
-];
-// Darker, more saturated variants of the same hues (same order), legible against a
-// light background instead — the light-mode half of `Palette`.
-const HEADING_COLORS_LIGHT: [Color32; 6] = [
-    Color32::from_rgb(0xB3, 0x00, 0x60), // h1 - pink
-    Color32::from_rgb(0x00, 0x76, 0x8C), // h2 - cyan
-    Color32::from_rgb(0x1E, 0x8E, 0x3A), // h3 - green
-    Color32::from_rgb(0x6C, 0x3F, 0xA6), // h4 - purple
-    Color32::from_rgb(0x8A, 0x6D, 0x00), // h5 - yellow
-    Color32::from_rgb(0xB5, 0x5A, 0x00), // h6 - orange
-];
-const WIKILINK_COLOR_DARK: Color32 = Color32::from_rgb(0x50, 0xFA, 0x7B);
-const WIKILINK_COLOR_LIGHT: Color32 = Color32::from_rgb(0x1E, 0x8E, 0x3A);
-const QUOTE_BAR_DARK: Color32 = Color32::from_rgb(0x62, 0x72, 0xA4);
-const QUOTE_BAR_LIGHT: Color32 = Color32::from_rgb(0x4A, 0x55, 0x78);
-
-/// The body size the fixed per-level heading sizes below were tuned against —
-/// `heading_size` scales them proportionally to whatever body size `Settings`
-/// actually configures, so the H1..H6 hierarchy's *relative* proportions stay
-/// the same regardless of the user's chosen font size.
-const REFERENCE_BODY_SIZE: f32 = 15.0;
 const BLOCK_SPACING: f32 = 10.0;
 const INDENT_PER_DEPTH: f32 = 20.0;
+
+/// Rough mm -> px scale used only to frame the preview's text column to a
+/// style's page width, so switching between (e.g.) Manuscript and Trade
+/// Paperback visibly narrows/widens the column the way switching styles
+/// should — not meant to be print-accurate (screen DPI varies).
+const PX_PER_MM: f32 = 3.0;
+const MIN_CONTENT_WIDTH: f32 = 100.0;
 
 /// Context needed to resolve a markdown `![](src)` into a loadable path: `dir` (the
 /// open document's own folder) resolves a relative `src`, and `project_root` — when
@@ -52,91 +28,118 @@ struct ImageContext<'a> {
     project_root: Option<&'a Path>,
 }
 
-/// Colors the preview renders with, derived from the current `egui::Visuals` (which
-/// reflects dark/light mode and any active `color_theme`) once per `show()` call.
-/// Body text, quote text, code backgrounds, and link color come straight from
-/// `Visuals` so they're always correctly contrasted against whatever the current
-/// theme's background is; headings and wikilinks keep the "glow"-style rainbow
-/// hierarchy this module was modeled on, picking whichever of the two hardcoded hue
-/// sets above actually reads clearly against a dark or light background.
-struct Palette {
-    heading: [Color32; 6],
-    body: Color32,
-    quote_bar: Color32,
-    quote_text: Color32,
-    code_bg: Color32,
-    code_inline_bg: Color32,
-    link: Color32,
-    wikilink: Color32,
-    dark_mode: bool,
-    /// The user's configured body font/size (`Settings::editor_font`/
-    /// `editor_font_size`, shared with the Editor) — everything except code
-    /// blocks (always monospace, matching every other markdown renderer's
-    /// convention) renders in this.
-    body_font: EditorFont,
-    body_size: f32,
+/// Resolves a `TypesetStyle` font name to one of the families egui actually has
+/// registered — either one of the three always-bundled ones
+/// (`editor_font::install`), or, if `custom_fonts` names it, a custom font a
+/// style loaded via `font_file` (`editor_font::install_custom_fonts`). A
+/// style's font is a free-text string — fine for DOCX/EPUB (which just
+/// reference a font by name) and for PDF (which resolves it via Typst,
+/// falling back to *some* available font if it's not installed) — but egui
+/// itself only knows what's actually been registered. `custom_fonts` must
+/// only ever contain names `install_custom_fonts` actually succeeded on —
+/// building an `egui::FontFamily::Name` for a name that was never registered
+/// panics the next time it's used to lay out text, so this never does that
+/// optimistically just because a style's `font_file` was set. An unrecognized
+/// name falls back to `fallback` here, same "some available font rather than
+/// none" spirit `export::pdf` already documents for its own resolution.
+fn resolve_family(
+    font_name: &str,
+    custom_fonts: &[String],
+    fallback: egui::FontFamily,
+) -> egui::FontFamily {
+    if font_name.eq_ignore_ascii_case("Libertinus Serif") {
+        EditorFont::LibertinusSerif.family()
+    } else if font_name.eq_ignore_ascii_case("DejaVu Sans Mono") {
+        EditorFont::DejaVuSansMono.family()
+    } else if font_name.eq_ignore_ascii_case("Atkinson Hyperlegible") {
+        EditorFont::AtkinsonHyperlegible.family()
+    } else if let Some(registered) = custom_fonts
+        .iter()
+        .find(|name| name.eq_ignore_ascii_case(font_name))
+    {
+        // Uses `registered`'s own casing, not `font_name`'s — they can differ if
+        // two styles declare the same font under different casing, and only the
+        // registered one is guaranteed to actually be the family key
+        // `editor_font::install_custom_fonts` registered.
+        egui::FontFamily::Name(registered.clone().into())
+    } else {
+        fallback
+    }
 }
 
-impl Palette {
-    /// `active_theme`, if given, may override `heading`/`wikilink`/`quote_bar`
-    /// (via `ColorTheme::preview_heading`/`preview_wikilink`/`preview_quote_bar`)
-    /// — a theme that leaves any of those `None` falls back to the hardcoded
-    /// dark/light default for that one color, unchanged from before this existed.
-    fn new(
-        visuals: &egui::Visuals,
-        active_theme: Option<&crate::color_theme::ColorTheme>,
-        body_font: EditorFont,
-        body_size: f32,
-    ) -> Self {
-        let (heading, quote_bar, wikilink) = if visuals.dark_mode {
-            (HEADING_COLORS_DARK, QUOTE_BAR_DARK, WIKILINK_COLOR_DARK)
-        } else {
-            (HEADING_COLORS_LIGHT, QUOTE_BAR_LIGHT, WIKILINK_COLOR_LIGHT)
-        };
-        let heading = active_theme
-            .and_then(|theme| theme.preview_heading)
-            .unwrap_or(heading);
-        let wikilink = active_theme
-            .and_then(|theme| theme.preview_wikilink)
-            .unwrap_or(wikilink);
-        let quote_bar = active_theme
-            .and_then(|theme| theme.preview_quote_bar)
-            .unwrap_or(quote_bar);
+/// Rendering inputs derived once per `show()` call from the selected
+/// `TypesetStyle` and the current `egui::Visuals` — the styling analog of the
+/// old Glow-palette `Palette`, but driven by what will actually get exported
+/// instead of a fixed dev-preview color scheme. Colors stay theme-aware
+/// (`Visuals::text_color`/`weak_text_color`/`hyperlink_color`) since a
+/// `TypesetStyle` has no color concept of its own — book export is
+/// effectively monochrome ink on a page.
+struct PreviewStyle<'a> {
+    style: &'a TypesetStyle,
+    body_family: egui::FontFamily,
+    heading_family: egui::FontFamily,
+    quote_family: egui::FontFamily,
+    code_family: egui::FontFamily,
+    text_color: Color32,
+    quote_text_color: Color32,
+    quote_bar_color: Color32,
+    code_bg: Color32,
+    link_color: Color32,
+    dark_mode: bool,
+}
+
+impl<'a> PreviewStyle<'a> {
+    fn new(visuals: &egui::Visuals, style: &'a TypesetStyle, custom_fonts: &[String]) -> Self {
         Self {
-            heading,
-            body: visuals.text_color(),
-            quote_bar,
-            quote_text: visuals.weak_text_color(),
+            style,
+            body_family: resolve_family(
+                &style.body.font,
+                custom_fonts,
+                egui::FontFamily::Proportional,
+            ),
+            heading_family: resolve_family(
+                &style.headings.font,
+                custom_fonts,
+                egui::FontFamily::Proportional,
+            ),
+            quote_family: resolve_family(
+                &style.blockquote.font,
+                custom_fonts,
+                egui::FontFamily::Proportional,
+            ),
+            code_family: resolve_family(
+                &style.code.font,
+                custom_fonts,
+                egui::FontFamily::Monospace,
+            ),
+            text_color: visuals.text_color(),
+            quote_text_color: visuals.weak_text_color(),
+            quote_bar_color: visuals.weak_text_color(),
             code_bg: visuals.code_bg_color,
-            code_inline_bg: visuals.code_bg_color,
-            link: visuals.hyperlink_color,
-            wikilink,
+            link_color: visuals.hyperlink_color,
             dark_mode: visuals.dark_mode,
-            body_font,
-            body_size,
         }
     }
 
-    /// The body font at `size` points — every non-code-block text run resolves
-    /// its `FontId` through this, rather than a hardcoded `FontId::proportional`.
-    fn font_id(&self, size: f32) -> FontId {
-        FontId::new(size, self.body_font.family())
+    fn body_font(&self, size: f32) -> FontId {
+        FontId::new(size, self.body_family.clone())
     }
-}
 
-/// H1..H6 point size, scaled from the fixed reference sizes below (tuned at
-/// `REFERENCE_BODY_SIZE`) so the hierarchy's proportions hold regardless of the
-/// user's configured body size.
-fn heading_size(level: u8, body_size: f32) -> f32 {
-    let reference = match level {
-        1 => 28.0,
-        2 => 24.0,
-        3 => 20.0,
-        4 => 18.0,
-        5 => 16.5,
-        _ => 15.5,
-    };
-    reference * (body_size / REFERENCE_BODY_SIZE)
+    fn heading_font(&self, level: u8) -> FontId {
+        let size = self.style.headings.sizes_pt[(level.saturating_sub(1).min(5)) as usize] as f32;
+        FontId::new(size, self.heading_family.clone())
+    }
+
+    fn quote_font(&self) -> FontId {
+        FontId::new(
+            self.style.blockquote.size_pt as f32,
+            self.quote_family.clone(),
+        )
+    }
+
+    fn code_font(&self) -> FontId {
+        FontId::new(self.style.code.size_pt as f32, self.code_family.clone())
+    }
 }
 
 /// Push `color` further from the background — toward white in dark mode, toward
@@ -154,17 +157,30 @@ fn emphasize(color: Color32, dark_mode: bool) -> Color32 {
     }
 }
 
-/// Render `markdown` styled like the `glow` CLI's terminal preview: colored heading
-/// hierarchy, a barred blockquote, a boxed code block, and a striped table, laid out
-/// with egui widgets. `base_dir` (typically the open document's folder) resolves a
-/// relative image path; `project_root`, if given, additionally bounds where that
-/// resolution — and an absolute or `..`-escaping `src` — is allowed to land, so a
-/// document can't make the preview read a file outside the project (see
-/// `resolve_image_uri`). Pass `None` for either when there's no meaningful base/root.
+/// The Preview tab's `show()` result: a clicked wikilink (if any, same as
+/// before) plus the new style id, when the inline Style picker changed it this
+/// frame — the caller (`app::dock_tab_viewer`) is responsible for both.
+pub struct PreviewOutcome {
+    pub wikilink: Option<WikilinkActivation>,
+    pub style_changed: Option<String>,
+}
+
+/// Render `markdown_text` styled as it will actually appear once exported: fonts,
+/// sizes, justification, drop cap, and page-width proportions all come from
+/// `style_id`'s `TypesetStyle` (looked up in `styles`, falling back to the first
+/// loaded style if `style_id` doesn't resolve — same fallback `app::open_export`
+/// uses) rather than a fixed dev-preview palette. An inline Style combo box above
+/// the rendered text lets the style be switched live; picking a different one is
+/// reported via `PreviewOutcome::style_changed` for the caller to persist onto
+/// `ProjectMeta::book_style` — the same field the Export dialog reads/writes — so
+/// Preview and Export always agree on what you'll get.
 ///
-/// Returns `Some` if the user clicked a `[[wikilink]]` during this frame — the caller
-/// is responsible for finding (and, if `force_create` is set because Ctrl/Cmd was
-/// held, creating) the matching document.
+/// `base_dir` (typically the open document's folder) resolves a relative image
+/// path; `project_root`, if given, additionally bounds where that resolution —
+/// and an absolute or `..`-escaping `src` — is allowed to land, so a document
+/// can't make the preview read a file outside the project (see
+/// `resolve_image_uri`). Pass `None` for either when there's no meaningful
+/// base/root.
 ///
 /// `typewriter_quotes` mirrors `Settings::typewriter_quotes` — when set, the
 /// parsed blocks are run through `markdown::apply_typewriter_quotes` before
@@ -177,102 +193,215 @@ pub fn show(
     markdown_text: &str,
     base_dir: Option<&Path>,
     project_root: Option<&Path>,
-    active_theme: Option<&crate::color_theme::ColorTheme>,
-    body_font: EditorFont,
-    body_size: f32,
+    styles: &[TypesetStyle],
+    style_id: &str,
+    custom_fonts: &[String],
     typewriter_quotes: bool,
-) -> Option<WikilinkActivation> {
+) -> PreviewOutcome {
     let base_dir = ImageContext {
         dir: base_dir,
         project_root,
     };
+
+    let mut selected_id = style_id.to_string();
+    let current_label = style::find(styles, &selected_id)
+        .map(|s| s.label.as_str())
+        .unwrap_or("(none)");
+    // `with_layout` alone claims the *entire* remaining height of the panel as
+    // its rect (right_to_left is still a single row, but nothing bounds that
+    // row to one line's height) — wrapping it in `horizontal` first bounds the
+    // row to its tallest child, so only then does right-aligning inside it
+    // actually look like a slim top bar instead of pushing everything below
+    // (the separator, the rendered document) down past the visible area.
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            egui::ComboBox::from_id_salt("preview_style_combo")
+                .selected_text(current_label)
+                .show_ui(ui, |ui| {
+                    for candidate in styles {
+                        ui.selectable_value(
+                            &mut selected_id,
+                            candidate.id.clone(),
+                            &candidate.label,
+                        );
+                    }
+                });
+        });
+    });
+    let style_changed = (selected_id != style_id).then(|| selected_id.clone());
+    ui.separator();
+
+    let Some(style) = style::find(styles, &selected_id).or_else(|| styles.first()) else {
+        ui.weak("No typesetting style available.");
+        return PreviewOutcome {
+            wikilink: None,
+            style_changed,
+        };
+    };
+
     let mut blocks = markdown::parse(crate::frontmatter::strip(markdown_text));
     if typewriter_quotes {
         markdown::apply_typewriter_quotes(&mut blocks);
     }
-    let palette = Palette::new(ui.visuals(), active_theme, body_font, body_size);
-    egui::ScrollArea::vertical()
+    let ps = PreviewStyle::new(ui.visuals(), style, custom_fonts);
+
+    let wikilink = egui::ScrollArea::vertical()
         .id_salt("markdown_preview_scroll")
         .show(ui, |ui| {
             if blocks.is_empty() {
                 ui.weak("Nothing to preview yet.");
                 return None;
             }
+            let content_width = ((style.page.width_mm - 2.0 * style.page.margin_mm) * PX_PER_MM)
+                .max(MIN_CONTENT_WIDTH)
+                .min(ui.available_width());
+            ui.set_max_width(content_width);
+
             let mut clicked = None;
+            let mut first_paragraph_seen = false;
             for block in &blocks {
-                if let Some(target) = render_block(ui, &palette, block, base_dir) {
+                let drop_cap_here =
+                    !first_paragraph_seen && matches!(block.kind, BlockKind::Paragraph);
+                if matches!(block.kind, BlockKind::Paragraph) {
+                    first_paragraph_seen = true;
+                }
+                if let Some(target) = render_block(ui, &ps, block, base_dir, drop_cap_here) {
                     clicked = Some(target);
                 }
                 ui.add_space(BLOCK_SPACING);
             }
             clicked
         })
-        .inner
+        .inner;
+
+    PreviewOutcome {
+        wikilink,
+        style_changed,
+    }
 }
 
 fn render_block(
     ui: &mut egui::Ui,
-    palette: &Palette,
+    ps: &PreviewStyle,
     block: &Block,
     base_dir: ImageContext<'_>,
+    drop_cap_here: bool,
 ) -> Option<WikilinkActivation> {
     match &block.kind {
-        BlockKind::Heading(level) => render_heading(ui, palette, *level, &block.spans, base_dir),
-        BlockKind::Paragraph => render_spans(
-            ui,
-            palette,
-            &block.spans,
-            palette.font_id(palette.body_size),
-            palette.body,
-            base_dir,
-        ),
+        BlockKind::Heading(level) => render_heading(ui, ps, *level, &block.spans, base_dir),
+        BlockKind::Paragraph => render_paragraph(ui, ps, &block.spans, base_dir, drop_cap_here),
         BlockKind::CodeBlock { language } => {
-            render_code_block(ui, palette, language.as_deref(), &block.spans);
+            render_code_block(ui, ps, language.as_deref(), &block.spans);
             None
         }
-        BlockKind::BlockQuote => render_blockquote(ui, palette, &block.spans, base_dir),
+        BlockKind::BlockQuote => render_blockquote(ui, ps, &block.spans, base_dir),
         BlockKind::ListItem {
             ordered,
             index,
             depth,
-        } => render_list_item(
-            ui,
-            palette,
-            *ordered,
-            *index,
-            *depth,
-            &block.spans,
-            base_dir,
-        ),
+        } => render_list_item(ui, ps, *ordered, *index, *depth, &block.spans, base_dir),
         BlockKind::Rule => {
             ui.add_space(4.0);
             ui.separator();
             None
         }
-        BlockKind::Table { header, rows, .. } => render_table(ui, palette, header, rows, base_dir),
+        BlockKind::Table { header, rows, .. } => render_table(ui, ps, header, rows, base_dir),
     }
 }
 
 fn render_heading(
     ui: &mut egui::Ui,
-    palette: &Palette,
+    ps: &PreviewStyle,
     level: u8,
     spans: &[Span],
     base_dir: ImageContext<'_>,
 ) -> Option<WikilinkActivation> {
-    let color = palette.heading[(level.saturating_sub(1).min(5)) as usize];
-    let size = heading_size(level, palette.body_size);
-    let clicked = render_spans(ui, palette, spans, palette.font_id(size), color, base_dir);
-    if level == 1 {
+    let font = ps.heading_font(level);
+    let clicked = render_spans_wrapped(ui, ps, spans, font, ps.text_color, base_dir);
+    if ps.style.headings.page_break_before {
         ui.add_space(2.0);
         ui.separator();
     }
     clicked
 }
 
-fn render_code_block(ui: &mut egui::Ui, palette: &Palette, language: Option<&str>, spans: &[Span]) {
+/// Renders a paragraph as a single justifiable `LayoutJob` when it's plain text
+/// (the common case for manuscript body copy), so `style.body.justify` can
+/// actually take effect. A paragraph containing a wikilink or image needs real
+/// interactive widgets egui can't express inside one `LayoutJob`, so those fall
+/// back to the same wrapped multi-widget rendering headings/blockquotes use —
+/// left-aligned regardless of `justify`, a known v1 limitation.
+fn render_paragraph(
+    ui: &mut egui::Ui,
+    ps: &PreviewStyle,
+    spans: &[Span],
+    base_dir: ImageContext<'_>,
+    drop_cap_here: bool,
+) -> Option<WikilinkActivation> {
+    let needs_widget = spans
+        .iter()
+        .any(|s| s.image.is_some() || s.wikilink.is_some());
+    if needs_widget {
+        let font = ps.body_font(ps.style.body.size_pt as f32);
+        return render_spans_wrapped(ui, ps, spans, font, ps.text_color, base_dir);
+    }
+    let drop_cap = drop_cap_here.then_some(ps.style.drop_cap).flatten();
+    let job = build_paragraph_job(ps, spans, drop_cap, ui.available_width());
+    ui.add(egui::Label::new(job).wrap());
+    None
+}
+
+/// Builds a whole-paragraph `LayoutJob` with `wrap.max_width`/`justify` set from
+/// `style.body`, optionally rendering the first character oversized as a raised
+/// drop cap (matches `export::pdf`'s own "raised, not sunk" cap — see
+/// `DropCapStyle`'s doc comment — so Preview and PDF agree on what this looks
+/// like) when `drop_cap` is `Some` — only ever passed for a document's first
+/// paragraph, mirroring `export::pdf::blocks_to_typst`'s own
+/// `first_paragraph_seen` gating.
+fn build_paragraph_job(
+    ps: &PreviewStyle,
+    spans: &[Span],
+    drop_cap: Option<DropCapStyle>,
+    wrap_width: f32,
+) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    job.wrap.max_width = wrap_width.max(1.0);
+    job.justify = ps.style.body.justify;
+    let base_size = ps.style.body.size_pt as f32;
+    let base_font = ps.body_font(base_size);
+
+    let mut start = 0;
+    if let Some(DropCapStyle { scale }) = drop_cap
+        && let Some(first) = spans.first()
+        && let Some(ch) = first.text.chars().next()
+    {
+        let cap_font = FontId::new(base_size * scale, ps.body_family.clone());
+        job.append(
+            &ch.to_string(),
+            0.0,
+            TextFormat {
+                font_id: cap_font,
+                color: ps.text_color,
+                ..Default::default()
+            },
+        );
+        let rest_byte = ch.len_utf8();
+        if rest_byte < first.text.len() {
+            let mut remainder = first.clone();
+            remainder.text = first.text[rest_byte..].to_string();
+            append_span(&mut job, ps, &remainder, base_font.clone(), ps.text_color);
+        }
+        start = 1;
+    }
+    for span in &spans[start..] {
+        append_span(&mut job, ps, span, base_font.clone(), ps.text_color);
+    }
+    job
+}
+
+fn render_code_block(ui: &mut egui::Ui, ps: &PreviewStyle, language: Option<&str>, spans: &[Span]) {
     egui::Frame::new()
-        .fill(palette.code_bg)
+        .fill(ps.code_bg)
         .corner_radius(4.0)
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
@@ -282,15 +411,15 @@ fn render_code_block(ui: &mut egui::Ui, palette: &Palette, language: Option<&str
             let text: String = spans.iter().map(|s| s.text.as_str()).collect();
             ui.add(egui::Label::new(
                 RichText::new(text.trim_end_matches('\n'))
-                    .font(FontId::monospace(palette.body_size))
-                    .color(palette.body),
+                    .font(ps.code_font())
+                    .color(ps.text_color),
             ));
         });
 }
 
 fn render_blockquote(
     ui: &mut egui::Ui,
-    palette: &Palette,
+    ps: &PreviewStyle,
     spans: &[Span],
     base_dir: ImageContext<'_>,
 ) -> Option<WikilinkActivation> {
@@ -299,17 +428,19 @@ fn render_blockquote(
             egui::vec2(3.0, ui.spacing().interact_size.y),
             egui::Sense::hover(),
         );
-        ui.painter().rect_filled(rect, 0.0, palette.quote_bar);
-        let mut italic_spans = spans.to_vec();
-        for span in &mut italic_spans {
-            span.italic = true;
+        ui.painter().rect_filled(rect, 0.0, ps.quote_bar_color);
+        let mut styled_spans = spans.to_vec();
+        if ps.style.blockquote.italic {
+            for span in &mut styled_spans {
+                span.italic = true;
+            }
         }
-        render_spans(
+        render_spans_wrapped(
             ui,
-            palette,
-            &italic_spans,
-            palette.font_id(palette.body_size),
-            palette.quote_text,
+            ps,
+            &styled_spans,
+            ps.quote_font(),
+            ps.quote_text_color,
             base_dir,
         )
     })
@@ -318,13 +449,14 @@ fn render_blockquote(
 
 fn render_list_item(
     ui: &mut egui::Ui,
-    palette: &Palette,
+    ps: &PreviewStyle,
     ordered: bool,
     index: Option<u64>,
     depth: u8,
     spans: &[Span],
     base_dir: ImageContext<'_>,
 ) -> Option<WikilinkActivation> {
+    let size = ps.style.body.size_pt as f32;
     ui.horizontal(|ui| {
         ui.add_space(depth as f32 * INDENT_PER_DEPTH);
         let bullet = if ordered {
@@ -336,18 +468,11 @@ fn render_list_item(
         };
         ui.label(
             RichText::new(bullet)
-                .color(palette.body)
-                .font(palette.font_id(palette.body_size))
+                .color(ps.text_color)
+                .font(ps.body_font(size))
                 .strong(),
         );
-        render_spans(
-            ui,
-            palette,
-            spans,
-            palette.font_id(palette.body_size),
-            palette.body,
-            base_dir,
-        )
+        render_spans_wrapped(ui, ps, spans, ps.body_font(size), ps.text_color, base_dir)
     })
     .inner
 }
@@ -356,11 +481,12 @@ fn render_list_item(
 /// into the block already but not yet reflected here — every cell is left-aligned.
 fn render_table(
     ui: &mut egui::Ui,
-    palette: &Palette,
+    ps: &PreviewStyle,
     header: &[Vec<Span>],
     rows: &[Vec<Vec<Span>>],
     base_dir: ImageContext<'_>,
 ) -> Option<WikilinkActivation> {
+    let size = ps.style.body.size_pt as f32;
     let mut clicked = None;
     egui::Frame::new()
         .inner_margin(egui::Margin::same(4))
@@ -370,12 +496,12 @@ fn render_table(
                 .spacing(egui::vec2(16.0, 6.0))
                 .show(ui, |ui| {
                     for cell in header {
-                        if let Some(activation) = render_spans(
+                        if let Some(activation) = render_spans_wrapped(
                             ui,
-                            palette,
+                            ps,
                             cell,
-                            palette.font_id(palette.body_size),
-                            emphasize(palette.body, palette.dark_mode),
+                            ps.body_font(size),
+                            emphasize(ps.text_color, ps.dark_mode),
                             base_dir,
                         ) {
                             clicked = Some(activation);
@@ -384,12 +510,12 @@ fn render_table(
                     ui.end_row();
                     for row in rows {
                         for cell in row {
-                            if let Some(activation) = render_spans(
+                            if let Some(activation) = render_spans_wrapped(
                                 ui,
-                                palette,
+                                ps,
                                 cell,
-                                palette.font_id(palette.body_size),
-                                palette.body,
+                                ps.body_font(size),
+                                ps.text_color,
                                 base_dir,
                             ) {
                                 clicked = Some(activation);
@@ -406,10 +532,12 @@ fn render_table(
 /// `[[wikilink]]` span as a clickable link, and each `![image](src)` span as a loaded
 /// image (falling back to its alt text while loading or on error). Returns the
 /// clicked wikilink, if any — holding Ctrl (Cmd on macOS) while clicking sets
-/// `force_create`.
-fn render_spans(
+/// `force_create`. Used for headings/blockquotes/lists/tables and any paragraph
+/// containing a wikilink or image — see `render_paragraph` for why plain-text
+/// paragraphs instead go through `build_paragraph_job` (justify support).
+fn render_spans_wrapped(
     ui: &mut egui::Ui,
-    palette: &Palette,
+    ps: &PreviewStyle,
     spans: &[Span],
     base_font: FontId,
     base_color: Color32,
@@ -422,28 +550,18 @@ fn render_spans(
         for span in spans {
             if let Some(image) = &span.image {
                 if !buffer.is_empty() {
-                    ui.label(build_layout_job(
-                        palette,
-                        &buffer,
-                        base_font.clone(),
-                        base_color,
-                    ));
+                    ui.label(build_inline_job(ps, &buffer, base_font.clone(), base_color));
                     buffer.clear();
                 }
                 render_image(ui, image, &span.text, base_dir);
             } else if let Some(target) = &span.wikilink {
                 if !buffer.is_empty() {
-                    ui.label(build_layout_job(
-                        palette,
-                        &buffer,
-                        base_font.clone(),
-                        base_color,
-                    ));
+                    ui.label(build_inline_job(ps, &buffer, base_font.clone(), base_color));
                     buffer.clear();
                 }
                 let response = ui.link(
                     RichText::new(&span.text)
-                        .color(palette.wikilink)
+                        .color(ps.link_color)
                         .font(base_font.clone()),
                 );
                 if response.clicked() {
@@ -458,11 +576,53 @@ fn render_spans(
             }
         }
         if !buffer.is_empty() {
-            ui.label(build_layout_job(palette, &buffer, base_font, base_color));
+            ui.label(build_inline_job(ps, &buffer, base_font, base_color));
         }
         clicked
     })
     .inner
+}
+
+fn build_inline_job(
+    ps: &PreviewStyle,
+    spans: &[Span],
+    base_font: FontId,
+    base_color: Color32,
+) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    for span in spans {
+        append_span(&mut job, ps, span, base_font.clone(), base_color);
+    }
+    job
+}
+
+fn append_span(job: &mut LayoutJob, ps: &PreviewStyle, span: &Span, font: FontId, color: Color32) {
+    let mut format = TextFormat {
+        font_id: font,
+        color,
+        ..Default::default()
+    };
+    if span.bold {
+        // egui has no bundled bold-weight font; like `RichText::strong()`, we
+        // signal emphasis by pushing the color further from the background
+        // rather than switching fonts.
+        format.color = emphasize(color, ps.dark_mode);
+    }
+    if span.italic {
+        format.italics = true;
+    }
+    if span.strikethrough {
+        format.strikethrough = egui::Stroke::new(1.0, format.color);
+    }
+    if span.code {
+        format.font_id = FontId::new(format.font_id.size * 0.95, ps.code_family.clone());
+        format.background = ps.code_bg;
+    }
+    if span.link.is_some() {
+        format.color = ps.link_color;
+        format.underline = egui::Stroke::new(1.0, ps.link_color);
+    }
+    job.append(&span.text, 0.0, format);
 }
 
 /// Load and display an image, resolving a relative `src` against `base_dir`. Loading
@@ -553,44 +713,6 @@ pub(crate) fn resolve_image_fs_path(
         doc_dir.join(path)
     };
     is_within_project(&resolved, Some(project_root)).then_some(resolved)
-}
-
-fn build_layout_job(
-    palette: &Palette,
-    spans: &[Span],
-    base_font: FontId,
-    base_color: Color32,
-) -> LayoutJob {
-    let mut job = LayoutJob::default();
-    for span in spans {
-        let mut format = TextFormat {
-            font_id: base_font.clone(),
-            color: base_color,
-            ..Default::default()
-        };
-        if span.bold {
-            // egui has no bundled bold-weight font; like `RichText::strong()`, we
-            // signal emphasis by pushing the color further from the background
-            // rather than switching fonts.
-            format.color = emphasize(base_color, palette.dark_mode);
-        }
-        if span.italic {
-            format.italics = true;
-        }
-        if span.strikethrough {
-            format.strikethrough = egui::Stroke::new(1.0, format.color);
-        }
-        if span.code {
-            format.font_id = FontId::monospace(base_font.size * 0.95);
-            format.background = palette.code_inline_bg;
-        }
-        if span.link.is_some() {
-            format.color = palette.link;
-            format.underline = egui::Stroke::new(1.0, palette.link);
-        }
-        job.append(&span.text, 0.0, format);
-    }
-    job
 }
 
 #[cfg(test)]
@@ -731,67 +853,128 @@ mod tests {
     }
 
     #[test]
-    fn palette_from_dark_visuals_uses_the_dark_heading_set() {
-        let palette = Palette::new(&egui::Visuals::dark(), None, EditorFont::Proportional, 15.0);
-        assert_eq!(palette.heading, HEADING_COLORS_DARK);
-        assert!(palette.dark_mode);
-    }
-
-    #[test]
-    fn palette_from_light_visuals_uses_the_light_heading_set() {
-        let palette = Palette::new(
-            &egui::Visuals::light(),
-            None,
-            EditorFont::Proportional,
-            15.0,
-        );
-        assert_eq!(palette.heading, HEADING_COLORS_LIGHT);
-        assert!(!palette.dark_mode);
-    }
-
-    fn theme_with_preview_overrides() -> crate::color_theme::ColorTheme {
-        let mut theme = crate::color_theme::built_in_themes().remove(0);
-        theme.preview_heading = Some([Color32::WHITE; 6]);
-        theme.preview_wikilink = Some(Color32::WHITE);
-        theme.preview_quote_bar = Some(Color32::WHITE);
-        theme
-    }
-
-    #[test]
-    fn a_theme_with_preview_overrides_replaces_the_hardcoded_palette() {
-        let theme = theme_with_preview_overrides();
-        let palette = Palette::new(
-            &egui::Visuals::dark(),
-            Some(&theme),
-            EditorFont::Proportional,
-            15.0,
-        );
-        assert_eq!(palette.heading, [Color32::WHITE; 6]);
-        assert_eq!(palette.wikilink, Color32::WHITE);
-        assert_eq!(palette.quote_bar, Color32::WHITE);
-    }
-
-    #[test]
-    fn a_theme_without_preview_overrides_leaves_the_hardcoded_palette_untouched() {
-        let theme = crate::color_theme::built_in_themes().remove(0);
-        assert!(theme.preview_heading.is_none());
-        let palette = Palette::new(
-            &egui::Visuals::dark(),
-            Some(&theme),
-            EditorFont::Proportional,
-            15.0,
-        );
-        assert_eq!(palette.heading, HEADING_COLORS_DARK);
-        assert_eq!(palette.wikilink, WIKILINK_COLOR_DARK);
-        assert_eq!(palette.quote_bar, QUOTE_BAR_DARK);
-    }
-
-    #[test]
     fn emphasize_moves_toward_white_in_dark_mode_and_black_in_light_mode() {
         let mid_gray = Color32::from_rgb(0x80, 0x80, 0x80);
         let dark = emphasize(mid_gray, true);
         let light = emphasize(mid_gray, false);
         assert!(dark.r() > mid_gray.r());
         assert!(light.r() < mid_gray.r());
+    }
+
+    #[test]
+    fn resolve_family_matches_the_bundled_fonts_case_insensitively() {
+        assert_eq!(
+            resolve_family("libertinus serif", &[], egui::FontFamily::Proportional),
+            EditorFont::LibertinusSerif.family()
+        );
+        assert_eq!(
+            resolve_family("DEJAVU SANS MONO", &[], egui::FontFamily::Proportional),
+            EditorFont::DejaVuSansMono.family()
+        );
+        assert_eq!(
+            resolve_family("atkinson hyperlegible", &[], egui::FontFamily::Proportional),
+            EditorFont::AtkinsonHyperlegible.family()
+        );
+    }
+
+    #[test]
+    fn resolve_family_falls_back_for_an_unrecognized_font_name() {
+        assert_eq!(
+            resolve_family("Comic Sans MS", &[], egui::FontFamily::Monospace),
+            egui::FontFamily::Monospace
+        );
+    }
+
+    #[test]
+    fn resolve_family_matches_a_registered_custom_font_name_case_insensitively() {
+        // The registered entry's own casing ("My Custom Font") is what
+        // `install_custom_fonts` actually used as the family key — the result
+        // must use that casing, not the differently-cased lookup arg, or it'd
+        // reference a family that was never registered.
+        let custom_fonts = vec!["My Custom Font".to_string()];
+        assert_eq!(
+            resolve_family(
+                "my custom font",
+                &custom_fonts,
+                egui::FontFamily::Proportional
+            ),
+            egui::FontFamily::Name("My Custom Font".into())
+        );
+    }
+
+    #[test]
+    fn resolve_family_does_not_trust_an_unregistered_custom_font_name() {
+        // A style's `font_file` might have failed to load — `custom_fonts` only
+        // ever contains names that actually succeeded, so an empty list (as if
+        // registration failed) must fall back, not optimistically build a
+        // `FontFamily::Name` for something that was never registered (which
+        // would panic the next time it's used to lay out text).
+        assert_eq!(
+            resolve_family("My Custom Font", &[], egui::FontFamily::Monospace),
+            egui::FontFamily::Monospace
+        );
+    }
+
+    fn plain_span(text: &str) -> Span {
+        Span {
+            text: text.to_string(),
+            bold: false,
+            italic: false,
+            strikethrough: false,
+            code: false,
+            link: None,
+            wikilink: None,
+            image: None,
+        }
+    }
+
+    fn preview_style(style: &TypesetStyle) -> PreviewStyle<'_> {
+        PreviewStyle::new(&egui::Visuals::dark(), style, &[])
+    }
+
+    #[test]
+    fn build_paragraph_job_honors_style_justify() {
+        let styles = style::built_in_styles();
+        let trade = style::find(&styles, "trade_paperback").unwrap();
+        let manuscript = style::find(&styles, "manuscript").unwrap();
+
+        let job = build_paragraph_job(&preview_style(trade), &[plain_span("Hello.")], None, 300.0);
+        assert!(job.justify);
+
+        let job = build_paragraph_job(
+            &preview_style(manuscript),
+            &[plain_span("Hello.")],
+            None,
+            300.0,
+        );
+        assert!(!job.justify);
+    }
+
+    #[test]
+    fn build_paragraph_job_splits_off_a_drop_cap_from_the_first_span() {
+        let styles = style::built_in_styles();
+        let trade = style::find(&styles, "trade_paperback").unwrap();
+        let ps = preview_style(trade);
+        let drop_cap = trade.drop_cap;
+        assert!(drop_cap.is_some());
+
+        let job = build_paragraph_job(&ps, &[plain_span("Hello there.")], drop_cap, 300.0);
+        assert_eq!(job.text, "Hello there.");
+        // The first section is just the split-off capital letter, at the
+        // enlarged size; the rest keeps the ordinary body size.
+        let cap_size = drop_cap.unwrap().scale * ps.style.body.size_pt as f32;
+        assert_eq!(job.sections[0].format.font_id.size, cap_size);
+        let range = job.sections[0].byte_range.start.0..job.sections[0].byte_range.end.0;
+        assert_eq!(&job.text[range], "H");
+    }
+
+    #[test]
+    fn build_paragraph_job_without_drop_cap_keeps_a_single_section() {
+        let styles = style::built_in_styles();
+        let manuscript = style::find(&styles, "manuscript").unwrap();
+        let ps = preview_style(manuscript);
+
+        let job = build_paragraph_job(&ps, &[plain_span("Hello there.")], None, 300.0);
+        assert_eq!(job.sections.len(), 1);
     }
 }

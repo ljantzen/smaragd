@@ -104,16 +104,18 @@ pub struct Settings {
     /// `templates::DEFAULT_DATE_FORMAT` rather than emitting an empty string, the
     /// same fallback it also applies to a format that fails to render at all.
     pub template_date_format: String,
-    /// The font the Editor and Preview render body text in — one shared choice
-    /// for both, not independent per-view settings (see `editor_font::EditorFont`).
+    /// The font the Editor renders in (see `editor_font::EditorFont`). The
+    /// Preview tab does *not* use this — its body font comes from whichever
+    /// `export::style::TypesetStyle` is selected there instead, so Preview
+    /// always shows what will actually get exported.
     pub editor_font: EditorFont,
-    /// Body text size (points) for both the Editor and Preview. `0.0` (this
-    /// struct's derived `Default`, and TOML's own implicit default for a missing
-    /// float key) means "not yet configured" — resolved to
-    /// `editor_font::DEFAULT_FONT_SIZE` at the point of use
-    /// (`editor_font::resolve_size`) rather than fought with a custom `Default`
-    /// impl, the same blank-means-unset convention `template_date_format` above
-    /// already uses.
+    /// Body text size (points) for the Editor. `0.0` (this struct's derived
+    /// `Default`, and TOML's own implicit default for a missing float key)
+    /// means "not yet configured" — resolved to `editor_font::DEFAULT_FONT_SIZE`
+    /// at the point of use (`editor_font::resolve_size`) rather than fought
+    /// with a custom `Default` impl, the same blank-means-unset convention
+    /// `template_date_format` above already uses. Like `editor_font`, the
+    /// Preview tab doesn't use this — see its doc comment.
     pub editor_font_size: f32,
     /// Pomodoro timer durations (minutes) and long-break cadence. `0` means
     /// "not yet configured," resolved to a real default at the point of use

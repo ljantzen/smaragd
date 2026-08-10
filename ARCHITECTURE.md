@@ -25,7 +25,7 @@ src/
   templates.rs            `${{name}}`/`${{date}}` substitution for New From Template
   project_template.rs     Scrivener-style New Project templates: built-in Blank/Novel/Nonfiction/Screenplay/World-Building + loaded-from-disk custom ones, apply()/save_from_project()
   editor/mod.rs           EditorState: open/close document, dirty tracking, save
-  editor_font.rs          the curated Editor/Preview font set, and registering the two custom ones with egui
+  editor_font.rs          the curated Editor/Preview font set, and registering the three bundled ones with egui
   collab/
     mod.rs                 CollabSession: the SmaragdApp-facing surface tying crdt/diff to a running net session
     crdt.rs                 CRDT document (Yjs/yrs), proven convergent against in-process documents
@@ -56,7 +56,7 @@ src/
     tags_panel.rs           tags list + tag search rendering (dockable tab)
     binder_panel.rs        binder tree rendering + right-click context menu + drag-and-drop move/reorder (dockable tab)
     editor_panel.rs         text editor + wikilink autocomplete popup + Focus Mode's paragraph-dimming layouter (dockable tab)
-    markdown_preview.rs     glow-style preview rendering (dockable tab)
+    markdown_preview.rs     style-driven manuscript preview rendering — same `TypesetStyle` export uses (dockable tab)
     corkboard_panel.rs      story-card grid + tabbed card editor modal (Plot / Belief and Knowledge / Third Rail) (dockable tab)
     story_grid_panel.rs     read-only, manuscript-ordered table view of the same story cards, resolved against multiple linked documents per card (dockable tab)
     belief_timeline_panel.rs  a chosen character's story cards chained in manuscript order as Prior Belief -> New Belief (dockable tab)

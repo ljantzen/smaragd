@@ -5,6 +5,38 @@ this file.
 
 ## Unreleased
 
+- The Preview tab now renders in the currently selected export typesetting
+  style (fonts, sizes, justification, page proportions, drop cap) instead of
+  a fixed Glow-CLI-style dev palette, with an inline Style picker that stays
+  in sync with the Export dialog's own Style dropdown — switching one updates
+  the other. As part of this, custom color themes' `[preview]` heading/
+  wikilink/quote-bar color overrides are no longer supported (a leftover
+  `[preview]` table in an existing theme file is simply ignored), and the
+  Editor's Font/Size setting no longer affects Preview.
+- Six more built-in typesetting styles: **Mass Market Paperback**, **Digest**,
+  **Hardcover**, **Academic**, **Large Print**, and **Chapbook**, alongside
+  the existing Manuscript and Trade Paperback — real trim sizes and type
+  conventions per format, selectable from Export/Preview like any other
+  style.
+- A third bundled font, **Atkinson Hyperlegible** (a sans-serif designed by
+  the Braille Institute for low-vision readers), joins Libertinus Serif and
+  DejaVu Sans Mono as an Editor font choice and is now guaranteed to render
+  identically in Preview, DOCX/EPUB, and print-PDF export. The new Large
+  Print style uses it for body text; Hardcover uses it for headings over a
+  serif body.
+- Four more built-in typesetting styles following UK/European trim
+  conventions rather than US/KDP ones: **UK B-Format Paperback** (129×198mm),
+  **UK A-Format Paperback** (110×178mm), **A5 Paperback** (ISO 216, exactly
+  148×210mm), and **Manuscript (A4)** (the existing Manuscript's submission
+  conventions on A4 instead of US Letter) — twelve built-in styles in total.
+- A custom typesetting style can now point a `font_file` at your own `.ttf`/
+  `.otf` alongside `font` in `[body]`/`[headings]`/`[blockquote]`/`[code]`, so
+  Preview (and print-PDF, without needing the font separately installed as a
+  system font) render with your actual font instead of falling back to a
+  generic face. A font file that's missing or invalid is skipped with an
+  error message — that one slot falls back gracefully rather than crashing
+  or blocking the rest of the style from loading.
+
 ## v0.7.0 — 2026-08-06
 
 - Story Cards now track a character's belief arc, not just plot mechanics.

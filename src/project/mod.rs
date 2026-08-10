@@ -264,6 +264,14 @@ impl Project {
         self.save_metadata()
     }
 
+    /// Same as `set_book_title`, for `book_style` — used by the Preview dock's
+    /// own inline Style picker (`ui::markdown_preview`), which lets a style be
+    /// switched live without opening the Export dialog.
+    pub fn set_book_style(&mut self, style_id: String) -> io::Result<()> {
+        self.meta.book_style = (!style_id.is_empty()).then_some(style_id);
+        self.save_metadata()
+    }
+
     /// See `ProjectMeta::logline`.
     pub fn set_logline(&mut self, logline: String) -> io::Result<()> {
         self.meta.logline = logline;
@@ -716,6 +724,48 @@ mod tests {
 
         project.set_book_subtitle(String::new()).unwrap();
         assert_eq!(project.meta.book_subtitle, None);
+    }
+
+    #[test]
+    fn set_book_style_persists_and_empty_stores_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        assert_eq!(project.meta.book_style, None);
+
+        project
+            .set_book_style("trade_paperback".to_string())
+            .unwrap();
+        let reloaded = Project::load_from_folder(dir.path()).unwrap();
+        assert_eq!(
+            reloaded.meta.book_style,
+            Some("trade_paperback".to_string())
+        );
+
+        project.set_book_style(String::new()).unwrap();
+        assert_eq!(project.meta.book_style, None);
+    }
+
+    #[test]
+    fn set_book_style_leaves_title_subtitle_and_author_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        project
+            .set_book_meta(
+                "Old Title".to_string(),
+                "Old Subtitle".to_string(),
+                "Jane Doe".to_string(),
+                "manuscript".to_string(),
+            )
+            .unwrap();
+
+        project
+            .set_book_style("trade_paperback".to_string())
+            .unwrap();
+
+        assert_eq!(project.meta.book_title, Some("Old Title".to_string()));
+        assert_eq!(project.meta.book_subtitle, Some("Old Subtitle".to_string()));
+        assert_eq!(project.meta.book_author, Some("Jane Doe".to_string()));
+        assert_eq!(project.meta.book_style, Some("trade_paperback".to_string()));
     }
 
     #[test]

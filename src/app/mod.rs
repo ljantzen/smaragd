@@ -182,10 +182,16 @@ pub struct SmaragdApp {
     project_templates: Vec<crate::project_template::ProjectTemplate>,
     /// The open Export dialog, if any — see `ExportState`.
     export: Option<ExportState>,
-    /// Every selectable typesetting style: the 2 built-ins plus whatever
+    /// Every selectable typesetting style: the 12 built-ins plus whatever
     /// `*.toml` files are in `export::style::global_styles_dir()`. Rebuilt by
     /// `reload_typeset_styles`.
     typeset_styles: Vec<crate::export::style::TypesetStyle>,
+    /// Every custom font name a loaded style's `font_file` successfully
+    /// registered with egui (see `editor_font::install_custom_fonts`) —
+    /// rebuilt alongside `typeset_styles` by `reload_typeset_styles`. The
+    /// Preview tab only ever trusts a font name in this list; see
+    /// `ui::markdown_preview::resolve_family`.
+    custom_font_names: Vec<String>,
     /// Work/break interval state — ticked once per frame regardless of whether
     /// the Pomodoro dock tab is open (see `tick_pomodoro`), so it keeps
     /// running while closed.
@@ -271,13 +277,14 @@ impl SmaragdApp {
             project_templates: Vec::new(),
             export: None,
             typeset_styles: Vec::new(),
+            custom_font_names: Vec::new(),
             pomodoro: crate::pomodoro::PomodoroState::new(&initial_pomodoro_durations),
             focus_binder_requested: false,
             focus_mode: false,
             collab: None,
             exit_confirm: ui::exit_confirm_prompt::ExitConfirmState::default(),
         };
-        app.reload_typeset_styles();
+        app.reload_typeset_styles(&cc.egui_ctx);
         app.reload_project_templates();
 
         // Before applying the persisted theme below, which needs `color_themes`
@@ -360,6 +367,7 @@ impl SmaragdApp {
             project_templates: Vec::new(),
             export: None,
             typeset_styles: Vec::new(),
+            custom_font_names: Vec::new(),
             pomodoro: crate::pomodoro::PomodoroState::new(&pomodoro_durations),
             focus_binder_requested: false,
             focus_mode: false,
@@ -435,14 +443,20 @@ impl SmaragdApp {
         }
     }
 
-    /// Reload the selectable typesetting styles (`self.typeset_styles`): the 2
+    /// Reload the selectable typesetting styles (`self.typeset_styles`): the 12
     /// built-ins plus every `*.toml` file in `export::style::global_styles_dir()`.
+    /// Also (re)registers any custom font a loaded style names via `font_file`
+    /// with `ctx` (`self.custom_font_names`) — see `editor_font::install_custom_fonts`.
     /// Called at startup and from the Export dialog's "Reload Styles" action.
-    fn reload_typeset_styles(&mut self) {
+    fn reload_typeset_styles(&mut self, ctx: &egui::Context) {
         let styles_dir = crate::export::style::global_styles_dir();
         let dirs: Vec<&Path> = styles_dir.as_deref().into_iter().collect();
-        let (styles, errors) = crate::export::style::load(&dirs);
+        let (styles, mut errors) = crate::export::style::load(&dirs);
+        let font_files = crate::export::style::custom_font_files(&styles);
+        let (registered, font_errors) = crate::editor_font::install_custom_fonts(ctx, &font_files);
+        errors.extend(font_errors);
         self.typeset_styles = styles;
+        self.custom_font_names = registered;
         if !errors.is_empty() {
             self.push_error_toast(errors.join("; "));
         }
@@ -1349,6 +1363,7 @@ impl eframe::App for SmaragdApp {
                             as u32
                     })
                     .unwrap_or(0);
+                let book_style_id = self.resolve_book_style_id();
                 let mut viewer = AppTabViewer {
                     project: self.project.as_ref(),
                     selected_path: self.selected_path.as_deref(),
@@ -1364,7 +1379,9 @@ impl eframe::App for SmaragdApp {
                     folder_word_counts: &self.word_count.folder_totals,
                     editor: &mut self.editor,
                     settings: &self.settings,
-                    color_themes: &self.color_themes,
+                    typeset_styles: &self.typeset_styles,
+                    book_style_id: &book_style_id,
+                    custom_fonts: &self.custom_font_names,
                     pomodoro: &self.pomodoro,
                     pomodoro_durations: crate::pomodoro::resolve_durations(&self.settings),
                     word_count_cache: self.word_count.cache,
@@ -1390,6 +1407,13 @@ impl eframe::App for SmaragdApp {
                         DockAction::RefreshTags => self.recompute_tags(),
                         DockAction::EditorSaveError(err) => self.push_error_toast(err),
                         DockAction::Wikilink(activation) => self.activate_wikilink(activation),
+                        DockAction::SetBookStyle(style_id) => {
+                            if let Some(project) = &mut self.project
+                                && let Err(err) = project.set_book_style(style_id)
+                            {
+                                self.push_error_toast(format!("Couldn't save settings: {err}"));
+                            }
+                        }
                         DockAction::Corkboard(event) => self.handle_corkboard_event(event),
                         DockAction::StoryGrid(event) => self.handle_story_grid_event(event),
                         DockAction::BeliefTimeline(event) => {
@@ -1454,7 +1478,7 @@ impl eframe::App for SmaragdApp {
                 &self.typeset_styles,
             );
             if let Some(action) = action {
-                self.finish_export(action);
+                self.finish_export(ui.ctx(), action);
             }
         }
     }
