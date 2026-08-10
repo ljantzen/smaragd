@@ -348,7 +348,7 @@ Title/Subtitle/Author show up differently per format:
 - **EPUB** has no title-page concept (it's reflowable text, not paginated), so Subtitle instead folds into the book's title metadata as `"Title: Subtitle"` — that's what shows up as the book's title in a reader/library view.
 - A custom style's **running header** (see below) can reference `{subtitle}` alongside `{title}`/`{author}`/`{chapter}`.
 
-All three formats read from the *same* style, so switching styles changes DOCX, EPUB, and PDF output alike — closer to how a book-design tool like Deckle Studio treats "one style set drives every output" than to a plain markdown-to-Word converter.
+All three formats read from the *same* style, so switching styles changes DOCX, EPUB, and PDF output alike 
 
 ### Typesetting styles
 

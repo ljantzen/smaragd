@@ -1,9 +1,7 @@
 //! DOCX rendering: walks `Block`/`Span` into `docx_rs` paragraphs/runs, styled
 //! from a shared [`super::style::TypesetStyle`] instead of hardcoded literals.
-//! Drop caps are **not attempted here** — matches Deckle Studio's own
-//! philosophy (its DOCX target is plain "submission-formatted", the real
-//! typesetting ambition is print PDF) and avoids a real DOCX-drop-cap API
-//! risk. Real running headers/page numbers and named heading styles are
+//! Drop caps are **not attempted here**  
+//! Real running headers/page numbers and named heading styles are
 //! attempted, via `docx-rs`'s `Header`/`Style` support.
 
 use std::fs;
