@@ -15,6 +15,17 @@ pub struct EditorState {
     /// which otherwise has nothing to point at since only one document is ever open
     /// (and thus `dirty`) at a time.
     pub modified_paths: BTreeSet<PathBuf>,
+    /// Byte offset of the text cursor in `buffer`, refreshed every frame the
+    /// editor panel renders (see `editor_panel::show`). Lets document-history
+    /// navigation (`SmaragdApp::document_history`) record "where was I" in the
+    /// outgoing document without needing a live `egui::Context` at every
+    /// `open_document` call site.
+    pub cursor_byte: usize,
+    /// A byte offset the editor panel should move the cursor to on its next
+    /// render, then clear — set right after `open` whenever the caller knows
+    /// (or wants to reset) where the cursor belongs, e.g. restoring the last
+    /// known position for a document reopened via Back/Forward.
+    pub pending_cursor: Option<usize>,
 }
 
 impl EditorState {
@@ -56,6 +67,8 @@ impl EditorState {
         self.open_path = None;
         self.buffer.clear();
         self.dirty = false;
+        self.cursor_byte = 0;
+        self.pending_cursor = None;
         Ok(())
     }
 }

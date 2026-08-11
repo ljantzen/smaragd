@@ -93,6 +93,18 @@ pub fn show(
     }
 
     let text_edit_id = editor_text_edit_id();
+
+    // A document switch (`SmaragdApp::load_document`) leaves a byte offset here
+    // for the cursor to jump to on the document's first render — restoring
+    // where the user last left off in it (tracked by `document_history`),
+    // rather than carrying over wherever the cursor happened to be in
+    // whichever document was open before. Consumed (and cleared) unconditionally
+    // so it never re-fires on a later frame once the `TextEdit` below has
+    // already picked it up.
+    if let Some(byte_offset) = editor.pending_cursor.take() {
+        move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, byte_offset);
+    }
+
     let state_id = text_edit_id.with("wikilink_autocomplete");
     let state: AutocompleteState = ui
         .ctx()
@@ -226,6 +238,14 @@ pub fn show(
 
     if output.response.changed() {
         editor.mark_dirty();
+    }
+
+    // Kept fresh every frame the editor renders, regardless of whether the
+    // cursor actually moved this frame — `document_history` reads this
+    // whenever the user navigates to a *different* document, to remember
+    // where they were leaving this one.
+    if let Some(range) = output.cursor_range {
+        editor.cursor_byte = char_offset_to_byte(&editor.buffer, range.primary.index.0);
     }
 
     if activate_wikilink_requested && let Some(range) = output.cursor_range {

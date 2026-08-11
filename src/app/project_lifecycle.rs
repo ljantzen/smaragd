@@ -31,6 +31,7 @@ impl SmaragdApp {
         self.project = Some(project);
         self.editor = EditorState::default();
         self.selected_path = None;
+        self.document_history = DocumentHistory::default();
         self.metadata.target = MetadataTarget::Document;
         self.metadata.folder_computed_for = None;
         self.document_status_cache.clear();
@@ -271,6 +272,7 @@ impl SmaragdApp {
         }
         self.project = None;
         self.selected_path = None;
+        self.document_history = DocumentHistory::default();
         self.metadata = MetadataState::default();
         self.backlinks = BacklinksState::default();
         self.tags = TagsState::default();
@@ -280,75 +282,150 @@ impl SmaragdApp {
         self.reload_plugins();
     }
 
-    /// Open `path` as a genuine switch to a different document. Every call
+    /// Open `path` as a genuine switch to a different document — recorded as a
+    /// fresh entry in `document_history` (see `load_document`). Every call
     /// site *except* `rename_node`'s post-rename reopen goes through here: a
     /// rename keeps the same logical document open (see
     /// `open_document_internal`), so it must not touch a session scoped to
     /// it.
-    ///
-    /// Role-aware collaboration handling (see `CollabSession`'s module
-    /// doc): a *host* switching documents doesn't end the session — the
-    /// next `sync_local_collab_edit` diffs the newly opened buffer against
-    /// the stale baseline and ships the whole new document to the joiner as
-    /// an ordinary (if large) update, so the joiner's view follows along
-    /// automatically. A *joiner* switching documents has no document of
-    /// their own tied to the session (see `start_collab_join`), so this
-    /// asks first via a native Yes/No dialog — matching `delete_node`'s
-    /// confirmation pattern — since it can only proceed by ending the
-    /// session; declining leaves the shared document showing and the
-    /// session alive.
     pub(super) fn open_document(&mut self, path: &Path) {
-        if let Some(session) = &self.collab {
-            match session.role {
-                CollabRole::Host => {}
-                CollabRole::Joiner => {
-                    let confirmed = rfd::MessageDialog::new()
-                        .set_title("End Collaboration Session")
-                        .set_description(
-                            "Opening another document will end the collaboration session. Continue?",
-                        )
-                        .set_level(rfd::MessageLevel::Warning)
-                        .set_buttons(rfd::MessageButtons::YesNo)
-                        .show();
-                    if confirmed != rfd::MessageDialogResult::Yes {
-                        return;
-                    }
-                    self.end_collab_session("Collaboration session ended: switched documents");
-                }
-            }
+        if !self.confirm_leave_collab_session() {
+            return;
         }
         self.open_document_internal(path);
     }
 
-    /// The actual open — no collaboration-session teardown. Only
-    /// `open_document` and `rename_node` (reopening the same document under
-    /// its new name) should call this directly.
+    /// The actual open, recorded in `document_history` — no collaboration-
+    /// session teardown. Only `open_document` and `rename_node` (reopening
+    /// the same document under its new name) should call this directly;
+    /// `go_back_document`/`go_forward_document` call `load_document` instead,
+    /// since a Back/Forward step must not itself count as a new visit.
     pub(super) fn open_document_internal(&mut self, path: &Path) {
+        if self.load_document(path) {
+            self.document_history.visit(path);
+        }
+    }
+
+    /// Step to the previously visited document (File > Go Back /
+    /// `ShortcutAction::GoBack`), restoring its last known cursor position.
+    /// A no-op if there's nothing behind the current position, or (for an
+    /// active collaboration joiner) if the user declines to end the session
+    /// — see `confirm_leave_collab_session`.
+    pub(super) fn go_back_document(&mut self) {
+        let Some(target) = self.document_history.previous().map(Path::to_path_buf) else {
+            return;
+        };
+        if !self.confirm_leave_collab_session() {
+            return;
+        }
+        self.document_history.go_back();
+        self.load_document(&target);
+    }
+
+    /// Step to the next visited document (File > Go Forward /
+    /// `ShortcutAction::GoForward`) — see `go_back_document`.
+    pub(super) fn go_forward_document(&mut self) {
+        let Some(target) = self.document_history.next().map(Path::to_path_buf) else {
+            return;
+        };
+        if !self.confirm_leave_collab_session() {
+            return;
+        }
+        self.document_history.go_forward();
+        self.load_document(&target);
+    }
+
+    /// Ask (via a native Yes/No dialog) before switching away from an active
+    /// *joined* collaboration session, which has no document of its own
+    /// outside the session (see `start_collab_join`) and can only survive a
+    /// document switch by ending — declining leaves the shared document
+    /// showing and the session alive, and this returns `false` so the caller
+    /// backs out of the switch entirely. Matches `delete_node`'s confirmation
+    /// pattern.
+    ///
+    /// Always returns `true` (no prompt) for a *host*, who keeps hosting
+    /// through the switch — the next `sync_local_collab_edit` diffs the newly
+    /// opened buffer against the stale baseline and ships the whole new
+    /// document to the joiner as an ordinary (if large) update, so the
+    /// joiner's view follows along automatically (see `CollabSession`'s
+    /// module doc) — and for anyone not currently collaborating.
+    fn confirm_leave_collab_session(&mut self) -> bool {
+        let Some(session) = &self.collab else {
+            return true;
+        };
+        match session.role {
+            CollabRole::Host => true,
+            CollabRole::Joiner => {
+                let confirmed = rfd::MessageDialog::new()
+                    .set_title("End Collaboration Session")
+                    .set_description(
+                        "Opening another document will end the collaboration session. Continue?",
+                    )
+                    .set_level(rfd::MessageLevel::Warning)
+                    .set_buttons(rfd::MessageButtons::YesNo)
+                    .show();
+                if confirmed != rfd::MessageDialogResult::Yes {
+                    return false;
+                }
+                self.end_collab_session("Collaboration session ended: switched documents");
+                true
+            }
+        }
+    }
+
+    /// Load `path` into the editor and update `selected_path`/metadata/status-
+    /// cache accordingly — the mechanics shared by every way of switching
+    /// documents. Records the outgoing document's cursor position (from
+    /// `EditorState::cursor_byte`, refreshed every frame by
+    /// `editor_panel::show`) and queues the incoming document's last known
+    /// position (`EditorState::pending_cursor`) to be restored on its next
+    /// render — `0` if `path` has never been visited before.
+    ///
+    /// Deliberately does *not* touch `document_history`'s entries itself:
+    /// callers decide whether this counts as a fresh visit
+    /// (`open_document_internal`, via `document_history.visit`) or a
+    /// Back/Forward step (`go_back_document`/`go_forward_document`, which
+    /// only move the existing position). Returns whether the open succeeded.
+    fn load_document(&mut self, path: &Path) -> bool {
         // Captured before `editor.open` runs (which may autosave a dirty
         // outgoing document first) — invalidated after, so its cached status
         // reflects whatever it was just saved as, not what it was before.
         let previous = self.editor.open_path.clone();
+        if let Some(previous) = &previous {
+            self.document_history
+                .record_cursor(previous, self.editor.cursor_byte);
+        }
         match self.editor.open(path) {
             Ok(()) => {
                 self.selected_path = Some(path.to_path_buf());
                 self.metadata.target = MetadataTarget::Document;
+                self.editor.pending_cursor =
+                    Some(self.document_history.cursor_for(path).unwrap_or(0));
                 if let Some(previous) = previous {
                     self.document_status_cache.invalidate(&previous);
                 }
+                true
             }
             Err(err) => {
                 self.push_error_toast(format!("Couldn't open {}: {err}", path.display()));
+                false
             }
         }
     }
 
     /// Close the currently open document (silently autosaving first if dirty — same
-    /// convention as `open_document`/`rename_node`, no discard/cancel prompt).
+    /// autosave convention as `open_document`/`rename_node`, no discard/cancel
+    /// prompt). Records its cursor position in `document_history` first, so a
+    /// later Back/Forward step or reopen picks up where the user left off.
     pub(super) fn close_document(&mut self, ctx: &egui::Context) {
         if self.collab.is_some() {
             self.end_collab_session("Collaboration session ended: document closed");
         }
         let previous = self.editor.open_path.clone();
+        if let Some(previous) = &previous {
+            self.document_history
+                .record_cursor(previous, self.editor.cursor_byte);
+        }
         if let Err(err) = self.editor.close() {
             self.push_error_toast(format!("Couldn't save before closing: {err}"));
             return;
@@ -392,6 +469,7 @@ impl SmaragdApp {
                     self.metadata.target = MetadataTarget::Folder(rebased);
                     self.metadata.folder_computed_for = None;
                 }
+                self.document_history.rebase_subtree(path, &new_path);
                 self.document_status_cache.clear();
             }
             Err(err) => {
@@ -400,7 +478,7 @@ impl SmaragdApp {
         }
     }
 
-    /// Same rebase-selected/open-path logic as `move_item`, for a document or
+    /// Same rebase-selected/open-path/history logic as `move_item`, for a document or
     /// folder dropped directly onto another document row (see
     /// `Project::move_item_before`).
     pub(super) fn move_item_before(&mut self, path: &Path, before: &Path) {
@@ -424,6 +502,7 @@ impl SmaragdApp {
                     self.metadata.target = MetadataTarget::Folder(rebased);
                     self.metadata.folder_computed_for = None;
                 }
+                self.document_history.rebase_subtree(path, &new_path);
                 self.document_status_cache.clear();
             }
             Err(err) => {
@@ -628,5 +707,88 @@ mod tests {
         assert!(app.collab.is_some());
         assert_eq!(app.editor.open_path.as_deref(), Some(doc_path.as_path()));
         assert_eq!(app.editor.buffer, "hello");
+    }
+
+    #[test]
+    fn go_back_and_go_forward_step_through_opened_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        let b = dir.path().join("b.md");
+        fs::write(&a, "a").unwrap();
+        fs::write(&b, "b").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+
+        app.open_document(&a);
+        app.open_document(&b);
+        assert_eq!(app.editor.open_path.as_deref(), Some(b.as_path()));
+
+        app.go_back_document();
+        assert_eq!(app.editor.open_path.as_deref(), Some(a.as_path()));
+
+        app.go_forward_document();
+        assert_eq!(app.editor.open_path.as_deref(), Some(b.as_path()));
+    }
+
+    #[test]
+    fn going_back_restores_the_cursor_position_last_left_in_that_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        let b = dir.path().join("b.md");
+        fs::write(&a, "hello world").unwrap();
+        fs::write(&b, "second document").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+
+        app.open_document(&a);
+        app.editor.cursor_byte = 6; // simulates the cursor having moved in `a.md`
+        app.open_document(&b);
+        assert_eq!(app.editor.pending_cursor, Some(0));
+
+        app.go_back_document();
+
+        assert_eq!(app.editor.open_path.as_deref(), Some(a.as_path()));
+        assert_eq!(app.editor.pending_cursor, Some(6));
+    }
+
+    #[test]
+    fn opening_the_same_document_again_does_not_grow_the_back_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        fs::write(&a, "a").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+
+        app.open_document(&a);
+        app.open_document(&a);
+
+        app.go_back_document();
+        assert_eq!(app.editor.open_path.as_deref(), Some(a.as_path()));
+    }
+
+    #[test]
+    fn renaming_the_open_document_keeps_its_history_entry_and_cursor_following_it() {
+        let dir = tempfile::tempdir().unwrap();
+        Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+        app.open_project(&ctx, dir.path());
+        let project_root = app.project.as_ref().unwrap().root.clone();
+        let a = project_root.join("a.md");
+        let b = project_root.join("b.md");
+        fs::write(&a, "a").unwrap();
+        fs::write(&b, "b").unwrap();
+        app.project.as_mut().unwrap().rescan();
+
+        app.open_document(&a);
+        app.open_document(&b);
+        app.editor.cursor_byte = 1;
+        app.rename_node(&b, "renamed");
+        let renamed = project_root.join("renamed.md");
+        assert_eq!(app.editor.open_path.as_deref(), Some(renamed.as_path()));
+
+        app.go_back_document();
+        assert_eq!(app.editor.open_path.as_deref(), Some(a.as_path()));
+
+        app.go_forward_document();
+        assert_eq!(app.editor.open_path.as_deref(), Some(renamed.as_path()));
+        assert_eq!(app.editor.pending_cursor, Some(1));
     }
 }

@@ -34,6 +34,8 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Toggle Focus Mode | `F9` |
 | Open Document | `Ctrl+P` |
 | Close Document | `Ctrl+W` |
+| Go Back | `Alt+Left` |
+| Go Forward | `Alt+Right` |
 | Toggle Pomodoro Timer | `Ctrl+Alt+T` |
 | Toggle Word Count | `Ctrl+Alt+W` |
 | Refresh Word Count | `F5` |

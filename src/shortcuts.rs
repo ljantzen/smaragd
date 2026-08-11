@@ -42,6 +42,11 @@ pub enum ShortcutAction {
     ToggleFocusMode,
     OpenDocument,
     CloseDocument,
+    /// Step to the previously/next visited document in `document_history`
+    /// (browser-style Back/Forward) — see `SmaragdApp::go_back_document`/
+    /// `go_forward_document`.
+    GoBack,
+    GoForward,
     /// Follow the `[[wikilink]]` the cursor is on in the editor — unlike every other
     /// action, this one's consumption happens inside `editor_panel::show` itself
     /// (it needs that frame's `TextEdit` cursor position, not available yet at the
@@ -91,6 +96,8 @@ impl ShortcutAction {
         Self::ToggleFocusMode,
         Self::OpenDocument,
         Self::CloseDocument,
+        Self::GoBack,
+        Self::GoForward,
         Self::ActivateWikilink,
         Self::TogglePomodoro,
         Self::ToggleWordCount,
@@ -131,6 +138,8 @@ impl ShortcutAction {
             Self::ToggleFocusMode => "Toggle Focus Mode",
             Self::OpenDocument => "Open Document",
             Self::CloseDocument => "Close Document",
+            Self::GoBack => "Go Back",
+            Self::GoForward => "Go Forward",
             Self::ActivateWikilink => "Activate Wikilink",
             Self::TogglePomodoro => "Toggle Pomodoro Timer",
             Self::ToggleWordCount => "Toggle Word Count",
@@ -176,6 +185,8 @@ impl ShortcutAction {
             Self::ToggleFocusMode => "toggle_focus_mode",
             Self::OpenDocument => "open_document",
             Self::CloseDocument => "close_document",
+            Self::GoBack => "go_back",
+            Self::GoForward => "go_forward",
             Self::ActivateWikilink => "activate_wikilink",
             Self::TogglePomodoro => "toggle_pomodoro",
             Self::ToggleWordCount => "toggle_word_count",
@@ -203,7 +214,9 @@ impl ShortcutAction {
             | Self::Delete
             | Self::Restore
             | Self::OpenDocument
-            | Self::CloseDocument => ShortcutCategory::FilesAndFolders,
+            | Self::CloseDocument
+            | Self::GoBack
+            | Self::GoForward => ShortcutCategory::FilesAndFolders,
             Self::Save | Self::FindReplace | Self::EditMetadata | Self::ActivateWikilink => {
                 ShortcutCategory::Editing
             }
@@ -288,6 +301,10 @@ impl ShortcutAction {
             Self::ToggleFocusMode => KeyboardShortcut::new(Modifiers::NONE, Key::F9),
             Self::OpenDocument => KeyboardShortcut::new(Modifiers::COMMAND, Key::P),
             Self::CloseDocument => KeyboardShortcut::new(Modifiers::COMMAND, Key::W),
+            // Alt+Left/Right, the conventional browser/IDE Back-Forward chord —
+            // safe (Alt is a modifier) and otherwise unused.
+            Self::GoBack => KeyboardShortcut::new(Modifiers::ALT, Key::ArrowLeft),
+            Self::GoForward => KeyboardShortcut::new(Modifiers::ALT, Key::ArrowRight),
             Self::ActivateWikilink => KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter),
             Self::TogglePomodoro => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::T)

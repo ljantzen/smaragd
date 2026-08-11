@@ -20,6 +20,9 @@ impl SmaragdApp {
                             self.settings.shortcuts.get(ShortcutAction::OpenDocument);
                         let close_document_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::CloseDocument);
+                        let go_back_shortcut = self.settings.shortcuts.get(ShortcutAction::GoBack);
+                        let go_forward_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::GoForward);
 
                         if nav
                             .shortcut_button(ui, "New Project", new_project_shortcut)
@@ -86,6 +89,22 @@ impl SmaragdApp {
                             let ctx = ui.ctx().clone();
                             self.close_document(&ctx);
                         }
+                        ui.add_enabled_ui(self.document_history.can_go_back(), |ui| {
+                            if nav
+                                .shortcut_button(ui, "Go Back", go_back_shortcut)
+                                .clicked()
+                            {
+                                self.go_back_document();
+                            }
+                        });
+                        ui.add_enabled_ui(self.document_history.can_go_forward(), |ui| {
+                            if nav
+                                .shortcut_button(ui, "Go Forward", go_forward_shortcut)
+                                .clicked()
+                            {
+                                self.go_forward_document();
+                            }
+                        });
                         if nav
                             .shortcut_button(ui, "Save Project as Template…", None)
                             .clicked()

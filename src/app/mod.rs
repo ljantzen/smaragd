@@ -8,6 +8,7 @@ mod collab;
 mod dock;
 mod dock_tab_viewer;
 mod dock_tabs;
+mod document_history;
 mod export;
 mod find_replace;
 mod git;
@@ -27,6 +28,7 @@ use dock::{
     DockTab, capture_floating_window_positions, default_dock_state, ensure_editor_tab_present,
 };
 use dock_tab_viewer::{AppTabViewer, DockAction};
+use document_history::DocumentHistory;
 use export::ExportState;
 use git::GitOperation;
 use menu_nav::{nav_submenu, top_menu_button};
@@ -63,6 +65,13 @@ pub struct SmaragdApp {
     project: Option<Project>,
     editor: EditorState,
     selected_path: Option<PathBuf>,
+    /// Which documents have been opened this project session, in order, plus
+    /// the last known cursor position in each — backs `open_document`'s
+    /// history tracking and the Go Back/Go Forward navigation
+    /// (`go_back_document`/`go_forward_document`). Reset whenever a project
+    /// is opened or closed (`set_project`/`close_project`): paths from one
+    /// project are meaningless once a different one is open.
+    document_history: DocumentHistory,
     /// A quiet, routine status-bar confirmation — "Committed", "Exported to
     /// ...", and the like. Overwritten freely by dozens of call sites, and
     /// replaced (not queued) by whichever ran most recently, since these are
@@ -256,6 +265,7 @@ impl SmaragdApp {
             project: None,
             editor: EditorState::default(),
             selected_path: None,
+            document_history: DocumentHistory::default(),
             status_message: None,
             status_message_set_at: None,
             toasts: Vec::new(),
@@ -340,6 +350,7 @@ impl SmaragdApp {
             project: None,
             editor: EditorState::default(),
             selected_path: None,
+            document_history: DocumentHistory::default(),
             status_message: None,
             status_message_set_at: None,
             toasts: Vec::new(),
@@ -544,6 +555,8 @@ impl SmaragdApp {
                     self.push_error_toast(format!("Save failed: {err}"));
                 }
             }
+            ShortcutAction::GoBack => self.go_back_document(),
+            ShortcutAction::GoForward => self.go_forward_document(),
             ShortcutAction::NewFile => self.keyboard_new_file(),
             ShortcutAction::NewFolder => self.keyboard_new_folder(),
             ShortcutAction::Rename => {

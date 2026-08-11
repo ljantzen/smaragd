@@ -5,6 +5,10 @@ this file.
 
 ## Unreleased
 
+- **File > Go Back / Go Forward** (`Alt+Left`/`Alt+Right`) navigate a
+  browser-style history of every document opened this project session,
+  restoring the cursor position last left in each one.
+
 ## v0.9.0 — 2026-08-11
 
 - Nested submenus in the menu bar — **View > Theme**, **Window > Layouts**,

@@ -253,7 +253,7 @@ impl SmaragdApp {
         }
     }
 
-    fn rename_node(&mut self, path: &Path, new_name: &str) {
+    pub(super) fn rename_node(&mut self, path: &Path, new_name: &str) {
         // If `path` is the open document and it's dirty, save it *before* the
         // physical rename below — `project.rename` does an immediate `fs::rename`,
         // and letting `EditorState::open`'s own save-if-dirty run afterward (from
@@ -280,6 +280,7 @@ impl SmaragdApp {
                     self.metadata.folder_computed_for = None;
                 }
                 self.document_status_cache.clear();
+                self.document_history.rename_path(path, &new_path);
                 if self.selected_path.as_deref() == Some(path) {
                     self.open_document_internal(&new_path);
                 } else if !self.editor.dirty
@@ -347,6 +348,7 @@ impl SmaragdApp {
                     self.metadata.target = MetadataTarget::Document;
                     self.metadata.folder_computed_for = None;
                 }
+                self.document_history.remove_subtree(path);
                 self.document_status_cache.clear();
             }
             Err(err) => {
