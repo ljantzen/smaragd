@@ -593,8 +593,16 @@ impl SmaragdApp {
             ShortcutAction::CloseDocument => self.close_document(ctx),
             ShortcutAction::FindReplace => self.find_replace.request_open(),
             ShortcutAction::CommandPrompt => self.command_prompt.request_open(),
-            ShortcutAction::GitCommit => self.prompt_git_commit(false),
-            ShortcutAction::GitPush => self.run_git_push(ctx),
+            ShortcutAction::GitCommit => {
+                if self.settings.git_integration_enabled() {
+                    self.prompt_git_commit(false);
+                }
+            }
+            ShortcutAction::GitPush => {
+                if self.settings.git_integration_enabled() {
+                    self.run_git_push(ctx);
+                }
+            }
             ShortcutAction::ToggleBacklinks => self.toggle_dock_tab(DockTab::Backlinks),
             ShortcutAction::ToggleTags => self.toggle_dock_tab(DockTab::Tags),
             ShortcutAction::EditMetadata => self.toggle_dock_tab(DockTab::Metadata),
@@ -726,15 +734,23 @@ impl SmaragdApp {
                 self.persist_settings();
             }
             Command::ColorTheme(choice) => self.set_color_theme(ctx, choice.as_deref()),
-            Command::Git(git_command) => match git_command {
-                GitCommand::Enable => self.enable_git_support_manually(),
-                GitCommand::Commit(Some(message)) => self.run_git_commit(ctx, &message, false),
-                GitCommand::Commit(None) => self.prompt_git_commit(false),
-                GitCommand::Push => self.run_git_push(ctx),
-                GitCommand::Pull => self.run_git_pull(ctx),
-                GitCommand::Backup(Some(message)) => self.run_git_commit(ctx, &message, true),
-                GitCommand::Backup(None) => self.prompt_git_commit(true),
-            },
+            Command::Git(git_command) => {
+                if !self.settings.git_integration_enabled() {
+                    self.push_error_toast(
+                        "Git integration is disabled — enable it in Settings > History",
+                    );
+                    return;
+                }
+                match git_command {
+                    GitCommand::Enable => self.enable_git_support_manually(),
+                    GitCommand::Commit(Some(message)) => self.run_git_commit(ctx, &message, false),
+                    GitCommand::Commit(None) => self.prompt_git_commit(false),
+                    GitCommand::Push => self.run_git_push(ctx),
+                    GitCommand::Pull => self.run_git_pull(ctx),
+                    GitCommand::Backup(Some(message)) => self.run_git_commit(ctx, &message, true),
+                    GitCommand::Backup(None) => self.prompt_git_commit(true),
+                }
+            }
             Command::Find(query) => {
                 if !query.is_empty() {
                     self.find_replace.query = query;
@@ -926,6 +942,7 @@ impl SmaragdApp {
                 &note_titles,
                 &plugin_commands,
                 &theme_ids,
+                self.settings.git_integration_enabled(),
             ) {
                 let ctx = ui.ctx().clone();
                 match event {
@@ -1591,6 +1608,41 @@ mod execute_command_tests {
 
         assert_eq!(app.toasts.len(), 1);
         assert_eq!(app.toasts[0].message, "No note found for \"Nonexistent\"");
+    }
+
+    #[test]
+    fn git_command_is_a_no_op_toast_when_integration_is_disabled() {
+        let mut app = SmaragdApp::test_fixture();
+        app.settings.git_integration_disabled = true;
+        let ctx = egui::Context::default();
+
+        app.execute_command(
+            &ctx,
+            Command::Git(crate::ui::command_prompt::GitCommand::Enable),
+        );
+
+        assert_eq!(app.toasts.len(), 1);
+        assert!(
+            app.toasts[0]
+                .message
+                .contains("Git integration is disabled")
+        );
+    }
+
+    #[test]
+    fn git_shortcuts_are_silent_no_ops_when_integration_is_disabled() {
+        // With no project open, `prompt_git_commit`/`run_git_push` would
+        // themselves push a "No project open" toast if reached at all — an
+        // empty toast list here proves the disabled check short-circuits
+        // before either runs, not just that they happened to no-op anyway.
+        let mut app = SmaragdApp::test_fixture();
+        app.settings.git_integration_disabled = true;
+        let ctx = egui::Context::default();
+
+        app.dispatch_shortcut_action(&ctx, ShortcutAction::GitCommit);
+        app.dispatch_shortcut_action(&ctx, ShortcutAction::GitPush);
+
+        assert!(app.toasts.is_empty());
     }
 }
 

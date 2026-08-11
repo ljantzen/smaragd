@@ -45,11 +45,13 @@ impl SmaragdApp {
         if self.is_test_fixture {
             return;
         }
-        self.maybe_offer_git_support();
-        if let Some(project) = &self.project
-            && let Err(err) = Self::ensure_git_repo(project)
-        {
-            self.push_error_toast(format!("Couldn't initialize git: {err}"));
+        if self.settings.git_integration_enabled() {
+            self.maybe_offer_git_support();
+            if let Some(project) = &self.project
+                && let Err(err) = Self::ensure_git_repo(project)
+            {
+                self.push_error_toast(format!("Couldn't initialize git: {err}"));
+            }
         }
         self.reload_plugins();
         self.word_count.last_dirty = false;

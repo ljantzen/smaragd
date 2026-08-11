@@ -397,43 +397,48 @@ impl SmaragdApp {
                     // "S" rather than "V" (Versions' first letter) since View already
                     // claims Alt+V — matches the classic Windows-mnemonic convention
                     // of falling back to a distinguishing later letter on collision.
-                    top_menu_button(ui, "Versions", egui::Key::S, |ui, nav| {
-                        let git_enabled = self
-                            .project
-                            .as_ref()
-                            .is_some_and(|project| project.meta.git_enabled);
-                        if !git_enabled {
-                            if nav.button(ui, "Enable Git Support").clicked() {
-                                self.enable_git_support_manually();
+                    // Hidden entirely (not just disabled) when the Settings > History
+                    // "Enable Git integration" flag is off — see
+                    // `Settings::git_integration_disabled`'s doc comment.
+                    if self.settings.git_integration_enabled() {
+                        top_menu_button(ui, "Versions", egui::Key::S, |ui, nav| {
+                            let git_enabled = self
+                                .project
+                                .as_ref()
+                                .is_some_and(|project| project.meta.git_enabled);
+                            if !git_enabled {
+                                if nav.button(ui, "Enable Git Support").clicked() {
+                                    self.enable_git_support_manually();
+                                }
+                            } else {
+                                let commit_shortcut =
+                                    self.settings.shortcuts.get(ShortcutAction::GitCommit);
+                                if nav.shortcut_button(ui, "Commit", commit_shortcut).clicked() {
+                                    self.prompt_git_commit(false);
+                                }
+                                // Push/pull run on a background thread (see `spawn_git_operation`);
+                                // disabled while one is already in flight rather than letting a
+                                // second click queue up or race it. `MenuNav::track`'s
+                                // `ui.is_enabled()` check means this trio is automatically
+                                // skipped by arrow-key navigation while busy, with no separate
+                                // bookkeeping needed.
+                                let git_busy = self.pending_git.is_some();
+                                ui.add_enabled_ui(!git_busy, |ui| {
+                                    if nav.button(ui, "Commit and Push").clicked() {
+                                        self.prompt_git_commit(true);
+                                    }
+                                    let push_shortcut =
+                                        self.settings.shortcuts.get(ShortcutAction::GitPush);
+                                    if nav.shortcut_button(ui, "Push", push_shortcut).clicked() {
+                                        self.run_git_push(ui.ctx());
+                                    }
+                                    if nav.button(ui, "Pull").clicked() {
+                                        self.run_git_pull(ui.ctx());
+                                    }
+                                });
                             }
-                        } else {
-                            let commit_shortcut =
-                                self.settings.shortcuts.get(ShortcutAction::GitCommit);
-                            if nav.shortcut_button(ui, "Commit", commit_shortcut).clicked() {
-                                self.prompt_git_commit(false);
-                            }
-                            // Push/pull run on a background thread (see `spawn_git_operation`);
-                            // disabled while one is already in flight rather than letting a
-                            // second click queue up or race it. `MenuNav::track`'s
-                            // `ui.is_enabled()` check means this trio is automatically
-                            // skipped by arrow-key navigation while busy, with no separate
-                            // bookkeeping needed.
-                            let git_busy = self.pending_git.is_some();
-                            ui.add_enabled_ui(!git_busy, |ui| {
-                                if nav.button(ui, "Commit and Push").clicked() {
-                                    self.prompt_git_commit(true);
-                                }
-                                let push_shortcut =
-                                    self.settings.shortcuts.get(ShortcutAction::GitPush);
-                                if nav.shortcut_button(ui, "Push", push_shortcut).clicked() {
-                                    self.run_git_push(ui.ctx());
-                                }
-                                if nav.button(ui, "Pull").clicked() {
-                                    self.run_git_pull(ui.ctx());
-                                }
-                            });
-                        }
-                    });
+                        });
+                    }
                     top_menu_button(ui, "Collaborate", egui::Key::C, |ui, nav| {
                         // A session that's already ended (peer disconnected, or a
                         // fatal error — see `CollabSession::session_ended`) doesn't

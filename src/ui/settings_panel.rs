@@ -27,16 +27,18 @@ pub enum SettingsCategory {
     Appearance,
     Editor,
     Templates,
+    History,
     Pomodoro,
     Shortcuts,
 }
 
 impl SettingsCategory {
-    pub const ALL: [SettingsCategory; 6] = [
+    pub const ALL: [SettingsCategory; 7] = [
         SettingsCategory::General,
         SettingsCategory::Appearance,
         SettingsCategory::Editor,
         SettingsCategory::Templates,
+        SettingsCategory::History,
         SettingsCategory::Pomodoro,
         SettingsCategory::Shortcuts,
     ];
@@ -47,6 +49,7 @@ impl SettingsCategory {
             SettingsCategory::Appearance => "Appearance",
             SettingsCategory::Editor => "Editor",
             SettingsCategory::Templates => "Templates",
+            SettingsCategory::History => "History",
             SettingsCategory::Pomodoro => "Pomodoro",
             SettingsCategory::Shortcuts => "Shortcuts",
         }
@@ -139,6 +142,7 @@ pub fn show(
                     SettingsCategory::Appearance => show_appearance_category(ctx, ui, settings),
                     SettingsCategory::Editor => show_editor_category(ui, settings),
                     SettingsCategory::Templates => show_templates_category(ui, settings),
+                    SettingsCategory::History => show_history_category(ui, settings),
                     SettingsCategory::Pomodoro => show_pomodoro_category(ui, settings),
                     SettingsCategory::Shortcuts => show_shortcuts_category(
                         ctx,
@@ -373,6 +377,28 @@ fn show_templates_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
     changed
 }
 
+fn show_history_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
+    let mut changed = false;
+    ui.heading("Git");
+    ui.add_space(12.0);
+    let mut enabled = settings.git_integration_enabled();
+    if ui
+        .checkbox(&mut enabled, "Enable Git integration")
+        .on_hover_text(
+            "Turns off every git-related feature app-wide: the Versions \
+             menu is hidden entirely, the Commit/Push shortcuts and every \
+             :git command do nothing, and the \"enable git support?\" \
+             prompt on opening a project never appears. Independent of, \
+             and stronger than, any individual project's own git setting.",
+        )
+        .changed()
+    {
+        settings.git_integration_disabled = !enabled;
+        changed = true;
+    }
+    changed
+}
+
 fn show_pomodoro_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
     let mut changed = false;
     let mut duration_row = |ui: &mut egui::Ui, label: &str, value: &mut u32, default: u32| {
@@ -447,6 +473,9 @@ fn show_shortcuts_category(
     // column on every row rather than a heading per group, so the whole
     // list stays one scannable grid instead of several disjoint ones.
     let mut actions: Vec<ShortcutAction> = ShortcutAction::ALL.to_vec();
+    if !settings.git_integration_enabled() {
+        actions.retain(|action| action.category() != ShortcutCategory::Git);
+    }
     actions.sort_by_key(|action| {
         let category_index = ShortcutCategory::ALL
             .iter()

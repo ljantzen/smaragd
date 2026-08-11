@@ -187,6 +187,23 @@ pub struct Settings {
     /// applied through (a global `TextStyle` remap, not a per-widget font
     /// choice like `editor_font` is).
     pub ui_font: EditorFont,
+    /// Global kill switch for git integration, set via the Settings > History
+    /// category. Stored inverted (`false` means enabled) so that this struct's
+    /// derived `Default` — which gives every `bool` field `false` — doesn't
+    /// silently turn git off for every *existing* settings file on upgrade, the
+    /// same "false/0 means no change from prior behavior" convention
+    /// `ui_scale`/`editor_font_size` above use. A genuinely new install starts
+    /// with this `true` (off) instead — see `load_from_path`, which is the only
+    /// place that distinguishes "new install" from "old file predating this
+    /// field" (both deserialize this key as absent, so the distinction can't
+    /// live in this field's own default). Read through
+    /// `git_integration_enabled()`, never directly. When off, this is a
+    /// stronger, app-wide veto than the per-project `ProjectMeta::git_enabled`
+    /// flag: the Versions menu is hidden entirely (not just its contents), the
+    /// `GitCommit`/`GitPush` shortcuts and every `:git` command become no-ops,
+    /// and the one-time "enable git?" prompt/auto-repair on project open never
+    /// runs — see `SmaragdApp::set_project`.
+    pub git_integration_disabled: bool,
     /// Pomodoro timer durations (minutes) and long-break cadence. `0` means
     /// "not yet configured," resolved to a real default at the point of use
     /// (`pomodoro::resolve_durations`) — same blank-means-unset convention as
@@ -294,10 +311,22 @@ impl Settings {
     /// its contents can't be parsed — a first launch or a hand-edited file should
     /// never prevent the app from starting.
     pub fn load_from_path(path: &Path) -> Self {
+        // Checked before reading: `git_integration_disabled`'s derived `Default`
+        // (`false`, i.e. enabled) has to stay that way for `unwrap_or_default()`
+        // below to also cover an *existing* settings file that simply predates
+        // this field — serde's per-field default can't tell that case apart from
+        // a genuinely new install, since both look like "key absent." Only an
+        // outright missing *file* is an unambiguous signal of "never
+        // configured," which is why this is decided here rather than by
+        // changing the field's own default.
+        let is_new_install = !path.exists();
         let mut settings: Self = std::fs::read_to_string(path)
             .ok()
             .and_then(|contents| toml::from_str(&contents).ok())
             .unwrap_or_default();
+        if is_new_install {
+            settings.git_integration_disabled = true;
+        }
         settings.backfill_new_shortcut_defaults();
         settings
     }
@@ -347,6 +376,12 @@ impl Settings {
         } else {
             DEFAULT_UI_SCALE
         }
+    }
+
+    /// Resolves `git_integration_disabled`'s inverted-storage convention (see its
+    /// own doc comment) to the plain "is git on" question every call site asks.
+    pub fn git_integration_enabled(&self) -> bool {
+        !self.git_integration_disabled
     }
 
     /// The full Story Grid column order, every `StoryGridColumn` present — the
@@ -622,6 +657,30 @@ mod tests {
     }
 
     #[test]
+    fn a_new_install_with_no_settings_file_starts_with_git_integration_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("smaragd.toml");
+        assert!(!path.exists());
+
+        let loaded = Settings::load_from_path(&path);
+
+        assert!(!loaded.git_integration_enabled());
+    }
+
+    #[test]
+    fn an_existing_settings_file_predating_this_field_keeps_git_integration_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("smaragd.toml");
+        // No `git_integration_disabled` key at all — simulates a settings file
+        // saved by a smaragd version that predates this field.
+        std::fs::write(&path, "reopen_last_project = true\n").unwrap();
+
+        let loaded = Settings::load_from_path(&path);
+
+        assert!(loaded.git_integration_enabled());
+    }
+
+    #[test]
     fn settings_round_trip_through_disk() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("smaragd.toml");
@@ -657,6 +716,7 @@ mod tests {
                 PathBuf::from("/home/author/old-draft"),
             ],
             create_starter_folders: true,
+            git_integration_disabled: true,
             shortcuts,
             theme_preference: egui::ThemePreference::Dark,
             color_theme: Some("dracula".to_string()),
@@ -709,6 +769,7 @@ mod tests {
     fn default_settings_after_load() -> Settings {
         let mut settings = Settings::default();
         settings.backfill_new_shortcut_defaults();
+        settings.git_integration_disabled = true;
         settings
     }
 
@@ -729,10 +790,13 @@ mod tests {
         let path = dir.path().join("smaragd.toml");
         std::fs::write(&path, "not valid { toml").unwrap();
 
-        assert_eq!(
-            Settings::load_from_path(&path),
-            default_settings_after_load()
-        );
+        let mut expected = default_settings_after_load();
+        // Unlike a missing file, an existing-but-corrupt one isn't a new
+        // install — git integration should stay on, not get silently
+        // disabled just because the file failed to parse.
+        expected.git_integration_disabled = false;
+
+        assert_eq!(Settings::load_from_path(&path), expected);
     }
 
     #[test]
