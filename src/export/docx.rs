@@ -12,10 +12,10 @@ use docx_rs::{
     StyleType, Table, TableCell, TableRow,
 };
 
+use super::resolve_image_fs_path;
 use super::style::TypesetStyle;
 use super::{BookMeta, ExportDoc, ExportError};
 use crate::markdown::{Block, BlockKind, Span};
-use crate::ui::markdown_preview::resolve_image_fs_path;
 
 const HEADING_STYLE_IDS: [&str; 6] = [
     "Heading1", "Heading2", "Heading3", "Heading4", "Heading5", "Heading6",

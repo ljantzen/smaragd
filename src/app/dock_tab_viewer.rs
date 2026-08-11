@@ -273,7 +273,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                                 .picklist_documents(field)
                                 .iter()
                                 .map(|node| {
-                                    ui::binder_panel::document_label(&node.name).to_string()
+                                    crate::project::model::document_label(&node.name).to_string()
                                 })
                                 .collect()
                         })

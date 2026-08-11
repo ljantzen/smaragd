@@ -982,7 +982,7 @@ impl SmaragdApp {
                         .map(|path| {
                             let relative = path.strip_prefix(&project.root).unwrap_or(&path);
                             let display =
-                                ui::binder_panel::document_label(&relative.to_string_lossy())
+                                crate::project::model::document_label(&relative.to_string_lossy())
                                     .to_string();
                             (display, path)
                         })
@@ -1498,7 +1498,7 @@ impl eframe::App for SmaragdApp {
                     project
                         .picklist_documents(crate::project::PicklistField::Pov)
                         .iter()
-                        .map(|node| ui::binder_panel::document_label(&node.name).to_string())
+                        .map(|node| crate::project::model::document_label(&node.name).to_string())
                         .collect()
                 })
                 .unwrap_or_default();

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::project::model::{BinderNode, BinderNodeKind};
+use crate::project::model::{BinderNode, BinderNodeKind, document_label};
 use crate::project::{BinderColorMode, FolderRole, PicklistField, Project};
 
 /// Outcomes of user interaction with the binder tree, handled by the caller (`app.rs`)
@@ -259,14 +259,6 @@ fn document_display_label(name: &str, dirty: bool) -> String {
     } else {
         base.to_string()
     }
-}
-
-/// Display label for a document node: `node.name` itself stays the full filename
-/// (with `.md`) since it's matched against on-disk names and `ProjectMeta::node_order`
-/// entries elsewhere (see `apply_order`) — only the binder's rendering trims the
-/// extension, Scrivener/Ulysses-style.
-pub(crate) fn document_label(name: &str) -> &str {
-    name.strip_suffix(".md").unwrap_or(name)
 }
 
 /// Paint a row's background: `status_color` (if any — see `ProjectMeta::status_colors`)
@@ -752,21 +744,6 @@ fn show_node(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn document_label_strips_the_md_extension() {
-        assert_eq!(document_label("01-opening.md"), "01-opening");
-    }
-
-    #[test]
-    fn document_label_leaves_names_without_the_md_extension_unchanged() {
-        assert_eq!(document_label("README"), "README");
-    }
-
-    #[test]
-    fn document_label_only_strips_a_trailing_md_extension() {
-        assert_eq!(document_label("notes.md.bak"), "notes.md.bak");
-    }
 
     #[test]
     fn document_display_label_appends_the_marker_only_when_dirty() {

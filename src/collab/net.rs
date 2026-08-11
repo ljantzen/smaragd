@@ -35,6 +35,23 @@ const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
 /// enough that a connector who never speaks can't park the session.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Session-lifecycle tracing for local debugging of the handshake/session-loop
+/// state machine — compiled out of release builds. Real errors are always
+/// surfaced to the UI via `CollabEvent::Error` regardless of this; these calls
+/// are extra, redundant console notes about *when* in the state machine
+/// something happened, not the only place a failure is reported.
+macro_rules! debug_log {
+    ($($arg:tt)*) => {{
+        #[cfg(debug_assertions)]
+        println!($($arg)*);
+        // Reference the interpolated variables even when the print above is
+        // compiled out, so a release build doesn't warn that (e.g.) an `err`
+        // bound only for a debug_log! call is unused.
+        #[cfg(not(debug_assertions))]
+        let _ = format_args!($($arg)*);
+    }};
+}
+
 /// Runs one collaboration session to completion: establishes the iroh
 /// connection (hosting or joining, per `role`), then shuttles bytes between
 /// the peer and the channels connecting back to the main thread until the
@@ -79,7 +96,7 @@ async fn run_session(
         SessionRole::Host => "host",
         SessionRole::Join(_) => "joiner",
     };
-    println!("[collab:{role_label}] starting session");
+    debug_log!("[collab:{role_label}] starting session");
 
     let secret_key = iroh::SecretKey::generate();
     let endpoint = match iroh::Endpoint::builder(iroh::endpoint::presets::N0)
@@ -90,7 +107,7 @@ async fn run_session(
     {
         Ok(endpoint) => endpoint,
         Err(err) => {
-            println!("[collab:{role_label}] failed to bind endpoint: {err}");
+            debug_log!("[collab:{role_label}] failed to bind endpoint: {err}");
             send_event(
                 &event_tx,
                 &ctx,
@@ -99,7 +116,7 @@ async fn run_session(
             return;
         }
     };
-    println!(
+    debug_log!(
         "[collab:{role_label}] endpoint bound, id={}",
         endpoint.id().fmt_short()
     );
@@ -125,12 +142,12 @@ async fn run_session(
         }
     };
     let Some(result) = outcome else {
-        println!("[collab:{role_label}] session ended before a peer connected, tearing down");
+        debug_log!("[collab:{role_label}] session ended before a peer connected, tearing down");
         endpoint.close().await;
         return;
     };
     let Some(established) = result else {
-        println!("[collab:{role_label}] establish() failed — see CollabEvent::Error above");
+        debug_log!("[collab:{role_label}] establish() failed — see CollabEvent::Error above");
         endpoint.close().await;
         return;
     };
@@ -141,7 +158,7 @@ async fn run_session(
         opener,
         peer_fingerprint,
     } = established;
-    println!("[collab:{role_label}] connected to peer {peer_fingerprint}");
+    debug_log!("[collab:{role_label}] connected to peer {peer_fingerprint}");
 
     send_event(
         &event_tx,
@@ -151,7 +168,7 @@ async fn run_session(
 
     for bytes in pending_edits {
         if let Err(err) = write_encrypted(&mut send_stream, &mut sealer, &bytes).await {
-            println!("[collab:{role_label}] flushing queued edit to peer failed: {err}");
+            debug_log!("[collab:{role_label}] flushing queued edit to peer failed: {err}");
             send_event(
                 &event_tx,
                 &ctx,
@@ -188,7 +205,7 @@ async fn run_session(
                     );
                 }
                 Err(err) => {
-                    println!(
+                    debug_log!(
                         "[collab:{reader_role_label}] read from peer failed, reporting disconnect: {err}"
                     );
                     send_event(&reader_event_tx, &reader_ctx, CollabEvent::PeerDisconnected);
@@ -212,7 +229,7 @@ async fn run_session(
                         if let Err(err) =
                             write_encrypted(&mut send_stream, &mut sealer, &bytes).await
                         {
-                            println!("[collab:{role_label}] write to peer failed: {err}");
+                            debug_log!("[collab:{role_label}] write to peer failed: {err}");
                             send_event(
                                 &event_tx,
                                 &ctx,
@@ -222,11 +239,11 @@ async fn run_session(
                         }
                     }
                     Some(CollabCommand::EndSession) => {
-                        println!("[collab:{role_label}] EndSession command received");
+                        debug_log!("[collab:{role_label}] EndSession command received");
                         break;
                     }
                     None => {
-                        println!(
+                        debug_log!(
                             "[collab:{role_label}] command channel closed (CollabSession dropped)"
                         );
                         break;
@@ -234,12 +251,12 @@ async fn run_session(
                 }
             }
             _ = &mut reader => {
-                println!("[collab:{role_label}] reader task ended, tearing down session");
+                debug_log!("[collab:{role_label}] reader task ended, tearing down session");
                 break;
             }
         }
     }
-    println!("[collab:{role_label}] session ending, tearing down");
+    debug_log!("[collab:{role_label}] session ending, tearing down");
 
     reader.abort();
     endpoint.close().await;
@@ -298,9 +315,9 @@ async fn establish(
                 crypto::derive_directional_key(&session_secret, &host_id, Direction::HostToJoiner);
             let recv_key =
                 crypto::derive_directional_key(&session_secret, &host_id, Direction::JoinerToHost);
-            println!("[collab:host] waiting for a relay address...");
+            debug_log!("[collab:host] waiting for a relay address...");
             let addr = wait_for_relay_addr(endpoint).await;
-            println!(
+            debug_log!(
                 "[collab:host] addr resolved: {} addr(s), relay={}",
                 addr.addrs.len(),
                 addr.addrs.iter().any(|a| a.is_relay())
@@ -314,9 +331,9 @@ async fn establish(
             // burns only its own attempt, not the session: the genuine
             // collaborator can still pair with the same code afterwards.
             loop {
-                println!("[collab:host] waiting for an incoming connection...");
+                debug_log!("[collab:host] waiting for an incoming connection...");
                 let incoming = endpoint.accept().await.or_else(|| {
-                    println!("[collab:host] endpoint.accept() returned None (endpoint closed)");
+                    debug_log!("[collab:host] endpoint.accept() returned None (endpoint closed)");
                     send_event(
                         event_tx,
                         ctx,
@@ -329,14 +346,14 @@ async fn establish(
                 let conn = match incoming.await {
                     Ok(conn) => conn,
                     Err(err) => {
-                        println!(
+                        debug_log!(
                             "[collab:host] incoming connection failed ({err}), still listening"
                         );
                         continue;
                     }
                 };
                 let peer_fingerprint = conn.remote_id().fmt_short().to_string();
-                println!(
+                debug_log!(
                     "[collab:host] connection from {peer_fingerprint}, awaiting its handshake..."
                 );
 
@@ -361,14 +378,14 @@ async fn establish(
                 let (mut send_stream, recv_stream) = match handshake {
                     Ok(Ok(streams)) => streams,
                     Ok(Err(reason)) => {
-                        println!(
+                        debug_log!(
                             "[collab:host] pairing attempt by {peer_fingerprint} rejected ({reason}), still listening"
                         );
                         conn.close(1u32.into(), b"pairing failed");
                         continue;
                     }
                     Err(_) => {
-                        println!(
+                        debug_log!(
                             "[collab:host] pairing attempt by {peer_fingerprint} timed out, still listening"
                         );
                         conn.close(1u32.into(), b"pairing timed out");
@@ -381,12 +398,12 @@ async fn establish(
                 // holds the key too — it won't report the peer as connected
                 // (or send anything) until this decrypts.
                 if let Err(err) = write_frame(&mut send_stream, &sealer.seal(&[])).await {
-                    println!(
+                    debug_log!(
                         "[collab:host] sending the handshake ack failed ({err}), still listening"
                     );
                     continue;
                 }
-                println!("[collab:host] handshake complete with {peer_fingerprint}");
+                debug_log!("[collab:host] handshake complete with {peer_fingerprint}");
                 return Some(Established {
                     send_stream,
                     recv_stream,
@@ -400,7 +417,7 @@ async fn establish(
             let ticket = match CollabTicket::decode(code) {
                 Ok(ticket) => ticket,
                 Err(err) => {
-                    println!("[collab:joiner] invalid connection code: {err}");
+                    debug_log!("[collab:joiner] invalid connection code: {err}");
                     send_event(
                         event_tx,
                         ctx,
@@ -420,7 +437,7 @@ async fn establish(
                 &host_id,
                 Direction::HostToJoiner,
             ));
-            println!(
+            debug_log!(
                 "[collab:joiner] connecting to host ({} addr(s), relay={})...",
                 ticket.endpoint_addr.addrs.len(),
                 ticket.endpoint_addr.addrs.iter().any(|a| a.is_relay())
@@ -428,7 +445,7 @@ async fn establish(
             let conn = match endpoint.connect(ticket.endpoint_addr, ALPN).await {
                 Ok(conn) => conn,
                 Err(err) => {
-                    println!("[collab:joiner] failed to connect to peer: {err}");
+                    debug_log!("[collab:joiner] failed to connect to peer: {err}");
                     send_event(
                         event_tx,
                         ctx,
@@ -438,11 +455,11 @@ async fn establish(
                 }
             };
             let peer_fingerprint = conn.remote_id().fmt_short().to_string();
-            println!("[collab:joiner] connected to {peer_fingerprint}, opening bi-stream...");
+            debug_log!("[collab:joiner] connected to {peer_fingerprint}, opening bi-stream...");
             let (mut send_stream, mut recv_stream) = match conn.open_bi().await {
                 Ok(streams) => streams,
                 Err(err) => {
-                    println!("[collab:joiner] open_bi() failed: {err}");
+                    debug_log!("[collab:joiner] open_bi() failed: {err}");
                     send_event(
                         event_tx,
                         ctx,
@@ -456,9 +473,9 @@ async fn establish(
             // host's `accept_bi` in the first place — that call only
             // resolves once actual data arrives on the stream (a documented
             // quirk of iroh/QUIC bidirectional streams, not optional).
-            println!("[collab:joiner] open_bi() succeeded, sending handshake ping...");
+            debug_log!("[collab:joiner] open_bi() succeeded, sending handshake ping...");
             if let Err(err) = write_frame(&mut send_stream, &sealer.seal(&[])).await {
-                println!("[collab:joiner] handshake ping failed: {err}");
+                debug_log!("[collab:joiner] handshake ping failed: {err}");
                 send_event(
                     event_tx,
                     ctx,
@@ -469,7 +486,7 @@ async fn establish(
             // ...and the host's ack is the mirror-image proof: nothing is
             // reported as connected here until the host has shown it can
             // produce a frame under the session key too.
-            println!("[collab:joiner] handshake ping sent, waiting for the host's ack...");
+            debug_log!("[collab:joiner] handshake ping sent, waiting for the host's ack...");
             let ack = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
                 let frame = read_frame(&mut recv_stream).await?;
                 opener.open(&frame)?;
@@ -478,7 +495,7 @@ async fn establish(
             .await;
             match ack {
                 Ok(Ok(())) => {
-                    println!("[collab:joiner] handshake complete with {peer_fingerprint}");
+                    debug_log!("[collab:joiner] handshake complete with {peer_fingerprint}");
                     Some(Established {
                         send_stream,
                         recv_stream,
@@ -488,7 +505,7 @@ async fn establish(
                     })
                 }
                 Ok(Err(err)) => {
-                    println!("[collab:joiner] handshake with host failed: {err}");
+                    debug_log!("[collab:joiner] handshake with host failed: {err}");
                     send_event(
                         event_tx,
                         ctx,
@@ -499,7 +516,7 @@ async fn establish(
                     None
                 }
                 Err(_) => {
-                    println!("[collab:joiner] host did not answer the handshake in time");
+                    debug_log!("[collab:joiner] host did not answer the handshake in time");
                     send_event(
                         event_tx,
                         ctx,

@@ -131,7 +131,7 @@ fn show_card_row(
         let paths = row.resolved_paths();
         if let Some(path) = paths.first() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let label = crate::ui::binder_panel::document_label(name);
+            let label = crate::project::model::document_label(name);
             if ui.link(format!("\u{1F517} {label}")).clicked() {
                 event = Some(BeliefTimelineEvent::OpenLinkedDocument(path.to_path_buf()));
             }

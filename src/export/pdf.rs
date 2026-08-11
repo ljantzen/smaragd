@@ -33,10 +33,10 @@ use std::path::Path;
 use typst_as_lib::TypstEngine;
 use typst_as_lib::typst_kit_options::TypstKitFontOptions;
 
+use super::resolve_image_fs_path;
 use super::style::{RunningHeaderStyle, TypesetStyle};
 use super::{BookMeta, ExportDoc, ExportError};
 use crate::markdown::{Block, BlockKind, Span};
-use crate::ui::markdown_preview::resolve_image_fs_path;
 
 /// Renders `docs` to a single print-ready PDF file at `out_path`, and returns
 /// an estimated spine width in inches for the resulting page count (see

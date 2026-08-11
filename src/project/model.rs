@@ -11,8 +11,8 @@ pub struct BinderTree {
 pub struct BinderNode {
     /// The on-disk filename, extension included for documents (`scene.md`) — matched
     /// against `ProjectMeta::node_order` entries and real filenames elsewhere, so it's
-    /// not the place to hide the `.md` extension; `ui::binder_panel::document_label`
-    /// does that at render time instead.
+    /// not the place to hide the `.md` extension; `document_label` does that at
+    /// render/export time instead.
     pub name: String,
     pub path: PathBuf,
     pub kind: BinderNodeKind,
@@ -126,6 +126,13 @@ impl BinderNode {
         }
         false
     }
+}
+
+/// Display label for a document node: `node.name` itself stays the full filename
+/// (with `.md`) since it's matched against on-disk names and `ProjectMeta::node_order`
+/// entries elsewhere — only rendering/export trims the extension, Scrivener/Ulysses-style.
+pub fn document_label(name: &str) -> &str {
+    name.strip_suffix(".md").unwrap_or(name)
 }
 
 impl BinderTree {
@@ -337,5 +344,20 @@ mod tests {
                 PathBuf::from("/vault/Chapter 1/Opening Scene.md"),
             ]
         );
+    }
+
+    #[test]
+    fn document_label_strips_the_md_extension() {
+        assert_eq!(document_label("01-opening.md"), "01-opening");
+    }
+
+    #[test]
+    fn document_label_leaves_names_without_the_md_extension_unchanged() {
+        assert_eq!(document_label("README"), "README");
+    }
+
+    #[test]
+    fn document_label_only_strips_a_trailing_md_extension() {
+        assert_eq!(document_label("notes.md.bak"), "notes.md.bak");
     }
 }

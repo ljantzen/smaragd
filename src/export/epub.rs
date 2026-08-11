@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
 
+use super::resolve_image_fs_path;
 use super::style::TypesetStyle;
 use super::{BookMeta, ExportDoc, ExportError};
 use crate::markdown::{Block, BlockKind, Span};
-use crate::ui::markdown_preview::resolve_image_fs_path;
 
 /// Renders `docs` to a single EPUB file at `out_path`. Each `ExportDoc` becomes
 /// one XHTML chapter; a `[[wikilink]]` whose target matches another exported

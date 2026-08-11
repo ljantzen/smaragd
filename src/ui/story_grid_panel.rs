@@ -509,10 +509,10 @@ fn resolve_pov_color(project: &Project, pov: Option<&str>) -> Option<egui::Color
 }
 
 /// The current document title for `path`, without the `.md` extension — see
-/// `ui::binder_panel::document_label`.
+/// `project::model::document_label`.
 fn document_label(path: &Path) -> String {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    crate::ui::binder_panel::document_label(name).to_string()
+    crate::project::model::document_label(name).to_string()
 }
 
 const TRUNCATE_CHARS: usize = 60;

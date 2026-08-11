@@ -382,6 +382,49 @@ fn accept_linked_document_candidate(draft: &mut CardDraft, candidate: &str) {
 /// cancels this frame. `pov_titles` are the picklist-folder-sourced POV options (see
 /// `ui::metadata_panel`'s `MetadataPicklists` for the parallel Metadata-panel usage);
 /// an empty list falls back to a plain text field, same as `metadata_panel::pov_row`.
+/// The card editor's "Plot" tab: Cause/Effect.
+fn show_plot_tab(ui: &mut egui::Ui, draft: &mut CardDraft, field_width: f32) {
+    ui.label("Cause (what happens):");
+    ui.add(egui::TextEdit::multiline(&mut draft.story_card.cause).desired_width(field_width));
+    ui.add_space(6.0);
+    ui.label("Effect (external and internal consequence):");
+    ui.add(egui::TextEdit::multiline(&mut draft.story_card.effect).desired_width(field_width));
+}
+
+/// The card editor's "Third Rail" tab: Why It Matters/Realization/And So.
+fn show_third_rail_tab(ui: &mut egui::Ui, draft: &mut CardDraft, field_width: f32) {
+    ui.label("Why it matters (the link to the protagonist's Desire/Misbelief):");
+    ui.add(
+        egui::TextEdit::multiline(&mut draft.story_card.why_it_matters).desired_width(field_width),
+    );
+    ui.add_space(6.0);
+    ui.label("Realization:");
+    ui.add(egui::TextEdit::multiline(&mut draft.story_card.realization).desired_width(field_width));
+    ui.add_space(6.0);
+    ui.label("And so? (what they do next):");
+    ui.add(egui::TextEdit::multiline(&mut draft.story_card.and_so).desired_width(field_width));
+}
+
+/// The card editor's "Belief and Knowledge" tab: Prior/New Belief, Value Shift,
+/// Knowledge Gained.
+fn show_belief_and_knowledge_tab(ui: &mut egui::Ui, draft: &mut CardDraft, field_width: f32) {
+    ui.label("Prior belief (going into this card):");
+    ui.add(
+        egui::TextEdit::singleline(&mut draft.story_card.prior_belief).desired_width(field_width),
+    );
+    ui.add_space(6.0);
+    ui.label("New belief (coming out of it):");
+    ui.add(egui::TextEdit::singleline(&mut draft.story_card.new_belief).desired_width(field_width));
+    ui.add_space(6.0);
+    ui.label("Value shift (e.g. \"Trust -> Distrust\"):");
+    ui.add(
+        egui::TextEdit::singleline(&mut draft.story_card.value_shift).desired_width(field_width),
+    );
+    ui.add_space(6.0);
+    ui.label("Knowledge gained (comma-separated):");
+    ui.add(egui::TextEdit::singleline(&mut draft.knowledge_text).desired_width(field_width));
+}
+
 pub fn show_card_editor(
     ctx: &egui::Context,
     draft: &mut CardDraft,
@@ -574,62 +617,10 @@ pub fn show_card_editor(
         ui.separator();
 
         match draft.active_tab {
-            CardEditorTab::Plot => {
-                ui.label("Cause (what happens):");
-                ui.add(
-                    egui::TextEdit::multiline(&mut draft.story_card.cause)
-                        .desired_width(field_width),
-                );
-                ui.add_space(6.0);
-                ui.label("Effect (external and internal consequence):");
-                ui.add(
-                    egui::TextEdit::multiline(&mut draft.story_card.effect)
-                        .desired_width(field_width),
-                );
-            }
-            CardEditorTab::ThirdRail => {
-                ui.label("Why it matters (the link to the protagonist's Desire/Misbelief):");
-                ui.add(
-                    egui::TextEdit::multiline(&mut draft.story_card.why_it_matters)
-                        .desired_width(field_width),
-                );
-                ui.add_space(6.0);
-                ui.label("Realization:");
-                ui.add(
-                    egui::TextEdit::multiline(&mut draft.story_card.realization)
-                        .desired_width(field_width),
-                );
-                ui.add_space(6.0);
-                ui.label("And so? (what they do next):");
-                ui.add(
-                    egui::TextEdit::multiline(&mut draft.story_card.and_so)
-                        .desired_width(field_width),
-                );
-            }
+            CardEditorTab::Plot => show_plot_tab(ui, draft, field_width),
+            CardEditorTab::ThirdRail => show_third_rail_tab(ui, draft, field_width),
             CardEditorTab::BeliefAndKnowledge => {
-                ui.label("Prior belief (going into this card):");
-                ui.add(
-                    egui::TextEdit::singleline(&mut draft.story_card.prior_belief)
-                        .desired_width(field_width),
-                );
-                ui.add_space(6.0);
-                ui.label("New belief (coming out of it):");
-                ui.add(
-                    egui::TextEdit::singleline(&mut draft.story_card.new_belief)
-                        .desired_width(field_width),
-                );
-                ui.add_space(6.0);
-                ui.label("Value shift (e.g. \"Trust -> Distrust\"):");
-                ui.add(
-                    egui::TextEdit::singleline(&mut draft.story_card.value_shift)
-                        .desired_width(field_width),
-                );
-                ui.add_space(6.0);
-                ui.label("Knowledge gained (comma-separated):");
-                ui.add(
-                    egui::TextEdit::singleline(&mut draft.knowledge_text)
-                        .desired_width(field_width),
-                );
+                show_belief_and_knowledge_tab(ui, draft, field_width)
             }
         }
 
