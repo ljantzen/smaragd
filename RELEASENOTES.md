@@ -5,9 +5,16 @@ this file.
 
 ## Unreleased
 
-- **File > Go Back / Go Forward** (`Alt+Left`/`Alt+Right`) navigate a
-  browser-style history of every document opened this project session,
-  restoring the cursor position last left in each one.
+- Broken-link coloring: a `[[wikilink]]` whose target doesn't
+  match any document in the project now renders in a distinct color, in both
+  the Editor and the Preview, instead of looking like an ordinary link. Each
+  built-in color theme has its own tuned color for this; a custom theme can
+  set its own via the new (optional) `broken_wikilink` key.
+- Fixed a Preview rendering bug (#66) where a `[[wikilink]]` sharing a line
+  with plain text could render visibly smaller/misaligned relative to its
+  neighbors, depending on the typesetting style's font. Every span in a line
+  is now drawn as one combined block of text instead of gluing separate
+  widgets together.
 
 ## v0.9.0 — 2026-08-11
 

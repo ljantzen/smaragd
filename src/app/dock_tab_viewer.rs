@@ -374,6 +374,10 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                 if self.editor.open_path.is_some() {
                     let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
                     let project_root = self.project.map(|project| project.root.as_path());
+                    let note_titles = self
+                        .project
+                        .map(|project| project.tree.document_names())
+                        .unwrap_or_default();
                     let outcome = ui::markdown_preview::show(
                         ui,
                         &self.editor.buffer,
@@ -383,6 +387,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         self.book_style_id,
                         self.custom_fonts,
                         self.settings.typewriter_quotes,
+                        &note_titles,
                     );
                     if let Some(activation) = outcome.wikilink {
                         self.actions.push(DockAction::Wikilink(activation));

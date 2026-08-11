@@ -2,6 +2,7 @@ use std::path::Path;
 
 use egui::{Color32, FontId, RichText, TextFormat, text::LayoutJob};
 
+use crate::autocomplete::char_offset_to_byte;
 use crate::editor_font::EditorFont;
 use crate::export::is_within_project;
 use crate::export::style::{self, DropCapStyle, TypesetStyle};
@@ -86,11 +87,30 @@ struct PreviewStyle<'a> {
     quote_bar_color: Color32,
     code_bg: Color32,
     link_color: Color32,
+    /// Color for a `[[wikilink]]` whose target doesn't resolve to any
+    /// document in the project, so a dead/mistyped/not-yet-created target
+    /// is visible at a glance instead of looking like any other link.
+    /// See `wikilink_color`.
+    /// Themeable: this is just `visuals.error_fg_color`, which `color_theme::apply` sets to the
+    /// active theme's `broken_wikilink`, falling back to plain egui default
+    /// red with no theme active.
+    broken_link_color: Color32,
+    /// The project's document filenames (without extension) — what a
+    /// wikilink target is checked against to decide `link_color` vs
+    /// `broken_link_color`. Empty (so every wikilink renders as broken) when
+    /// there's no project, e.g. viewing a joined collaboration session's
+    /// shared content.
+    note_titles: &'a [String],
     dark_mode: bool,
 }
 
 impl<'a> PreviewStyle<'a> {
-    fn new(visuals: &egui::Visuals, style: &'a TypesetStyle, custom_fonts: &[String]) -> Self {
+    fn new(
+        visuals: &egui::Visuals,
+        style: &'a TypesetStyle,
+        custom_fonts: &[String],
+        note_titles: &'a [String],
+    ) -> Self {
         Self {
             style,
             body_family: resolve_family(
@@ -118,7 +138,19 @@ impl<'a> PreviewStyle<'a> {
             quote_bar_color: visuals.weak_text_color(),
             code_bg: visuals.code_bg_color,
             link_color: visuals.hyperlink_color,
+            broken_link_color: visuals.error_fg_color,
+            note_titles,
             dark_mode: visuals.dark_mode,
+        }
+    }
+
+    /// `link_color` if `target` resolves to a document in the project,
+    /// `broken_link_color` otherwise — see both fields' doc comments.
+    fn wikilink_color(&self, target: &str) -> Color32 {
+        if markdown::wikilink_resolves(target, self.note_titles) {
+            self.link_color
+        } else {
+            self.broken_link_color
         }
     }
 
@@ -188,6 +220,11 @@ pub struct PreviewOutcome {
 /// rendering, so the preview shows the same curly quotes/em dash/ellipsis an
 /// export with the same setting would produce, without altering `markdown_text`
 /// itself.
+///
+/// `note_titles` (every document filename in the project, without extension —
+/// the same list the Editor's wikilink autocomplete uses) decides which
+/// `[[wikilink]]`s render as ordinary links versus "broken" links,
+/// see `PreviewStyle::wikilink_color`.
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
@@ -198,6 +235,7 @@ pub fn show(
     style_id: &str,
     custom_fonts: &[String],
     typewriter_quotes: bool,
+    note_titles: &[String],
 ) -> PreviewOutcome {
     let base_dir = ImageContext {
         dir: base_dir,
@@ -244,7 +282,7 @@ pub fn show(
     if typewriter_quotes {
         markdown::apply_typewriter_quotes(&mut blocks);
     }
-    let ps = PreviewStyle::new(ui.visuals(), style, custom_fonts);
+    let ps = PreviewStyle::new(ui.visuals(), style, custom_fonts, note_titles);
 
     let wikilink = egui::ScrollArea::vertical()
         .id_salt("markdown_preview_scroll")
@@ -328,10 +366,15 @@ fn render_heading(
 
 /// Renders a paragraph as a single justifiable `LayoutJob` when it's plain text
 /// (the common case for manuscript body copy), so `style.body.justify` can
-/// actually take effect. A paragraph containing a wikilink or image needs real
-/// interactive widgets egui can't express inside one `LayoutJob`, so those fall
-/// back to the same wrapped multi-widget rendering headings/blockquotes use —
-/// left-aligned regardless of `justify`, a known v1 limitation.
+/// actually take effect. A paragraph containing an image needs a real widget
+/// egui can't express inside one `LayoutJob`, so those fall back to the same
+/// wrapped rendering headings/blockquotes use — left-aligned regardless of
+/// `justify`, a known v1 limitation. A wikilink alone doesn't force that
+/// fallback (it's just a colored range within one combined galley — see
+/// `render_spans_wrapped`), but still routes through the same fallback here
+/// rather than duplicating that galley/hit-testing machinery into
+/// `build_paragraph_job` too, so it's left-aligned the same as an image
+/// paragraph would be.
 fn render_paragraph(
     ui: &mut egui::Ui,
     ps: &PreviewStyle,
@@ -529,13 +572,24 @@ fn render_table(
     clicked
 }
 
-/// Render a run of spans, laying out plain-text runs as wrapped, styled text, each
-/// `[[wikilink]]` span as a clickable link, and each `![image](src)` span as a loaded
-/// image (falling back to its alt text while loading or on error). Returns the
-/// clicked wikilink, if any — holding Ctrl (Cmd on macOS) while clicking sets
-/// `force_create`. Used for headings/blockquotes/lists/tables and any paragraph
-/// containing a wikilink or image — see `render_paragraph` for why plain-text
-/// paragraphs instead go through `build_paragraph_job` (justify support).
+/// Render a run of spans as wrapped, styled text, with each `![image](src)` span
+/// pulled out as a loaded image (falling back to its alt text while loading or on
+/// error). Returns the clicked wikilink, if any — holding Ctrl (Cmd on macOS) while
+/// clicking sets `force_create`. Used for headings/blockquotes/lists/tables and any
+/// paragraph containing a wikilink or image — see `render_paragraph` for why
+/// plain-text paragraphs instead go through `build_paragraph_job` (justify support).
+///
+/// A `[[wikilink]]` is *not* a separate widget here (unlike plain text runs, which
+/// used to flush into their own `ui.label()`, with each wikilink as its own
+/// `ui.link()` sitting beside them) — it's just a differently-colored/underlined
+/// range within the same combined galley as its surrounding plain text (colored via
+/// `append_span`, see `PreviewStyle::wikilink_color`), hit-tested against `wikilinks`
+/// after the fact by `render_text_run`. GitHub issue #66: a `ui.link()` sitting next
+/// to a `ui.label()` on the same wrapped line visibly diverged in size/alignment
+/// from its neighbor for some (but not all) fonts, for reasons that resisted every
+/// attempt to pin down in egui's own widget code; rendering the whole run as one
+/// widget/one paint call sidesteps the question entirely — there's nothing left for
+/// it to diverge *from*.
 fn render_spans_wrapped(
     ui: &mut egui::Ui,
     ps: &PreviewStyle,
@@ -547,54 +601,106 @@ fn render_spans_wrapped(
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let mut clicked = None;
-        let mut buffer: Vec<Span> = Vec::new();
+        let mut job = LayoutJob::default();
+        let mut wikilinks: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+
         for span in spans {
             if let Some(image) = &span.image {
-                if !buffer.is_empty() {
-                    ui.label(build_inline_job(ps, &buffer, base_font.clone(), base_color));
-                    buffer.clear();
+                if !job.text.is_empty() {
+                    if let Some(activation) =
+                        render_text_run(ui, ps, std::mem::take(&mut job), &wikilinks)
+                    {
+                        clicked = Some(activation);
+                    }
+                    wikilinks.clear();
                 }
                 render_image(ui, image, &span.text, base_dir);
-            } else if let Some(target) = &span.wikilink {
-                if !buffer.is_empty() {
-                    ui.label(build_inline_job(ps, &buffer, base_font.clone(), base_color));
-                    buffer.clear();
-                }
-                let response = ui.link(
-                    RichText::new(&span.text)
-                        .color(ps.link_color)
-                        .font(base_font.clone()),
-                );
-                if response.clicked() {
-                    let force_create = ui.input(|i| i.modifiers.command);
-                    clicked = Some(WikilinkActivation {
-                        target: target.clone(),
-                        force_create,
-                    });
-                }
             } else {
-                buffer.push(span.clone());
+                let start = job.text.len();
+                append_span(&mut job, ps, span, base_font.clone(), base_color);
+                if let Some(target) = &span.wikilink {
+                    wikilinks.push((start..job.text.len(), target.clone()));
+                }
             }
         }
-        if !buffer.is_empty() {
-            ui.label(build_inline_job(ps, &buffer, base_font, base_color));
+        if !job.text.is_empty()
+            && let Some(activation) = render_text_run(ui, ps, job, &wikilinks)
+        {
+            clicked = Some(activation);
         }
         clicked
     })
     .inner
 }
 
-fn build_inline_job(
+/// Renders `job` (already fully styled, including any wikilinks' colors — see
+/// `render_spans_wrapped`'s doc comment) as a single widget, then hit-tests the
+/// mouse position against `wikilinks` (byte ranges into `job.text`, paired with
+/// their target) to decide hover cursor/tooltip and clicks — reimplements the
+/// relevant slices of `egui::Label`/`egui::widgets::Link`'s own `Widget` impls
+/// (`layout_in_ui` for the shared layout/wrapping logic, `LabelSelectionState` for
+/// the same click-and-drag text selection a plain label gets) rather than calling
+/// either directly, since neither has a hook for "part of this text is also a
+/// click/hover target with its own tooltip."
+fn render_text_run(
+    ui: &mut egui::Ui,
     ps: &PreviewStyle,
-    spans: &[Span],
-    base_font: FontId,
-    base_color: Color32,
-) -> LayoutJob {
-    let mut job = LayoutJob::default();
-    for span in spans {
-        append_span(&mut job, ps, span, base_font.clone(), base_color);
+    job: LayoutJob,
+    wikilinks: &[(std::ops::Range<usize>, String)],
+) -> Option<WikilinkActivation> {
+    let label = egui::Label::new(job).sense(egui::Sense::click());
+    let (galley_pos, galley, mut response) = label.layout_in_ui(ui);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), galley.text())
+    });
+
+    let hovered_wikilink = response.hover_pos().and_then(|pos| {
+        let char_index = galley.cursor_from_pos(pos - galley_pos).index.0;
+        let byte_offset = char_offset_to_byte(&galley.job.text, char_index);
+        wikilinks
+            .iter()
+            .find(|(range, _)| range.contains(&byte_offset))
+    });
+
+    if ui.is_rect_visible(response.rect) {
+        if ui.style().interaction.selectable_labels {
+            egui::text_selection::LabelSelectionState::label_text_selection(
+                ui,
+                &response,
+                galley_pos,
+                galley,
+                ps.text_color,
+                egui::Stroke::NONE,
+            );
+        } else {
+            ui.painter().add(egui::epaint::TextShape::new(
+                galley_pos,
+                galley,
+                ps.text_color,
+            ));
+        }
     }
-    job
+
+    if let Some((_, target)) = hovered_wikilink {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        let resolves = markdown::wikilink_resolves(target, ps.note_titles);
+        response = response.on_hover_text(if resolves {
+            target.clone()
+        } else {
+            "No document found — Ctrl+click to create it".to_string()
+        });
+    }
+
+    if response.clicked()
+        && let Some((_, target)) = hovered_wikilink
+    {
+        let force_create = ui.input(|i| i.modifiers.command);
+        return Some(WikilinkActivation {
+            target: target.clone(),
+            force_create,
+        });
+    }
+    None
 }
 
 fn append_span(job: &mut LayoutJob, ps: &PreviewStyle, span: &Span, font: FontId, color: Color32) {
@@ -622,6 +728,10 @@ fn append_span(job: &mut LayoutJob, ps: &PreviewStyle, span: &Span, font: FontId
     if span.link.is_some() {
         format.color = ps.link_color;
         format.underline = egui::Stroke::new(1.0, ps.link_color);
+    }
+    if let Some(target) = &span.wikilink {
+        format.color = ps.wikilink_color(target);
+        format.underline = egui::Stroke::new(1.0, format.color);
     }
     job.append(&span.text, 0.0, format);
 }
@@ -890,8 +1000,185 @@ mod tests {
         }
     }
 
+    fn wikilink_span(target: &str) -> Span {
+        Span {
+            text: target.to_string(),
+            bold: false,
+            italic: false,
+            strikethrough: false,
+            code: false,
+            link: None,
+            wikilink: Some(target.to_string()),
+            image: None,
+        }
+    }
+
     fn preview_style(style: &TypesetStyle) -> PreviewStyle<'_> {
-        PreviewStyle::new(&egui::Visuals::dark(), style, &[])
+        PreviewStyle::new(&egui::Visuals::dark(), style, &[], &[])
+    }
+
+    /// Regression test for GitHub issue #66: clicking plain text that shares a
+    /// wrapped run with a wikilink must not activate the link, and clicking the
+    /// wikilink itself must — verifying `render_text_run`'s hit-testing picks the
+    /// right byte range out of the single combined galley `render_spans_wrapped`
+    /// now renders (previously two adjacent widgets, `ui.label()` + `ui.link()`,
+    /// each responsible for its own hit-testing).
+    #[test]
+    fn clicking_plain_text_next_to_a_wikilink_does_not_activate_it_but_clicking_the_link_does() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let font_id = EditorFont::DejaVuSansMono.font_id(20.0);
+
+        // Warm-up frame: fonts (and thus glyph measurement) aren't available
+        // until the first real pass — same reason other tests in this module
+        // call `editor_font::install` before measuring/rendering.
+        let char_width = {
+            let mut width = 0.0;
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                width = ui
+                    .fonts_mut(|f| f.layout_no_wrap("A".into(), font_id.clone(), Color32::WHITE))
+                    .size()
+                    .x;
+            });
+            width
+        };
+
+        let styles = style::built_in_styles();
+        let style = style::find(&styles, "manuscript").unwrap();
+        let note_titles = vec!["BB".to_string()];
+        // Spans render as one combined run "AABBCC": "AA" plain, "BB" a
+        // (resolved) wikilink, "CC" plain — monospace so each character's
+        // on-screen x position is exactly predictable, letting the test click
+        // precise character centers without needing to inspect the galley.
+        let spans = [plain_span("AA"), wikilink_span("BB"), plain_span("CC")];
+
+        let click_at = |ctx: &egui::Context,
+                        style: &TypesetStyle,
+                        note_titles: &[String],
+                        spans: &[Span],
+                        char_index: f32|
+         -> Option<WikilinkActivation> {
+            let mut clicked = None;
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 200.0),
+                )),
+                ..Default::default()
+            };
+            let mut start = egui::Pos2::ZERO;
+            let _ = ctx.run_ui(input.clone(), |ui| {
+                start = ui.cursor().min;
+            });
+            let pos = start
+                + egui::vec2(
+                    char_width * char_index,
+                    ctx.fonts_mut(|f| f.row_height(&font_id)) / 2.0,
+                );
+            let render = |ui: &mut egui::Ui| -> Option<WikilinkActivation> {
+                let ps = PreviewStyle::new(ui.visuals(), style, &[], note_titles);
+                render_spans_wrapped(
+                    ui,
+                    &ps,
+                    spans,
+                    font_id.clone(),
+                    ps.text_color,
+                    NO_IMAGE_CONTEXT,
+                )
+            };
+            // Move, press, and release each get their own frame — a single
+            // combined frame left `is_pointer_button_down_on()` false, as if
+            // the press event was never attributed to the widget at all
+            // (seemingly because `hovered()`, which the press attribution
+            // depends on, isn't settled from a `PointerMoved` delivered in
+            // that same frame).
+            let move_input = egui::RawInput {
+                events: vec![egui::Event::PointerMoved(pos)],
+                ..input.clone()
+            };
+            let _ = ctx.run_ui(move_input, |ui| {
+                render(ui);
+            });
+            let press_input = egui::RawInput {
+                events: vec![egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..input.clone()
+            };
+            let _ = ctx.run_ui(press_input, |ui| {
+                render(ui);
+            });
+            let release_input = egui::RawInput {
+                events: vec![egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..input
+            };
+            let _ = ctx.run_ui(release_input, |ui| {
+                clicked = render(ui);
+            });
+            clicked
+        };
+
+        let clicked_on_plain = click_at(
+            &ctx,
+            style,
+            &note_titles,
+            &spans,
+            0.5, /* inside "AA" */
+        );
+        assert!(
+            clicked_on_plain.is_none(),
+            "clicking plain text next to a wikilink activated it: {:?}",
+            clicked_on_plain.map(|a| a.target)
+        );
+
+        let clicked_on_link = click_at(
+            &ctx,
+            style,
+            &note_titles,
+            &spans,
+            2.5, /* inside "BB" */
+        );
+        assert_eq!(
+            clicked_on_link.map(|a| a.target),
+            Some("BB".to_string()),
+            "clicking the wikilink itself should have activated it"
+        );
+    }
+
+    const NO_IMAGE_CONTEXT: ImageContext<'static> = ImageContext {
+        dir: None,
+        project_root: None,
+    };
+
+    #[test]
+    fn wikilink_color_is_the_link_color_when_the_target_resolves() {
+        let styles = style::built_in_styles();
+        let style = style::find(&styles, "manuscript").unwrap();
+        let note_titles = vec!["Chapter 1".to_string()];
+        let visuals = egui::Visuals::dark();
+        let ps = PreviewStyle::new(&visuals, style, &[], &note_titles);
+
+        assert_eq!(ps.wikilink_color("Chapter 1"), visuals.hyperlink_color);
+        assert_eq!(ps.wikilink_color("chapter 1"), visuals.hyperlink_color);
+    }
+
+    #[test]
+    fn wikilink_color_is_the_broken_color_when_the_target_does_not_resolve() {
+        let styles = style::built_in_styles();
+        let style = style::find(&styles, "manuscript").unwrap();
+        let note_titles = vec!["Chapter 1".to_string()];
+        let visuals = egui::Visuals::dark();
+        let ps = PreviewStyle::new(&visuals, style, &[], &note_titles);
+
+        assert_eq!(ps.wikilink_color("Chapter 2"), visuals.error_fg_color);
     }
 
     #[test]

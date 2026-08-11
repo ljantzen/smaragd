@@ -47,7 +47,7 @@ pub struct Span {
     pub code: bool,
     pub strikethrough: bool,
     pub link: Option<String>,
-    /// Set for an Obsidian-style `[[Topic]]`/`[[Topic|Alias]]` span: the target note
+    /// Set for a `[[Topic]]`/`[[Topic|Alias]]` span: the target note
     /// name to resolve, separate from `link` (which holds a real URL destination).
     pub wikilink: Option<String>,
     /// Set for an inline `![alt](src "title")` image. `text` holds the alt text, kept
@@ -406,7 +406,7 @@ const WIKILINK_MARK: char = '\u{E000}';
 struct WikilinkPlaceholder {
     target: String,
     display: String,
-    /// Set for Obsidian-style `![[Target]]` embeds, as opposed to a plain
+    /// Set for `![[Target]]` embeds, as opposed to a plain
     /// `[[Target]]` link. Only image-extension targets actually embed as images
     /// (see [`has_image_extension`]) — an embed of anything else (e.g. another note)
     /// falls back to behaving like a plain link, since full note transclusion isn't
@@ -672,6 +672,20 @@ pub fn wikilink_target_at(markdown: &str, cursor: usize) -> Option<String> {
         .map(|(_, target)| target)
 }
 
+/// Whether `target` (a `[[wikilink]]`'s target, i.e. without its `|Alias`)
+/// matches one of `note_titles` — the project's document filenames without
+/// extension — case-insensitively (full Unicode case folding, matching
+/// `project::BinderTree::find_document_by_stem`, the lookup that actually
+/// resolves a followed link to a file). Duplicated here rather than depending
+/// on `project` so both the Editor and Preview panels can style a wikilink
+/// that doesn't resolve to any document, without a circular dependency between the two modules.
+pub fn wikilink_resolves(target: &str, note_titles: &[String]) -> bool {
+    let target = target.to_lowercase();
+    note_titles
+        .iter()
+        .any(|title| title.to_lowercase() == target)
+}
+
 /// Total characters of context a backlink snippet shows, split ~evenly before/after
 /// the link.
 const MAX_SNIPPET_CHARS: usize = 120;
@@ -748,8 +762,7 @@ fn char_index_to_byte(s: &str, total_chars: usize, char_index: usize) -> usize {
 }
 
 /// A `#tag` marker's allowed characters after the leading `#`: ASCII letters,
-/// digits, `_`, `-`, and `/` (the last for Obsidian-style nested tags like
-/// `#projects/smaragd`).
+/// digits, `_`, `-`, and `/` (the last for nested tags like `#projects/smaragd`).
 fn is_tag_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '/')
 }
@@ -1288,6 +1301,19 @@ mod tests {
         let text = "See [[Topic]] please";
         let outside = text.find("please").unwrap();
         assert_eq!(wikilink_target_at(text, outside), None);
+    }
+
+    #[test]
+    fn wikilink_resolves_matches_case_insensitively() {
+        let titles = vec!["Chapter 1".to_string(), "Café".to_string()];
+        assert!(wikilink_resolves("chapter 1", &titles));
+        assert!(wikilink_resolves("CAFÉ", &titles));
+    }
+
+    #[test]
+    fn wikilink_resolves_is_false_for_a_target_with_no_matching_document() {
+        let titles = vec!["Chapter 1".to_string()];
+        assert!(!wikilink_resolves("Chapter 2", &titles));
     }
 
     #[test]

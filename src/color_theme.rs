@@ -33,6 +33,16 @@ pub struct ColorTheme {
     pub background: Color32,
     pub foreground: Color32,
     pub accent: Color32,
+    /// "broken link" color — a `[[wikilink]]` whose target
+    /// doesn't resolve to any document, in both the Editor and the Preview
+    /// (`ui::editor_panel`/`ui::markdown_preview`, both of which just read
+    /// `ui.visuals().error_fg_color`, the same field `apply` writes this
+    /// into). Deliberately its own color rather than a fixed derivation from
+    /// `accent` — it needs to read as visually distinct from a *resolved*
+    /// link (which uses `accent`, via `hyperlink_color`), and how far a
+    /// theme wants "broken" to stand out is a per-palette judgment call, not
+    /// something a formula can guess.
+    pub broken_wikilink: Color32,
 }
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
@@ -49,6 +59,9 @@ struct BuiltIn {
     background: Color32,
     foreground: Color32,
     accent: Color32,
+    /// Each palette's own published red/error tone (Helix's `error`/`diagnostic.error`
+    /// scope, where the theme defines one) — see `ColorTheme::broken_wikilink`.
+    broken_wikilink: Color32,
 }
 
 const BUILT_IN: &[BuiltIn] = &[
@@ -59,6 +72,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0x28, 0x28, 0x28),
         foreground: rgb(0xeb, 0xdb, 0xb2),
         accent: rgb(0xfe, 0x80, 0x19),
+        broken_wikilink: rgb(0xfb, 0x49, 0x34),
     },
     BuiltIn {
         id: "gruvbox_light",
@@ -67,6 +81,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0xfb, 0xf1, 0xc7),
         foreground: rgb(0x3c, 0x38, 0x36),
         accent: rgb(0xaf, 0x3a, 0x03),
+        broken_wikilink: rgb(0x9d, 0x00, 0x06),
     },
     BuiltIn {
         id: "dracula",
@@ -75,6 +90,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0x28, 0x2a, 0x36),
         foreground: rgb(0xf8, 0xf8, 0xf2),
         accent: rgb(0xbd, 0x93, 0xf9),
+        broken_wikilink: rgb(0xff, 0x55, 0x55),
     },
     BuiltIn {
         id: "nord",
@@ -83,6 +99,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0x2e, 0x34, 0x40),
         foreground: rgb(0xd8, 0xde, 0xe9),
         accent: rgb(0x88, 0xc0, 0xd0),
+        broken_wikilink: rgb(0xbf, 0x61, 0x6a),
     },
     BuiltIn {
         id: "nord_light",
@@ -91,6 +108,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0xec, 0xef, 0xf4),
         foreground: rgb(0x2e, 0x34, 0x40),
         accent: rgb(0x5e, 0x81, 0xac),
+        broken_wikilink: rgb(0xbf, 0x61, 0x6a),
     },
     BuiltIn {
         id: "solarized_dark",
@@ -99,6 +117,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0x00, 0x2b, 0x36),
         foreground: rgb(0x93, 0xa1, 0xa1),
         accent: rgb(0x26, 0x8b, 0xd2),
+        broken_wikilink: rgb(0xdc, 0x32, 0x2f),
     },
     BuiltIn {
         id: "solarized_light",
@@ -107,6 +126,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0xfd, 0xf6, 0xe3),
         foreground: rgb(0x58, 0x6e, 0x75),
         accent: rgb(0x26, 0x8b, 0xd2),
+        broken_wikilink: rgb(0xdc, 0x32, 0x2f),
     },
     BuiltIn {
         id: "catppuccin_mocha",
@@ -115,6 +135,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0x1e, 0x1e, 0x2e),
         foreground: rgb(0xcd, 0xd6, 0xf4),
         accent: rgb(0xcb, 0xa6, 0xf7),
+        broken_wikilink: rgb(0xf3, 0x8b, 0xa8),
     },
     BuiltIn {
         id: "catppuccin_latte",
@@ -123,6 +144,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0xef, 0xf1, 0xf5),
         foreground: rgb(0x4c, 0x4f, 0x69),
         accent: rgb(0x88, 0x39, 0xef),
+        broken_wikilink: rgb(0xd2, 0x0f, 0x39),
     },
     BuiltIn {
         id: "onedark",
@@ -131,6 +153,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0x28, 0x2c, 0x34),
         foreground: rgb(0xab, 0xb2, 0xbf),
         accent: rgb(0x61, 0xaf, 0xef),
+        broken_wikilink: rgb(0xe0, 0x6c, 0x75),
     },
     BuiltIn {
         id: "onelight",
@@ -139,6 +162,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0xfa, 0xfa, 0xfa),
         foreground: rgb(0x28, 0x2c, 0x34),
         accent: rgb(0x00, 0x61, 0xff),
+        broken_wikilink: rgb(0xe4, 0x56, 0x49),
     },
     BuiltIn {
         id: "tokyonight",
@@ -147,6 +171,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0x1a, 0x1b, 0x26),
         foreground: rgb(0xc0, 0xca, 0xf5),
         accent: rgb(0x7a, 0xa2, 0xf7),
+        broken_wikilink: rgb(0xf7, 0x76, 0x8e),
     },
     BuiltIn {
         id: "everforest_dark",
@@ -155,6 +180,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0x2d, 0x35, 0x3b),
         foreground: rgb(0xd3, 0xc6, 0xaa),
         accent: rgb(0xa7, 0xc0, 0x80),
+        broken_wikilink: rgb(0xe6, 0x7e, 0x80),
     },
     BuiltIn {
         id: "everforest_light",
@@ -163,6 +189,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0xfd, 0xf6, 0xe3),
         foreground: rgb(0x5c, 0x6a, 0x72),
         accent: rgb(0x8d, 0xa1, 0x01),
+        broken_wikilink: rgb(0xf8, 0x55, 0x52),
     },
     BuiltIn {
         id: "ayu_dark",
@@ -171,6 +198,7 @@ const BUILT_IN: &[BuiltIn] = &[
         background: rgb(0x0f, 0x14, 0x19),
         foreground: rgb(0xbf, 0xbd, 0xb6),
         accent: rgb(0xff, 0x8f, 0x40),
+        broken_wikilink: rgb(0xf0, 0x71, 0x78),
     },
 ];
 
@@ -186,6 +214,7 @@ pub fn built_in_themes() -> Vec<ColorTheme> {
             background: theme.background,
             foreground: theme.foreground,
             accent: theme.accent,
+            broken_wikilink: theme.broken_wikilink,
         })
         .collect()
 }
@@ -227,6 +256,12 @@ const PROGRESS_RED: Color32 = Color32::from_rgb(200, 60, 60);
 const PROGRESS_YELLOW: Color32 = Color32::from_rgb(230, 180, 30);
 const PROGRESS_GREEN: Color32 = Color32::from_rgb(60, 180, 75);
 
+/// Fallback `broken_wikilink` for a custom theme `.toml` written before that
+/// field existed — see `RawTheme::broken_wikilink`'s doc comment. A plain,
+/// unremarkable red rather than anything tuned to a specific palette, since
+/// there's no theme context to tune it against.
+const DEFAULT_BROKEN_WIKILINK: Color32 = Color32::from_rgb(224, 108, 117);
+
 /// A red→yellow→green gradient for `BinderColorMode::WordCountProgress` —
 /// `fraction` is `word_count as f32 / target as f32`, clamped to `[0.0, 1.0]`
 /// before interpolating: pure red at 0%, yellow at 50%, pure green at 100%
@@ -265,12 +300,22 @@ struct RawTheme {
     background: String,
     foreground: String,
     accent: String,
+    /// Added after the initial theme file format — `#[serde(default)]` so a
+    /// theme file written before this field existed still loads (falling
+    /// back to `DEFAULT_BROKEN_WIKILINK`) rather than failing to parse.
+    #[serde(default)]
+    broken_wikilink: Option<String>,
 }
 
 impl RawTheme {
     fn into_theme(self) -> Result<ColorTheme, String> {
         let parse = |field: &str, value: &str| {
             parse_hex_color(value).ok_or_else(|| format!("invalid color for {field}: {value:?}"))
+        };
+
+        let broken_wikilink = match &self.broken_wikilink {
+            Some(hex) => parse("broken_wikilink", hex)?,
+            None => DEFAULT_BROKEN_WIKILINK,
         };
 
         Ok(ColorTheme {
@@ -280,6 +325,7 @@ impl RawTheme {
             background: parse("background", &self.background)?,
             foreground: parse("foreground", &self.foreground)?,
             accent: parse("accent", &self.accent)?,
+            broken_wikilink,
         })
     }
 }
@@ -386,6 +432,7 @@ pub fn apply(ctx: &egui::Context, theme: &ColorTheme) {
         visuals.text_edit_bg_color = Some(theme.background);
         visuals.override_text_color = Some(theme.foreground);
         visuals.hyperlink_color = theme.accent;
+        visuals.error_fg_color = theme.broken_wikilink;
         visuals.selection.bg_fill = theme.accent;
         for widgets in [
             &mut visuals.widgets.noninteractive,
@@ -419,6 +466,7 @@ pub fn reset(ctx: &egui::Context) {
             visuals.text_edit_bg_color = Some(defaults.panel_fill);
             visuals.override_text_color = None;
             visuals.hyperlink_color = defaults.hyperlink_color;
+            visuals.error_fg_color = defaults.error_fg_color;
             visuals.selection = defaults.selection;
             visuals.widgets = defaults.widgets;
             show_input_frame(visuals);
@@ -667,5 +715,97 @@ mod tests {
         "##;
         let raw: RawTheme = toml::from_str(source).unwrap();
         assert!(raw.into_theme().is_err());
+    }
+
+    #[test]
+    fn a_custom_theme_can_set_its_own_broken_wikilink_color() {
+        let source = r##"
+            id = "my_theme"
+            label = "My Theme"
+            dark = true
+            background = "#1e1e2e"
+            foreground = "#cdd6f4"
+            accent = "#cba6f7"
+            broken_wikilink = "#f38ba8"
+        "##;
+        let raw: RawTheme = toml::from_str(source).unwrap();
+        let theme = raw.into_theme().unwrap();
+        assert_eq!(theme.broken_wikilink, Color32::from_rgb(0xf3, 0x8b, 0xa8));
+    }
+
+    #[test]
+    fn a_custom_theme_without_broken_wikilink_falls_back_to_the_default_instead_of_erroring() {
+        // Written before this field existed — must still load, per
+        // `RawTheme::broken_wikilink`'s doc comment.
+        let source = r##"
+            id = "my_theme"
+            label = "My Theme"
+            dark = true
+            background = "#1e1e2e"
+            foreground = "#cdd6f4"
+            accent = "#cba6f7"
+        "##;
+        let raw: RawTheme = toml::from_str(source).unwrap();
+        let theme = raw.into_theme().unwrap();
+        assert_eq!(theme.broken_wikilink, DEFAULT_BROKEN_WIKILINK);
+    }
+
+    #[test]
+    fn an_invalid_broken_wikilink_color_is_rejected() {
+        let source = r##"
+            id = "bad"
+            label = "Bad"
+            dark = true
+            background = "#000000"
+            foreground = "#ffffff"
+            accent = "#ffffff"
+            broken_wikilink = "not-a-color"
+        "##;
+        let raw: RawTheme = toml::from_str(source).unwrap();
+        assert!(raw.into_theme().is_err());
+    }
+
+    #[test]
+    fn apply_sets_error_fg_color_to_the_theme_s_broken_wikilink() {
+        let ctx = egui::Context::default();
+        let theme = ColorTheme {
+            id: "t".to_string(),
+            label: "T".to_string(),
+            dark: true,
+            background: Color32::BLACK,
+            foreground: Color32::WHITE,
+            accent: Color32::BLUE,
+            broken_wikilink: Color32::from_rgb(0x12, 0x34, 0x56),
+        };
+
+        apply(&ctx, &theme);
+
+        ctx.style_mut_of(egui::Theme::Dark, |style| {
+            assert_eq!(style.visuals.error_fg_color, theme.broken_wikilink);
+        });
+    }
+
+    #[test]
+    fn reset_restores_the_plain_egui_default_error_fg_color() {
+        let ctx = egui::Context::default();
+        let theme = ColorTheme {
+            id: "t".to_string(),
+            label: "T".to_string(),
+            dark: true,
+            background: Color32::BLACK,
+            foreground: Color32::WHITE,
+            accent: Color32::BLUE,
+            broken_wikilink: Color32::from_rgb(0x12, 0x34, 0x56),
+        };
+        apply(&ctx, &theme);
+
+        reset(&ctx);
+
+        ctx.style_mut_of(egui::Theme::Dark, |style| {
+            assert_eq!(
+                style.visuals.error_fg_color,
+                egui::Visuals::dark().error_fg_color
+            );
+        });
     }
 }

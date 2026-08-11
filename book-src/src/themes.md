@@ -48,6 +48,12 @@ accent = "#cba6f7"
 
 `id`, `label`, `dark`, and the three colors are required; colors are `"#RRGGBB"` hex strings (the `#` is optional). `id` is what you'd type as `:theme my_theme` — it's lowercased automatically, so casing in the file doesn't matter.
 
+An optional fourth color, `broken_wikilink`, sets the color a `[[wikilink]]` renders in (Editor and Preview alike) when its target doesn't match any document in the project. Omit it and it falls back to a plain default red:
+
+```toml
+broken_wikilink = "#f38ba8"
+```
+
 Use **`View > Theme > Reload Custom Themes`** to pick up a new or edited file without restarting the app. A theme file that fails to parse, has an invalid color, or whose `id` collides with an already-loaded theme (built-in or another custom one — whichever loaded first wins) is skipped with an error message rather than stopping other themes from loading. If the theme you currently have active stops resolving after a reload (for instance, you just introduced a mistake into the file you're editing), smaragd falls back to the default appearance rather than leaving a stale palette applied with nothing in the menu showing as selected.
 
 ## Editor Font

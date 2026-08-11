@@ -8,7 +8,7 @@ use crate::autocomplete::{
 };
 use crate::editor::EditorState;
 use crate::editor_font::EditorFont;
-use crate::markdown::wikilink_target_at;
+use crate::markdown::{wikilink_resolves, wikilink_spans, wikilink_target_at};
 use crate::ui::WikilinkActivation;
 
 /// What happened this frame, for the caller to react to: a failed autosave, or the
@@ -51,7 +51,7 @@ pub fn editor_text_edit_id() -> Id {
     Id::new("smaragd_editor_text_edit")
 }
 
-/// Renders the document editor, including an Obsidian-style `[[wikilink]]`
+/// Renders the document editor, including a `[[wikilink]]`
 /// autocomplete popup driven by `note_titles`. Returns `Some` if an autosave
 /// triggered by focus loss failed, or the user pressed `activate_wikilink_shortcut`
 /// (the remappable `ShortcutAction::ActivateWikilink`, `Ctrl+Enter`/`Cmd+Enter` by
@@ -60,8 +60,10 @@ pub fn editor_text_edit_id() -> Id {
 ///
 /// `focus_mode` enables Focus Mode's "typewriter" effect: the paragraph
 /// containing the cursor renders at full strength, every other paragraph
-/// dimmed — see `paragraph_byte_range`. `false` (normal dock-tab editing)
-/// renders exactly as before, with no custom layouter at all.
+/// dimmed — see `paragraph_byte_range`. Independent of `focus_mode`, every
+/// `[[wikilink]]` in the buffer is always colored, the app's
+/// normal link color if `note_titles` has a matching document, a distinct
+/// "broken link" color otherwise — see `build_editor_layout_job`.
 ///
 /// `font`/`font_size` are `Settings::editor_font`/`editor_font_size` (already
 /// resolved via `editor_font::resolve_size` — this takes a real point size, not
@@ -132,66 +134,18 @@ pub fn show(
                 .map(|range| char_offset_to_byte(&editor.buffer, range.primary.index.0))
         })
         .flatten();
-    let mut focus_mode_layouter =
-        move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-            let text = buf.as_str();
-            let font_id = font.font_id(font_size);
-            let mut job = egui::text::LayoutJob {
-                wrap: egui::text::TextWrapping {
-                    max_width: wrap_width,
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            let normal = ui.visuals().text_color();
-            match focus_mode_cursor_byte.map(|b| b.min(text.len())) {
-                Some(cursor_byte) => {
-                    let range = paragraph_byte_range(text, cursor_byte);
-                    let dim = ui.visuals().weak_text_color();
-                    if range.start > 0 {
-                        job.append(
-                            &text[..range.start],
-                            0.0,
-                            egui::TextFormat {
-                                font_id: font_id.clone(),
-                                color: dim,
-                                ..Default::default()
-                            },
-                        );
-                    }
-                    job.append(
-                        &text[range.start..range.end],
-                        0.0,
-                        egui::TextFormat {
-                            font_id: font_id.clone(),
-                            color: normal,
-                            ..Default::default()
-                        },
-                    );
-                    if range.end < text.len() {
-                        job.append(
-                            &text[range.end..],
-                            0.0,
-                            egui::TextFormat {
-                                font_id,
-                                color: dim,
-                                ..Default::default()
-                            },
-                        );
-                    }
-                }
-                None => job.append(
-                    text,
-                    0.0,
-                    egui::TextFormat {
-                        font_id,
-                        color: normal,
-                        ..Default::default()
-                    },
-                ),
-            }
-            ui.fonts_mut(|f| f.layout_job(job))
-        };
+    let mut editor_layouter = move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+        let text = buf.as_str();
+        let job = build_editor_layout_job(
+            ui,
+            text,
+            font.font_id(font_size),
+            focus_mode_cursor_byte.map(|b| b.min(text.len())),
+            note_titles,
+            wrap_width,
+        );
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
 
     // `TextEdit`'s allocated (and thus *interactive* — this isn't just cosmetic)
     // height is `desired_rows` rows at minimum, regardless of how much content it
@@ -222,16 +176,14 @@ pub fn show(
             // hardcodes the Monospace font — not wanted now that the font is
             // configurable) keeps Tab inserting a tab character instead of
             // leaving the field, still desirable for a plain-text editor.
-            let mut text_edit = egui::TextEdit::multiline(&mut editor.buffer)
+            let text_edit = egui::TextEdit::multiline(&mut editor.buffer)
                 .desired_width(f32::INFINITY)
                 .desired_rows(desired_rows)
                 .font(font.font_id(font_size))
                 .lock_focus(true)
                 .frame(egui::Frame::NONE)
-                .id(text_edit_id);
-            if focus_mode {
-                text_edit = text_edit.layouter(&mut focus_mode_layouter);
-            }
+                .id(text_edit_id)
+                .layouter(&mut editor_layouter);
             text_edit.show(ui)
         })
         .inner;
@@ -356,6 +308,94 @@ fn paragraph_byte_range(text: &str, cursor_byte: usize) -> std::ops::Range<usize
     start..end
 }
 
+/// Builds the `TextEdit` layouter's output for the document editor: Focus
+/// Mode's typewriter dimming (the paragraph containing `focus_cursor_byte`,
+/// if given, at full strength, everything else in `ui.visuals().weak_text_color()`)
+/// composed with `[[wikilink]]` coloring — every wikilink in
+/// `text` (found via `wikilink_spans`, which covers the whole `[[...]]` span
+/// including its brackets) renders in the app's normal hyperlink color if its
+/// target matches one of `note_titles`, or a distinct "broken link" color
+/// (`ui.visuals().error_fg_color`) otherwise — regardless of whether it falls
+/// inside or outside the dimmed range, so an unresolved link stays equally
+/// visible either way.
+///
+/// Works by splitting `text` at every boundary either coloring rule cares
+/// about (the focus-paragraph edges, plus each wikilink's edges), then
+/// picking one color per resulting run: a run inside a wikilink always uses
+/// that link's color, overriding the dim/normal choice Focus Mode would
+/// otherwise make for it.
+fn build_editor_layout_job(
+    ui: &egui::Ui,
+    text: &str,
+    font_id: egui::FontId,
+    focus_cursor_byte: Option<usize>,
+    note_titles: &[String],
+    wrap_width: f32,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob {
+        wrap: egui::text::TextWrapping {
+            max_width: wrap_width,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let normal = ui.visuals().text_color();
+    let dim = ui.visuals().weak_text_color();
+    let link_color = ui.visuals().hyperlink_color;
+    let broken_link_color = ui.visuals().error_fg_color;
+
+    let focus_range = focus_cursor_byte.map(|cursor_byte| paragraph_byte_range(text, cursor_byte));
+    let wikilinks = wikilink_spans(text);
+
+    let mut boundaries: Vec<usize> = vec![0, text.len()];
+    if let Some(range) = &focus_range {
+        boundaries.push(range.start);
+        boundaries.push(range.end);
+    }
+    for (range, _) in &wikilinks {
+        boundaries.push(range.start);
+        boundaries.push(range.end);
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+
+    for pair in boundaries.windows(2) {
+        let (start, end) = (pair[0], pair[1]);
+        if start == end {
+            continue;
+        }
+        let color = if let Some((_, target)) = wikilinks
+            .iter()
+            .find(|(range, _)| range.start <= start && end <= range.end)
+        {
+            if wikilink_resolves(target, note_titles) {
+                link_color
+            } else {
+                broken_link_color
+            }
+        } else if focus_range
+            .as_ref()
+            .is_some_and(|range| range.start <= start && end <= range.end)
+            || focus_range.is_none()
+        {
+            normal
+        } else {
+            dim
+        };
+        job.append(
+            &text[start..end],
+            0.0,
+            egui::TextFormat {
+                font_id: font_id.clone(),
+                color,
+                ..Default::default()
+            },
+        );
+    }
+    job
+}
+
 /// Consume (and act on) a keypress meant for the autocomplete popup, so the `TextEdit`
 /// underneath never sees it — otherwise Enter would insert a newline and the arrow
 /// keys would move the text cursor instead of the popup's selection.
@@ -422,7 +462,7 @@ pub fn move_cursor_to(ctx: &egui::Context, id: Id, text: &str, byte_offset: usiz
 
 #[cfg(test)]
 mod tests {
-    use super::{editor_text_edit_id, paragraph_byte_range, show};
+    use super::{build_editor_layout_job, editor_text_edit_id, paragraph_byte_range, show};
     use crate::editor::EditorState;
     use crate::editor_font::EditorFont;
 
@@ -545,6 +585,92 @@ mod tests {
         assert!(
             ctx.read_response(editor_text_edit_id()).is_none(),
             "expected no TextEdit to render with nothing open and no collaboration session"
+        );
+    }
+
+    /// Finds whichever `LayoutJob` section covers `byte_offset` and returns its
+    /// color — the sections returned by `build_editor_layout_job` don't line up
+    /// 1:1 with any particular substring, so tests locate the one they care
+    /// about by position rather than by index.
+    fn color_at(sections: &[egui::text::LayoutSection], byte_offset: usize) -> egui::Color32 {
+        sections
+            .iter()
+            .find(|s| s.byte_range.start.0 <= byte_offset && byte_offset < s.byte_range.end.0)
+            .unwrap_or_else(|| panic!("no section covers byte {byte_offset}"))
+            .format
+            .color
+    }
+
+    #[test]
+    fn a_resolved_wikilink_is_colored_differently_from_an_unresolved_one() {
+        let ctx = egui::Context::default();
+        let text = "See [[Known]] and [[Missing]] notes.";
+        let note_titles = vec!["Known".to_string()];
+        let (mut link_color, mut broken_color, mut sections) = (
+            egui::Color32::TRANSPARENT,
+            egui::Color32::TRANSPARENT,
+            Vec::new(),
+        );
+
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            link_color = ui.visuals().hyperlink_color;
+            broken_color = ui.visuals().error_fg_color;
+            sections = build_editor_layout_job(
+                ui,
+                text,
+                egui::FontId::monospace(14.0),
+                None,
+                &note_titles,
+                1000.0,
+            )
+            .sections;
+        });
+
+        assert_ne!(link_color, broken_color, "test fixture assumption");
+        assert_eq!(color_at(&sections, text.find("Known").unwrap()), link_color);
+        assert_eq!(
+            color_at(&sections, text.find("Missing").unwrap()),
+            broken_color
+        );
+    }
+
+    #[test]
+    fn an_unresolved_wikilink_keeps_its_broken_color_even_outside_the_focus_paragraph() {
+        let ctx = egui::Context::default();
+        let text = "First paragraph, cursor here.\n\n[[Missing]] in the second paragraph.";
+        let cursor_byte = 5; // inside the first paragraph
+        let (mut broken_color, mut dim_color, mut sections) = (
+            egui::Color32::TRANSPARENT,
+            egui::Color32::TRANSPARENT,
+            Vec::new(),
+        );
+
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            broken_color = ui.visuals().error_fg_color;
+            dim_color = ui.visuals().weak_text_color();
+            sections = build_editor_layout_job(
+                ui,
+                text,
+                egui::FontId::monospace(14.0),
+                Some(cursor_byte),
+                &[],
+                1000.0,
+            )
+            .sections;
+        });
+
+        assert_ne!(broken_color, dim_color, "test fixture assumption");
+        // The plain text right before `[[Missing]]`, still inside the second
+        // (unfocused) paragraph, should be dimmed...
+        assert_eq!(
+            color_at(&sections, text.find("in the second").unwrap()),
+            dim_color
+        );
+        // ...but the wikilink itself stays at full "broken" strength rather
+        // than inheriting that dimming.
+        assert_eq!(
+            color_at(&sections, text.find("Missing").unwrap()),
+            broken_color
         );
     }
 
