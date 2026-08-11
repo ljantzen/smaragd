@@ -35,6 +35,7 @@
     - [Host Functions](plugins-host-functions.md)
     - [Examples](plugins-examples.md)
 - [Git Integration](git-integration.md)
+- [Backups](backups.md)
 - [Themes and Appearance](themes.md)
 - [Keyboard Shortcuts](keyboard-shortcuts.md)
 - [Notifications](notifications.md)
