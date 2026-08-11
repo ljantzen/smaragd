@@ -80,8 +80,8 @@ pub struct ProjectMeta {
     /// and `protagonist_desire` — see that field's doc comment.
     #[serde(default)]
     pub protagonist_misbelief: String,
-    /// Whether git version control (commit/push/pull from the Versions menu, modeled
-    /// after the Obsidian Git plugin) is turned on for this project. Deliberately a
+    /// Whether git version control (commit/push/pull from the Versions menu,
+    /// is turned on for this project. Deliberately a
     /// per-project setting, not a global one in `Settings`/`settings.rs`: one project
     /// folder might be a git repo (or want to be) while another isn't, and there's no
     /// single "on for every project" answer that would make sense.

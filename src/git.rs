@@ -1,5 +1,4 @@
-//! Thin wrapper around the system `git` binary — modeled after the Obsidian Git
-//! plugin's core idea (commit/push/pull a vault as its own git repository), scoped
+//! Thin wrapper around the system `git` binary scoped
 //! down to manually-triggered actions (no auto-commit timer or auto-push): the app
 //! shells out to whatever `git` is on `PATH`, the same way that plugin ultimately
 //! does, rather than embedding a git implementation.

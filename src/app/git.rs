@@ -34,8 +34,7 @@ impl SmaragdApp {
         Ok(())
     }
 
-    /// The one-time "enable git support?" dialog (modeled after the Obsidian Git
-    /// plugin), shown at most once per project — see `ProjectMeta::git_prompted`.
+    /// The one-time "enable git support?", shown at most once per project, see `ProjectMeta::git_prompted`.
     /// A no-op if `git` isn't on `PATH`, or the project's already been asked.
     pub(super) fn maybe_offer_git_support(&mut self) {
         let Some(project) = &self.project else {

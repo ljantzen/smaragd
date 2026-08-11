@@ -1,6 +1,6 @@
 # Git Integration
 
-Modeled on the Obsidian Git plugin. **`Versions` menu**, or **`:git`** commands:
+**`Versions` menu**, or **`:git`** commands:
 
 - Opt-in per project — you're offered "Enable Git Support" once when a project is opened, or you can trigger it manually (`Versions > Enable Git Support` or `:git enable`)
 - Commit / Commit and Push / Push / Pull — shells out to the system `git` binary

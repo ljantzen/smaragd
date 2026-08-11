@@ -43,10 +43,9 @@ pub fn show(
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         // Group consecutive same-source entries under one clickable title, one
-        // snippet row per occurrence beneath it (Obsidian-style "N links" grouping)
-        // without needing a grouped data structure — `Project::backlinks` already
-        // emits entries in document-tree order, so a shared source's occurrences
-        // are already adjacent.
+        // snippet row per occurrence beneath it without needing a grouped data structure,
+        // `Project::backlinks` already emits entries in document-tree order, so a
+        // shared source's occurrences are already adjacent.
         let mut index = 0;
         while index < backlinks.len() {
             let source = &backlinks[index];

@@ -59,8 +59,8 @@ pub enum Command {
     Plugin(String, String),
 }
 
-/// A `:git <subcommand>` action, modeled after the Obsidian Git plugin's core
-/// commands. `Commit`/`Backup`'s `Option<String>` is the commit message: `Some` when
+/// A `:git <subcommand>` action,
+/// `Commit`/`Backup`'s `Option<String>` is the commit message: `Some` when
 /// given inline (`:git commit fixed typo`), `None` to prompt for one instead (with a
 /// default pre-filled) — `app.rs` decides which since it owns the message-prompt
 /// modal.
@@ -69,8 +69,7 @@ pub enum GitCommand {
     Commit(Option<String>),
     Push,
     Pull,
-    /// Commit and push in one action — the closest equivalent to Obsidian Git's
-    /// "create backup" command.
+    /// Commit and push in one action
     Backup(Option<String>),
 }
 
