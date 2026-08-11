@@ -5,6 +5,35 @@ this file.
 
 ## Unreleased
 
+- Nested submenus in the menu bar — **View > Theme**, **Window > Layouts**,
+  **File > Export Manuscript…** (with 2+ Manuscript folders), **File >
+  Import**, **File > Recent Projects**, and **View > Color Binder By** — are
+  now fully keyboard-navigable: `Right`/`Enter` opens a focused submenu and
+  focuses its first item, `Up`/`Down` move within it, `Left` backs out to the
+  parent without closing it. Previously only their trigger row could be
+  reached by keyboard. Closes #56.
+- Settings gains a **History** category: an app-wide **"Enable Git
+  integration"** switch (on for existing installs, off for a brand new one)
+  that hides the Versions menu entirely, no-ops the Commit/Push shortcuts
+  and every `:git` command, and skips the one-time "enable git support?"
+  prompt when it's off — a stronger, global veto on top of the existing
+  per-project opt-in.
+- Automatic, Scrivener-style project backups: a zipped, timestamped snapshot
+  of the whole project folder, written to a shared backup directory (one
+  per project, disambiguated by filename, with the oldest pruned past a
+  configurable count). Off by default; independent triggers for opening a
+  project, closing one, and every explicit save, all in Settings > History.
+- A file with uncommitted git changes gets a trailing "•" marker in the
+  Binder (a folder shows the same marker if anything nested inside it is
+  dirty) whenever git integration is on — a plain text suffix, not a color,
+  so it shows alongside whichever `Color Binder By` mode is active instead
+  of competing with it.
+- Settings > Appearance gains a **UI font** picker — the same five bundled
+  choices as the Editor font, but for the rest of the app's chrome (menus,
+  the Binder, buttons, headings) instead of just the Editor/Preview.
+- The user manual is now an [mdBook](https://ljantzen.github.io/smaragd/manual/)
+  — real chapter navigation and full-text search instead of one long page —
+  built and deployed automatically on every push to `main`.
 - A new **File > Import** menu brings an existing manuscript into a project:
   **Word Document (.docx)** (split into one document per Heading 1, falling
   back to a single document if there's none), **EPUB** (one document per

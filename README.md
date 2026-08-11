@@ -33,7 +33,8 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Find and Replace 
 - Helix/vim-style command prompt 
 - Support for user-contributed plugins
-- Support for version control using Git
+- Support for version control using Git, with an app-wide on/off switch and a Binder marker for files with uncommitted changes
+- Automatic, Scrivener-style zipped project backups on open/close/save, with configurable retention
 - 15 built-in Helix-inspired color themes in addition to your own custom themes 
 - UI Scaling 
 - A Pomodoro timer 
