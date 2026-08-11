@@ -1,0 +1,13 @@
+# Word Count
+
+**`Tools > Word Count`** (or the remappable shortcut, `Ctrl+Alt+W` by default) opens a Word Count dock tab, Scrivener-style: a **Draft Target** for the whole manuscript and a **Session Target** for today's writing, each shown as a progress bar against the project's current word count.
+
+- **Track** — a per-project toggle for what counts toward the total: **Manuscript folders only** (any folder holding the [Manuscript role](folder-roles.md), falling back to the whole project if none is assigned yet) or **Everything except Trash** (every document except Trash and Templates content). Trash and Templates are excluded either way — the toggle only changes whether tracking is scoped to your Manuscript folder(s) or opened up to the whole project.
+- **Draft Target** — type a target word count to see a progress bar (current / target); leave it blank to hide the bar.
+- **Session Target** — a separate, smaller target for today's writing, measured against words written since the session's baseline rather than the Draft Target's running total. The baseline rolls forward automatically at the start of a new calendar day, or immediately if you click **Reset Session**.
+- **Characters typed this session** — a plain informational count, no target: every character you insert *or* delete in a tracked document adds to it, so typing 100 characters and then deleting them all reads 200, not a net 0. It only counts keystrokes in documents inside the current Track scope, resets when a project is opened or you click Reset Session, and isn't saved to disk — it doesn't survive quitting and relaunching smaragd.
+- **Refresh** — recomputes the current word count immediately. There's also a dedicated remappable shortcut for this, **Refresh Word Count** (`F5` by default), so you don't need the panel open to force an update.
+
+The total doesn't recompute on every keystroke or every frame — recomputing means re-reading every tracked document from disk, so it only happens on a handful of triggers (opening a project, a git pull, a folder-role or Track-scope change, an actual save, or an explicit Refresh) and always runs on a background thread so it never freezes the UI. Creating, deleting, moving, or renaming a document doesn't trigger a recompute on its own — click Refresh (or its shortcut) if the count looks stale after one of those.
+
+A compact `340 : 12,345 / 50,000 words` segment (characters typed this session, then current/target words) shows in the status bar, next to the Pomodoro countdown, any time a Draft Target is set — the Session Target is dock-tab-only, not mirrored in the status bar.

@@ -4,11 +4,11 @@ Smaragd is a native desktop authoring tool for writers.
 
 A project is a folder of `.md` files and subfolders marked with a `.smaragd/project.json` file. There is no proprietary bundle format, but not just any folder either. `File > New Project` creates one from scratch; `File > Open Project` on a folder that hasn't been used by smaragd before offers to set it up in place rather than refusing outright. `.smaragd/project.json` stores manuscript ordering and folder roles that the filesystem can't express; if its *contents* are corrupt (as opposed to the marker being absent, which instead means "not a project yet") smaragd falls back to defaults rather than erroring.
 
-See [`docs/user-manual.md`](docs/user-manual.md) for a full user-facing guide to every feature below.
+See the [User Manual](https://ljantzen.github.io/smaragd/manual/) for a full user-facing guide to every feature below.
 
 ## Installing
 
-Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https://github.com/ljantzen/smaragd/releases/latest). They aren't signed with a paid code-signing certificate, so Windows and macOS show a first-run warning — expected, not a broken download. See [Installation](docs/user-manual.md#installation) in the user manual for how to get past it on each OS.
+Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https://github.com/ljantzen/smaragd/releases/latest). They aren't signed with a paid code-signing certificate, so Windows and macOS show a first-run warning — expected, not a broken download. See [Installation](https://ljantzen.github.io/smaragd/manual/installation.html) in the user manual for how to get past it on each OS.
 
 ## Features
 

@@ -42,3 +42,11 @@ coverage:
 # Cut a release: bump version, roll RELEASENOTES.md, check, commit, tag, push. Usage: just release 0.6.2 [--dry-run|--yes]
 release version *args:
     ./scripts/release.sh {{ version }} {{ args }}
+
+# Build the user manual locally (requires `cargo install mdbook` once)
+book:
+    mdbook build book-src
+
+# Live-reloading local preview of the user manual
+book-serve:
+    mdbook serve book-src --open
