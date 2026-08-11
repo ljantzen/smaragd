@@ -396,6 +396,74 @@ fn show_history_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
         settings.git_integration_disabled = !enabled;
         changed = true;
     }
+
+    ui.add_space(20.0);
+    ui.heading("Backups");
+    ui.add_space(12.0);
+    changed |= ui
+        .checkbox(&mut settings.backup_enabled, "Enable automatic backups")
+        .on_hover_text(
+            "Zip the whole project folder into a timestamped snapshot, \
+             Scrivener-style, at the points checked below. Off by default.",
+        )
+        .changed();
+    ui.add_enabled_ui(settings.backup_enabled, |ui| {
+        changed |= ui
+            .checkbox(
+                &mut settings.backup_on_open,
+                "Back up when opening a project",
+            )
+            .changed();
+        changed |= ui
+            .checkbox(
+                &mut settings.backup_on_close,
+                "Back up when closing a project",
+            )
+            .changed();
+        changed |= ui
+            .checkbox(
+                &mut settings.backup_on_manual_save,
+                "Back up on every manual save (Ctrl+S)",
+            )
+            .on_hover_text(
+                "Not the silent autosave on losing focus or switching \
+                 documents — only an explicit save.",
+            )
+            .changed();
+        ui.horizontal(|ui| {
+            ui.label("Backups to keep:");
+            let mut keep = settings.resolve_backup_keep_count();
+            if ui
+                .add(egui::DragValue::new(&mut keep).range(1..=100))
+                .changed()
+            {
+                settings.backup_keep_count = keep;
+                changed = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Backup folder:");
+            let mut dir_text = settings
+                .resolve_backup_dir()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "(no location available)".to_string());
+            ui.add_enabled(
+                false,
+                egui::TextEdit::singleline(&mut dir_text).desired_width(300.0),
+            );
+            if ui.button("Browse…").clicked()
+                && let Some(picked) = rfd::FileDialog::new().pick_folder()
+            {
+                settings.backup_dir = Some(picked);
+                changed = true;
+            }
+            if settings.backup_dir.is_some() && ui.button("Reset").clicked() {
+                settings.backup_dir = None;
+                changed = true;
+            }
+        });
+    });
+
     changed
 }
 

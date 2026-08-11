@@ -1,5 +1,6 @@
 pub mod app;
 pub mod autocomplete;
+pub mod backup;
 pub mod collab;
 pub mod color_theme;
 pub mod editor;

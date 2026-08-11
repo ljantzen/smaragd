@@ -21,6 +21,10 @@ const DEFAULT_UI_SCALE: f32 = 1.0;
 /// unwieldy.
 const MAX_RECENT_PROJECTS: usize = 10;
 
+/// `Settings::backup_keep_count`'s effective default, used whenever that field
+/// is `0` (unconfigured — see its own doc comment).
+const DEFAULT_BACKUP_KEEP_COUNT: u32 = 10;
+
 /// A user's explicit choice for a plugin-registered `:` command's shortcut, kept
 /// separate from a plain `Option<KeyboardShortcut>` so `Unbound` can be told apart
 /// from "no override recorded yet" (see `plugin_shortcut_overrides`'s doc comment)
@@ -204,6 +208,39 @@ pub struct Settings {
     /// and the one-time "enable git?" prompt/auto-repair on project open never
     /// runs — see `SmaragdApp::set_project`.
     pub git_integration_disabled: bool,
+    /// Master switch for automatic project backups (Scrivener-style zipped
+    /// snapshots — see `crate::backup`), set via Settings > History. Unlike
+    /// `git_integration_disabled` this is a brand new feature with no prior
+    /// behavior to preserve, so it uses this struct's ordinary derived
+    /// `Default` (`false`, off) directly — every install, new or upgrading,
+    /// starts with backups off until explicitly turned on, the same opt-in
+    /// convention `typewriter_quotes`/`create_starter_folders` already use.
+    /// `backup_on_open`/`backup_on_close`/`backup_on_manual_save` below are
+    /// each still independently gated by this.
+    pub backup_enabled: bool,
+    /// Take a backup right after a project finishes opening.
+    pub backup_on_open: bool,
+    /// Take a backup right after a project's open document (and any in-progress
+    /// story card edit) has been saved on close, capturing the final state
+    /// before the project folder is torn down.
+    pub backup_on_close: bool,
+    /// Take a backup after every explicit save (`Ctrl+S`/`:w`/`:wq`) — *not*
+    /// the silent autosave on focus loss or document switch, which fires far
+    /// too often for a whole-project zip to be reasonable. See
+    /// `SmaragdApp::save_editor`.
+    pub backup_on_manual_save: bool,
+    /// How many of a project's own backups to keep before the oldest are
+    /// deleted (see `backup::prune_old_backups`). `0` means "not yet
+    /// configured," resolved to `DEFAULT_BACKUP_KEEP_COUNT` at the point of
+    /// use (`resolve_backup_keep_count`) — same blank-means-unset convention
+    /// as `editor_font_size`/`ui_scale` above.
+    pub backup_keep_count: u32,
+    /// Where backups are written — one shared folder for every project,
+    /// disambiguated by filename prefix (see `backup::create_backup`), same
+    /// as Scrivener's own default backup location. `None` means "not yet
+    /// configured," resolved to `backup::default_backup_dir()` at the point
+    /// of use (`resolve_backup_dir`).
+    pub backup_dir: Option<PathBuf>,
     /// Pomodoro timer durations (minutes) and long-break cadence. `0` means
     /// "not yet configured," resolved to a real default at the point of use
     /// (`pomodoro::resolve_durations`) — same blank-means-unset convention as
@@ -384,6 +421,26 @@ impl Settings {
         !self.git_integration_disabled
     }
 
+    /// Resolve `backup_keep_count`'s blank-means-unset (`0`) convention to an
+    /// actual retention count — same shape as `resolve_ui_scale`.
+    pub fn resolve_backup_keep_count(&self) -> u32 {
+        if self.backup_keep_count > 0 {
+            self.backup_keep_count
+        } else {
+            DEFAULT_BACKUP_KEEP_COUNT
+        }
+    }
+
+    /// Resolve `backup_dir`'s "not yet configured" (`None`) convention to an
+    /// actual directory, falling back to `backup::default_backup_dir()` —
+    /// same shape as `resolve_ui_scale`. Still `None` if even that can't be
+    /// determined (no resolvable platform data directory).
+    pub fn resolve_backup_dir(&self) -> Option<PathBuf> {
+        self.backup_dir
+            .clone()
+            .or_else(crate::backup::default_backup_dir)
+    }
+
     /// The full Story Grid column order, every `StoryGridColumn` present — the
     /// "Columns" menu needs to list hidden columns too, only
     /// `story_grid_hidden_columns` controls visibility. Appends any variant
@@ -562,6 +619,48 @@ mod tests {
     }
 
     #[test]
+    fn resolve_backup_keep_count_falls_back_to_the_default_when_unconfigured() {
+        let settings = Settings {
+            backup_keep_count: 0,
+            ..Default::default()
+        };
+        assert_eq!(
+            settings.resolve_backup_keep_count(),
+            DEFAULT_BACKUP_KEEP_COUNT
+        );
+    }
+
+    #[test]
+    fn resolve_backup_keep_count_uses_the_configured_value() {
+        let settings = Settings {
+            backup_keep_count: 3,
+            ..Default::default()
+        };
+        assert_eq!(settings.resolve_backup_keep_count(), 3);
+    }
+
+    #[test]
+    fn resolve_backup_dir_uses_the_configured_value_when_set() {
+        let settings = Settings {
+            backup_dir: Some(PathBuf::from("/custom/backups")),
+            ..Default::default()
+        };
+        assert_eq!(
+            settings.resolve_backup_dir(),
+            Some(PathBuf::from("/custom/backups"))
+        );
+    }
+
+    #[test]
+    fn resolve_backup_dir_falls_back_to_the_platform_default_when_unconfigured() {
+        let settings = Settings::default();
+        assert_eq!(
+            settings.resolve_backup_dir(),
+            crate::backup::default_backup_dir()
+        );
+    }
+
+    #[test]
     fn defaults_to_following_the_system_theme() {
         assert_eq!(
             Settings::default().theme_preference,
@@ -717,6 +816,12 @@ mod tests {
             ],
             create_starter_folders: true,
             git_integration_disabled: true,
+            backup_enabled: true,
+            backup_on_open: true,
+            backup_on_close: true,
+            backup_on_manual_save: false,
+            backup_keep_count: 5,
+            backup_dir: Some(PathBuf::from("/home/author/backups")),
             shortcuts,
             theme_preference: egui::ThemePreference::Dark,
             color_theme: Some("dracula".to_string()),

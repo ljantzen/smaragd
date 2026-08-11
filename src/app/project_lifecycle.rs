@@ -53,6 +53,7 @@ impl SmaragdApp {
                 self.push_error_toast(format!("Couldn't initialize git: {err}"));
             }
         }
+        self.run_backup(BackupTrigger::Open);
         self.reload_plugins();
         self.word_count.last_dirty = false;
         self.word_count.char_activity = 0;
@@ -256,6 +257,12 @@ impl SmaragdApp {
         if self.card_draft.is_some() {
             self.finish_card_editor(CardEditorOutcome::Save);
         }
+        // Cleared before the backup below (rather than at the end, like
+        // every other bit of project-scoped state) so a "Backed up project"
+        // confirmation from `run_backup` is the status message left showing,
+        // not immediately wiped by a later unconditional clear.
+        self.clear_status_message();
+        self.run_backup(BackupTrigger::Close);
         self.export = None;
         if self.focus_mode {
             self.set_focus_mode(ctx, false);
@@ -268,7 +275,6 @@ impl SmaragdApp {
         self.word_count = WordCountState::default();
         self.settings.last_project_path = None;
         self.persist_settings();
-        self.clear_status_message();
         self.reload_plugins();
     }
 
@@ -567,6 +573,40 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&doc_path).unwrap(), "edited");
         assert!(app.project.is_none());
+    }
+
+    #[test]
+    fn close_project_backs_up_the_project_when_backup_on_close_is_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        Project::initialize(dir.path()).unwrap();
+        let backup_dir = tempfile::tempdir().unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+        app.open_project(&ctx, dir.path());
+        app.settings.backup_enabled = true;
+        app.settings.backup_on_close = true;
+        app.settings.backup_dir = Some(backup_dir.path().to_path_buf());
+
+        app.close_project(&ctx);
+
+        let backups: Vec<_> = fs::read_dir(backup_dir.path()).unwrap().collect();
+        assert_eq!(backups.len(), 1);
+    }
+
+    #[test]
+    fn opening_a_project_in_a_test_fixture_never_triggers_a_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        Project::initialize(dir.path()).unwrap();
+        let backup_dir = tempfile::tempdir().unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.settings.backup_enabled = true;
+        app.settings.backup_on_open = true;
+        app.settings.backup_dir = Some(backup_dir.path().to_path_buf());
+        let ctx = egui::Context::default();
+
+        app.open_project(&ctx, dir.path());
+
+        assert_eq!(fs::read_dir(backup_dir.path()).unwrap().count(), 0);
     }
 
     /// Regression test for the host side of the role-aware collaboration

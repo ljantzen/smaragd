@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+mod backup;
 mod collab;
 mod dock;
 mod dock_tab_viewer;
@@ -21,6 +22,7 @@ mod settings_persist;
 mod streak_events;
 mod toast;
 mod word_count_events;
+use backup::BackupTrigger;
 use dock::{
     DockTab, capture_floating_window_positions, default_dock_state, ensure_editor_tab_present,
 };
@@ -678,6 +680,9 @@ impl SmaragdApp {
             && let Some(err) = crate::frontmatter::validate(&self.editor.buffer)
         {
             self.push_error_toast(err.to_string());
+        }
+        if result.is_ok() {
+            self.run_backup(BackupTrigger::ManualSave);
         }
         result
     }
@@ -1643,6 +1648,55 @@ mod execute_command_tests {
         app.dispatch_shortcut_action(&ctx, ShortcutAction::GitPush);
 
         assert!(app.toasts.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod save_editor_tests {
+    use super::*;
+
+    #[test]
+    fn save_editor_backs_up_the_project_when_backup_on_manual_save_is_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        Project::initialize(dir.path()).unwrap();
+        let backup_dir = tempfile::tempdir().unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+        app.open_project(&ctx, dir.path());
+        let doc_path = dir.path().join("doc.md");
+        std::fs::write(&doc_path, "original").unwrap();
+        app.open_document_internal(&doc_path);
+        app.editor.buffer = "edited".to_string();
+        app.editor.mark_dirty();
+        app.settings.backup_enabled = true;
+        app.settings.backup_on_manual_save = true;
+        app.settings.backup_dir = Some(backup_dir.path().to_path_buf());
+
+        app.save_editor().unwrap();
+
+        assert_eq!(std::fs::read_dir(backup_dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn save_editor_does_not_back_up_when_the_manual_save_trigger_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        Project::initialize(dir.path()).unwrap();
+        let backup_dir = tempfile::tempdir().unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+        app.open_project(&ctx, dir.path());
+        let doc_path = dir.path().join("doc.md");
+        std::fs::write(&doc_path, "original").unwrap();
+        app.open_document_internal(&doc_path);
+        app.editor.buffer = "edited".to_string();
+        app.editor.mark_dirty();
+        app.settings.backup_enabled = true;
+        app.settings.backup_on_manual_save = false;
+        app.settings.backup_dir = Some(backup_dir.path().to_path_buf());
+
+        app.save_editor().unwrap();
+
+        assert_eq!(std::fs::read_dir(backup_dir.path()).unwrap().count(), 0);
     }
 }
 
