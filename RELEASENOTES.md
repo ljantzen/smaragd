@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v0.9.0 — 2026-08-11
+
 - Nested submenus in the menu bar — **View > Theme**, **Window > Layouts**,
   **File > Export Manuscript…** (with 2+ Manuscript folders), **File >
   Import**, **File > Recent Projects**, and **View > Color Binder By** — are
