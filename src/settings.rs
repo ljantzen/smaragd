@@ -178,6 +178,15 @@ pub struct Settings {
     /// `template_date_format` above already uses. Like `editor_font`, the
     /// Preview tab doesn't use this — see its doc comment.
     pub editor_font_size: f32,
+    /// The font used for the rest of the UI chrome — menus, the Binder tree,
+    /// buttons, headings, the Settings window itself — everywhere that isn't
+    /// the Editor/Preview body text (`editor_font` above) or an export's own
+    /// typeset style. Defaults to `EditorFont::Proportional`, egui's own
+    /// built-in default face, so upgrading changes nothing until a user
+    /// picks something else. See `editor_font::apply_ui_font`, which this is
+    /// applied through (a global `TextStyle` remap, not a per-widget font
+    /// choice like `editor_font` is).
+    pub ui_font: EditorFont,
     /// Pomodoro timer durations (minutes) and long-break cadence. `0` means
     /// "not yet configured," resolved to a real default at the point of use
     /// (`pomodoro::resolve_durations`) — same blank-means-unset convention as
@@ -655,6 +664,7 @@ mod tests {
             template_date_format: "%d %B %Y".to_string(),
             editor_font: EditorFont::LibertinusSerif,
             editor_font_size: 16.0,
+            ui_font: EditorFont::AtkinsonHyperlegible,
             pomodoro_work_minutes: 50,
             pomodoro_short_break_minutes: 10,
             pomodoro_long_break_minutes: 30,

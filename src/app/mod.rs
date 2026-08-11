@@ -230,6 +230,7 @@ impl SmaragdApp {
             .unwrap_or_default();
         cc.egui_ctx.set_theme(settings.theme_preference);
         cc.egui_ctx.set_zoom_factor(settings.resolve_ui_scale());
+        crate::editor_font::apply_ui_font(&cc.egui_ctx, settings.ui_font);
         let initial_pomodoro_durations = crate::pomodoro::resolve_durations(&settings);
         // Match the editor's background to the surrounding chrome instead of egui's
         // default `extreme_bg_color`, which renders TextEdit widgets noticeably darker
@@ -845,6 +846,7 @@ impl SmaragdApp {
             })
             .collect();
 
+        let previous_ui_font = self.settings.ui_font;
         if ui::settings_panel::show(
             ui.ctx(),
             &mut self.show_settings,
@@ -853,6 +855,9 @@ impl SmaragdApp {
             &mut self.recording_shortcut,
             &plugin_shortcut_rows,
         ) {
+            if self.settings.ui_font != previous_ui_font {
+                crate::editor_font::apply_ui_font(ui.ctx(), self.settings.ui_font);
+            }
             self.persist_settings();
             self.plugin_shortcuts = self.compute_effective_plugin_shortcuts();
         }

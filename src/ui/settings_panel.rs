@@ -251,6 +251,27 @@ fn show_appearance_category(
         changed = true;
     }
     ui.add_space(12.0);
+    ui.heading("Font");
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        ui.label("UI font:");
+        let previous_font = settings.ui_font;
+        egui::ComboBox::new("ui_font_combo", "")
+            .selected_text(settings.ui_font.label())
+            .show_ui(ui, |ui| {
+                for font in EditorFont::ALL {
+                    ui.selectable_value(&mut settings.ui_font, font, font.label());
+                }
+            });
+        changed |= settings.ui_font != previous_font;
+    })
+    .response
+    .on_hover_text(
+        "The typeface for menus, the Binder, buttons, and every other UI \
+         chrome element — separate from the Editor and Preview font under \
+         the Editor category.",
+    );
+    ui.add_space(12.0);
     ui.heading("UI Scale");
     ui.add_space(12.0);
     ui.horizontal(|ui| {

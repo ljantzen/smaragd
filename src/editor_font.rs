@@ -118,21 +118,26 @@ pub fn install(ctx: &egui::Context) {
         "AtkinsonHyperlegible".to_owned(),
         Arc::new(egui::FontData::from_static(ATKINSON_HYPERLEGIBLE)),
     );
-    fonts
+    // Fall back to egui's own default proportional chain (Ubuntu-Light, then the
+    // two bundled emoji/icon fonts) for any glyph these three don't cover —
+    // folder-role icons in the Binder and similar symbol glyphs, not just emoji.
+    // Without this, picking one of these three as `Settings::ui_font` (which
+    // resolves every `TextStyle` to its bare `FontFamily::Name`, see
+    // `apply_ui_font`) rendered those icons as tofu, since a `FontFamily::Name`
+    // family starts out with no fallback fonts of its own.
+    let proportional_fallback = fonts
         .families
-        .entry(egui::FontFamily::Name("LibertinusSerif".into()))
-        .or_default()
-        .insert(0, "LibertinusSerif".to_owned());
-    fonts
-        .families
-        .entry(egui::FontFamily::Name("DejaVuSansMono".into()))
-        .or_default()
-        .insert(0, "DejaVuSansMono".to_owned());
-    fonts
-        .families
-        .entry(egui::FontFamily::Name("AtkinsonHyperlegible".into()))
-        .or_default()
-        .insert(0, "AtkinsonHyperlegible".to_owned());
+        .get(&egui::FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    for name in ["LibertinusSerif", "DejaVuSansMono", "AtkinsonHyperlegible"] {
+        let list = fonts
+            .families
+            .entry(egui::FontFamily::Name(name.into()))
+            .or_default();
+        list.insert(0, name.to_owned());
+        list.extend(proportional_fallback.iter().cloned());
+    }
     ctx.set_fonts(fonts);
 }
 
@@ -193,6 +198,28 @@ pub fn install_custom_fonts(
     (registered, errors)
 }
 
+/// Applies `font` as the UI's default typeface — every widget that doesn't
+/// request a specific font (menus, the Binder tree, buttons, headings, the
+/// Settings window itself) resolves its `egui::TextStyle` to a `FontId` via
+/// `egui::Style::text_styles`, so overwriting each entry's family there
+/// changes all of them at once. `TextStyle::Monospace` is left alone even
+/// when `font` isn't `Monospace` itself — code-ish widgets that specifically
+/// ask for the monospace style should keep looking like one. Sizes are left
+/// untouched; only the typeface changes. Call once at startup (after
+/// `install`, so the three bundled custom families are already registered)
+/// and again whenever `Settings::ui_font` changes.
+pub fn apply_ui_font(ctx: &egui::Context, font: EditorFont) {
+    for theme in [egui::Theme::Dark, egui::Theme::Light] {
+        ctx.style_mut_of(theme, |style| {
+            for (text_style, font_id) in style.text_styles.iter_mut() {
+                if *text_style != egui::TextStyle::Monospace {
+                    font_id.family = font.family();
+                }
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,6 +231,80 @@ mod tests {
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(labels.len(), unique.len());
+    }
+
+    #[test]
+    fn apply_ui_font_changes_every_text_style_but_monospace() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        apply_ui_font(&ctx, EditorFont::LibertinusSerif);
+
+        for theme in [egui::Theme::Dark, egui::Theme::Light] {
+            ctx.style_mut_of(theme, |style| {
+                for (text_style, font_id) in style.text_styles.iter() {
+                    if *text_style == egui::TextStyle::Monospace {
+                        assert_eq!(font_id.family, egui::FontFamily::Monospace);
+                    } else {
+                        assert_eq!(
+                            font_id.family,
+                            EditorFont::LibertinusSerif.family(),
+                            "{text_style:?} was not updated"
+                        );
+                    }
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn apply_ui_font_with_proportional_matches_egui_default() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        apply_ui_font(&ctx, EditorFont::Proportional);
+
+        for theme in [egui::Theme::Dark, egui::Theme::Light] {
+            ctx.style_mut_of(theme, |style| {
+                for (text_style, font_id) in style.text_styles.iter() {
+                    if *text_style != egui::TextStyle::Monospace {
+                        assert_eq!(font_id.family, egui::FontFamily::Proportional);
+                    }
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn custom_families_fall_back_to_the_default_proportional_chain() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(10.0, 10.0),
+            )),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |_ui| {});
+        ctx.fonts(|fonts| {
+            for name in ["LibertinusSerif", "DejaVuSansMono", "AtkinsonHyperlegible"] {
+                let family = fonts
+                    .definitions()
+                    .families
+                    .get(&egui::FontFamily::Name(name.into()))
+                    .unwrap_or_else(|| panic!("{name} family missing"));
+                assert_eq!(
+                    family.first().map(String::as_str),
+                    Some(name),
+                    "{name}'s own font must be tried first"
+                );
+                assert!(
+                    family.iter().any(|f| f == "NotoEmoji-Regular")
+                        && family.iter().any(|f| f == "emoji-icon-font"),
+                    "{name} has no icon/emoji fallback, folder-role icons would \
+                     render as tofu if picked as Settings::ui_font: {family:?}"
+                );
+            }
+        });
     }
 
     #[test]
