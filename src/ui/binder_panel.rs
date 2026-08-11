@@ -99,6 +99,7 @@ pub fn show(
     selected_folder: Option<&Path>,
     document_row_color: &dyn Fn(&Path) -> Option<egui::Color32>,
     folder_word_counts: &HashMap<PathBuf, usize>,
+    git_dirty: &std::collections::HashSet<PathBuf>,
 ) -> Option<BinderEvent> {
     let mut event = None;
     let mut visible_rows: Vec<(PathBuf, egui::Id)> = Vec::new();
@@ -114,6 +115,7 @@ pub fn show(
         selected_folder,
         document_row_color,
         folder_word_counts,
+        git_dirty,
     );
 
     // Up/Down move the keyboard cursor between rows, in the same top-to-bottom order
@@ -228,6 +230,34 @@ fn role_prefix(role: Option<FolderRole>) -> &'static str {
         Some(FolderRole::Templates) => "📋 ",
         Some(FolderRole::Manuscript) => "📖 ",
         None => "",
+    }
+}
+
+/// A trailing marker (`•`, verified present in the `Ubuntu-Light` fallback
+/// every UI font keeps in its chain — see `editor_font::install`'s doc
+/// comment) appended to a row's label when it has uncommitted git changes.
+/// Kept as a plain text suffix rather than a full-row recolor so it composes
+/// with any `BinderColorMode` instead of competing with it — see
+/// `folder_row_color`'s doc comment on why only one color mode can be active
+/// at a time.
+const GIT_DIRTY_MARKER: &str = " •";
+
+/// A folder counts as dirty if *any* path under it (at any depth) has
+/// uncommitted changes — cheap in practice since `git_dirty` is normally
+/// tiny (only files actually changed since the last commit), so a linear
+/// scan per folder row beats maintaining a second precomputed set.
+fn folder_is_dirty(git_dirty: &std::collections::HashSet<PathBuf>, folder_path: &Path) -> bool {
+    git_dirty.iter().any(|path| path.starts_with(folder_path))
+}
+
+/// A document row's label — `document_label`'s extension-stripped name, plus
+/// `GIT_DIRTY_MARKER` when `dirty`.
+fn document_display_label(name: &str, dirty: bool) -> String {
+    let base = document_label(name);
+    if dirty {
+        format!("{base}{GIT_DIRTY_MARKER}")
+    } else {
+        base.to_string()
     }
 }
 
@@ -412,11 +442,17 @@ fn show_node(
     selected_folder: Option<&Path>,
     document_row_color: &dyn Fn(&Path) -> Option<egui::Color32>,
     folder_word_counts: &HashMap<PathBuf, usize>,
+    git_dirty: &std::collections::HashSet<PathBuf>,
 ) {
     match &node.kind {
         BinderNodeKind::Folder { children } => {
             let role = project.folder_role(&node.path);
-            let label = format!("{}{}", role_prefix(role), node.name);
+            let dirty_marker = if folder_is_dirty(git_dirty, &node.path) {
+                GIT_DIRTY_MARKER
+            } else {
+                ""
+            };
+            let label = format!("{}{}{}", role_prefix(role), node.name, dirty_marker);
             let id = ui.make_persistent_id(&node.path);
             let is_selected =
                 folder_row_is_selected(is_root, project_selected, selected_folder, &node.path);
@@ -631,6 +667,7 @@ fn show_node(
                         selected_folder,
                         document_row_color,
                         folder_word_counts,
+                        git_dirty,
                     );
                 }
             });
@@ -638,7 +675,8 @@ fn show_node(
         BinderNodeKind::Document => {
             let is_selected = selected == Some(node.path.as_path());
             let status_color = document_row_color(&node.path);
-            let response = document_row(ui, document_label(&node.name), is_selected, status_color);
+            let label = document_display_label(&node.name, git_dirty.contains(&node.path));
+            let response = document_row(ui, &label, is_selected, status_color);
             visible_rows.push((node.path.clone(), response.id));
             if response.clicked() {
                 *event = Some(BinderEvent::Selected(node.path.clone()));
@@ -728,6 +766,33 @@ mod tests {
     #[test]
     fn document_label_only_strips_a_trailing_md_extension() {
         assert_eq!(document_label("notes.md.bak"), "notes.md.bak");
+    }
+
+    #[test]
+    fn document_display_label_appends_the_marker_only_when_dirty() {
+        assert_eq!(document_display_label("01-opening.md", false), "01-opening");
+        assert_eq!(
+            document_display_label("01-opening.md", true),
+            format!("01-opening{GIT_DIRTY_MARKER}")
+        );
+    }
+
+    #[test]
+    fn folder_is_dirty_true_for_a_direct_or_nested_dirty_file_false_otherwise() {
+        let folder = Path::new("/project/Chapter 1");
+        let mut dirty = std::collections::HashSet::new();
+        assert!(!folder_is_dirty(&dirty, folder));
+
+        dirty.insert(Path::new("/project/Chapter 1/Scene 1.md").to_path_buf());
+        assert!(folder_is_dirty(&dirty, folder));
+
+        dirty.clear();
+        dirty.insert(Path::new("/project/Chapter 1/Sub/Scene 2.md").to_path_buf());
+        assert!(folder_is_dirty(&dirty, folder));
+
+        dirty.clear();
+        dirty.insert(Path::new("/project/Other Chapter/Scene 1.md").to_path_buf());
+        assert!(!folder_is_dirty(&dirty, folder));
     }
 
     #[test]
@@ -880,6 +945,7 @@ mod tests {
                     None,
                     &|_| None,
                     &HashMap::new(),
+                    &std::collections::HashSet::new(),
                 );
             });
             event

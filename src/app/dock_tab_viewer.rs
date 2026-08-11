@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Requests raised by `AppTabViewer::ui` for the caller to apply once the dock has
 /// finished rendering for the frame — `egui_dock::TabViewer::ui` only gets `&mut
@@ -70,6 +70,8 @@ pub(super) struct AppTabViewer<'a> {
     /// See `WordCountState::folder_totals` — the data source for
     /// `BinderColorMode::WordCountProgress`'s folder rows.
     pub(super) folder_word_counts: &'a HashMap<PathBuf, usize>,
+    /// See `SmaragdApp::git_dirty_paths`.
+    pub(super) git_dirty_paths: &'a HashSet<PathBuf>,
     pub(super) editor: &'a mut EditorState,
     pub(super) settings: &'a Settings,
     /// The selectable typesetting styles (see `SmaragdApp::typeset_styles`) —
@@ -212,6 +214,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         selected_folder,
                         &document_row_color,
                         self.folder_word_counts,
+                        self.git_dirty_paths,
                     ) {
                         self.actions.push(DockAction::Binder(event));
                     }

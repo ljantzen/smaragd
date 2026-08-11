@@ -4,9 +4,10 @@
 //! shells out to whatever `git` is on `PATH`, the same way that plugin ultimately
 //! does, rather than embedding a git implementation.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug)]
@@ -83,6 +84,34 @@ pub fn push(root: &Path) -> Result<(), GitError> {
 
 pub fn pull(root: &Path) -> Result<(), GitError> {
     run(root, &["pull"]).map(|_| ())
+}
+
+/// Every path under `root` with uncommitted changes — staged or not,
+/// including untracked files — as absolute paths. Powers the Binder's
+/// "modified" marker (`ui::binder_panel`); consulted only when git
+/// integration is enabled, so a project that never turned git on never pays
+/// for this.
+pub fn status(root: &Path) -> Result<HashSet<PathBuf>, GitError> {
+    let output = run(root, &["status", "--porcelain", "-z"])?;
+    let mut paths = HashSet::new();
+    // `-z` NUL-terminates every field instead of newline-terminating whole
+    // lines, so a path containing a newline (or one git would otherwise
+    // quote/escape) round-trips exactly — each entry is `XY<space>PATH`,
+    // except a rename/copy (`R`/`C` in either status column), which is
+    // followed by one extra field holding the path it was renamed *from*.
+    let mut fields = output.stdout.split(|&b| b == 0).filter(|f| !f.is_empty());
+    while let Some(entry) = fields.next() {
+        if entry.len() < 3 {
+            continue;
+        }
+        let (x, y) = (entry[0], entry[1]);
+        let path = root.join(String::from_utf8_lossy(&entry[3..]).into_owned());
+        paths.insert(path);
+        if x == b'R' || x == b'C' || y == b'R' || y == b'C' {
+            fields.next(); // the rename/copy source path, not itself a live file
+        }
+    }
+    Ok(paths)
 }
 
 fn run(root: &Path, args: &[&str]) -> Result<std::process::Output, GitError> {
@@ -180,5 +209,56 @@ mod tests {
         let result = push(dir.path());
 
         assert!(matches!(result, Err(GitError::CommandFailed(_))));
+    }
+
+    #[test]
+    fn status_is_empty_right_after_a_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        init_with_identity(dir.path());
+        fs::write(dir.path().join("note.md"), "hello").unwrap();
+        commit_all(dir.path(), "first commit").unwrap();
+
+        assert!(status(dir.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn status_reports_an_untracked_file() {
+        let dir = tempfile::tempdir().unwrap();
+        init_with_identity(dir.path());
+        fs::write(dir.path().join("new.md"), "brand new").unwrap();
+
+        let dirty = status(dir.path()).unwrap();
+
+        assert_eq!(dirty, [dir.path().join("new.md")].into_iter().collect());
+    }
+
+    #[test]
+    fn status_reports_a_modified_tracked_file_but_not_an_untouched_one() {
+        let dir = tempfile::tempdir().unwrap();
+        init_with_identity(dir.path());
+        fs::write(dir.path().join("a.md"), "a").unwrap();
+        fs::write(dir.path().join("b.md"), "b").unwrap();
+        commit_all(dir.path(), "first commit").unwrap();
+        fs::write(dir.path().join("a.md"), "a, edited").unwrap();
+
+        let dirty = status(dir.path()).unwrap();
+
+        assert_eq!(dirty, [dir.path().join("a.md")].into_iter().collect());
+    }
+
+    #[test]
+    fn status_reports_a_staged_file_too() {
+        let dir = tempfile::tempdir().unwrap();
+        init_with_identity(dir.path());
+        fs::write(dir.path().join("staged.md"), "staged").unwrap();
+        Command::new("git")
+            .current_dir(dir.path())
+            .args(["add", "staged.md"])
+            .output()
+            .unwrap();
+
+        let dirty = status(dir.path()).unwrap();
+
+        assert_eq!(dirty, [dir.path().join("staged.md")].into_iter().collect());
     }
 }

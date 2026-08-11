@@ -52,6 +52,7 @@ impl SmaragdApp {
             {
                 self.push_error_toast(format!("Couldn't initialize git: {err}"));
             }
+            self.refresh_git_dirty_paths();
         }
         self.run_backup(BackupTrigger::Open);
         self.reload_plugins();
@@ -263,6 +264,7 @@ impl SmaragdApp {
         // not immediately wiped by a later unconditional clear.
         self.clear_status_message();
         self.run_backup(BackupTrigger::Close);
+        self.git_dirty_paths.clear();
         self.export = None;
         if self.focus_mode {
             self.set_focus_mode(ctx, false);

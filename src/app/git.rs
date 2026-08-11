@@ -107,9 +107,29 @@ impl SmaragdApp {
             return;
         };
         match project.enable_git_support() {
-            Ok(()) => self.set_status_message("Git support enabled"),
+            Ok(()) => {
+                self.set_status_message("Git support enabled");
+                self.refresh_git_dirty_paths();
+            }
             Err(err) => self.push_error_toast(format!("Couldn't save settings: {err}")),
         }
+    }
+
+    /// Refresh `git_dirty_paths` from `git status`, or clear it if git
+    /// integration is off (globally or for this project) or no project is
+    /// open — see that field's doc comment for why every git-touching call
+    /// site funnels through here rather than only ever setting it on
+    /// success. Failures are swallowed (not reported as a toast): this is a
+    /// best-effort visual enhancement, not a user-triggered action with its
+    /// own outcome to report — an actual git problem still surfaces the next
+    /// time the user tries to commit/push/pull.
+    pub(super) fn refresh_git_dirty_paths(&mut self) {
+        let dirty = self.project.as_ref().and_then(|project| {
+            (self.settings.git_integration_enabled() && project.meta.git_enabled)
+                .then(|| crate::git::status(&project.root).ok())
+                .flatten()
+        });
+        self.git_dirty_paths = dirty.unwrap_or_default();
     }
 
     /// Open the commit-message prompt (the existing name-prompt modal, reused),
@@ -154,6 +174,7 @@ impl SmaragdApp {
         match crate::git::commit_all(&project.root, message) {
             Ok(()) => {
                 self.set_status_message("Committed");
+                self.refresh_git_dirty_paths();
                 if push_after {
                     self.run_git_push(ctx);
                 }
@@ -248,11 +269,91 @@ impl SmaragdApp {
                     project.rescan();
                     self.spawn_word_count_recompute(ctx);
                 }
+                self.refresh_git_dirty_paths();
                 self.set_status_message(format!("{}ed", operation.label()));
             }
             Err(err) => {
                 self.push_error_toast(format!("{} failed: {err}", operation.label()));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn init_repo_with_identity(root: &Path) {
+        crate::git::init(root).unwrap();
+        std::process::Command::new("git")
+            .current_dir(root)
+            .args(["config", "--local", "user.email", "test@example.com"])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .current_dir(root)
+            .args(["config", "--local", "user.name", "Smaragd Tests"])
+            .output()
+            .unwrap();
+    }
+
+    #[test]
+    fn refresh_git_dirty_paths_picks_up_an_untracked_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        init_repo_with_identity(&project.root);
+        project.enable_git_support().unwrap();
+        // Commit the initial `.smaragd/project.json` first so only `new.md`
+        // below shows up as dirty, isolating what this test actually checks.
+        crate::git::commit_all(&project.root, "initial commit").unwrap();
+        std::fs::write(dir.path().join("new.md"), "brand new").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+
+        app.refresh_git_dirty_paths();
+
+        assert_eq!(app.git_dirty_paths, [dir.path().join("new.md")].into());
+    }
+
+    #[test]
+    fn refresh_git_dirty_paths_is_empty_when_global_git_integration_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        init_repo_with_identity(&project.root);
+        project.enable_git_support().unwrap();
+        std::fs::write(dir.path().join("new.md"), "brand new").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.settings.git_integration_disabled = true;
+
+        app.refresh_git_dirty_paths();
+
+        assert!(app.git_dirty_paths.is_empty());
+    }
+
+    #[test]
+    fn refresh_git_dirty_paths_is_empty_when_this_project_has_not_enabled_git() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        init_repo_with_identity(&project.root);
+        // Deliberately not calling `enable_git_support` — a repo can exist on
+        // disk without smaragd's own per-project flag being on.
+        std::fs::write(dir.path().join("new.md"), "brand new").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+
+        app.refresh_git_dirty_paths();
+
+        assert!(app.git_dirty_paths.is_empty());
+    }
+
+    #[test]
+    fn refresh_git_dirty_paths_clears_a_stale_set_with_no_project_open() {
+        let mut app = SmaragdApp::test_fixture();
+        app.git_dirty_paths = [PathBuf::from("/stale/path.md")].into();
+
+        app.refresh_git_dirty_paths();
+
+        assert!(app.git_dirty_paths.is_empty());
     }
 }

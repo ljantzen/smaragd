@@ -134,6 +134,14 @@ pub struct SmaragdApp {
     /// `DocumentStatusCache`'s doc comment for why this exists (avoiding a
     /// disk read for every visible binder row every frame).
     document_status_cache: DocumentStatusCache,
+    /// Absolute paths under the open project with uncommitted git changes
+    /// (staged or not, including untracked files) — see `crate::git::status`.
+    /// Powers the Binder's "modified" marker (`ui::binder_panel`). Kept
+    /// empty whenever git integration is off (`Settings::
+    /// git_integration_enabled`/`ProjectMeta::git_enabled`) or no project is
+    /// open, rather than ever going stale-but-nonempty — see
+    /// `refresh_git_dirty_paths`, which every call site funnels through.
+    git_dirty_paths: std::collections::HashSet<PathBuf>,
     /// Every `[[wikilink]]` elsewhere in the project pointing at the open
     /// document, kept in sync with whichever document is open (see
     /// `refresh_backlinks_if_needed`).
@@ -269,6 +277,7 @@ impl SmaragdApp {
                 ui::new_project_template_prompt::NewProjectTemplatePromptState::default(),
             metadata: MetadataState::default(),
             document_status_cache: DocumentStatusCache::default(),
+            git_dirty_paths: std::collections::HashSet::new(),
             backlinks: BacklinksState::default(),
             tags: TagsState::default(),
             word_count: WordCountState::default(),
@@ -359,6 +368,7 @@ impl SmaragdApp {
                 ui::new_project_template_prompt::NewProjectTemplatePromptState::default(),
             metadata: MetadataState::default(),
             document_status_cache: DocumentStatusCache::default(),
+            git_dirty_paths: std::collections::HashSet::new(),
             backlinks: BacklinksState::default(),
             tags: TagsState::default(),
             word_count: WordCountState::default(),
@@ -683,6 +693,7 @@ impl SmaragdApp {
         }
         if result.is_ok() {
             self.run_backup(BackupTrigger::ManualSave);
+            self.refresh_git_dirty_paths();
         }
         result
     }
@@ -1405,6 +1416,7 @@ impl eframe::App for SmaragdApp {
                     folder_metadata_draft: &mut self.metadata.folder_draft,
                     document_status_cache: &self.document_status_cache,
                     folder_word_counts: &self.word_count.folder_totals,
+                    git_dirty_paths: &self.git_dirty_paths,
                     editor: &mut self.editor,
                     settings: &self.settings,
                     typeset_styles: &self.typeset_styles,
