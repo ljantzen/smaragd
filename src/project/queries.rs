@@ -26,6 +26,33 @@ struct TaggedDocument {
     tags: Vec<String>,
 }
 
+/// Lazily-populated, in-memory memo of [`Project::tag_index`]'s full-vault scan —
+/// avoids a `fs::read_to_string` + parse of every document on every call, which
+/// otherwise happens far more often than it needs to: `all_tags` in particular is
+/// read fresh every frame the Editor or Metadata dock tab is visible (for the
+/// `#tag`/tag-chip autocomplete — see `app::dock_tab_viewer`), not just when a
+/// document's tags might actually have changed.
+///
+/// `pub(crate)` (rather than staying private to this file) so `Project`'s own
+/// struct definition in `mod.rs` can hold one as a field, and so
+/// `app::refresh::spawn_word_count_recompute`'s hand-built background-thread
+/// `Project` snapshot (which needs one too, always empty — see that field's own
+/// doc comment) can name the type. `RefCell` because every method here takes
+/// `&self`, called from UI code that only ever borrows `Project` immutably (the
+/// same reason `app::refresh::DocumentStatusCache` needs one).
+///
+/// Invalidated wherever the vault's tag-relevant content could have changed:
+/// [`Project::rescan`] (called by every create/rename/move/delete/trash operation —
+/// anything that changes *which* documents exist) clears it directly, as does
+/// [`Project::rename_tag`]'s vault-wide rewrite; `app::SmaragdApp` also clears it
+/// once per frame when it notices the open document's buffer was just saved — the
+/// one way a document's *content* (as opposed to its existence) changes without
+/// going through `rescan`.
+#[derive(Debug, Default)]
+pub(crate) struct TagCache {
+    index: Option<Vec<TaggedDocument>>,
+}
+
 /// One tag on a queried document, together with every *other* document in the
 /// project that also carries it — found by [`Project::related_by_tag`]. Kept
 /// even when `documents` is empty, so a caller (the Tags dock) can still show
@@ -89,10 +116,17 @@ impl Project {
     /// `tags:` plus inline `#tag` mentions in the body, case-insensitively
     /// deduplicated (frontmatter's casing wins over an inline mention's, since
     /// it's the more deliberately authored form). The shared full-vault scan
-    /// behind [`Project::related_by_tag`] and [`Project::documents_with_tag`];
-    /// recomputed fresh from disk on every call, like `backlinks` — a document
-    /// that can't be read is skipped rather than failing the whole scan.
+    /// behind [`Project::related_by_tag`] and [`Project::documents_with_tag`].
+    /// Memoized in `self.tag_cache` (see [`TagCache`]'s doc comment for exactly
+    /// when it's invalidated) rather than rescanned from disk on every call, the
+    /// way `backlinks` still is — `backlinks` is only ever recomputed when the
+    /// open document changes, cheap enough already, while this is read every
+    /// frame for tag autocomplete, not just on a meaningful change.
     fn tag_index(&self) -> Vec<TaggedDocument> {
+        if let Some(cached) = &self.tag_cache.borrow().index {
+            return cached.clone();
+        }
+
         let mut index = Vec::new();
         for doc_path in self.tree.document_paths() {
             let Ok(contents) = fs::read_to_string(&doc_path) else {
@@ -115,7 +149,16 @@ impl Project {
                 tags,
             });
         }
+        self.tag_cache.borrow_mut().index = Some(index.clone());
         index
+    }
+
+    /// Drop the memoized tag index so the next `tag_index()` call rescans the
+    /// vault from disk — see [`TagCache`]'s doc comment for when this needs
+    /// calling. `&self`, not `&mut self`: the cache is a `RefCell`, so this is
+    /// callable from anywhere `tag_index`/`all_tags`/etc. already are.
+    pub fn invalidate_tag_cache(&self) {
+        self.tag_cache.borrow_mut().index = None;
     }
 
     /// Every tag on the document at `target_path`, each paired with every
@@ -432,5 +475,73 @@ mod tests {
         fs::write(&doc, "No tags here.").unwrap();
 
         assert!(project.all_tags().is_empty());
+    }
+
+    #[test]
+    fn all_tags_is_memoized_until_something_invalidates_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc").unwrap();
+        fs::write(&doc, "#original").unwrap();
+
+        assert_eq!(project.all_tags(), vec!["original"]);
+
+        // Bypasses `Project` entirely, the same way `EditorState::save` does — the
+        // cached result should still be returned, proving the second call didn't
+        // rescan the vault.
+        fs::write(&doc, "#changed").unwrap();
+        assert_eq!(
+            project.all_tags(),
+            vec!["original"],
+            "expected the memoized tag index, not a fresh rescan"
+        );
+
+        project.invalidate_tag_cache();
+        assert_eq!(
+            project.all_tags(),
+            vec!["changed"],
+            "expected a fresh rescan after invalidate_tag_cache"
+        );
+    }
+
+    #[test]
+    fn rescan_invalidates_the_tag_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc").unwrap();
+        fs::write(&doc, "#original").unwrap();
+        assert_eq!(project.all_tags(), vec!["original"]);
+
+        fs::write(&doc, "#changed").unwrap();
+        project.rescan();
+
+        assert_eq!(project.all_tags(), vec!["changed"]);
+    }
+
+    #[test]
+    fn creating_a_document_invalidates_the_tag_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let a = project.create_document(dir.path(), "A").unwrap();
+        fs::write(&a, "#alpha").unwrap();
+        assert_eq!(project.all_tags(), vec!["alpha"]);
+
+        let b = project.create_document(dir.path(), "B").unwrap();
+        fs::write(&b, "#beta").unwrap();
+
+        assert_eq!(project.all_tags(), vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn rename_tag_invalidates_the_cache_so_the_new_name_is_immediately_visible() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc").unwrap();
+        fs::write(&doc, "#old-tag").unwrap();
+        assert_eq!(project.all_tags(), vec!["old-tag"]);
+
+        project.rename_tag("old-tag", "new-tag").unwrap();
+
+        assert_eq!(project.all_tags(), vec!["new-tag"]);
     }
 }

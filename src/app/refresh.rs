@@ -374,19 +374,27 @@ impl SmaragdApp {
         self.tags.search_computed_for = self.tags.search_text.clone();
     }
 
-    /// Recompute `word_count.cache` whenever a save just completed — edge-detects
-    /// `editor.dirty` going `true` -> `false` this frame, the moment any of the
-    /// three existing save paths (explicit `Ctrl+S`, focus-loss autosave inside
-    /// `editor_panel::show`, or `close_document`) commits bytes to disk, without
-    /// needing a call at each of those sites. Unlike `refresh_backlinks_if_needed`/
-    /// `refresh_tags_if_needed` (keyed on which document is open), word count
-    /// doesn't depend on the open document at all, so a dirty-edge check is the
-    /// right trigger here instead. A no-op most frames.
+    /// Recompute `word_count.cache`, and drop `Project`'s cached tag index,
+    /// whenever a save just completed — edge-detects `editor.dirty` going `true`
+    /// -> `false` this frame, the moment any of the three existing save paths
+    /// (explicit `Ctrl+S`, focus-loss autosave inside `editor_panel::show`, or
+    /// `close_document`) commits bytes to disk, without needing a call at each of
+    /// those sites. Unlike `refresh_backlinks_if_needed`/`refresh_tags_if_needed`
+    /// (keyed on which document is open), neither word count nor the tag cache
+    /// depends on which document is open, so a dirty-edge check is the right
+    /// trigger for both instead. A save is the only way a document's *content*
+    /// (as opposed to its existence — see `Project::rescan`, which already
+    /// invalidates the tag cache itself) can change tags without going through
+    /// `Project::rename_tag` (which also invalidates it itself). A no-op most
+    /// frames.
     pub(super) fn refresh_word_count_if_needed(&mut self, ctx: &egui::Context) {
         let just_saved = self.word_count.last_dirty && !self.editor.dirty;
         self.word_count.last_dirty = self.editor.dirty;
         if just_saved {
             self.spawn_word_count_recompute(ctx);
+            if let Some(project) = &self.project {
+                project.invalidate_tag_cache();
+            }
         }
     }
 
@@ -450,7 +458,12 @@ impl SmaragdApp {
         let (sender, receiver) = std::sync::mpsc::channel();
         let repaint_ctx = ctx.clone();
         std::thread::spawn(move || {
-            let snapshot = crate::project::Project { root, tree, meta };
+            let snapshot = crate::project::Project {
+                root,
+                tree,
+                meta,
+                tag_cache: Default::default(),
+            };
             let total = snapshot.word_count(scope);
             let folder_totals = snapshot.folder_word_counts();
             let _ = sender.send(WordCountRecomputeResult {
@@ -613,6 +626,46 @@ mod word_count_refresh_tests {
         app.refresh_word_count_if_needed(&ctx);
 
         assert!(app.word_count.pending.is_none());
+    }
+
+    /// The same dirty->clean save edge that triggers a word-count recompute also
+    /// has to drop `Project`'s memoized tag index (see
+    /// `queries::TagCache`/`Project::invalidate_tag_cache`) — a save is the one way
+    /// a document's content, and thus its tags, can change without going through
+    /// `Project::rescan` or `Project::rename_tag`, neither of which a plain editor
+    /// save touches.
+    #[test]
+    fn a_save_edge_also_invalidates_the_project_s_tag_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc").unwrap();
+        fs::write(&doc, "#original").unwrap();
+        assert_eq!(project.all_tags(), vec!["original"], "warms the cache");
+
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        let ctx = egui::Context::default();
+
+        // Simulates what actually happens on disk during a save, without going
+        // through `EditorState::save` itself (this test cares about the
+        // invalidation trigger, not the save mechanics already covered elsewhere).
+        fs::write(&doc, "#changed").unwrap();
+
+        app.editor.dirty = true;
+        app.refresh_word_count_if_needed(&ctx);
+        assert_eq!(
+            app.project.as_ref().unwrap().all_tags(),
+            vec!["original"],
+            "becoming dirty alone should not invalidate the cache"
+        );
+
+        app.editor.dirty = false;
+        app.refresh_word_count_if_needed(&ctx);
+        assert_eq!(
+            app.project.as_ref().unwrap().all_tags(),
+            vec!["changed"],
+            "the dirty->clean transition should have invalidated the cache"
+        );
     }
 
     #[test]

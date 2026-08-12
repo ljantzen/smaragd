@@ -5,6 +5,13 @@ this file.
 
 ## Unreleased
 
+- The project's tag index (backing `all_tags`, `:tag` completion, and the
+  `#tag`/tag-chip autocomplete popups) is now memoized in memory instead of
+  rescanning every document on disk on every call — noticeable on large
+  projects, since it was previously re-read from scratch every single frame
+  the Editor or Metadata tab was open. Invalidated automatically whenever a
+  document is created/renamed/moved/deleted/trashed, a tag is renamed, or
+  the open document is saved.
 - **File > Go Back / Go Forward** (`Alt+Left`/`Alt+Right`) navigate a
   browser-style history of every document opened this project session,
   restoring the cursor position last left in each one.

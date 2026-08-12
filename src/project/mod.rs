@@ -115,6 +115,16 @@ pub struct Project {
     pub root: PathBuf,
     pub tree: BinderTree,
     pub meta: ProjectMeta,
+    /// In-memory memo of the vault-wide tag scan — see `queries::TagCache`'s doc
+    /// comment for what it caches and when it's invalidated. Not part of
+    /// `Project`'s own identity (no `Debug`/`PartialEq` derived for `Project`, so
+    /// this doesn't need either), purely a performance cache. `pub(crate)` (rather
+    /// than private) only so `app::refresh::spawn_word_count_recompute`'s
+    /// background-thread `Project` snapshot — built by hand from cloned
+    /// `root`/`tree`/`meta` rather than through `load_from_folder`, since it needs
+    /// to be `Send` — can still construct one; that snapshot never actually reads
+    /// tags, so it's always built fresh/empty via `Default::default()`.
+    pub(crate) tag_cache: std::cell::RefCell<queries::TagCache>,
 }
 
 impl Project {
@@ -138,6 +148,7 @@ impl Project {
             root: root.to_path_buf(),
             tree,
             meta,
+            tag_cache: std::cell::RefCell::new(queries::TagCache::default()),
         })
     }
 
@@ -195,6 +206,10 @@ impl Project {
         let mut tree = scan_project(&self.root);
         apply_order(&mut tree.root, &self.root, &self.meta.node_order);
         self.tree = tree;
+        // Every create/rename/move/delete/trash operation calls `rescan` — the one
+        // choke point where *which* documents exist can change, so it's also where
+        // the tag cache needs to drop whatever it remembered about the old set.
+        self.invalidate_tag_cache();
     }
 
     pub fn save_metadata(&self) -> io::Result<()> {

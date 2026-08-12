@@ -10,9 +10,11 @@ impl Project {
     ///
     /// Unlike `rename_wikilinks_everywhere`, this is a first-class user action in its
     /// own right — triggered from the Tags dock, not a side effect of renaming
-    /// something else — so it's `pub`. Recomputed callers (`all_tags`,
-    /// `related_by_tag`, ...) read fresh from disk on every call, so no `rescan` is
-    /// needed here the way a document/folder rename needs one.
+    /// something else — so it's `pub`. No `rescan` needed the way a document/folder
+    /// rename needs one (the set of documents doesn't change), but the tag cache
+    /// still needs to drop what it remembered about every document this touched —
+    /// see `invalidate_tag_cache`, called via `&self` since the cache is a
+    /// `RefCell`.
     pub fn rename_tag(&self, old_tag: &str, new_tag: &str) -> io::Result<()> {
         for doc_path in self.tree.document_paths() {
             let contents = fs::read_to_string(&doc_path)?;
@@ -41,6 +43,7 @@ impl Project {
             };
             fs::write(&doc_path, updated)?;
         }
+        self.invalidate_tag_cache();
         Ok(())
     }
 }
