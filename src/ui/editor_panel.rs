@@ -134,6 +134,22 @@ pub fn show(
         return None;
     }
 
+    // Obsidian-style document title at the top of the pane, above the text itself —
+    // the dock tab's own label just says "Editor" (see `DockTab::title`), so without
+    // this there's nothing in the pane confirming which document is actually open.
+    // The filename stem matches every other place a document's title is shown
+    // (binder rows, `Project::tree.document_names`, wikilink targets). Skipped for a
+    // joined collaboration session, which has no `open_path` of its own to name.
+    if let Some(title) = editor
+        .open_path
+        .as_deref()
+        .and_then(|path| path.file_stem())
+        .and_then(|stem| stem.to_str())
+    {
+        ui.heading(title);
+        ui.add_space(4.0);
+    }
+
     let text_edit_id = editor_text_edit_id();
 
     // A document switch (`SmaragdApp::load_document`) leaves a byte offset here
@@ -524,6 +540,105 @@ mod tests {
     /// fixed-size viewport and checks the `TextEdit`'s own allocated rect (read
     /// back via `Context::read_response`, since `show`'s return value doesn't
     /// expose it) actually reaches down close to the bottom of that viewport.
+    /// Regression test for the Obsidian-style document title: the open document's
+    /// filename stem is shown as a heading above the editable area, pushing the
+    /// `TextEdit` down from the top of the pane — checked geometrically (the
+    /// `TextEdit`'s own top y-coordinate) rather than by inspecting rendered text,
+    /// matching this file's other layout regression test
+    /// (`a_short_document_s_editable_area_fills_the_available_height`) — egui gives
+    /// no simpler way to assert "this text was painted" than measuring what it
+    /// pushed around it. Needs `editor_font::install` first: without a real font
+    /// registered, the heading measures to zero height and the regression this
+    /// guards against would go undetected.
+    #[test]
+    fn the_open_document_s_title_is_shown_as_a_heading_above_the_editor() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let mut editor = EditorState {
+            open_path: Some(std::path::PathBuf::from("Chapter One.md")),
+            buffer: "Some text.".to_string(),
+            ..Default::default()
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+
+        let _ = ctx.run_ui(input, |ui| {
+            show(
+                ui,
+                &mut editor,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+            );
+        });
+
+        let top = ctx
+            .read_response(editor_text_edit_id())
+            .expect("TextEdit renders once a document is open")
+            .rect
+            .top();
+        assert!(
+            top > 15.0,
+            "expected the TextEdit to sit below a document-title heading, but it starts at y={top}"
+        );
+    }
+
+    /// A joined collaboration session has no `open_path` of its own to name (see
+    /// `collaborating_with_no_open_path_still_renders_the_editor`), so no title
+    /// heading should be shown — the `TextEdit` should sit right at the top of the
+    /// pane, the same as before this heading existed.
+    #[test]
+    fn no_title_heading_is_shown_while_collaborating_with_no_open_document() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let mut editor = EditorState {
+            open_path: None,
+            buffer: "Shared content from a peer".to_string(),
+            ..Default::default()
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+
+        let _ = ctx.run_ui(input, |ui| {
+            show(
+                ui,
+                &mut editor,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                true,
+            );
+        });
+
+        let top = ctx
+            .read_response(editor_text_edit_id())
+            .expect("TextEdit renders while collaborating even with no open_path")
+            .rect
+            .top();
+        assert!(
+            top < 15.0,
+            "expected no title heading (no open_path to name) so the TextEdit sits at the \
+             top of the pane, but it starts at y={top}"
+        );
+    }
+
     #[test]
     fn a_short_document_s_editable_area_fills_the_available_height() {
         let ctx = egui::Context::default();

@@ -40,6 +40,9 @@ this file.
   typing a new one offers autocomplete against every tag already used
   elsewhere in the project — Enter, a comma, or clicking a suggestion
   commits it (#31).
+- The Editor pane now shows the open document's title as a heading above
+  the text, Obsidian-style — the dock tab itself just says "Editor", so
+  previously nothing in the pane confirmed which document was open.
 
 ## v0.9.0 — 2026-08-11
 
