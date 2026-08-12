@@ -271,7 +271,7 @@ pub struct Settings {
     /// so an unfamiliar surname or invented word shows up as a false positive
     /// with no way to silence it — opt-in until that lands. Also currently
     /// backed by placeholder dictionaries with only a couple dozen known words
-    /// per language (see `assets/dictionaries/NOTICE`), so turning this on
+    /// per language (see `dictionaries/NOTICE`), so turning this on
     /// today isn't yet meaningfully useful regardless of the default.
     pub spell_check_language: SpellCheckLanguage,
     /// How long an error-severity toast notification (`app::Toast`) stays on

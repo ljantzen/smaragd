@@ -27,6 +27,7 @@ pub enum SettingsCategory {
     General,
     Appearance,
     Editor,
+    SpellCheck,
     Templates,
     History,
     Pomodoro,
@@ -34,10 +35,11 @@ pub enum SettingsCategory {
 }
 
 impl SettingsCategory {
-    pub const ALL: [SettingsCategory; 7] = [
+    pub const ALL: [SettingsCategory; 8] = [
         SettingsCategory::General,
         SettingsCategory::Appearance,
         SettingsCategory::Editor,
+        SettingsCategory::SpellCheck,
         SettingsCategory::Templates,
         SettingsCategory::History,
         SettingsCategory::Pomodoro,
@@ -49,6 +51,7 @@ impl SettingsCategory {
             SettingsCategory::General => "General",
             SettingsCategory::Appearance => "Appearance",
             SettingsCategory::Editor => "Editor",
+            SettingsCategory::SpellCheck => "Spell Check",
             SettingsCategory::Templates => "Templates",
             SettingsCategory::History => "History",
             SettingsCategory::Pomodoro => "Pomodoro",
@@ -144,7 +147,8 @@ pub fn show(
                 changed |= match *category {
                     SettingsCategory::General => show_general_category(ui, settings),
                     SettingsCategory::Appearance => show_appearance_category(ctx, ui, settings),
-                    SettingsCategory::Editor => show_editor_category(
+                    SettingsCategory::Editor => show_editor_category(ui, settings),
+                    SettingsCategory::SpellCheck => show_spell_check_category(
                         ui,
                         settings,
                         dictionary_downloading,
@@ -319,12 +323,7 @@ fn show_appearance_category(
     changed
 }
 
-fn show_editor_category(
-    ui: &mut egui::Ui,
-    settings: &mut Settings,
-    dictionary_downloading: Option<SpellCheckLanguage>,
-    dictionary_download_request: &mut Option<SpellCheckLanguage>,
-) -> bool {
+fn show_editor_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
     let mut changed = false;
     ui.heading("Font");
     ui.add_space(12.0);
@@ -370,7 +369,16 @@ fn show_editor_category(
              changed.",
         )
         .changed();
-    ui.add_space(12.0);
+    changed
+}
+
+fn show_spell_check_category(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    dictionary_downloading: Option<SpellCheckLanguage>,
+    dictionary_download_request: &mut Option<SpellCheckLanguage>,
+) -> bool {
+    let mut changed = false;
     ui.heading("Spell Check");
     ui.add_space(12.0);
     ui.horizontal(|ui| {
@@ -379,7 +387,17 @@ fn show_editor_category(
         egui::ComboBox::new("spell_check_language_combo", "")
             .selected_text(settings.spell_check_language.label())
             .show_ui(ui, |ui| {
-                for lang in SpellCheckLanguage::ALL {
+                ui.selectable_value(
+                    &mut settings.spell_check_language,
+                    SpellCheckLanguage::Off,
+                    SpellCheckLanguage::Off.label(),
+                );
+                let mut languages: Vec<SpellCheckLanguage> = SpellCheckLanguage::ALL
+                    .into_iter()
+                    .filter(|lang| *lang != SpellCheckLanguage::Off)
+                    .collect();
+                languages.sort_by_key(|lang| lang.label());
+                for lang in languages {
                     ui.selectable_value(&mut settings.spell_check_language, lang, lang.label());
                 }
             });
@@ -399,16 +417,28 @@ fn show_editor_category(
          dictionary here to make spell-check actually useful.",
     );
     ui.add_space(8.0);
-    show_dictionary_catalog(ui, dictionary_downloading, dictionary_download_request);
+    egui::ScrollArea::vertical()
+        .id_salt("dictionary_catalog_scroll")
+        .max_height(280.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            show_dictionary_catalog(ui, dictionary_downloading, dictionary_download_request);
+        });
     changed
 }
 
-/// The "Dictionaries" list inside the Editor category: one row per
+/// The "Dictionaries" list inside the Spell Check category: one row per
 /// `spellcheck::catalog()` entry that isn't `is_blocked()` — a blocked entry
 /// (this repo's own review found a license incompatibility) is never even
 /// shown here, let alone downloadable, regardless of what its `redistributable`
-/// field claims. Each row shows the language, its review status/license as a
-/// hover tooltip, and either a "Download" button, a spinner while
+/// field claims. Rows are sorted alphabetically by language name (not
+/// `catalog()`'s own order, which just reflects the order each was reviewed
+/// and added), and rendered inside `show_spell_check_category`'s own bounded,
+/// scrollable area rather than however tall the full list happens to be — with
+/// this many languages, an unbounded list would push the language picker
+/// above it off screen. Each row shows the language, its SPDX license
+/// identifier inline (full review status/copyright/notes as a hover
+/// tooltip), and either a "Download" button, a spinner while
 /// `dictionary_downloading` names this row's language, or "Downloaded" once
 /// `spellcheck::is_downloaded` confirms the files are already on disk.
 /// Clicking "Download" sets `*dictionary_download_request` rather than
@@ -420,7 +450,9 @@ fn show_dictionary_catalog(
     dictionary_downloading: Option<SpellCheckLanguage>,
     dictionary_download_request: &mut Option<SpellCheckLanguage>,
 ) {
-    for entry in crate::spellcheck::catalog() {
+    let mut entries: Vec<_> = crate::spellcheck::catalog().iter().collect();
+    entries.sort_by(|a, b| a.language.cmp(&b.language));
+    for entry in entries {
         if entry.is_blocked() {
             continue;
         }
@@ -431,6 +463,7 @@ fn show_dictionary_catalog(
         let downloaded = crate::spellcheck::is_downloaded(language);
         let row = ui.horizontal(|ui| {
             ui.label(&entry.language);
+            ui.weak(format!("({})", entry.license_spdx));
             if is_downloading {
                 ui.add(egui::Spinner::new().size(14.0));
                 ui.weak("Downloading…");
