@@ -149,6 +149,26 @@ impl Project {
         groups
     }
 
+    /// Every distinct tag used anywhere in the project — frontmatter and
+    /// inline alike — case-insensitively deduplicated (first-seen casing
+    /// kept, the same convention `markdown::inline_tags` uses for one
+    /// document), sorted alphabetically. The project's full known-tag
+    /// vocabulary, independent of whatever document (if any) is currently
+    /// open — backs the `:tag` command prompt's argument completion
+    /// (`ui::command_prompt`).
+    pub fn all_tags(&self) -> Vec<String> {
+        let mut tags: Vec<String> = Vec::new();
+        for doc in self.tag_index() {
+            for tag in doc.tags {
+                if !tags.iter().any(|seen| seen.eq_ignore_ascii_case(&tag)) {
+                    tags.push(tag);
+                }
+            }
+        }
+        tags.sort_by_key(|tag| tag.to_lowercase());
+        tags
+    }
+
     /// Every document in the project carrying `tag` (case-insensitive match
     /// against both frontmatter and inline tags), sorted by title —
     /// vault-wide tag search, independent of whatever document (if any) is
@@ -378,5 +398,39 @@ mod tests {
         fs::write(&doc, "No tags here.").unwrap();
 
         assert!(project.documents_with_tag("foo").is_empty());
+    }
+
+    #[test]
+    fn all_tags_collects_every_distinct_tag_sorted_alphabetically() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let a = project.create_document(dir.path(), "A").unwrap();
+        let b = project.create_document(dir.path(), "B").unwrap();
+        fs::write(&a, "---\ntags: [Zebra]\n---\nBody.").unwrap();
+        fs::write(&b, "Inline #apple tag.").unwrap();
+
+        assert_eq!(project.all_tags(), vec!["apple", "Zebra"]);
+    }
+
+    #[test]
+    fn all_tags_deduplicates_case_insensitively_keeping_first_seen_casing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let a = project.create_document(dir.path(), "A").unwrap();
+        let b = project.create_document(dir.path(), "B").unwrap();
+        fs::write(&a, "---\ntags: [Foo]\n---\nBody.").unwrap();
+        fs::write(&b, "Inline #FOO tag.").unwrap();
+
+        assert_eq!(project.all_tags(), vec!["Foo"]);
+    }
+
+    #[test]
+    fn all_tags_is_empty_for_a_project_with_no_tagged_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Doc").unwrap();
+        fs::write(&doc, "No tags here.").unwrap();
+
+        assert!(project.all_tags().is_empty());
     }
 }

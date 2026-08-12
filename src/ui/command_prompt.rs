@@ -178,6 +178,7 @@ fn completions<'a>(
     note_titles: &'a [String],
     plugin_commands: &'a [String],
     theme_ids: &'a [String],
+    tag_names: &'a [String],
     git_enabled: bool,
 ) -> Vec<&'a str> {
     let mut matches = match completion_target(input) {
@@ -210,6 +211,10 @@ fn completions<'a>(
             }
             matches
         }
+        CompletionTarget::Argument {
+            command: "tag",
+            query,
+        } => filter_candidates(tag_names, query),
         CompletionTarget::Argument {
             command: "git",
             query,
@@ -270,6 +275,7 @@ pub fn show(
     note_titles: &[String],
     plugin_commands: &[String],
     theme_ids: &[String],
+    tag_names: &[String],
     git_enabled: bool,
 ) -> Option<CommandPromptEvent> {
     if !state.open {
@@ -284,6 +290,7 @@ pub fn show(
         note_titles,
         plugin_commands,
         theme_ids,
+        tag_names,
         git_enabled,
     );
     if !candidates.is_empty() {
@@ -312,7 +319,7 @@ pub fn show(
                 egui::TextEdit::singleline(&mut state.input)
                     .desired_width(f32::INFINITY)
                     .hint_text(
-                        "w | q | wq | open <title> | new <title> | dmode dark|light|system | theme <name> | git enable|commit|push|pull|backup | find <text>",
+                        "w | q | wq | open <title> | new <title> | dmode dark|light|system | theme <name> | git enable|commit|push|pull|backup | find <text> | tag <name>",
                     ),
             );
             if state.focus_requested {
@@ -528,28 +535,28 @@ mod tests {
         // Prefix match ("commit") ranks ahead of a mere substring match ("backup"
         // contains "c"), each group sorted alphabetically.
         assert_eq!(
-            completions("git c", &[], &[], &[], true),
+            completions("git c", &[], &[], &[], &[], true),
             vec!["commit", "backup"]
         );
         assert_eq!(
-            completions("git pu", &[], &[], &[], true),
+            completions("git pu", &[], &[], &[], &[], true),
             vec!["pull", "push"]
         );
     }
 
     #[test]
     fn git_message_argument_has_no_completions() {
-        assert!(completions("git commit fix", &[], &[], &[], true).is_empty());
+        assert!(completions("git commit fix", &[], &[], &[], &[], true).is_empty());
     }
 
     #[test]
     fn git_is_omitted_from_command_name_completions_when_disabled() {
-        assert_eq!(completions("gi", &[], &[], &[], false), Vec::<&str>::new());
+        assert_eq!(completions("gi", &[], &[], &[], &[], false), Vec::<&str>::new());
     }
 
     #[test]
     fn git_subcommand_has_no_completions_when_disabled() {
-        assert!(completions("git c", &[], &[], &[], false).is_empty());
+        assert!(completions("git c", &[], &[], &[], &[], false).is_empty());
     }
 
     #[test]
@@ -640,28 +647,28 @@ mod tests {
         // Prefix matches ("wq", "write") rank ahead of a mere substring match
         // ("new" contains "w"), each group sorted alphabetically.
         assert_eq!(
-            completions("w", &[], &[], &[], true),
+            completions("w", &[], &[], &[], &[], true),
             vec!["wq", "write", "new"]
         );
         // Likewise "dmode" (prefix) ahead of "find" (contains "d").
-        assert_eq!(completions("d", &[], &[], &[], true), vec!["dmode", "find"]);
+        assert_eq!(completions("d", &[], &[], &[], &[], true), vec!["dmode", "find"]);
     }
 
     #[test]
     fn command_name_completions_still_include_a_fully_typed_exact_match() {
         // "quit" is itself the only candidate once you've typed the whole word.
-        assert_eq!(completions("quit", &[], &[], &[], true), vec!["quit"]);
+        assert_eq!(completions("quit", &[], &[], &[], &[], true), vec!["quit"]);
     }
 
     #[test]
     fn open_argument_completes_against_note_titles() {
         let titles = vec!["Opening Scene".to_string(), "Backstory".to_string()];
         assert_eq!(
-            completions("open open", &titles, &[], &[], true),
+            completions("open open", &titles, &[], &[], &[], true),
             vec!["Opening Scene"]
         );
         assert_eq!(
-            completions("o open", &titles, &[], &[], true),
+            completions("o open", &titles, &[], &[], &[], true),
             vec!["Opening Scene"]
         );
     }
@@ -669,13 +676,13 @@ mod tests {
     #[test]
     fn open_argument_completions_are_capped_at_max_suggestions() {
         let titles: Vec<String> = (0..20).map(|n| format!("Note {n:02}")).collect();
-        let candidates = completions("open Note", &titles, &[], &[], true);
+        let candidates = completions("open Note", &titles, &[], &[], &[], true);
         assert_eq!(candidates.len(), MAX_SUGGESTIONS);
     }
 
     #[test]
     fn dmode_argument_completes_against_the_fixed_choices() {
-        assert_eq!(completions("dmode d", &[], &[], &[], true), vec!["dark"]);
+        assert_eq!(completions("dmode d", &[], &[], &[], &[], true), vec!["dark"]);
     }
 
     fn theme_ids_fixture() -> Vec<String> {
@@ -689,7 +696,7 @@ mod tests {
     fn theme_argument_completes_against_known_theme_ids() {
         let theme_ids = theme_ids_fixture();
         assert_eq!(
-            completions("theme drac", &[], &[], &theme_ids, true),
+            completions("theme drac", &[], &[], &theme_ids, &[], true),
             vec!["dracula"]
         );
     }
@@ -697,7 +704,7 @@ mod tests {
     #[test]
     fn theme_argument_completion_includes_default() {
         assert_eq!(
-            completions("theme def", &[], &[], &[], true),
+            completions("theme def", &[], &[], &[], &[], true),
             vec!["default"]
         );
     }
@@ -705,7 +712,7 @@ mod tests {
     #[test]
     fn theme_argument_completion_with_an_empty_query_is_capped_and_leads_with_default() {
         let theme_ids = theme_ids_fixture();
-        let candidates = completions("theme ", &[], &[], &theme_ids, true);
+        let candidates = completions("theme ", &[], &[], &theme_ids, &[], true);
         assert_eq!(candidates.len(), MAX_SUGGESTIONS);
         assert_eq!(candidates[0], "default");
     }
@@ -713,14 +720,27 @@ mod tests {
     #[test]
     fn new_and_find_arguments_have_no_completions() {
         let titles = vec!["Opening Scene".to_string()];
-        assert!(completions("new Open", &titles, &[], &[], true).is_empty());
-        assert!(completions("find Open", &titles, &[], &[], true).is_empty());
-        assert!(completions("tag Open", &titles, &[], &[], true).is_empty());
+        assert!(completions("new Open", &titles, &[], &[], &[], true).is_empty());
+        assert!(completions("find Open", &titles, &[], &[], &[], true).is_empty());
+    }
+
+    #[test]
+    fn tag_argument_completes_against_known_project_tags() {
+        let tags = vec!["projects/smaragd".to_string(), "personal".to_string()];
+        assert_eq!(
+            completions("tag proj", &[], &[], &[], &tags, true),
+            vec!["projects/smaragd"]
+        );
+    }
+
+    #[test]
+    fn tag_argument_with_no_known_tags_has_no_completions() {
+        assert!(completions("tag any", &[], &[], &[], &[], true).is_empty());
     }
 
     #[test]
     fn unrecognized_command_has_no_argument_completions() {
-        assert!(completions("frobnicate a", &[], &[], &[], true).is_empty());
+        assert!(completions("frobnicate a", &[], &[], &[], &[], true).is_empty());
     }
 
     #[test]

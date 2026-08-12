@@ -965,12 +965,18 @@ impl SmaragdApp {
                 .map(str::to_string)
                 .collect();
             let theme_ids: Vec<String> = self.color_themes.iter().map(|t| t.id.clone()).collect();
+            let tag_names: Vec<String> = self
+                .project
+                .as_ref()
+                .map(|project| project.all_tags())
+                .unwrap_or_default();
             if let Some(event) = ui::command_prompt::show(
                 ui.ctx(),
                 &mut self.command_prompt,
                 &note_titles,
                 &plugin_commands,
                 &theme_ids,
+                &tag_names,
                 self.settings.git_integration_enabled(),
             ) {
                 let ctx = ui.ctx().clone();

@@ -18,6 +18,9 @@ this file.
 - A `` `[[not a link]]` `` or `` `#not-a-tag` `` written inside inline code is
   now left alone instead of being treated as a real wikilink/tag — matches
   the existing behavior for fenced code blocks (#37).
+- The `:tag` command prompt now completes its argument against every tag
+  already used somewhere in the project, the same way `:open`/`:theme`
+  already complete against known titles/theme ids (#36).
 
 ## v0.9.0 — 2026-08-11
 
