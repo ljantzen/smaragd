@@ -35,6 +35,11 @@ this file.
   way Obsidian's tag pane does: `#projects` shows as a collapsible section
   with `#projects/tachylite` (and siblings) nested underneath, instead of
   every tag — nested or not — sitting in one flat list (#38).
+- The Metadata panel's Tags field is now a chip editor instead of a bare
+  comma-separated text box: existing tags show as removable pills, and
+  typing a new one offers autocomplete against every tag already used
+  elsewhere in the project — Enter, a comma, or clicking a suggestion
+  commits it (#31).
 
 ## v0.9.0 — 2026-08-11
 

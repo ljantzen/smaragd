@@ -296,6 +296,9 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     statuses: &statuses,
                     povs: &povs,
                 };
+                let known_tags = project
+                    .map(|project| project.all_tags())
+                    .unwrap_or_default();
                 match &self.metadata_target {
                     MetadataTarget::Project => match project {
                         Some(project) => {
@@ -321,6 +324,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                                 &picklists,
                                 status_color,
                                 pov_color,
+                                &known_tags,
                             ) {
                                 self.actions.push(DockAction::Metadata(event));
                             }
@@ -345,6 +349,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             word_count,
                             status_color,
                             pov_color,
+                            &known_tags,
                         ) {
                             self.actions.push(DockAction::Metadata(event));
                         }

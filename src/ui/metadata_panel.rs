@@ -20,8 +20,17 @@ pub struct MetadataDraft {
     pub status: String,
     pub pov: String,
     pub word_count_target_text: String,
-    /// Comma-separated, matching the story card editor's `subplot_tags_text`.
+    /// Comma-separated, matching the story card editor's `subplot_tags_text`. The
+    /// actual stored value `to_meta()`/`from_meta` round-trip through — `tags_chip_editor`
+    /// renders it as removable chips rather than a raw text box, but never lets the
+    /// user edit this buffer directly.
     pub tags_text: String,
+    /// The chip editor's transient "typing a new tag" buffer — not itself part of
+    /// `tags_text`/`DocumentMeta`, so it's not touched by `from_meta`/`to_meta`.
+    /// Naturally resets to empty along with the rest of the draft whenever the open
+    /// document/folder changes, the same way a half-finished edit anywhere else in
+    /// this form is abandoned rather than carried over.
+    pub tag_input: String,
 }
 
 impl MetadataDraft {
@@ -35,6 +44,7 @@ impl MetadataDraft {
                 .map(|target| target.to_string())
                 .unwrap_or_default(),
             tags_text: meta.tags.join(", "),
+            tag_input: String::new(),
         }
     }
 
@@ -47,13 +57,7 @@ impl MetadataDraft {
             status: non_empty(&self.status),
             pov: non_empty(&self.pov),
             word_count_target: self.word_count_target_text.trim().parse().ok(),
-            tags: self
-                .tags_text
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect(),
+            tags: parse_tags_text(&self.tags_text),
         }
     }
 }
@@ -61,6 +65,48 @@ impl MetadataDraft {
 fn non_empty(s: &str) -> Option<String> {
     let trimmed = s.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+/// Split `tags_text` (`MetadataDraft`'s comma-separated storage format) into its
+/// individual tags — trimmed, with empty entries (from a stray/doubled/trailing
+/// comma) dropped. Shared by `to_meta` and `tags_chip_editor`'s chip rendering, so
+/// both agree on exactly what counts as "one tag".
+fn parse_tags_text(tags_text: &str) -> Vec<String> {
+    tags_text
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Append `candidate` to `tags_text` as a new chip, unless a case-insensitively
+/// matching tag is already present (in which case `tags_text` comes back unchanged)
+/// — the logic behind committing a typed or suggestion-clicked tag in
+/// `tags_chip_editor`, pulled out pure so it's unit-testable without an egui
+/// context. A blank `candidate` (or one that's only whitespace) is a no-op.
+fn add_tag(tags_text: &str, candidate: &str) -> String {
+    let candidate = candidate.trim();
+    if candidate.is_empty() {
+        return tags_text.to_string();
+    }
+    let mut tags = parse_tags_text(tags_text);
+    if tags.iter().any(|tag| tag.eq_ignore_ascii_case(candidate)) {
+        return tags_text.to_string();
+    }
+    tags.push(candidate.to_string());
+    tags.join(", ")
+}
+
+/// Remove the tag at `index` (as [`parse_tags_text`] would enumerate them) from
+/// `tags_text` — the logic behind a chip's "×" button, pulled out pure for the same
+/// reason as `add_tag`. An out-of-range `index` is a no-op.
+fn remove_tag(tags_text: &str, index: usize) -> String {
+    let mut tags = parse_tags_text(tags_text);
+    if index < tags.len() {
+        tags.remove(index);
+    }
+    tags.join(", ")
 }
 
 /// The three fields' picklist options, bundled so `show` doesn't need a separate
@@ -103,6 +149,7 @@ pub fn show(
     word_count: usize,
     status_color: Option<egui::Color32>,
     pov_color: Option<egui::Color32>,
+    known_tags: &[String],
 ) -> Option<MetadataFormEvent> {
     ui.heading("Metadata");
     ui.separator();
@@ -120,6 +167,7 @@ pub fn show(
         status_color,
         pov_color,
         Some(word_count),
+        known_tags,
     )
 }
 
@@ -138,6 +186,7 @@ fn metadata_fields_grid(
     status_color: Option<egui::Color32>,
     pov_color: Option<egui::Color32>,
     word_count: Option<usize>,
+    known_tags: &[String],
 ) -> Option<MetadataFormEvent> {
     let mut event = None;
     egui::Grid::new(id_salt).num_columns(2).show(ui, |ui| {
@@ -179,10 +228,108 @@ fn metadata_fields_grid(
         ui.end_row();
 
         ui.label("Tags:");
-        ui.text_edit_singleline(&mut draft.tags_text);
+        tags_chip_editor(
+            ui,
+            id_salt,
+            &mut draft.tags_text,
+            &mut draft.tag_input,
+            known_tags,
+        );
         ui.end_row();
     });
     event
+}
+
+/// Renders `tags_text` (see `MetadataDraft::tags_text`) as a row of removable chips
+/// plus a free-text input for adding a new one — Obsidian-style, replacing what used
+/// to be a bare comma-separated text box (#31). `tag_input` is the transient
+/// "typing a new tag" buffer (see its doc comment on `MetadataDraft`); `known_tags`
+/// (`Project::all_tags`) drives a prefix-matched suggestion list shown under the
+/// input while typing, via the same `autocomplete::filter_candidates` logic behind
+/// the Editor's own `#tag` autocomplete popup and the `:tag` command's completion.
+///
+/// Typing a comma commits everything before it as chips (so pasting
+/// `"foo, bar, baz"` in one go produces three chips, not one long tag), leaving only
+/// the text after the last comma as the still-in-progress `tag_input`; Enter (while
+/// the input has focus) or clicking a suggestion commits the current `tag_input` as
+/// one more chip. A candidate that already matches an existing tag
+/// case-insensitively is silently ignored rather than added as a duplicate (see
+/// `add_tag`).
+fn tags_chip_editor(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    tags_text: &mut String,
+    tag_input: &mut String,
+    known_tags: &[String],
+) {
+    ui.vertical(|ui| {
+        let tags = parse_tags_text(tags_text);
+        if !tags.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                let mut remove_index = None;
+                for (index, tag) in tags.iter().enumerate() {
+                    egui::Frame::group(ui.style())
+                        .inner_margin(egui::Margin::symmetric(6, 2))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                ui.label(format!("#{tag}"));
+                                if ui.small_button("×").clicked() {
+                                    remove_index = Some(index);
+                                }
+                            });
+                        });
+                }
+                if let Some(index) = remove_index {
+                    *tags_text = remove_tag(tags_text, index);
+                }
+            });
+        }
+
+        let response = ui.add(
+            egui::TextEdit::singleline(tag_input)
+                .hint_text("Add tag…")
+                .id_salt(format!("{id_salt}_tag_input")),
+        );
+
+        // A comma commits every complete tag typed/pasted before it, leaving only
+        // the still-in-progress fragment after the last comma as the new `tag_input`.
+        if tag_input.contains(',') {
+            let mut parts: Vec<String> = tag_input.split(',').map(str::to_string).collect();
+            let remainder = parts.pop().unwrap_or_default();
+            for part in parts {
+                *tags_text = add_tag(tags_text, part.trim());
+            }
+            *tag_input = remainder;
+        }
+
+        let mut commit: Option<String> = None;
+        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            commit = Some(tag_input.clone());
+        }
+
+        let query = tag_input.trim();
+        if !query.is_empty() {
+            let suggestions: Vec<&str> = crate::autocomplete::filter_candidates(known_tags, query)
+                .into_iter()
+                .take(8)
+                .collect();
+            if !suggestions.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    for suggestion in suggestions {
+                        if ui.small_button(suggestion).clicked() {
+                            commit = Some(suggestion.to_string());
+                        }
+                    }
+                });
+            }
+        }
+
+        if let Some(candidate) = commit {
+            *tags_text = add_tag(tags_text, &candidate);
+            tag_input.clear();
+        }
+    });
 }
 
 /// Renders a folder's own metadata form — structurally identical to `show`
@@ -197,6 +344,7 @@ pub fn show_folder(
     picklists: &MetadataPicklists,
     status_color: Option<egui::Color32>,
     pov_color: Option<egui::Color32>,
+    known_tags: &[String],
 ) -> Option<MetadataFormEvent> {
     ui.heading("Folder Metadata");
     ui.separator();
@@ -208,6 +356,7 @@ pub fn show_folder(
         status_color,
         pov_color,
         None,
+        known_tags,
     )
 }
 
@@ -584,6 +733,7 @@ mod tests {
             pov: String::new(),
             word_count_target_text: String::new(),
             tags_text: String::new(),
+            tag_input: String::new(),
         };
         let meta = draft.to_meta();
         assert_eq!(meta.section_type, None);
@@ -601,6 +751,7 @@ mod tests {
             pov: String::new(),
             word_count_target_text: "not a number".to_string(),
             tags_text: String::new(),
+            tag_input: String::new(),
         };
         assert_eq!(draft.to_meta().word_count_target, None);
     }
@@ -613,7 +764,61 @@ mod tests {
             pov: String::new(),
             word_count_target_text: String::new(),
             tags_text: " foo ,, bar ,".to_string(),
+            tag_input: String::new(),
         };
         assert_eq!(draft.to_meta().tags, vec!["foo", "bar"]);
+    }
+
+    #[test]
+    fn add_tag_appends_a_new_chip_to_an_existing_list() {
+        assert_eq!(add_tag("foo, bar", "baz"), "foo, bar, baz");
+    }
+
+    #[test]
+    fn add_tag_to_an_empty_list_produces_a_single_chip() {
+        assert_eq!(add_tag("", "foo"), "foo");
+    }
+
+    #[test]
+    fn add_tag_trims_the_candidate() {
+        assert_eq!(add_tag("foo", "  bar  "), "foo, bar");
+    }
+
+    #[test]
+    fn add_tag_ignores_a_case_insensitive_duplicate() {
+        assert_eq!(add_tag("foo, Bar", "bar"), "foo, Bar");
+    }
+
+    #[test]
+    fn add_tag_is_a_noop_for_a_blank_candidate() {
+        assert_eq!(add_tag("foo", "   "), "foo");
+    }
+
+    #[test]
+    fn remove_tag_drops_the_chip_at_the_given_index() {
+        assert_eq!(remove_tag("foo, bar, baz", 1), "foo, baz");
+    }
+
+    #[test]
+    fn remove_tag_at_the_first_index_drops_the_first_chip() {
+        assert_eq!(remove_tag("foo, bar", 0), "bar");
+    }
+
+    #[test]
+    fn remove_tag_with_an_out_of_range_index_is_a_noop() {
+        assert_eq!(remove_tag("foo, bar", 5), "foo, bar");
+    }
+
+    #[test]
+    fn remove_tag_the_only_entry_leaves_an_empty_string() {
+        assert_eq!(remove_tag("foo", 0), "");
+    }
+
+    #[test]
+    fn parse_tags_text_drops_empty_entries_from_stray_commas() {
+        assert_eq!(
+            parse_tags_text(" foo ,, bar ,"),
+            vec!["foo".to_string(), "bar".to_string()]
+        );
     }
 }
