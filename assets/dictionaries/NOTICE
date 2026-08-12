@@ -1,43 +1,23 @@
-en_US.aff/en_US.dic and nb_NO.aff/nb_NO.dic are PLACEHOLDER Hunspell-format
-dictionaries, not real spell-checking word lists — each is a tiny,
-hand-written set of common words in valid Hunspell `.aff`/`.dic` syntax
-(see `src/spellcheck.rs`), authored directly for this repository with no
-external sourcing, so they carry no licensing question of their own.
+See README.md in this directory for the current story: this directory now
+hosts real, individually reviewed Hunspell dictionaries (each in its own
+`<language_code>/` subdirectory, with its own `LICENSE` and `SOURCE`), pinned
+to an exact upstream commit and redistributed here as independent, unmodified
+data files — not compiled or linked into smaragd's own GPL-3.0-or-later
+source or binary. `catalog.json` is the machine-readable index of the same
+facts; `src/spellcheck.rs` reads it to drive Settings > Editor > Dictionaries.
 
-This exists to let the spell-check feature (GitHub issue #47) be built,
-wired, and tested end to end — Settings, the Editor's inline underline
-rendering, the caching, the tokenizer — without yet resolving which real
-dictionary data to bundle. With only ~20 words known per language, nearly
-every real word in a document will be (correctly, if uselessly) flagged
-as unrecognized; this is expected and why `Settings::spell_check_language`
-still defaults to `Off`.
+`placeholders/en_US.aff`/`.dic` and `placeholders/nb_NO.aff`/`.dic` are a
+different thing entirely: tiny (~20-word), hand-written word lists with no
+licensing question of their own, `include_bytes!`-bundled directly into the
+compiled binary so English/Norwegian have *something* working immediately,
+before either real dictionary has been downloaded. Every other language does
+nothing at all (flags no words) until its real dictionary is downloaded — see
+`src/spellcheck.rs`'s module doc comment for the full explanation of why.
 
-Nothing needs "swapping in" at build time anymore, though: `src/spellcheck.rs`'s
-`download_dictionary` fetches a real dictionary from `catalog.json`'s
-`download_urls` at runtime, on request (Settings > Editor > Dictionaries, or
-`app::dictionary_download`), verifies its SHA-256 against the catalog, and
-saves it to the platform data directory — never into this `assets/` folder,
-and never into the compiled binary itself. Only a catalog entry whose
-`review_status` doesn't start with `"blocked"` is ever offered. This sidesteps
-the "is a copyrighted word list embedded in a GPL-3.0-or-later binary okay"
-question for whichever entry is still merely "needs a second opinion" rather
-than fully cleared: nothing not already reviewed as at least plausibly
-compatible ever gets bundled into a distributed smaragd binary, and what a
-user chooses to download onto their own machine at their own request is
-their call, informed by the license/attribution shown right there in the
-Settings UI.
-
-See `catalog.json` in this directory for the tracked, per-language due
-diligence on real-dictionary candidates (source, version, copyright,
-license, attribution, SHA-256 of the actual files investigated, and a
-review status/date) — that file is the source of truth going forward, not
-this paragraph. Summary as of the last review: English (`en_US`, from
-JetBrains' `hunspell-dictionaries` GitHub repo, also the source
-`spellbook`'s own test/example dictionaries use) looks permissively
-licensed once you read the dictionary-specific README rather than the
-generic bare-GPLv2 `license.txt` sitting next to it — still flagged
-"needs a second opinion," not cleared outright. Norwegian Bokmål (`nb_NO`,
-same source repo) has no such dictionary-specific README and is flagged
-"blocked": its `COPYING` is bare GPL-2.0 with no "or any later version"
-grant found anywhere, which is not automatically compatible with combining
-into a GPL-3.0-or-later work.
+This file used to describe an earlier, since-superseded state (only two
+placeholder dictionaries existed, no real ones were bundled anywhere, and
+Norwegian was flagged license-blocked). That review was revisited: see
+`nb_NO/SOURCE` and `catalog.json`'s `dictionary_source_policy` for why
+redistributing it here, as a genuinely separate file, is fine even though its
+own license (GPL-2.0-only) would be a real problem if it were ever combined
+or linked into smaragd's own binary.

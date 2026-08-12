@@ -7,11 +7,12 @@ this file.
 
 - Settings > Editor gains a **Dictionaries** list (part of the new, still
   early spell-check groundwork — see below): a "Download" button per
-  supported language fetches a real Hunspell dictionary at runtime,
-  SHA-256-verified against a tracked catalog, into your own data directory —
-  never bundled into the app itself. Only a dictionary this project's own
-  license review didn't flag as blocked is ever offered, and once
-  downloaded it's used immediately, no restart needed.
+  supported language fetches a real, individually license-reviewed Hunspell
+  dictionary, SHA-256-verified against a tracked catalog, into your own data
+  directory — never bundled into the app itself. Nine languages available at
+  launch: English, Norwegian Bokmål, French, Russian, Georgian, Lithuanian,
+  Persian, Turkmen, and Interlingue. Once downloaded, a dictionary is used
+  immediately, no restart needed.
 - The project's tag index (backing `all_tags`, `:tag` completion, and the
   `#tag`/tag-chip autocomplete popups) is now memoized in memory instead of
   rescanning every document on disk on every call — noticeable on large

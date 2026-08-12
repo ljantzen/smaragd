@@ -452,8 +452,8 @@ fn show_dictionary_catalog(
             format!("\n\n{}", entry.review_status_notes)
         };
         row.response.on_hover_text(format!(
-            "License: {}\nReview status: {}\nAttribution: {}{notes}",
-            entry.license, entry.review_status, entry.attribution
+            "License: {}\nReview status: {}\nCopyright: {}{notes}",
+            entry.license_spdx, entry.review_status, entry.copyright
         ));
     }
 }

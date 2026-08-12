@@ -6,22 +6,26 @@
 //! partly because it's the crate Helix's own spell-check feature uses, fitting
 //! this app's existing Helix-inspired conventions.
 //!
-//! **The bundled `assets/dictionaries/*.aff`/`*.dic` files are placeholders**,
-//! not real word lists — see `assets/dictionaries/NOTICE` for why a real
-//! English/Norwegian dictionary isn't bundled directly into the binary (an
-//! unresolved licensing question, not a technical one). Instead, real
-//! dictionaries can be fetched at runtime, on request, into the platform data
-//! directory (`app::dictionary_download`, `ui::settings_panel`'s "Dictionaries"
-//! list) from `catalog()` — sourced from `assets/dictionaries/catalog.json`,
-//! itself bundled into the binary as plain tracking metadata (source, license,
-//! attribution, expected SHA-256 — no copyrighted word-list content). Only a
-//! catalog entry whose `review_status` doesn't start with `"blocked"` is ever
-//! offered for download; `download_dictionary` also independently re-verifies
-//! every downloaded file's SHA-256 against the catalog before keeping it, so a
-//! tampered mirror or a stale catalog entry can't silently swap in different
-//! content. `Settings::spell_check_language` defaults to `Off`, and checking
-//! against a language nobody's downloaded yet quietly falls back to the tiny
-//! placeholder list — flagging nearly every real word, but never panicking.
+//! Real dictionaries are hosted in this repo (`assets/dictionaries/<language_code>/`
+//! — each with its own `LICENSE`/`SOURCE`, see `assets/dictionaries/README.md` for
+//! why redistributing them alongside smaragd's own GPL-3.0-or-later code is fine:
+//! they're independent, unmodified, un-linked data files, GPLv2's own "mere
+//! aggregation" case) but not compiled into the binary — instead fetched at
+//! runtime, on request, into the platform data directory
+//! (`app::dictionary_download`, `ui::settings_panel`'s "Dictionaries" list) from
+//! `catalog()`, sourced from `assets/dictionaries/catalog.json`. Only a catalog
+//! entry whose `review_status` doesn't start with `"blocked"` is ever offered;
+//! `download_dictionary` also independently re-verifies every downloaded file's
+//! SHA-256 against the catalog before keeping it, so a tampered mirror or a stale
+//! catalog entry can't silently swap in different content.
+//!
+//! `Settings::spell_check_language` defaults to `Off`. English and Norwegian
+//! additionally fall back to a tiny (~20-word), hand-written placeholder
+//! (`assets/dictionaries/placeholders/`, no licensing question of its own) before
+//! either has been downloaded, so picking one of those two "just works" at a
+//! (very) rough level immediately — every other language does nothing (flags no
+//! words at all, rather than misleadingly flagging every word) until its real
+//! dictionary is downloaded.
 //!
 //! This module deliberately splits two independent halves: [`misspelled_word_spans`]
 //! is pure text-tokenization logic taking an injected "is this word wrong"
@@ -38,24 +42,52 @@ use std::sync::{Arc, LazyLock, RwLock};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// Which bundled dictionary (if any) checks spelling in the Editor — see
-/// `Settings::spell_check_language`.
+/// Which dictionary (if any) checks spelling in the Editor — see
+/// `Settings::spell_check_language`. Every non-`Off` variant has a
+/// `catalog_entry()`; whether it's actually usable yet depends on
+/// `is_downloaded` (or, for `English`/`Norwegian` only, the bundled
+/// placeholder — see this module's doc comment).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum SpellCheckLanguage {
     #[default]
     Off,
     English,
     Norwegian,
+    Georgian,
+    Lithuanian,
+    Russian,
+    Persian,
+    Interlingue,
+    Turkmen,
+    French,
 }
 
 impl SpellCheckLanguage {
-    pub const ALL: [SpellCheckLanguage; 3] = [Self::Off, Self::English, Self::Norwegian];
+    pub const ALL: [SpellCheckLanguage; 10] = [
+        Self::Off,
+        Self::English,
+        Self::Norwegian,
+        Self::Georgian,
+        Self::Lithuanian,
+        Self::Russian,
+        Self::Persian,
+        Self::Interlingue,
+        Self::Turkmen,
+        Self::French,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Off => "Off",
             Self::English => "English",
             Self::Norwegian => "Norwegian (Bokmål)",
+            Self::Georgian => "Georgian",
+            Self::Lithuanian => "Lithuanian",
+            Self::Russian => "Russian",
+            Self::Persian => "Persian",
+            Self::Interlingue => "Interlingue",
+            Self::Turkmen => "Turkmen",
+            Self::French => "French",
         }
     }
 
@@ -66,6 +98,13 @@ impl SpellCheckLanguage {
             Self::Off => None,
             Self::English => Some("en_US"),
             Self::Norwegian => Some("nb_NO"),
+            Self::Georgian => Some("ka_GE"),
+            Self::Lithuanian => Some("lt_LT"),
+            Self::Russian => Some("ru_RU"),
+            Self::Persian => Some("fa_IR"),
+            Self::Interlingue => Some("ie"),
+            Self::Turkmen => Some("tk_TM"),
+            Self::French => Some("fr_FR"),
         }
     }
 
@@ -84,20 +123,21 @@ impl SpellCheckLanguage {
 }
 
 /// One dictionary tracked in `assets/dictionaries/catalog.json` — see that
-/// file's own `notes` field, and `assets/dictionaries/NOTICE`, for the full
+/// file's own `notes` field, and `assets/dictionaries/README.md`, for the full
 /// story. Every field here is metadata (source, license, expected hashes),
-/// never the copyrighted word-list content itself.
+/// never the copyrighted word-list content itself — the actual files live
+/// alongside this catalog in `assets/dictionaries/<language_code>/`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CatalogEntry {
     pub language: String,
     pub language_code: String,
     pub files: Vec<String>,
-    pub version: Option<String>,
-    pub source: String,
+    pub source_repository: String,
+    pub source_path: String,
+    pub source_commit: String,
     pub copyright: String,
-    pub license: String,
-    pub license_url: String,
-    pub attribution: String,
+    pub license_spdx: String,
+    pub license_file: String,
     pub redistributable: bool,
     pub review_status: String,
     #[serde(default)]
@@ -139,17 +179,20 @@ fn load_bundled(aff: &[u8], dic: &[u8]) -> spellbook::Dictionary {
     spellbook::Dictionary::new(aff, dic).expect("bundled dictionary must parse")
 }
 
-fn load_placeholder(language: SpellCheckLanguage) -> spellbook::Dictionary {
+/// The tiny hand-written placeholder for `language`, if it has one — only
+/// `English`/`Norwegian` do (see this module's doc comment); every other
+/// language returns `None` until its real dictionary has been downloaded.
+fn load_placeholder(language: SpellCheckLanguage) -> Option<spellbook::Dictionary> {
     match language {
-        SpellCheckLanguage::Off => unreachable!("Off has no dictionary to load"),
-        SpellCheckLanguage::English => load_bundled(
-            include_bytes!("../assets/dictionaries/en_US.aff"),
-            include_bytes!("../assets/dictionaries/en_US.dic"),
-        ),
-        SpellCheckLanguage::Norwegian => load_bundled(
-            include_bytes!("../assets/dictionaries/nb_NO.aff"),
-            include_bytes!("../assets/dictionaries/nb_NO.dic"),
-        ),
+        SpellCheckLanguage::English => Some(load_bundled(
+            include_bytes!("../assets/dictionaries/placeholders/en_US.aff"),
+            include_bytes!("../assets/dictionaries/placeholders/en_US.dic"),
+        )),
+        SpellCheckLanguage::Norwegian => Some(load_bundled(
+            include_bytes!("../assets/dictionaries/placeholders/nb_NO.aff"),
+            include_bytes!("../assets/dictionaries/placeholders/nb_NO.dic"),
+        )),
+        _ => None,
     }
 }
 
@@ -275,7 +318,7 @@ fn dictionary_for(language: SpellCheckLanguage) -> Option<Arc<spellbook::Diction
     if let Some(dict) = LOADED.read().expect("not poisoned").get(&language) {
         return Some(dict.clone());
     }
-    let dict = Arc::new(load_dictionary_for(language));
+    let dict = Arc::new(load_dictionary_for(language)?);
     LOADED
         .write()
         .expect("not poisoned")
@@ -285,13 +328,12 @@ fn dictionary_for(language: SpellCheckLanguage) -> Option<Arc<spellbook::Diction
 
 /// Loads `language`'s dictionary from a downloaded file on disk if one's
 /// present and parses cleanly, falling back to the bundled placeholder
-/// otherwise (including when a downloaded file exists but fails to parse —
-/// e.g. left over from an older, incompatible version).
-fn load_dictionary_for(language: SpellCheckLanguage) -> spellbook::Dictionary {
-    if let Some(dict) = load_downloaded(language) {
-        return dict;
-    }
-    load_placeholder(language)
+/// (English/Norwegian only — see this module's doc comment) otherwise,
+/// including when a downloaded file exists but fails to parse (e.g. left over
+/// from an older, incompatible version). `None` for a language with neither —
+/// every other language, before its real dictionary has been downloaded.
+fn load_dictionary_for(language: SpellCheckLanguage) -> Option<spellbook::Dictionary> {
+    load_downloaded(language).or_else(|| load_placeholder(language))
 }
 
 /// `load_dictionary_for`'s downloaded-file half — `None` whenever anything about
@@ -456,7 +498,12 @@ mod tests {
             .iter()
             .map(|entry| entry.language_code.as_str())
             .collect();
-        assert_eq!(codes, vec!["en_US", "nb_NO"]);
+        assert_eq!(
+            codes,
+            vec![
+                "en_US", "nb_NO", "ka_GE", "lt_LT", "ru_RU", "fa_IR", "ie", "tk_TM", "fr_FR"
+            ]
+        );
     }
 
     #[test]
@@ -478,33 +525,69 @@ mod tests {
     }
 
     #[test]
-    fn the_blocked_norwegian_entry_is_flagged_blocked() {
-        let nb_no = catalog()
-            .iter()
-            .find(|entry| entry.language_code == "nb_NO")
-            .expect("nb_NO is in the catalog");
-        assert!(nb_no.is_blocked());
+    fn no_current_catalog_entry_is_blocked() {
+        // Every language currently catalogued passed review under the
+        // self-hosted "separate, unmodified file" model (see
+        // assets/dictionaries/README.md) -- including nb_NO, whose
+        // GPL-2.0-only license would be a real problem if it were ever
+        // combined/linked into smaragd's own GPL-3.0-or-later binary, but
+        // isn't here. `is_blocked` itself is covered directly by the two
+        // tests below, independent of what's in the catalog right now.
+        for entry in catalog() {
+            assert!(
+                !entry.is_blocked(),
+                "{} is unexpectedly blocked: {}",
+                entry.language,
+                entry.review_status
+            );
+        }
+    }
+
+    fn sample_entry(review_status: &str) -> CatalogEntry {
+        CatalogEntry {
+            language: "Test Language".to_string(),
+            language_code: "xx_XX".to_string(),
+            files: vec!["xx_XX.aff".to_string(), "xx_XX.dic".to_string()],
+            source_repository: "https://example.invalid".to_string(),
+            source_path: "dictionaries/xx".to_string(),
+            source_commit: "0".repeat(40),
+            copyright: "Test".to_string(),
+            license_spdx: "MIT".to_string(),
+            license_file: "xx_XX/LICENSE".to_string(),
+            redistributable: true,
+            review_status: review_status.to_string(),
+            review_status_notes: String::new(),
+            review_date: "2026-08-12".to_string(),
+            sha256: HashMap::new(),
+            download_urls: HashMap::new(),
+        }
     }
 
     #[test]
-    fn the_needs_review_english_entry_is_not_flagged_blocked() {
-        let en_us = catalog()
-            .iter()
-            .find(|entry| entry.language_code == "en_US")
-            .expect("en_US is in the catalog");
-        assert!(!en_us.is_blocked());
+    fn is_blocked_is_true_for_any_status_starting_with_blocked() {
+        assert!(sample_entry("blocked-license-incompatibility").is_blocked());
+        assert!(sample_entry("blocked").is_blocked());
+    }
+
+    #[test]
+    fn is_blocked_is_false_for_approved_or_other_statuses() {
+        assert!(!sample_entry("approved").is_blocked());
+        assert!(!sample_entry("needs-second-opinion").is_blocked());
     }
 
     #[test]
     fn spell_check_language_from_code_round_trips_every_non_off_variant() {
-        assert_eq!(
-            SpellCheckLanguage::from_code("en_US"),
-            Some(SpellCheckLanguage::English)
-        );
-        assert_eq!(
-            SpellCheckLanguage::from_code("nb_NO"),
-            Some(SpellCheckLanguage::Norwegian)
-        );
+        for language in SpellCheckLanguage::ALL {
+            if language == SpellCheckLanguage::Off {
+                continue;
+            }
+            let code = language.code().expect("non-Off variant has a code");
+            assert_eq!(
+                SpellCheckLanguage::from_code(code),
+                Some(language),
+                "code {code:?} should round-trip back to {language:?}"
+            );
+        }
     }
 
     #[test]
@@ -513,21 +596,16 @@ mod tests {
     }
 
     #[test]
-    fn catalog_entry_finds_the_right_entry_for_each_language() {
-        assert_eq!(
-            SpellCheckLanguage::English
+    fn catalog_entry_finds_the_right_entry_for_every_non_off_language() {
+        for language in SpellCheckLanguage::ALL {
+            if language == SpellCheckLanguage::Off {
+                continue;
+            }
+            let entry = language
                 .catalog_entry()
-                .unwrap()
-                .language_code,
-            "en_US"
-        );
-        assert_eq!(
-            SpellCheckLanguage::Norwegian
-                .catalog_entry()
-                .unwrap()
-                .language_code,
-            "nb_NO"
-        );
+                .unwrap_or_else(|| panic!("{language:?} should have a catalog entry"));
+            assert_eq!(entry.language_code, language.code().unwrap());
+        }
         assert!(SpellCheckLanguage::Off.catalog_entry().is_none());
     }
 
@@ -644,6 +722,94 @@ mod tests {
         assert_eq!(SpellCheckLanguage::default(), SpellCheckLanguage::Off);
     }
 
+    /// Every catalog entry's real dictionary files are already sitting in this
+    /// repo (`assets/dictionaries/<language_code>/`, not `include_bytes!`-bundled
+    /// — see this module's doc comment for why). This is the check that matters
+    /// most before ever redistributing them: each bundled file's SHA-256 must
+    /// match what `catalog.json` recorded (catching a file that was
+    /// accidentally re-fetched/edited/corrupted after review), and each pair
+    /// must actually parse as a valid Hunspell dictionary (catching a
+    /// mismatched `.aff`/`.dic` pairing or a genuinely broken file) — a
+    /// licensing review is worthless if the file it was performed on isn't the
+    /// file actually being shipped.
+    #[test]
+    fn every_bundled_real_dictionary_matches_its_catalog_sha256_and_parses() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/dictionaries");
+        for entry in catalog() {
+            let dir = root.join(&entry.language_code);
+            let mut contents: HashMap<&str, String> = HashMap::new();
+            for file in &entry.files {
+                let path = dir.join(file);
+                let bytes = std::fs::read(&path)
+                    .unwrap_or_else(|err| panic!("reading {}: {err}", path.display()));
+                let expected = entry.sha256.get(file).unwrap_or_else(|| {
+                    panic!("{} has no recorded sha256 for {file}", entry.language)
+                });
+                assert_eq!(
+                    &sha256_hex(&bytes),
+                    expected,
+                    "{} ({file}) doesn't match its recorded sha256 -- the bundled file changed \
+                     since it was reviewed",
+                    entry.language
+                );
+                let text = String::from_utf8(bytes)
+                    .unwrap_or_else(|err| panic!("{file} is not valid UTF-8: {err}"));
+                contents.insert(file, text);
+            }
+            let aff_name = entry
+                .files
+                .iter()
+                .find(|f| f.ends_with(".aff"))
+                .expect("catalog entry lists an .aff file");
+            let dic_name = entry
+                .files
+                .iter()
+                .find(|f| f.ends_with(".dic"))
+                .expect("catalog entry lists a .dic file");
+            spellbook::Dictionary::new(&contents[aff_name.as_str()], &contents[dic_name.as_str()])
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "{}'s bundled dictionary failed to parse: {err}",
+                        entry.language
+                    )
+                });
+        }
+    }
+
+    /// A lighter sanity check than `every_bundled_real_dictionary_...parses`
+    /// above: for the languages this reviewer can personally vouch for a
+    /// correctly-spelled word in, load the bundled dictionary directly (not
+    /// through `is_misspelled`, since none of these are the active
+    /// `Settings::spell_check_language` in this test) and confirm it actually
+    /// recognizes real vocabulary, not just that the file parses without
+    /// erroring.
+    #[test]
+    fn bundled_real_dictionaries_recognize_real_words_in_their_own_language() {
+        let cases: &[(&str, &str)] = &[
+            ("en_US", "wonderful"),
+            ("nb_NO", "verden"),
+            ("fr_FR", "bonjour"),
+        ];
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/dictionaries");
+        for (code, word) in cases {
+            let entry = catalog()
+                .iter()
+                .find(|e| e.language_code == *code)
+                .unwrap_or_else(|| panic!("{code} is in the catalog"));
+            let dir = root.join(code);
+            let aff_name = entry.files.iter().find(|f| f.ends_with(".aff")).unwrap();
+            let dic_name = entry.files.iter().find(|f| f.ends_with(".dic")).unwrap();
+            let aff = std::fs::read_to_string(dir.join(aff_name)).unwrap();
+            let dic = std::fs::read_to_string(dir.join(dic_name)).unwrap();
+            let dict = spellbook::Dictionary::new(&aff, &dic).unwrap();
+            assert!(
+                dict.check(word),
+                "{}'s bundled dictionary should recognize {word:?}",
+                entry.language
+            );
+        }
+    }
+
     /// End-to-end proof the real download path works, not just its pieces in
     /// isolation: downloads the real English dictionary, confirms
     /// `is_downloaded`/`is_misspelled` pick it up over the placeholder without
@@ -652,7 +818,9 @@ mod tests {
     /// this machine's data directory. Ignored by default — real network access,
     /// same convention `collab::net`'s iroh-relay tests use.
     #[test]
-    #[ignore = "requires real internet access to github.com"]
+    #[ignore = "requires real internet access, and this repo already pushed to GitHub \
+                with assets/dictionaries/ in it (download_urls point at raw.githubusercontent.com/\
+                <this repo>/main/... — a 404 here most likely just means that push hasn't happened yet)"]
     fn download_dictionary_fetches_and_verifies_the_real_english_dictionary() {
         assert!(
             is_misspelled("wonderful", SpellCheckLanguage::English),
