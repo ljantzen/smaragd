@@ -16,6 +16,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Binder tree view of the writing project
 - Markdown text editor 
 - fzf-style quick-switcher between documents 
+- Browser-style Go Back/Go Forward document history, restoring your cursor position in each
 - Project templates 
 - Custom file templates 
 - Folders can serve different roles   
@@ -29,7 +30,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Obsidian-style `[[Topic]]` / `[[Topic|Alias]]` wikilinks
 - Wikilink autocomplete while typing `[[`: filtered suggestions, arrow-key/Tab/Enter navigation, mouse click
 - Backlinks. A dockable tool window like Binder/Metadata above): every other document that `[[links]]` to the one currently open
-- Document annotations with #tags in the text and/or in the document frontmatter. 
+- Document annotations with #tags in the text and/or in the document frontmatter, with autocomplete, project-wide rename, hierarchical grouping of nested tags, and a chip-style tag editor 
 - Find and Replace 
 - Helix/vim-style command prompt 
 - Support for user-contributed plugins

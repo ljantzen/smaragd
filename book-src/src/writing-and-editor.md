@@ -1,6 +1,6 @@
 # Writing and the Editor
 
-The main panel is a plain-text Markdown editor, borderless and filling the whole Editor tab — clicking anywhere in it, including below the last line of a short document, places the cursor there.
+The main panel is a plain-text Markdown editor, borderless and filling the whole Editor tab — clicking anywhere in it, including below the last line of a short document, places the cursor there. The open document's title (its filename, without the `.md` extension) is shown as a heading above the text, so it's always clear which document you're looking at even if the Editor tab itself is just labeled "Editor".
 
 - **`Ctrl+S`** (or **`Cmd+S`** on macOS) saves explicitly. The document also saves automatically when it loses focus (e.g. you click into the binder or another panel).
 - There's currently no multi-tab editing — opening a document replaces whatever's currently open (saving it first if it has unsaved changes).

@@ -1,6 +1,6 @@
 # The Command Prompt
 
-**`Tools > Command Prompt`** opens a Vim/Helix-style `:` command line. Arguments tab-complete where it makes sense (note titles, theme ids, plugin command names).
+**`Tools > Command Prompt`** opens a Vim/Helix-style `:` command line. Arguments tab-complete where it makes sense (note titles, theme ids, tag names, plugin command names).
 
 | Command | Effect |
 |---|---|

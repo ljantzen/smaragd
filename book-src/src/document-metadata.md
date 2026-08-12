@@ -20,7 +20,7 @@ Open **`View > Metadata`** (or **`Ctrl+Shift+M`**) to edit these fields through 
 | `status` | Free-form drafting status — "draft", "revised", "final", or anything you want. |
 | `pov` | Point-of-view character, free text. |
 | `word_count_target` | A target word count for this document. |
-| `tags` | A list of free-form tags — see [Tags](tags.md) for combining these with inline `#tag` mentions and searching by tag. |
+| `tags` | A list of free-form tags, edited as removable pill-style chips rather than typed YAML — click **×** on a chip to remove it, and type into the adjoining box to add one: a comma or Enter commits it, and an autocomplete list of every tag already used elsewhere in the project appears as you type (click a suggestion to accept it). See [Tags](tags.md) for combining these with inline `#tag` mentions and searching by tag. |
 
 Any other YAML key you've hand-added to the block (or that some other tool wrote) is left alone — Smaragd never round-trips the whole block through its own data model, so unrelated keys survive a save untouched. The frontmatter block is stripped from the Markdown preview so it doesn't render as a garbled paragraph.
 

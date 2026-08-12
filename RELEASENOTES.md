@@ -5,6 +5,9 @@ this file.
 
 ## Unreleased
 
+- **File > Go Back / Go Forward** (`Alt+Left`/`Alt+Right`) navigate a
+  browser-style history of every document opened this project session,
+  restoring the cursor position last left in each one.
 - Broken-link coloring: a `[[wikilink]]` whose target doesn't
   match any document in the project now renders in a distinct color, in both
   the Editor and the Preview, instead of looking like an ordinary link. Each
