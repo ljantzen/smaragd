@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "notes": "Catalog of Hunspell dictionaries investigated as candidates for smaragd's spell-check feature (src/spellcheck.rs, GitHub issue #47). Nothing listed here is bundled yet -- the two files actually shipped today (assets/dictionaries/en_US.* and nb_NO.*) are tiny hand-written placeholders with no licensing question of their own; see assets/dictionaries/NOTICE. `redistributable`/`review_status` below reflect this repo's own reading of publicly available license/README files, not a legal opinion -- treat every entry as needing a second opinion before it's actually bundled, regardless of how confident its notes sound.",
+  "dictionaries": [
+    {
+      "language": "English (American)",
+      "language_code": "en_US",
+      "files": ["en_US.aff", "en_US.dic"],
+      "version": "2017.08.24",
+      "source": "https://github.com/JetBrains/hunspell-dictionaries/tree/master/en (mirrors the LibreOffice/OpenOffice \"English spelling dictionaries\" extension; upstream wordlist project at https://github.com/kevina/wordlist / http://wordlist.sourceforge.net)",
+      "copyright": "Collective work Copyright 2000-2016 by Kevin Atkinson (SCOWL-derived word list). Affix file heavily modified from Geoff Kuenning's Ispell english.aff (Copyright 1993, Geoff Kuenning). Several component word lists (MWords, ENABLE, 12Dicts, UK English Wordlist with Frequency Classification) are separately declared public domain by their own authors. Full attribution chain is in the dictionary's own README_en_US.txt.",
+      "license": "Not GPL for the word list itself, despite a generic bare GNU GPLv2 `license.txt`/COPYING sitting at the repository/extension root: the dictionary's own README_en_US.txt states a distinct, permissive Kevin Atkinson license (\"Permission to use, copy, modify, distribute and sell these word lists ... for any purpose is hereby granted without fee, provided that the above copyright notice appears in all copies\"), and the affix file inherits Ispell's 4-clause-minus-advertising BSD license. Corroborating evidence: this same repo's Lightproof.py (a different, grammar-checking component) declares its own license inline as \"MPL 1.1 / GPLv3+ / LGPLv3+\", confirming the root-level license.txt is a generic/legacy file that does not govern every component uniformly -- each component's own file is the authoritative statement, and for en_US that file is README_en_US.txt, not license.txt.",
+      "license_url": "https://github.com/JetBrains/hunspell-dictionaries/blob/master/en/README_en_US.txt",
+      "attribution": "Kevin Atkinson <kevina@gnu.org> (SCOWL, collective work); Geoff Kuenning (Ispell affix file); Alan Beale (12Dicts, Supplement); Brian Kelk (UK English Wordlist, public domain); Grady Ward (MWords, public domain); M Cooper (ENABLE, public domain); J Ross Beresford (UKACD); Benjamin Titze (Australian additions, 2016). Full text in README_en_US.txt.",
+      "redistributable": true,
+      "review_status": "needs-second-opinion",
+      "review_status_notes": "Read as permissively licensed for the .aff/.dic files specifically, based on README_en_US.txt's explicit grant -- but this repo also ships a generic bare-GPLv2 license.txt at the same directory level with no obvious per-file scoping, so a second, independent read is warranted before treating this as fully cleared. Not the same dictionary variant already-bundled-elsewhere concerns apply to (see version note): this is the exact file content also vendored by the `spellbook` crate's own test/example fixtures (byte-identical, confirmed via SHA-256), just currently mislabeled there as covered by that directory's own bare license.txt without README_en_US.txt alongside it.",
+      "review_date": "2026-08-12",
+      "sha256": {
+        "en_US.aff": "c7a8c4d08c29d237880844b1623099f59092602f189be38ce3912e457ff38bc1",
+        "en_US.dic": "fa070979b1c5448bd7ab66eb6acb616d306f92879eb4218bc16ee35d39a608ee"
+      }
+    },
+    {
+      "language": "Norwegian (Bokmål)",
+      "language_code": "nb_NO",
+      "files": ["nb_NO.aff", "nb_NO.dic"],
+      "version": null,
+      "source": "https://github.com/JetBrains/hunspell-dictionaries/tree/master/no (published by no.speling.org; also ships nn_NO Nynorsk alongside, not catalogued here yet)",
+      "copyright": "Not explicitly stated anywhere in the bundled files. `description.xml` names the publisher as no.speling.org (a Norwegian free-dictionary project) with no individual copyright holder. `nb_NO.aff` carries an inline comment crediting Arno Teigseth for a specific rule addition dated 20 Oct 2010, but no overall copyright header for the word list itself.",
+      "license": "COPYING is a bare, unmodified GNU GPL v2 license text with no per-file \"or any later version\" grant found anywhere in the no/ directory, and -- unlike English -- no dictionary-specific README restating more specific or more permissive terms (only README_hyph_NO.txt exists, and it covers hyphenation rules, not the main nb_NO spelling dictionary). Must be treated as GPL-2.0-only until a clearer, dictionary-specific statement turns up.",
+      "license_url": "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html",
+      "attribution": "no.speling.org (publisher, per description.xml); Arno Teigseth (specific affix rule additions, 2010).",
+      "redistributable": false,
+      "review_status": "blocked-license-incompatibility",
+      "review_status_notes": "GPL-2.0-only is not compatible with combining into a GPL-3.0-or-later work for a single distributed binary -- there is no license version that simultaneously satisfies both (GPL-2-only requires exactly GPL-2; GPL-3-or-later requires GPL-3 or newer). Either find a dictionary-specific \"or later\" grant this investigation missed, or source Norwegian from a differently-licensed project (e.g. an MPL/BSD-licensed Bokmål dictionary) before bundling.",
+      "review_date": "2026-08-12",
+      "sha256": {
+        "nb_NO.aff": "b9e828538222b3580d8adb4660d5bae9bc1fbe42e7c21fd3e01970efed96b4f8",
+        "nb_NO.dic": "e801e2c5e592e2c2b7d63685f3bffdd4db9615912f0826cd1ae0f4116c7d359d"
+      }
+    }
+  ]
+}

@@ -17,12 +17,18 @@ Swapping in real dictionaries later is a drop-in replacement — same
 different bundled files. Do not treat that as done casually: a real
 Hunspell word list is copyrighted work with its own license, and needs
 checking for compatibility with smaragd's GPL-3.0-or-later before bundling.
-Candidates investigated for issue #47 (English `en_US` and Norwegian
-Bokmål `nb_NO`, both from JetBrains' `hunspell-dictionaries` GitHub repo,
-also the source `spellbook`'s own test/example dictionaries use) ship with
-a bare GNU GPL v2 `COPYING`/`license.txt` and no per-file "or any later
-version" grant found anywhere in the bundle — GPL-2.0-only is NOT
-automatically compatible with combining into a GPL-3.0-or-later work, so
-this needs an explicit compatibility check (or a differently-licensed
-source, e.g. an MPL/BSD-licensed dictionary) before real data replaces
-these placeholders.
+
+See `catalog.json` in this directory for the tracked, per-language due
+diligence on real-dictionary candidates (source, version, copyright,
+license, attribution, SHA-256 of the actual files investigated, and a
+review status/date) — that file is the source of truth going forward, not
+this paragraph. Summary as of the last review: English (`en_US`, from
+JetBrains' `hunspell-dictionaries` GitHub repo, also the source
+`spellbook`'s own test/example dictionaries use) looks permissively
+licensed once you read the dictionary-specific README rather than the
+generic bare-GPLv2 `license.txt` sitting next to it — still flagged
+"needs a second opinion," not cleared outright. Norwegian Bokmål (`nb_NO`,
+same source repo) has no such dictionary-specific README and is flagged
+"blocked": its `COPYING` is bare GPL-2.0 with no "or any later version"
+grant found anywhere, which is not automatically compatible with combining
+into a GPL-3.0-or-later work.
