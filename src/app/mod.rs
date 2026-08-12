@@ -1374,6 +1374,11 @@ impl eframe::App for SmaragdApp {
                     .as_ref()
                     .map(|project| project.tree.document_names())
                     .unwrap_or_default();
+                let tag_names = self
+                    .project
+                    .as_ref()
+                    .map(|project| project.all_tags())
+                    .unwrap_or_default();
                 let activate_wikilink_shortcut = self
                     .settings
                     .shortcuts
@@ -1382,6 +1387,7 @@ impl eframe::App for SmaragdApp {
                     &mut column_ui,
                     &mut self.editor,
                     &note_titles,
+                    &tag_names,
                     activate_wikilink_shortcut,
                     true,
                     self.settings.editor_font,

@@ -811,7 +811,10 @@ fn char_index_to_byte(s: &str, total_chars: usize, char_index: usize) -> usize {
 
 /// A `#tag` marker's allowed characters after the leading `#`: ASCII letters,
 /// digits, `_`, `-`, and `/` (the last for nested tags like `#projects/smaragd`).
-fn is_tag_char(c: char) -> bool {
+/// `pub(crate)` rather than private since `autocomplete::active_tag_query`
+/// needs the exact same character rule to know when an in-progress `#query`
+/// stops being a valid tag.
+pub(crate) fn is_tag_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '/')
 }
 

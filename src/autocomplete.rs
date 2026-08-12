@@ -32,6 +32,46 @@ pub fn active_wikilink_query(text: &str, cursor: usize) -> Option<WikilinkQuery>
     })
 }
 
+/// The in-progress `#query` at the cursor, if any — the `#tag` analogue of
+/// [`WikilinkQuery`]/[`active_wikilink_query`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct TagQuery {
+    /// Byte offset into the buffer right after the opening `#`, where the
+    /// typed query (and eventually the chosen tag) begins.
+    pub query_start: usize,
+    pub query: String,
+}
+
+/// If `cursor` (a byte offset into `text`) sits inside an unclosed `#query` on
+/// its current line, return the query typed so far — `None` once it stops
+/// being a valid tag: a `#` immediately after a word character never starts one
+/// (`markdown::inline_tag_spans`'s own rule, checked here too so the popup never
+/// opens somewhere the parser wouldn't actually recognize a tag once typing
+/// stops), and neither does any character in the query itself outside
+/// `markdown::is_tag_char`'s allowed set (e.g. a space ends the query, the same
+/// way `]`/`[` end an in-progress wikilink query).
+pub fn active_tag_query(text: &str, cursor: usize) -> Option<TagQuery> {
+    let line_start = text[..cursor].rfind('\n').map_or(0, |i| i + 1);
+    let line_before_cursor = &text[line_start..cursor];
+    let hash = line_before_cursor.rfind('#')?;
+    let preceded_by_word_char = line_before_cursor[..hash]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_alphanumeric());
+    if preceded_by_word_char {
+        return None;
+    }
+    let query_start = line_start + hash + 1;
+    let query = &text[query_start..cursor];
+    if !query.chars().all(crate::markdown::is_tag_char) {
+        return None;
+    }
+    Some(TagQuery {
+        query_start,
+        query: query.to_string(),
+    })
+}
+
 /// Filter `candidates` against `query`, case-insensitively: candidates starting with
 /// `query` are ranked first, then candidates merely containing it elsewhere, each
 /// group sorted alphabetically. An empty query matches everything. Generic over
@@ -77,6 +117,24 @@ pub fn apply_wikilink_completion(
     result.push_str("]]");
     let new_cursor = result.len();
     result.push_str(&text[tail_start..]);
+    (result, new_cursor)
+}
+
+/// Replace the query `text[query_start..cursor]` with `chosen` — the `#tag`
+/// analogue of [`apply_wikilink_completion`], simpler since a tag has no
+/// closing delimiter to manage or absorb. Returns the new buffer and the byte
+/// offset right after the inserted tag, where the cursor should land.
+pub fn apply_tag_completion(
+    text: &str,
+    query_start: usize,
+    cursor: usize,
+    chosen: &str,
+) -> (String, usize) {
+    let mut result = String::with_capacity(text.len() + chosen.len());
+    result.push_str(&text[..query_start]);
+    result.push_str(chosen);
+    let new_cursor = result.len();
+    result.push_str(&text[cursor..]);
     (result, new_cursor)
 }
 
@@ -150,6 +208,60 @@ mod tests {
     }
 
     #[test]
+    fn active_tag_query_finds_in_progress_query() {
+        let text = "See #proj";
+        let found = active_tag_query(text, text.len()).unwrap();
+        assert_eq!(found.query, "proj");
+        assert_eq!(found.query_start, 5);
+    }
+
+    #[test]
+    fn active_tag_query_is_empty_right_after_hash() {
+        let text = "#";
+        let found = active_tag_query(text, text.len()).unwrap();
+        assert_eq!(found.query, "");
+        assert_eq!(found.query_start, 1);
+    }
+
+    #[test]
+    fn active_tag_query_supports_nested_slash_tags() {
+        let text = "#projects/smar";
+        let found = active_tag_query(text, text.len()).unwrap();
+        assert_eq!(found.query, "projects/smar");
+    }
+
+    #[test]
+    fn active_tag_query_ends_at_a_space() {
+        assert!(active_tag_query("#foo bar", 8).is_none());
+    }
+
+    #[test]
+    fn active_tag_query_does_not_cross_lines() {
+        let text = "#foo\nbar";
+        assert!(active_tag_query(text, text.len()).is_none());
+    }
+
+    #[test]
+    fn active_tag_query_is_none_without_a_hash() {
+        assert!(active_tag_query("just text", 9).is_none());
+    }
+
+    #[test]
+    fn active_tag_query_is_none_right_after_a_word_character() {
+        // Matches `markdown::inline_tag_spans`'s own rule: "foo#bar" mid-word
+        // never starts a tag.
+        assert!(active_tag_query("foo#bar", 7).is_none());
+    }
+
+    #[test]
+    fn active_tag_query_uses_the_last_hash_on_the_line() {
+        let text = "#a and #b";
+        let found = active_tag_query(text, text.len()).unwrap();
+        assert_eq!(found.query, "b");
+        assert_eq!(found.query_start, 8);
+    }
+
+    #[test]
     fn filter_candidates_ranks_prefix_matches_before_substring_matches() {
         let candidates = vec![
             "Backstory".to_string(),
@@ -202,6 +314,21 @@ mod tests {
 
         assert_eq!(text, "caf\u{e9} [[T\u{e9}ma]]");
         assert_eq!(new_cursor, text.len());
+    }
+
+    #[test]
+    fn apply_tag_completion_replaces_the_query_with_the_chosen_tag() {
+        let (text, cursor) = apply_tag_completion("See #proj", 5, 9, "projects/smaragd");
+        assert_eq!(text, "See #projects/smaragd");
+        assert_eq!(cursor, text.len());
+        assert_eq!(&text[cursor..], "");
+    }
+
+    #[test]
+    fn apply_tag_completion_keeps_text_after_the_cursor_intact() {
+        let (text, cursor) = apply_tag_completion("#proj please", 1, 5, "projects");
+        assert_eq!(text, "#projects please");
+        assert_eq!(&text[cursor..], " please");
     }
 
     #[test]

@@ -347,6 +347,10 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     .project
                     .map(|project| project.tree.document_names())
                     .unwrap_or_default();
+                let tag_names = self
+                    .project
+                    .map(|project| project.all_tags())
+                    .unwrap_or_default();
                 let activate_wikilink_shortcut = self
                     .settings
                     .shortcuts
@@ -355,6 +359,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     ui,
                     self.editor,
                     &note_titles,
+                    &tag_names,
                     activate_wikilink_shortcut,
                     false,
                     self.settings.editor_font,

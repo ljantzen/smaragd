@@ -551,7 +551,10 @@ mod tests {
 
     #[test]
     fn git_is_omitted_from_command_name_completions_when_disabled() {
-        assert_eq!(completions("gi", &[], &[], &[], &[], false), Vec::<&str>::new());
+        assert_eq!(
+            completions("gi", &[], &[], &[], &[], false),
+            Vec::<&str>::new()
+        );
     }
 
     #[test]
@@ -651,7 +654,10 @@ mod tests {
             vec!["wq", "write", "new"]
         );
         // Likewise "dmode" (prefix) ahead of "find" (contains "d").
-        assert_eq!(completions("d", &[], &[], &[], &[], true), vec!["dmode", "find"]);
+        assert_eq!(
+            completions("d", &[], &[], &[], &[], true),
+            vec!["dmode", "find"]
+        );
     }
 
     #[test]
@@ -682,7 +688,10 @@ mod tests {
 
     #[test]
     fn dmode_argument_completes_against_the_fixed_choices() {
-        assert_eq!(completions("dmode d", &[], &[], &[], &[], true), vec!["dark"]);
+        assert_eq!(
+            completions("dmode d", &[], &[], &[], &[], true),
+            vec!["dark"]
+        );
     }
 
     fn theme_ids_fixture() -> Vec<String> {

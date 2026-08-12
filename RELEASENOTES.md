@@ -21,6 +21,8 @@ this file.
 - The `:tag` command prompt now completes its argument against every tag
   already used somewhere in the project, the same way `:open`/`:theme`
   already complete against known titles/theme ids (#36).
+- Typing `#` in the Editor now pops up an autocomplete list of the project's
+  existing tags, the same way `[[` already suggests document titles (#35).
 
 ## v0.9.0 — 2026-08-11
 

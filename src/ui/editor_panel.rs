@@ -3,8 +3,8 @@ use egui::widgets::text_edit::TextEditOutput;
 use egui::{Id, Key, KeyboardShortcut, Modifiers};
 
 use crate::autocomplete::{
-    active_wikilink_query, apply_wikilink_completion, byte_offset_to_char, char_offset_to_byte,
-    filter_candidates,
+    active_tag_query, active_wikilink_query, apply_tag_completion, apply_wikilink_completion,
+    byte_offset_to_char, char_offset_to_byte, filter_candidates,
 };
 use crate::editor::EditorState;
 use crate::editor_font::EditorFont;
@@ -18,23 +18,61 @@ pub enum EditorEvent {
     Wikilink(WikilinkActivation),
 }
 
-/// Cap on how many `[[wikilink]]` suggestions are shown at once, matching Obsidian's
-/// short, scannable popup rather than dumping the whole vault into a list.
+/// Cap on how many `[[wikilink]]`/`#tag` suggestions are shown at once, matching
+/// Obsidian's short, scannable popup rather than dumping the whole vault into a list.
 const MAX_SUGGESTIONS: usize = 8;
 
-/// Cross-frame state for the wikilink autocomplete popup, stored in egui's temporary
-/// widget memory (keyed off the editor's `TextEdit` id) rather than in `EditorState`,
-/// since it's transient UI state, not part of the document being edited.
+/// Cross-frame state for the wikilink/tag autocomplete popup (shared between the two —
+/// only one can ever be active at a given cursor position, see `ActiveQuery`), stored
+/// in egui's temporary widget memory (keyed off the editor's `TextEdit` id) rather than
+/// in `EditorState`, since it's transient UI state, not part of the document being
+/// edited.
 #[derive(Clone, Default)]
 struct AutocompleteState {
     open: bool,
-    /// The `query_start` (byte offset) of the wikilink this popup belongs to, used to
-    /// tell "still the same link" from "cursor moved to a different `[[`".
+    /// The `query_start` (byte offset) of the wikilink/tag this popup belongs to, used
+    /// to tell "still the same query" from "cursor moved to a different `[[`/`#`".
     query_start: Option<usize>,
-    /// The `query_start` of a wikilink the user dismissed with Escape, so it doesn't
+    /// The `query_start` of a query the user dismissed with Escape, so it doesn't
     /// immediately reopen every frame while the cursor stays inside it.
     dismissed_at: Option<usize>,
     selected: usize,
+}
+
+/// Which kind of in-progress query the autocomplete popup is currently open for —
+/// determines both the candidate source (`note_titles` vs `tag_names`) and how an
+/// accepted suggestion gets spliced into the buffer (`apply_wikilink_completion`'s
+/// bracket handling vs `apply_tag_completion`'s plain replacement).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QueryKind {
+    Wikilink,
+    Tag,
+}
+
+/// An in-progress `[[query`/`#query` at the cursor, tagged with which one it is —
+/// `active_wikilink_query`/`active_tag_query` unified into one type so the rest of
+/// `show` doesn't need two parallel copies of the popup-driving state machine.
+/// Wikilink takes priority when (in some contrived input) both could match at once,
+/// simply because it's checked first — an edge case not worth resolving more cleverly.
+struct ActiveQuery {
+    kind: QueryKind,
+    query_start: usize,
+    query: String,
+}
+
+fn active_query(text: &str, cursor: usize) -> Option<ActiveQuery> {
+    if let Some(q) = active_wikilink_query(text, cursor) {
+        return Some(ActiveQuery {
+            kind: QueryKind::Wikilink,
+            query_start: q.query_start,
+            query: q.query,
+        });
+    }
+    active_tag_query(text, cursor).map(|q| ActiveQuery {
+        kind: QueryKind::Tag,
+        query_start: q.query_start,
+        query: q.query,
+    })
 }
 
 enum PopupAction {
@@ -51,11 +89,12 @@ pub fn editor_text_edit_id() -> Id {
     Id::new("smaragd_editor_text_edit")
 }
 
-/// Renders the document editor, including a `[[wikilink]]`
-/// autocomplete popup driven by `note_titles`. Returns `Some` if an autosave
-/// triggered by focus loss failed, or the user pressed `activate_wikilink_shortcut`
-/// (the remappable `ShortcutAction::ActivateWikilink`, `Ctrl+Enter`/`Cmd+Enter` by
-/// default — `None` if the user unbound it) on a wikilink to follow it — the caller
+/// Renders the document editor, including a `[[wikilink]]`/`#tag` autocomplete
+/// popup driven by `note_titles`/`tag_names` respectively (see `ActiveQuery`).
+/// Returns `Some` if an autosave triggered by focus loss failed, or the user
+/// pressed `activate_wikilink_shortcut` (the remappable
+/// `ShortcutAction::ActivateWikilink`, `Ctrl+Enter`/`Cmd+Enter` by default —
+/// `None` if the user unbound it) on a wikilink to follow it — the caller
 /// decides what to do with either.
 ///
 /// `focus_mode` enables Focus Mode's "typewriter" effect: the paragraph
@@ -73,6 +112,7 @@ pub fn show(
     ui: &mut egui::Ui,
     editor: &mut EditorState,
     note_titles: &[String],
+    tag_names: &[String],
     activate_wikilink_shortcut: Option<KeyboardShortcut>,
     focus_mode: bool,
     font: EditorFont,
@@ -213,11 +253,10 @@ pub fn show(
     let active = output.cursor_range.and_then(|range| {
         let cursor_char = range.primary.index.0;
         let cursor_byte = char_offset_to_byte(&editor.buffer, cursor_char);
-        active_wikilink_query(&editor.buffer, cursor_byte)
-            .map(|query| (cursor_char, cursor_byte, query))
+        active_query(&editor.buffer, cursor_byte).map(|query| (cursor_char, cursor_byte, query))
     });
 
-    let mut completion: Option<(usize, usize, String)> = None; // (query_start, cursor_byte, chosen)
+    let mut completion: Option<(usize, usize, QueryKind, String)> = None; // (query_start, cursor_byte, kind, chosen)
 
     let new_state = match active {
         None => AutocompleteState::default(),
@@ -226,7 +265,11 @@ pub fn show(
             ..AutocompleteState::default()
         },
         Some((cursor_char, cursor_byte, query)) => {
-            let all_candidates = filter_candidates(note_titles, &query.query);
+            let source = match query.kind {
+                QueryKind::Wikilink => note_titles,
+                QueryKind::Tag => tag_names,
+            };
+            let all_candidates = filter_candidates(source, &query.query);
             let candidates = &all_candidates[..all_candidates.len().min(MAX_SUGGESTIONS)];
 
             if candidates.is_empty() {
@@ -262,6 +305,7 @@ pub fn show(
                     completion = Some((
                         query.query_start,
                         cursor_byte,
+                        query.kind,
                         candidates[index].to_string(),
                     ));
                     AutocompleteState::default()
@@ -279,9 +323,15 @@ pub fn show(
 
     ui.ctx().data_mut(|d| d.insert_temp(state_id, new_state));
 
-    if let Some((query_start, cursor_byte, chosen)) = completion {
-        let (new_text, new_cursor_byte) =
-            apply_wikilink_completion(&editor.buffer, query_start, cursor_byte, &chosen);
+    if let Some((query_start, cursor_byte, kind, chosen)) = completion {
+        let (new_text, new_cursor_byte) = match kind {
+            QueryKind::Wikilink => {
+                apply_wikilink_completion(&editor.buffer, query_start, cursor_byte, &chosen)
+            }
+            QueryKind::Tag => {
+                apply_tag_completion(&editor.buffer, query_start, cursor_byte, &chosen)
+            }
+        };
         editor.buffer = new_text;
         editor.mark_dirty();
         move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, new_cursor_byte);
@@ -496,6 +546,7 @@ mod tests {
                 ui,
                 &mut editor,
                 &[],
+                &[],
                 None,
                 false,
                 EditorFont::Monospace,
@@ -543,6 +594,7 @@ mod tests {
                 ui,
                 &mut editor,
                 &[],
+                &[],
                 None,
                 false,
                 EditorFont::Monospace,
@@ -573,6 +625,7 @@ mod tests {
             show(
                 ui,
                 &mut editor,
+                &[],
                 &[],
                 None,
                 false,
