@@ -19,6 +19,10 @@
       "sha256": {
         "en_US.aff": "c7a8c4d08c29d237880844b1623099f59092602f189be38ce3912e457ff38bc1",
         "en_US.dic": "fa070979b1c5448bd7ab66eb6acb616d306f92879eb4218bc16ee35d39a608ee"
+      },
+      "download_urls": {
+        "en_US.aff": "https://raw.githubusercontent.com/JetBrains/hunspell-dictionaries/master/en/en_US.aff",
+        "en_US.dic": "https://raw.githubusercontent.com/JetBrains/hunspell-dictionaries/master/en/en_US.dic"
       }
     },
     {
@@ -38,6 +42,10 @@
       "sha256": {
         "nb_NO.aff": "b9e828538222b3580d8adb4660d5bae9bc1fbe42e7c21fd3e01970efed96b4f8",
         "nb_NO.dic": "e801e2c5e592e2c2b7d63685f3bffdd4db9615912f0826cd1ae0f4116c7d359d"
+      },
+      "download_urls": {
+        "nb_NO.aff": "https://raw.githubusercontent.com/JetBrains/hunspell-dictionaries/master/no/nb_NO.aff",
+        "nb_NO.dic": "https://raw.githubusercontent.com/JetBrains/hunspell-dictionaries/master/no/nb_NO.dic"
       }
     }
   ]

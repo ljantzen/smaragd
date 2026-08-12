@@ -78,6 +78,7 @@ impl SettingsCategory {
 /// on top visually. `Modal` adds the dimmed backdrop that actually captures
 /// that input, at the cost of the free resizing/dragging/title-bar chrome
 /// `Window` gave for nothing; those aren't essential for a settings dialog.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ctx: &egui::Context,
     open: &mut bool,
@@ -85,6 +86,8 @@ pub fn show(
     category: &mut SettingsCategory,
     recording_shortcut: &mut Option<ShortcutTarget>,
     plugin_shortcut_rows: &[(String, Option<egui::KeyboardShortcut>)],
+    dictionary_downloading: Option<SpellCheckLanguage>,
+    dictionary_download_request: &mut Option<SpellCheckLanguage>,
 ) -> bool {
     // Detects the dialog's closed->open transition (not persisted to disk, just
     // session-local `Context` memory) so `show_category_nav` can grab keyboard
@@ -141,7 +144,12 @@ pub fn show(
                 changed |= match *category {
                     SettingsCategory::General => show_general_category(ui, settings),
                     SettingsCategory::Appearance => show_appearance_category(ctx, ui, settings),
-                    SettingsCategory::Editor => show_editor_category(ui, settings),
+                    SettingsCategory::Editor => show_editor_category(
+                        ui,
+                        settings,
+                        dictionary_downloading,
+                        dictionary_download_request,
+                    ),
                     SettingsCategory::Templates => show_templates_category(ui, settings),
                     SettingsCategory::History => show_history_category(ui, settings),
                     SettingsCategory::Pomodoro => show_pomodoro_category(ui, settings),
@@ -311,7 +319,12 @@ fn show_appearance_category(
     changed
 }
 
-fn show_editor_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
+fn show_editor_category(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    dictionary_downloading: Option<SpellCheckLanguage>,
+    dictionary_download_request: &mut Option<SpellCheckLanguage>,
+) -> bool {
     let mut changed = false;
     ui.heading("Font");
     ui.add_space(12.0);
@@ -378,7 +391,71 @@ fn show_editor_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
          No right-click suggestions or \"add to dictionary\" yet — expect false \
          positives on names and invented words until a later update.",
     );
+    ui.add_space(12.0);
+    ui.heading("Dictionaries");
+    ui.add_space(4.0);
+    ui.weak(
+        "Smaragd ships with tiny placeholder word lists only — download a real \
+         dictionary here to make spell-check actually useful.",
+    );
+    ui.add_space(8.0);
+    show_dictionary_catalog(ui, dictionary_downloading, dictionary_download_request);
     changed
+}
+
+/// The "Dictionaries" list inside the Editor category: one row per
+/// `spellcheck::catalog()` entry that isn't `is_blocked()` — a blocked entry
+/// (this repo's own review found a license incompatibility) is never even
+/// shown here, let alone downloadable, regardless of what its `redistributable`
+/// field claims. Each row shows the language, its review status/license as a
+/// hover tooltip, and either a "Download" button, a spinner while
+/// `dictionary_downloading` names this row's language, or "Downloaded" once
+/// `spellcheck::is_downloaded` confirms the files are already on disk.
+/// Clicking "Download" sets `*dictionary_download_request` rather than
+/// spawning anything itself — this module has no background-thread machinery
+/// of its own, that's `app::dictionary_download`'s job once the caller sees
+/// the request.
+fn show_dictionary_catalog(
+    ui: &mut egui::Ui,
+    dictionary_downloading: Option<SpellCheckLanguage>,
+    dictionary_download_request: &mut Option<SpellCheckLanguage>,
+) {
+    for entry in crate::spellcheck::catalog() {
+        if entry.is_blocked() {
+            continue;
+        }
+        let Some(language) = SpellCheckLanguage::from_code(&entry.language_code) else {
+            continue;
+        };
+        let is_downloading = dictionary_downloading == Some(language);
+        let downloaded = crate::spellcheck::is_downloaded(language);
+        let row = ui.horizontal(|ui| {
+            ui.label(&entry.language);
+            if is_downloading {
+                ui.add(egui::Spinner::new().size(14.0));
+                ui.weak("Downloading…");
+            } else if downloaded {
+                ui.weak("✓ Downloaded");
+            } else {
+                let enabled = dictionary_downloading.is_none();
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Download"))
+                    .clicked()
+                {
+                    *dictionary_download_request = Some(language);
+                }
+            }
+        });
+        let notes = if entry.review_status_notes.is_empty() {
+            String::new()
+        } else {
+            format!("\n\n{}", entry.review_status_notes)
+        };
+        row.response.on_hover_text(format!(
+            "License: {}\nReview status: {}\nAttribution: {}{notes}",
+            entry.license, entry.review_status, entry.attribution
+        ));
+    }
 }
 
 fn show_templates_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
@@ -830,6 +907,7 @@ mod tests {
             ..Default::default()
         };
         let mut category = SettingsCategory::General;
+        let mut dictionary_download_request = None;
         let _ = ctx.run_ui(input, |ui| {
             show(
                 ui.ctx(),
@@ -838,6 +916,8 @@ mod tests {
                 &mut category,
                 recording_shortcut,
                 &[],
+                None,
+                &mut dictionary_download_request,
             );
         });
     }
@@ -940,8 +1020,18 @@ mod tests {
                 &mut self.category,
                 &mut self.recording_shortcut,
             );
+            let mut dictionary_download_request = None;
             let _ = self.ctx.run_ui(input, |ui| {
-                show(ui.ctx(), open, settings, category, recording_shortcut, &[]);
+                show(
+                    ui.ctx(),
+                    open,
+                    settings,
+                    category,
+                    recording_shortcut,
+                    &[],
+                    None,
+                    &mut dictionary_download_request,
+                );
             });
         }
 

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 mod backup;
 mod collab;
+mod dictionary_download;
 mod dock;
 mod dock_tab_viewer;
 mod dock_tabs;
@@ -183,6 +184,14 @@ pub struct SmaragdApp {
         GitOperation,
         std::sync::mpsc::Receiver<Result<(), crate::git::GitError>>,
     )>,
+    /// A real dictionary download (see `spellcheck::download_dictionary`)
+    /// currently running on a background thread, if any — real network I/O, so
+    /// it never runs synchronously on the UI thread, mirroring `pending_git`.
+    /// `None` once `poll_dictionary_download` has picked up its result.
+    pending_dictionary_download: Option<(
+        crate::spellcheck::SpellCheckLanguage,
+        std::sync::mpsc::Receiver<Result<(), String>>,
+    )>,
     /// Loaded `.rhai` plugins — the global directory always, plus the open
     /// project's own `.smaragd/plugins` if it has opted in (see
     /// `ProjectMeta::plugins_enabled`). Rebuilt by `reload_plugins`.
@@ -294,6 +303,7 @@ impl SmaragdApp {
             dock_state: Self::load_dock_state(),
             saved_layouts: Self::load_saved_layouts(),
             pending_git: None,
+            pending_dictionary_download: None,
             plugin_engine: crate::plugins::PluginEngine::default(),
             plugin_shortcuts: Vec::new(),
             color_themes: Vec::new(),
@@ -386,6 +396,7 @@ impl SmaragdApp {
             dock_state: default_dock_state(),
             saved_layouts: std::collections::BTreeMap::new(),
             pending_git: None,
+            pending_dictionary_download: None,
             plugin_engine: crate::plugins::PluginEngine::default(),
             plugin_shortcuts: Vec::new(),
             color_themes: Vec::new(),
@@ -903,6 +914,11 @@ impl SmaragdApp {
             .collect();
 
         let previous_ui_font = self.settings.ui_font;
+        let dictionary_downloading = self
+            .pending_dictionary_download
+            .as_ref()
+            .map(|(language, _)| *language);
+        let mut dictionary_download_request = None;
         if ui::settings_panel::show(
             ui.ctx(),
             &mut self.show_settings,
@@ -910,12 +926,17 @@ impl SmaragdApp {
             &mut self.settings_category,
             &mut self.recording_shortcut,
             &plugin_shortcut_rows,
+            dictionary_downloading,
+            &mut dictionary_download_request,
         ) {
             if self.settings.ui_font != previous_ui_font {
                 crate::editor_font::apply_ui_font(ui.ctx(), self.settings.ui_font);
             }
             self.persist_settings();
             self.plugin_shortcuts = self.compute_effective_plugin_shortcuts();
+        }
+        if let Some(language) = dictionary_download_request {
+            self.spawn_dictionary_download(ui.ctx(), language);
         }
 
         if self.prompt.is_some() {
@@ -1254,6 +1275,7 @@ fn streak_status_hover_text(status: crate::streak::StreakStatus) -> &'static str
 impl eframe::App for SmaragdApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_git_operation(ui.ctx());
+        self.poll_dictionary_download();
         self.poll_word_count();
         self.poll_collab_events(ui.ctx());
         self.tick_pomodoro(ui.ctx());

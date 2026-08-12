@@ -12,11 +12,20 @@ every real word in a document will be (correctly, if uselessly) flagged
 as unrecognized; this is expected and why `Settings::spell_check_language`
 still defaults to `Off`.
 
-Swapping in real dictionaries later is a drop-in replacement — same
-`Dictionary::new(aff, dic)` loading path in `src/spellcheck.rs`, just
-different bundled files. Do not treat that as done casually: a real
-Hunspell word list is copyrighted work with its own license, and needs
-checking for compatibility with smaragd's GPL-3.0-or-later before bundling.
+Nothing needs "swapping in" at build time anymore, though: `src/spellcheck.rs`'s
+`download_dictionary` fetches a real dictionary from `catalog.json`'s
+`download_urls` at runtime, on request (Settings > Editor > Dictionaries, or
+`app::dictionary_download`), verifies its SHA-256 against the catalog, and
+saves it to the platform data directory — never into this `assets/` folder,
+and never into the compiled binary itself. Only a catalog entry whose
+`review_status` doesn't start with `"blocked"` is ever offered. This sidesteps
+the "is a copyrighted word list embedded in a GPL-3.0-or-later binary okay"
+question for whichever entry is still merely "needs a second opinion" rather
+than fully cleared: nothing not already reviewed as at least plausibly
+compatible ever gets bundled into a distributed smaragd binary, and what a
+user chooses to download onto their own machine at their own request is
+their call, informed by the license/attribution shown right there in the
+Settings UI.
 
 See `catalog.json` in this directory for the tracked, per-language due
 diligence on real-dictionary candidates (source, version, copyright,
