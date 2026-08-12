@@ -102,6 +102,12 @@ struct PreviewStyle<'a> {
     /// shared content.
     note_titles: &'a [String],
     dark_mode: bool,
+    /// Subtle translucent pill background painted behind an inline `#tag` span (see
+    /// `append_span`) — derived from `link_color` rather than a separate themed field,
+    /// since a tag isn't a distinct "broken/resolved" concept the way a wikilink is
+    /// (every tag in a rendered document exists by definition), just a visually
+    /// distinct kind of link.
+    tag_bg_color: Color32,
 }
 
 impl<'a> PreviewStyle<'a> {
@@ -141,6 +147,7 @@ impl<'a> PreviewStyle<'a> {
             broken_link_color: visuals.error_fg_color,
             note_titles,
             dark_mode: visuals.dark_mode,
+            tag_bg_color: visuals.hyperlink_color.gamma_multiply(0.16),
         }
     }
 
@@ -190,11 +197,21 @@ fn emphasize(color: Color32, dark_mode: bool) -> Color32 {
     }
 }
 
-/// The Preview tab's `show()` result: a clicked wikilink (if any, same as
-/// before) plus the new style id, when the inline Style picker changed it this
-/// frame — the caller (`app::dock_tab_viewer`) is responsible for both.
+/// What was clicked in the rendered preview text — either a `[[wikilink]]` (see
+/// `WikilinkActivation`) or an inline `#tag` (see `inline_tag_spans`), each rendered
+/// as its own distinctly-styled/hit-tested range within the same combined galley
+/// (see `render_spans_wrapped`'s doc comment for why they're not separate widgets).
+pub enum PreviewClick {
+    Wikilink(WikilinkActivation),
+    /// The tag name, without its leading `#`.
+    Tag(String),
+}
+
+/// The Preview tab's `show()` result: a clicked wikilink/tag (if any) plus the new
+/// style id, when the inline Style picker changed it this frame — the caller
+/// (`app::dock_tab_viewer`) is responsible for both.
 pub struct PreviewOutcome {
-    pub wikilink: Option<WikilinkActivation>,
+    pub click: Option<PreviewClick>,
     pub style_changed: Option<String>,
 }
 
@@ -273,7 +290,7 @@ pub fn show(
     let Some(style) = style::find(styles, &selected_id).or_else(|| styles.first()) else {
         ui.weak("No typesetting style available.");
         return PreviewOutcome {
-            wikilink: None,
+            click: None,
             style_changed,
         };
     };
@@ -284,7 +301,7 @@ pub fn show(
     }
     let ps = PreviewStyle::new(ui.visuals(), style, custom_fonts, note_titles);
 
-    let wikilink = egui::ScrollArea::vertical()
+    let click = egui::ScrollArea::vertical()
         .id_salt("markdown_preview_scroll")
         .show(ui, |ui| {
             if blocks.is_empty() {
@@ -314,7 +331,7 @@ pub fn show(
         .inner;
 
     PreviewOutcome {
-        wikilink,
+        click,
         style_changed,
     }
 }
@@ -325,7 +342,7 @@ fn render_block(
     block: &Block,
     base_dir: ImageContext<'_>,
     drop_cap_here: bool,
-) -> Option<WikilinkActivation> {
+) -> Option<PreviewClick> {
     match &block.kind {
         BlockKind::Heading(level) => render_heading(ui, ps, *level, &block.spans, base_dir),
         BlockKind::Paragraph => render_paragraph(ui, ps, &block.spans, base_dir, drop_cap_here),
@@ -354,7 +371,7 @@ fn render_heading(
     level: u8,
     spans: &[Span],
     base_dir: ImageContext<'_>,
-) -> Option<WikilinkActivation> {
+) -> Option<PreviewClick> {
     let font = ps.heading_font(level);
     let clicked = render_spans_wrapped(ui, ps, spans, font, ps.text_color, base_dir);
     if ps.style.headings.page_break_before {
@@ -381,7 +398,7 @@ fn render_paragraph(
     spans: &[Span],
     base_dir: ImageContext<'_>,
     drop_cap_here: bool,
-) -> Option<WikilinkActivation> {
+) -> Option<PreviewClick> {
     let needs_widget = spans
         .iter()
         .any(|s| s.image.is_some() || s.wikilink.is_some());
@@ -466,7 +483,7 @@ fn render_blockquote(
     ps: &PreviewStyle,
     spans: &[Span],
     base_dir: ImageContext<'_>,
-) -> Option<WikilinkActivation> {
+) -> Option<PreviewClick> {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(3.0, ui.spacing().interact_size.y),
@@ -499,7 +516,7 @@ fn render_list_item(
     depth: u8,
     spans: &[Span],
     base_dir: ImageContext<'_>,
-) -> Option<WikilinkActivation> {
+) -> Option<PreviewClick> {
     let size = ps.style.body.size_pt as f32;
     ui.horizontal(|ui| {
         ui.add_space(depth as f32 * INDENT_PER_DEPTH);
@@ -529,7 +546,7 @@ fn render_table(
     header: &[Vec<Span>],
     rows: &[Vec<Vec<Span>>],
     base_dir: ImageContext<'_>,
-) -> Option<WikilinkActivation> {
+) -> Option<PreviewClick> {
     let size = ps.style.body.size_pt as f32;
     let mut clicked = None;
     egui::Frame::new()
@@ -590,6 +607,14 @@ fn render_table(
 /// attempt to pin down in egui's own widget code; rendering the whole run as one
 /// widget/one paint call sidesteps the question entirely — there's nothing left for
 /// it to diverge *from*.
+/// A clickable/hoverable range within a rendered `LayoutJob`: either a `[[wikilink]]`
+/// or a `#tag`, tracked by `render_spans_wrapped`/`render_text_run` alongside the
+/// byte range it occupies in the job's combined text.
+enum ClickTarget {
+    Wikilink(String),
+    Tag(String),
+}
+
 fn render_spans_wrapped(
     ui: &mut egui::Ui,
     ps: &PreviewStyle,
@@ -597,34 +622,36 @@ fn render_spans_wrapped(
     base_font: FontId,
     base_color: Color32,
     base_dir: ImageContext<'_>,
-) -> Option<WikilinkActivation> {
+) -> Option<PreviewClick> {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let mut clicked = None;
         let mut job = LayoutJob::default();
-        let mut wikilinks: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+        let mut targets: Vec<(std::ops::Range<usize>, ClickTarget)> = Vec::new();
 
         for span in spans {
             if let Some(image) = &span.image {
                 if !job.text.is_empty() {
                     if let Some(activation) =
-                        render_text_run(ui, ps, std::mem::take(&mut job), &wikilinks)
+                        render_text_run(ui, ps, std::mem::take(&mut job), &targets)
                     {
                         clicked = Some(activation);
                     }
-                    wikilinks.clear();
+                    targets.clear();
                 }
                 render_image(ui, image, &span.text, base_dir);
             } else {
                 let start = job.text.len();
                 append_span(&mut job, ps, span, base_font.clone(), base_color);
                 if let Some(target) = &span.wikilink {
-                    wikilinks.push((start..job.text.len(), target.clone()));
+                    targets.push((start..job.text.len(), ClickTarget::Wikilink(target.clone())));
+                } else if let Some(tag) = &span.tag {
+                    targets.push((start..job.text.len(), ClickTarget::Tag(tag.clone())));
                 }
             }
         }
         if !job.text.is_empty()
-            && let Some(activation) = render_text_run(ui, ps, job, &wikilinks)
+            && let Some(activation) = render_text_run(ui, ps, job, &targets)
         {
             clicked = Some(activation);
         }
@@ -633,10 +660,10 @@ fn render_spans_wrapped(
     .inner
 }
 
-/// Renders `job` (already fully styled, including any wikilinks' colors — see
+/// Renders `job` (already fully styled, including any wikilinks'/tags' colors — see
 /// `render_spans_wrapped`'s doc comment) as a single widget, then hit-tests the
-/// mouse position against `wikilinks` (byte ranges into `job.text`, paired with
-/// their target) to decide hover cursor/tooltip and clicks — reimplements the
+/// mouse position against `targets` (byte ranges into `job.text`, paired with their
+/// wikilink/tag) to decide hover cursor/tooltip and clicks — reimplements the
 /// relevant slices of `egui::Label`/`egui::widgets::Link`'s own `Widget` impls
 /// (`layout_in_ui` for the shared layout/wrapping logic, `LabelSelectionState` for
 /// the same click-and-drag text selection a plain label gets) rather than calling
@@ -646,18 +673,18 @@ fn render_text_run(
     ui: &mut egui::Ui,
     ps: &PreviewStyle,
     job: LayoutJob,
-    wikilinks: &[(std::ops::Range<usize>, String)],
-) -> Option<WikilinkActivation> {
+    targets: &[(std::ops::Range<usize>, ClickTarget)],
+) -> Option<PreviewClick> {
     let label = egui::Label::new(job).sense(egui::Sense::click());
     let (galley_pos, galley, mut response) = label.layout_in_ui(ui);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), galley.text())
     });
 
-    let hovered_wikilink = response.hover_pos().and_then(|pos| {
+    let hovered = response.hover_pos().and_then(|pos| {
         let char_index = galley.cursor_from_pos(pos - galley_pos).index.0;
         let byte_offset = char_offset_to_byte(&galley.job.text, char_index);
-        wikilinks
+        targets
             .iter()
             .find(|(range, _)| range.contains(&byte_offset))
     });
@@ -681,23 +708,32 @@ fn render_text_run(
         }
     }
 
-    if let Some((_, target)) = hovered_wikilink {
+    if let Some((_, target)) = hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        let resolves = markdown::wikilink_resolves(target, ps.note_titles);
-        response = response.on_hover_text(if resolves {
-            target.clone()
-        } else {
-            "No document found — Ctrl+click to create it".to_string()
+        response = response.on_hover_text(match target {
+            ClickTarget::Wikilink(wikilink) => {
+                if markdown::wikilink_resolves(wikilink, ps.note_titles) {
+                    wikilink.clone()
+                } else {
+                    "No document found — Ctrl+click to create it".to_string()
+                }
+            }
+            ClickTarget::Tag(tag) => format!("#{tag}"),
         });
     }
 
     if response.clicked()
-        && let Some((_, target)) = hovered_wikilink
+        && let Some((_, target)) = hovered
     {
-        let force_create = ui.input(|i| i.modifiers.command);
-        return Some(WikilinkActivation {
-            target: target.clone(),
-            force_create,
+        return Some(match target {
+            ClickTarget::Wikilink(wikilink) => {
+                let force_create = ui.input(|i| i.modifiers.command);
+                PreviewClick::Wikilink(WikilinkActivation {
+                    target: wikilink.clone(),
+                    force_create,
+                })
+            }
+            ClickTarget::Tag(tag) => PreviewClick::Tag(tag.clone()),
         });
     }
     None
@@ -732,6 +768,10 @@ fn append_span(job: &mut LayoutJob, ps: &PreviewStyle, span: &Span, font: FontId
     if let Some(target) = &span.wikilink {
         format.color = ps.wikilink_color(target);
         format.underline = egui::Stroke::new(1.0, format.color);
+    }
+    if span.tag.is_some() {
+        format.color = ps.link_color;
+        format.background = ps.tag_bg_color;
     }
     job.append(&span.text, 0.0, format);
 }
@@ -996,6 +1036,7 @@ mod tests {
             code: false,
             link: None,
             wikilink: None,
+            tag: None,
             image: None,
         }
     }
@@ -1009,12 +1050,115 @@ mod tests {
             code: false,
             link: None,
             wikilink: Some(target.to_string()),
+            tag: None,
+            image: None,
+        }
+    }
+
+    fn tag_span(tag: &str) -> Span {
+        Span {
+            text: format!("#{tag}"),
+            bold: false,
+            italic: false,
+            strikethrough: false,
+            code: false,
+            link: None,
+            wikilink: None,
+            tag: Some(tag.to_string()),
             image: None,
         }
     }
 
     fn preview_style(style: &TypesetStyle) -> PreviewStyle<'_> {
         PreviewStyle::new(&egui::Visuals::dark(), style, &[], &[])
+    }
+
+    fn wikilink_or_tag(click: PreviewClick) -> String {
+        match click {
+            PreviewClick::Wikilink(activation) => activation.target,
+            PreviewClick::Tag(tag) => tag,
+        }
+    }
+
+    /// Simulates a full move/press/release click at the center of the `char_index`-th
+    /// character of `spans` rendered as one combined `render_spans_wrapped` run
+    /// (`font_id` must be monospace so each character's on-screen x position is
+    /// exactly predictable — `char_width` is that fixed advance, measured by the
+    /// caller's own warm-up frame). Shared by the wikilink- and tag-click tests below.
+    fn click_at_char(
+        ctx: &egui::Context,
+        style: &TypesetStyle,
+        note_titles: &[String],
+        spans: &[Span],
+        font_id: &FontId,
+        char_width: f32,
+        char_index: f32,
+    ) -> Option<PreviewClick> {
+        let mut clicked = None;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 200.0),
+            )),
+            ..Default::default()
+        };
+        let mut start = egui::Pos2::ZERO;
+        let _ = ctx.run_ui(input.clone(), |ui| {
+            start = ui.cursor().min;
+        });
+        let pos = start
+            + egui::vec2(
+                char_width * char_index,
+                ctx.fonts_mut(|f| f.row_height(font_id)) / 2.0,
+            );
+        let render = |ui: &mut egui::Ui| -> Option<PreviewClick> {
+            let ps = PreviewStyle::new(ui.visuals(), style, &[], note_titles);
+            render_spans_wrapped(
+                ui,
+                &ps,
+                spans,
+                font_id.clone(),
+                ps.text_color,
+                NO_IMAGE_CONTEXT,
+            )
+        };
+        // Move, press, and release each get their own frame — a single combined
+        // frame left `is_pointer_button_down_on()` false, as if the press event
+        // was never attributed to the widget at all (seemingly because
+        // `hovered()`, which the press attribution depends on, isn't settled
+        // from a `PointerMoved` delivered in that same frame).
+        let move_input = egui::RawInput {
+            events: vec![egui::Event::PointerMoved(pos)],
+            ..input.clone()
+        };
+        let _ = ctx.run_ui(move_input, |ui| {
+            render(ui);
+        });
+        let press_input = egui::RawInput {
+            events: vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..input.clone()
+        };
+        let _ = ctx.run_ui(press_input, |ui| {
+            render(ui);
+        });
+        let release_input = egui::RawInput {
+            events: vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..input
+        };
+        let _ = ctx.run_ui(release_input, |ui| {
+            clicked = render(ui);
+        });
+        clicked
     }
 
     /// Regression test for GitHub issue #66: clicking plain text that shares a
@@ -1052,105 +1196,92 @@ mod tests {
         // precise character centers without needing to inspect the galley.
         let spans = [plain_span("AA"), wikilink_span("BB"), plain_span("CC")];
 
-        let click_at = |ctx: &egui::Context,
-                        style: &TypesetStyle,
-                        note_titles: &[String],
-                        spans: &[Span],
-                        char_index: f32|
-         -> Option<WikilinkActivation> {
-            let mut clicked = None;
-            let input = egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(800.0, 200.0),
-                )),
-                ..Default::default()
-            };
-            let mut start = egui::Pos2::ZERO;
-            let _ = ctx.run_ui(input.clone(), |ui| {
-                start = ui.cursor().min;
-            });
-            let pos = start
-                + egui::vec2(
-                    char_width * char_index,
-                    ctx.fonts_mut(|f| f.row_height(&font_id)) / 2.0,
-                );
-            let render = |ui: &mut egui::Ui| -> Option<WikilinkActivation> {
-                let ps = PreviewStyle::new(ui.visuals(), style, &[], note_titles);
-                render_spans_wrapped(
-                    ui,
-                    &ps,
-                    spans,
-                    font_id.clone(),
-                    ps.text_color,
-                    NO_IMAGE_CONTEXT,
-                )
-            };
-            // Move, press, and release each get their own frame — a single
-            // combined frame left `is_pointer_button_down_on()` false, as if
-            // the press event was never attributed to the widget at all
-            // (seemingly because `hovered()`, which the press attribution
-            // depends on, isn't settled from a `PointerMoved` delivered in
-            // that same frame).
-            let move_input = egui::RawInput {
-                events: vec![egui::Event::PointerMoved(pos)],
-                ..input.clone()
-            };
-            let _ = ctx.run_ui(move_input, |ui| {
-                render(ui);
-            });
-            let press_input = egui::RawInput {
-                events: vec![egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::NONE,
-                }],
-                ..input.clone()
-            };
-            let _ = ctx.run_ui(press_input, |ui| {
-                render(ui);
-            });
-            let release_input = egui::RawInput {
-                events: vec![egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: false,
-                    modifiers: egui::Modifiers::NONE,
-                }],
-                ..input
-            };
-            let _ = ctx.run_ui(release_input, |ui| {
-                clicked = render(ui);
-            });
-            clicked
-        };
-
-        let clicked_on_plain = click_at(
+        let clicked_on_plain = click_at_char(
             &ctx,
             style,
             &note_titles,
             &spans,
+            &font_id,
+            char_width,
             0.5, /* inside "AA" */
         );
         assert!(
             clicked_on_plain.is_none(),
             "clicking plain text next to a wikilink activated it: {:?}",
-            clicked_on_plain.map(|a| a.target)
+            clicked_on_plain.map(wikilink_or_tag)
         );
 
-        let clicked_on_link = click_at(
+        let clicked_on_link = click_at_char(
             &ctx,
             style,
             &note_titles,
             &spans,
+            &font_id,
+            char_width,
             2.5, /* inside "BB" */
         );
         assert_eq!(
-            clicked_on_link.map(|a| a.target),
+            clicked_on_link.map(wikilink_or_tag),
             Some("BB".to_string()),
             "clicking the wikilink itself should have activated it"
         );
+    }
+
+    /// A `#tag` shares the same single-combined-galley hit-testing as a wikilink
+    /// (see the #66 regression test above) — clicking it must report
+    /// `PreviewClick::Tag`, not `Wikilink`, and clicking plain text next to it must
+    /// not activate it.
+    #[test]
+    fn clicking_a_tag_activates_it_as_a_tag_not_a_wikilink() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let font_id = EditorFont::DejaVuSansMono.font_id(20.0);
+
+        let char_width = {
+            let mut width = 0.0;
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                width = ui
+                    .fonts_mut(|f| f.layout_no_wrap("A".into(), font_id.clone(), Color32::WHITE))
+                    .size()
+                    .x;
+            });
+            width
+        };
+
+        let styles = style::built_in_styles();
+        let style = style::find(&styles, "manuscript").unwrap();
+        // Spans render as one combined run "AA#tagCC": "AA" plain, "#tag" a tag,
+        // "CC" plain.
+        let spans = [plain_span("AA"), tag_span("tag"), plain_span("CC")];
+
+        let clicked_on_plain = click_at_char(
+            &ctx,
+            style,
+            &[],
+            &spans,
+            &font_id,
+            char_width,
+            0.5, /* inside "AA" */
+        );
+        assert!(
+            clicked_on_plain.is_none(),
+            "clicking plain text next to a tag activated it: {:?}",
+            clicked_on_plain.map(wikilink_or_tag)
+        );
+
+        let clicked_on_tag = click_at_char(
+            &ctx,
+            style,
+            &[],
+            &spans,
+            &font_id,
+            char_width,
+            3.5, /* inside "#tag" */
+        );
+        match clicked_on_tag {
+            Some(PreviewClick::Tag(tag)) => assert_eq!(tag, "tag"),
+            other => panic!("expected a tag click, got {:?}", other.map(wikilink_or_tag)),
+        }
     }
 
     const NO_IMAGE_CONTEXT: ImageContext<'static> = ImageContext {
@@ -1179,6 +1310,36 @@ mod tests {
         let ps = PreviewStyle::new(&visuals, style, &[], &note_titles);
 
         assert_eq!(ps.wikilink_color("Chapter 2"), visuals.error_fg_color);
+    }
+
+    #[test]
+    fn append_span_gives_a_tag_the_link_color_and_a_background_pill() {
+        let styles = style::built_in_styles();
+        let style = style::find(&styles, "manuscript").unwrap();
+        let ps = preview_style(style);
+        let span = tag_span("worldbuilding");
+
+        let mut job = LayoutJob::default();
+        append_span(&mut job, &ps, &span, ps.body_font(12.0), ps.text_color);
+
+        let format = &job.sections[0].format;
+        assert_eq!(format.color, ps.link_color);
+        assert_eq!(format.background, ps.tag_bg_color);
+    }
+
+    #[test]
+    fn append_span_leaves_plain_text_without_a_background() {
+        let styles = style::built_in_styles();
+        let style = style::find(&styles, "manuscript").unwrap();
+        let ps = preview_style(style);
+        let span = plain_span("just prose");
+
+        let mut job = LayoutJob::default();
+        append_span(&mut job, &ps, &span, ps.body_font(12.0), ps.text_color);
+
+        let format = &job.sections[0].format;
+        assert_eq!(format.color, ps.text_color);
+        assert_eq!(format.background, Color32::TRANSPARENT);
     }
 
     #[test]

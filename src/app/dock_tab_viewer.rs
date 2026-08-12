@@ -19,6 +19,9 @@ pub(super) enum DockAction {
     /// The Tags dock's "Rename…" button was clicked for the given tag — see
     /// `ui::tags_panel::TagsEvent::RenameTag`.
     RenameTag(String),
+    /// A `#tag` was clicked in the Preview tab — see
+    /// `ui::markdown_preview::PreviewClick::Tag`.
+    PreviewTagClicked(String),
     EditorSaveError(String),
     Wikilink(WikilinkActivation),
     /// The Preview tab's inline Style picker (`ui::markdown_preview::show`)
@@ -400,8 +403,14 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         self.settings.typewriter_quotes,
                         &note_titles,
                     );
-                    if let Some(activation) = outcome.wikilink {
-                        self.actions.push(DockAction::Wikilink(activation));
+                    match outcome.click {
+                        Some(ui::markdown_preview::PreviewClick::Wikilink(activation)) => {
+                            self.actions.push(DockAction::Wikilink(activation));
+                        }
+                        Some(ui::markdown_preview::PreviewClick::Tag(tag)) => {
+                            self.actions.push(DockAction::PreviewTagClicked(tag));
+                        }
+                        None => {}
                     }
                     if let Some(style_id) = outcome.style_changed {
                         self.actions.push(DockAction::SetBookStyle(style_id));

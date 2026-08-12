@@ -27,6 +27,10 @@ this file.
   tag now rewrites it everywhere in the project — every document's
   frontmatter `tags:` entry and every inline `#tag` mention — in one step
   (#32).
+- Inline `#tag` mentions now render specially in the Preview tab — a subtle
+  background pill in the link color, matching how `[[wikilink]]`s already
+  stand out from plain text — and are clickable, opening the Tags dock
+  pre-filtered to that tag (#34).
 
 ## v0.9.0 — 2026-08-11
 

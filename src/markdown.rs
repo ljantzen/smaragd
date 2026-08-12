@@ -50,6 +50,9 @@ pub struct Span {
     /// Set for a `[[Topic]]`/`[[Topic|Alias]]` span: the target note
     /// name to resolve, separate from `link` (which holds a real URL destination).
     pub wikilink: Option<String>,
+    /// Set for an inline `#tag` span (see [`inline_tag_spans`]): the tag name,
+    /// without its leading `#` (which stays part of `text` so it still displays).
+    pub tag: Option<String>,
     /// Set for an inline `![alt](src "title")` image. `text` holds the alt text, kept
     /// as the fallback if the image can't be loaded/rendered.
     pub image: Option<ImageRef>,
@@ -112,7 +115,8 @@ fn current_sink<'a>(
 /// footnotes — a flat block list with single-level list nesting covers what an author
 /// actually writes, and matches what `ui::markdown_preview` renders.
 pub fn parse(markdown: &str) -> Vec<Block> {
-    let (markdown, wikilinks) = extract_wikilinks(markdown);
+    let (markdown, tags) = extract_tags(markdown);
+    let (markdown, wikilinks) = extract_wikilinks(&markdown);
     let markdown = markdown.as_str();
 
     let mut blocks = Vec::new();
@@ -333,7 +337,7 @@ pub fn parse(markdown: &str) -> Vec<Block> {
                             ..template
                         });
                     } else {
-                        expand_placeholders(target, &text, &template, &wikilinks);
+                        expand_placeholders(target, &text, &template, &wikilinks, &tags);
                     }
                 }
             }
@@ -349,6 +353,7 @@ pub fn parse(markdown: &str) -> Vec<Block> {
                         strikethrough: strike_depth > 0,
                         link: link_stack.last().cloned(),
                         wikilink: None,
+                        tag: None,
                         image: None,
                     });
                 }
@@ -516,48 +521,116 @@ fn replace_wikilinks_in_line(
     }
 }
 
-/// Split `text` (already through pulldown-cmark) on wikilink placeholders inserted by
-/// [`extract_wikilinks`], pushing plain-text spans, wikilink spans, and image spans
-/// (for `![[image.ext]]` embeds) in order, all inheriting `template`'s formatting.
+/// A private-use-area character marking the start/end of a `#tag` placeholder — the
+/// `#tag` counterpart to [`WIKILINK_MARK`], inserted by [`extract_tags`]. A distinct
+/// codepoint from `WIKILINK_MARK` so [`expand_placeholders`] can tell which kind of
+/// placeholder it's looking at.
+const TAG_MARK: char = '\u{E001}';
+
+/// A `#tag` marker found by [`extract_tags`], recorded in its side table — just the
+/// tag name (without its leading `#`, which `expand_placeholders` re-adds to the
+/// span's display text).
+struct TagPlaceholder {
+    tag: String,
+}
+
+/// Replace every `#tag` marker in `markdown` (as found by [`inline_tag_spans`], so
+/// fenced code blocks/inline code spans are already excluded, along with headings and
+/// numeric-only markers) with a placeholder pulldown-cmark's inline parser passes
+/// through untouched, mirroring [`extract_wikilinks`]. Unlike `[[...]]`, a bare `#` has
+/// no inline-parsing significance of its own to escape, but a placeholder is still
+/// used — instead of restyling `#tag` text after the fact — so tag detection always
+/// runs against the raw source `inline_tag_spans` already validates, not against
+/// fragments pulldown-cmark may have split a line into.
+fn extract_tags(markdown: &str) -> (String, Vec<TagPlaceholder>) {
+    let markdown = if markdown.contains(TAG_MARK) {
+        std::borrow::Cow::Owned(markdown.replace(TAG_MARK, "\u{FFFD}"))
+    } else {
+        std::borrow::Cow::Borrowed(markdown)
+    };
+
+    let spans = inline_tag_spans(&markdown);
+    if spans.is_empty() {
+        return (markdown.into_owned(), Vec::new());
+    }
+
+    let mut output = String::with_capacity(markdown.len());
+    let mut table = Vec::new();
+    let mut cursor = 0usize;
+    for (range, tag) in spans {
+        output.push_str(&markdown[cursor..range.start]);
+        table.push(TagPlaceholder { tag });
+        output.push(TAG_MARK);
+        output.push_str(&(table.len() - 1).to_string());
+        output.push(TAG_MARK);
+        cursor = range.end;
+    }
+    output.push_str(&markdown[cursor..]);
+    (output, table)
+}
+
+/// Split `text` (already through pulldown-cmark) on wikilink and `#tag` placeholders
+/// inserted by [`extract_wikilinks`]/[`extract_tags`], pushing plain-text spans,
+/// wikilink spans, tag spans, and image spans (for `![[image.ext]]` embeds) in order,
+/// all inheriting `template`'s formatting.
 fn expand_placeholders(
     spans: &mut Vec<Span>,
     text: &str,
     template: &Span,
-    table: &[WikilinkPlaceholder],
+    wikilinks: &[WikilinkPlaceholder],
+    tags: &[TagPlaceholder],
 ) {
     let mut rest = text;
-    while let Some(start) = rest.find(WIKILINK_MARK) {
+    loop {
+        let next_wikilink = rest.find(WIKILINK_MARK);
+        let next_tag = rest.find(TAG_MARK);
+        let next = match (next_wikilink, next_tag) {
+            (Some(w), Some(t)) => Some(w.min(t)),
+            (Some(w), None) => Some(w),
+            (None, Some(t)) => Some(t),
+            (None, None) => None,
+        };
+        let Some(start) = next else {
+            break;
+        };
         if start > 0 {
             spans.push(Span {
                 text: rest[..start].to_string(),
                 ..template.clone()
             });
         }
-        let after = &rest[start + WIKILINK_MARK.len_utf8()..];
-        let end = after
-            .find(WIKILINK_MARK)
-            .expect("well-formed wikilink placeholder");
-        let index: usize = after[..end]
-            .parse()
-            .expect("well-formed wikilink placeholder");
-        let placeholder = &table[index];
-        if placeholder.is_embed && has_image_extension(&placeholder.target) {
-            spans.push(Span {
-                text: placeholder.display.clone(),
-                image: Some(ImageRef {
-                    src: placeholder.target.clone(),
-                    title: String::new(),
-                }),
-                ..template.clone()
-            });
+        let is_wikilink = next_wikilink == Some(start);
+        let mark = if is_wikilink { WIKILINK_MARK } else { TAG_MARK };
+        let after = &rest[start + mark.len_utf8()..];
+        let end = after.find(mark).expect("well-formed placeholder");
+        let index: usize = after[..end].parse().expect("well-formed placeholder");
+        if is_wikilink {
+            let placeholder = &wikilinks[index];
+            if placeholder.is_embed && has_image_extension(&placeholder.target) {
+                spans.push(Span {
+                    text: placeholder.display.clone(),
+                    image: Some(ImageRef {
+                        src: placeholder.target.clone(),
+                        title: String::new(),
+                    }),
+                    ..template.clone()
+                });
+            } else {
+                spans.push(Span {
+                    text: placeholder.display.clone(),
+                    wikilink: Some(placeholder.target.clone()),
+                    ..template.clone()
+                });
+            }
         } else {
+            let placeholder = &tags[index];
             spans.push(Span {
-                text: placeholder.display.clone(),
-                wikilink: Some(placeholder.target.clone()),
+                text: format!("#{}", placeholder.tag),
+                tag: Some(placeholder.tag.clone()),
                 ..template.clone()
             });
         }
-        rest = &after[end + WIKILINK_MARK.len_utf8()..];
+        rest = &after[end + mark.len_utf8()..];
     }
     if !rest.is_empty() {
         spans.push(Span {
@@ -1330,6 +1403,83 @@ mod tests {
         let blocks = parse("~~~\n[[Topic]]\n~~~\n");
         assert_eq!(blocks[0].spans[0].text, "[[Topic]]\n");
         assert!(blocks[0].spans[0].wikilink.is_none());
+    }
+
+    #[test]
+    fn parses_an_inline_tag_in_a_paragraph() {
+        let blocks = parse("See #worldbuilding for notes.");
+        let tag_span = blocks[0]
+            .spans
+            .iter()
+            .find(|s| s.tag.is_some())
+            .expect("expected a tag span");
+        assert_eq!(tag_span.tag.as_deref(), Some("worldbuilding"));
+        assert_eq!(tag_span.text, "#worldbuilding");
+    }
+
+    #[test]
+    fn a_tag_at_the_start_of_a_paragraph_does_not_become_a_heading() {
+        // Only a leading `#` followed by a space is an ATX heading; `#tag` with no
+        // space after it never reaches the block parser as a heading marker.
+        let blocks = parse("#worldbuilding notes here.");
+        assert_eq!(blocks[0].kind, BlockKind::Paragraph);
+        assert_eq!(blocks[0].spans[0].tag.as_deref(), Some("worldbuilding"));
+    }
+
+    #[test]
+    fn tag_inherits_surrounding_bold_formatting() {
+        let blocks = parse("**#worldbuilding**");
+        let tag_span = blocks[0]
+            .spans
+            .iter()
+            .find(|s| s.tag.is_some())
+            .expect("expected a tag span");
+        assert!(tag_span.bold);
+        assert_eq!(tag_span.tag.as_deref(), Some("worldbuilding"));
+    }
+
+    #[test]
+    fn tag_inside_fenced_code_block_is_left_as_plain_text() {
+        let blocks = parse("```\n#not-a-tag\n```\n");
+        assert_eq!(blocks[0].spans[0].text, "#not-a-tag\n");
+        assert!(blocks[0].spans[0].tag.is_none());
+    }
+
+    #[test]
+    fn tag_inside_inline_code_is_left_as_plain_text() {
+        let blocks = parse("`#not-a-tag` stays literal");
+        assert!(blocks[0].spans.iter().all(|s| s.tag.is_none()));
+        let full_text: String = blocks[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert!(full_text.contains("#not-a-tag"));
+    }
+
+    #[test]
+    fn a_purely_numeric_marker_is_not_treated_as_a_tag() {
+        let blocks = parse("See issue #42 for details.");
+        assert!(blocks[0].spans.iter().all(|s| s.tag.is_none()));
+    }
+
+    #[test]
+    fn a_wikilink_and_a_tag_can_share_the_same_paragraph() {
+        let blocks = parse("See [[Topic]] and #worldbuilding.");
+        assert!(
+            blocks[0]
+                .spans
+                .iter()
+                .any(|s| s.wikilink.as_deref() == Some("Topic"))
+        );
+        assert!(
+            blocks[0]
+                .spans
+                .iter()
+                .any(|s| s.tag.as_deref() == Some("worldbuilding"))
+        );
+    }
+
+    #[test]
+    fn parses_a_nested_slash_tag() {
+        let blocks = parse("#projects/smaragd");
+        assert_eq!(blocks[0].spans[0].tag.as_deref(), Some("projects/smaragd"));
     }
 
     #[test]

@@ -798,6 +798,17 @@ impl SmaragdApp {
         }
     }
 
+    /// Open the Tags dock (if not already open) and switch its search box to `tag` —
+    /// the vault-wide "documents carrying this tag" view. Shared by clicking a `#tag`
+    /// in the Preview tab and (with an always-nonempty query, unlike `Command::Tag`,
+    /// which tolerates an empty one to just open the dock) the `:tag` command.
+    fn activate_tag(&mut self, tag: String) {
+        self.tags.search_text = tag;
+        if self.dock_state.find_tab(&DockTab::Tags).is_none() {
+            self.dock_state.push_to_focused_leaf(DockTab::Tags);
+        }
+    }
+
     /// Run a plugin-registered `:` command, giving it the open document's live
     /// buffer to read via `smaragd_document_text()`, its file name (minus
     /// `.md`) via `smaragd_document_basename()`, and its path relative to the
@@ -1471,6 +1482,7 @@ impl eframe::App for SmaragdApp {
                         DockAction::RefreshBacklinks => self.recompute_backlinks(),
                         DockAction::RefreshTags => self.recompute_tags(),
                         DockAction::RenameTag(tag) => self.prompt_rename_tag(tag),
+                        DockAction::PreviewTagClicked(tag) => self.activate_tag(tag),
                         DockAction::EditorSaveError(err) => self.push_error_toast(err),
                         DockAction::Wikilink(activation) => self.activate_wikilink(activation),
                         DockAction::SetBookStyle(style_id) => {
@@ -1615,6 +1627,18 @@ mod execute_command_tests {
             .filter(|(_, tab)| **tab == DockTab::Tags)
             .count();
         assert_eq!(tag_tab_count, 1);
+    }
+
+    #[test]
+    fn activate_tag_sets_search_text_and_opens_the_tags_tab() {
+        let mut app = SmaragdApp::test_fixture();
+
+        assert!(app.dock_state.find_tab(&DockTab::Tags).is_none());
+
+        app.activate_tag("worldbuilding".to_string());
+
+        assert_eq!(app.tags.search_text, "worldbuilding");
+        assert!(app.dock_state.find_tab(&DockTab::Tags).is_some());
     }
 
     #[test]
