@@ -1470,6 +1470,7 @@ impl eframe::App for SmaragdApp {
                         DockAction::Metadata(event) => self.handle_metadata_form_event(event),
                         DockAction::RefreshBacklinks => self.recompute_backlinks(),
                         DockAction::RefreshTags => self.recompute_tags(),
+                        DockAction::RenameTag(tag) => self.prompt_rename_tag(tag),
                         DockAction::EditorSaveError(err) => self.push_error_toast(err),
                         DockAction::Wikilink(activation) => self.activate_wikilink(activation),
                         DockAction::SetBookStyle(style_id) => {

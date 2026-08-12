@@ -809,6 +809,31 @@ fn char_index_to_byte(s: &str, total_chars: usize, char_index: usize) -> usize {
         .map_or(s.len(), |(byte, _)| byte)
 }
 
+/// Rewrite every `#tag` marker in `markdown` matching `old_tag` case-insensitively
+/// (an exact match against the whole tag, not a prefix — renaming `projects` never
+/// touches `projects/smaragd`) to `#new_tag` instead. Reuses [`inline_tag_spans`] to
+/// find the occurrences, so it inherits the same fenced-code-block/inline-code-span
+/// skipping and heading/mid-word exclusions for free. Returns `None` if nothing
+/// changed. The `#tag` counterpart to [`rename_wikilink_target`], used to rename a
+/// tag across the whole vault (see `Project::rename_tag`).
+pub fn rename_tag(markdown: &str, old_tag: &str, new_tag: &str) -> Option<String> {
+    let mut output = String::with_capacity(markdown.len());
+    let mut cursor = 0usize;
+    let mut changed = false;
+    for (range, tag) in inline_tag_spans(markdown) {
+        if !tag.eq_ignore_ascii_case(old_tag) {
+            continue;
+        }
+        output.push_str(&markdown[cursor..range.start]);
+        output.push('#');
+        output.push_str(new_tag);
+        cursor = range.end;
+        changed = true;
+    }
+    output.push_str(&markdown[cursor..]);
+    changed.then_some(output)
+}
+
 /// A `#tag` marker's allowed characters after the leading `#`: ASCII letters,
 /// digits, `_`, `-`, and `/` (the last for nested tags like `#projects/smaragd`).
 /// `pub(crate)` rather than private since `autocomplete::active_tag_query`
@@ -1488,6 +1513,59 @@ mod tests {
             inline_tags("#Foo and #foo and #FOO"),
             vec!["Foo".to_string()]
         );
+    }
+
+    #[test]
+    fn rename_tag_updates_a_simple_tag() {
+        let updated = rename_tag("See #old-tag for more.", "old-tag", "new-tag").unwrap();
+        assert_eq!(updated, "See #new-tag for more.");
+    }
+
+    #[test]
+    fn rename_tag_is_case_insensitive() {
+        let updated = rename_tag("#OLD-TAG", "old-tag", "new-tag").unwrap();
+        assert_eq!(updated, "#new-tag");
+    }
+
+    #[test]
+    fn rename_tag_updates_every_matching_occurrence() {
+        let updated = rename_tag("#old-tag and again #old-tag", "old-tag", "new-tag").unwrap();
+        assert_eq!(updated, "#new-tag and again #new-tag");
+    }
+
+    #[test]
+    fn rename_tag_leaves_other_tags_untouched() {
+        let updated = rename_tag("#unrelated", "old-tag", "new-tag");
+        assert_eq!(updated, None);
+    }
+
+    #[test]
+    fn rename_tag_does_not_match_a_tag_sharing_a_prefix() {
+        let updated = rename_tag("#projects/smaragd stays put", "projects", "work");
+        assert_eq!(updated, None);
+    }
+
+    #[test]
+    fn rename_tag_renames_a_nested_tag_exactly() {
+        let updated = rename_tag(
+            "#projects/smaragd but not #projects",
+            "projects/smaragd",
+            "work/smaragd",
+        )
+        .unwrap();
+        assert_eq!(updated, "#work/smaragd but not #projects");
+    }
+
+    #[test]
+    fn rename_tag_skips_fenced_code_blocks() {
+        let updated = rename_tag("```\n#old-tag\n```\n", "old-tag", "new-tag");
+        assert_eq!(updated, None);
+    }
+
+    #[test]
+    fn rename_tag_skips_inline_code_spans() {
+        let updated = rename_tag("`#old-tag` stays literal", "old-tag", "new-tag");
+        assert_eq!(updated, None);
     }
 
     fn only_span(markdown: &str) -> std::ops::Range<usize> {

@@ -23,6 +23,10 @@ this file.
   already complete against known titles/theme ids (#36).
 - Typing `#` in the Editor now pops up an autocomplete list of the project's
   existing tags, the same way `[[` already suggests document titles (#35).
+- The Tags dock gains a "Rename…" button next to each tag heading: renaming a
+  tag now rewrites it everywhere in the project — every document's
+  frontmatter `tags:` entry and every inline `#tag` mention — in one step
+  (#32).
 
 ## v0.9.0 — 2026-08-11
 

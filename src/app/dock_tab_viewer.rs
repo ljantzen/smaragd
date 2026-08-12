@@ -16,6 +16,9 @@ pub(super) enum DockAction {
     Metadata(crate::ui::metadata_panel::MetadataFormEvent),
     RefreshBacklinks,
     RefreshTags,
+    /// The Tags dock's "Rename…" button was clicked for the given tag — see
+    /// `ui::tags_panel::TagsEvent::RenameTag`.
+    RenameTag(String),
     EditorSaveError(String),
     Wikilink(WikilinkActivation),
     /// The Preview tab's inline Style picker (`ui::markdown_preview::show`)
@@ -260,6 +263,9 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         }
                         ui::tags_panel::TagsEvent::Refresh => {
                             self.actions.push(DockAction::RefreshTags)
+                        }
+                        ui::tags_panel::TagsEvent::RenameTag(tag) => {
+                            self.actions.push(DockAction::RenameTag(tag));
                         }
                     }
                 }

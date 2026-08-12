@@ -7,6 +7,7 @@ mod picklists;
 mod pov_colors;
 mod queries;
 mod rename_move_delete;
+mod rename_tag;
 mod roles;
 mod scan;
 mod status_colors;

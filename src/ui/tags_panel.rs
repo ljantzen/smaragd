@@ -10,6 +10,10 @@ pub enum TagsEvent {
     /// The manual "Refresh" button was clicked — recompute now regardless of
     /// whether the open document has actually changed since the last scan.
     Refresh,
+    /// The "Rename…" button next to a tag heading was clicked — the caller
+    /// (`app.rs`) opens a name-prompt modal pre-filled with this tag, then
+    /// applies it project-wide via `Project::rename_tag`.
+    RenameTag(String),
 }
 
 /// Renders the Tags dock: by default, the currently-open document's own tags
@@ -76,9 +80,14 @@ pub fn show(
         }
 
         for group in tags {
-            if ui.link(format!("#{}", group.tag)).clicked() {
-                *search_text = group.tag.clone();
-            }
+            ui.horizontal(|ui| {
+                if ui.link(format!("#{}", group.tag)).clicked() {
+                    *search_text = group.tag.clone();
+                }
+                if ui.small_button("Rename…").clicked() {
+                    event = Some(TagsEvent::RenameTag(group.tag.clone()));
+                }
+            });
             if group.documents.is_empty() {
                 ui.label(egui::RichText::new("No other document shares this tag yet.").weak());
             } else {

@@ -15,6 +15,9 @@ pub(super) enum PromptAction {
     Rename {
         path: PathBuf,
     },
+    RenameTag {
+        old_tag: String,
+    },
     NewProject {
         location: PathBuf,
         template_id: String,
@@ -95,6 +98,17 @@ impl SmaragdApp {
         self.prompt = Some(PendingPrompt {
             action: PromptAction::Rename { path },
             state: NamePromptState::new("Rename", "Rename", name),
+        });
+    }
+
+    /// Open the "Rename Tag" name-prompt modal, pre-filled with `old_tag`. Triggered
+    /// by the Tags dock's "Rename…" button next to a tag heading.
+    pub(super) fn prompt_rename_tag(&mut self, old_tag: String) {
+        self.prompt = Some(PendingPrompt {
+            action: PromptAction::RenameTag {
+                old_tag: old_tag.clone(),
+            },
+            state: NamePromptState::new("Rename Tag", "Rename", old_tag),
         });
     }
 
@@ -242,6 +256,7 @@ impl SmaragdApp {
                 template_path,
             } => self.create_document_from_template(&parent, name, &template_path),
             PromptAction::Rename { path } => self.rename_node(&path, name),
+            PromptAction::RenameTag { old_tag } => self.rename_tag(&old_tag, name),
             PromptAction::NewProject {
                 location,
                 template_id,
@@ -295,6 +310,31 @@ impl SmaragdApp {
             Err(err) => {
                 self.push_error_toast(format!("Couldn't rename: {err}"));
             }
+        }
+    }
+
+    /// Rename `old_tag` to `new_tag` everywhere it's used in the project (see
+    /// `Project::rename_tag`) — every frontmatter `tags:` entry and every inline
+    /// `#tag` mention. If the currently open document is one of the ones rewritten
+    /// and has no unsaved edits, reload it so the editor reflects the new tag text;
+    /// skipped while dirty for the same reason `rename_node` skips its own reload.
+    pub(super) fn rename_tag(&mut self, old_tag: &str, new_tag: &str) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        if let Err(err) = project.rename_tag(old_tag, new_tag) {
+            self.push_error_toast(format!("Couldn't rename tag: {err}"));
+            return;
+        }
+
+        if self.tags.search_text.eq_ignore_ascii_case(old_tag) {
+            self.tags.search_text = new_tag.to_string();
+        }
+        self.recompute_tags();
+        if !self.editor.dirty
+            && let Some(open_path) = self.editor.open_path.clone()
+        {
+            let _ = self.editor.open(&open_path);
         }
     }
 
