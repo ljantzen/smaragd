@@ -1,6 +1,7 @@
 use crate::editor_font::EditorFont;
 use crate::settings::Settings;
 use crate::shortcuts::{ShortcutAction, ShortcutCategory, ShortcutTarget, is_safe_binding};
+use crate::spellcheck::SpellCheckLanguage;
 
 /// Keyboard filter claimed on every focused category row in the settings nav
 /// list — same mechanism `binder_panel.rs`'s `ARROW_KEYS_FILTER` uses and for
@@ -356,6 +357,27 @@ fn show_editor_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
              changed.",
         )
         .changed();
+    ui.add_space(12.0);
+    ui.heading("Spell Check");
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        ui.label("Language:");
+        let previous = settings.spell_check_language;
+        egui::ComboBox::new("spell_check_language_combo", "")
+            .selected_text(settings.spell_check_language.label())
+            .show_ui(ui, |ui| {
+                for lang in SpellCheckLanguage::ALL {
+                    ui.selectable_value(&mut settings.spell_check_language, lang, lang.label());
+                }
+            });
+        changed |= settings.spell_check_language != previous;
+    })
+    .response
+    .on_hover_text(
+        "Underlines words not found in the selected dictionary while you type. \
+         No right-click suggestions or \"add to dictionary\" yet — expect false \
+         positives on names and invented words until a later update.",
+    );
     changed
 }
 

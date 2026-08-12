@@ -721,8 +721,10 @@ fn rename_wikilink_target_in_line(
 /// via `` ``like `this` `` ``) — a rare enough case not to be worth the extra
 /// complexity here. An unterminated trailing backtick (no closing partner on
 /// the line) opens no span and is simply left out of the result, same as it
-/// wouldn't open real code.
-fn inline_code_ranges(line: &str) -> Vec<std::ops::Range<usize>> {
+/// wouldn't open real code. `pub(crate)` so `spellcheck::misspelled_word_spans`
+/// (a different module) can skip inline code the same way, rather than
+/// duplicating this scan.
+pub(crate) fn inline_code_ranges(line: &str) -> Vec<std::ops::Range<usize>> {
     let mut ranges = Vec::new();
     let mut cursor = 0usize;
     while let Some(offset) = line[cursor..].find('`') {
@@ -739,7 +741,7 @@ fn inline_code_ranges(line: &str) -> Vec<std::ops::Range<usize>> {
     ranges
 }
 
-fn in_inline_code(ranges: &[std::ops::Range<usize>], pos: usize) -> bool {
+pub(crate) fn in_inline_code(ranges: &[std::ops::Range<usize>], pos: usize) -> bool {
     ranges.iter().any(|range| range.contains(&pos))
 }
 

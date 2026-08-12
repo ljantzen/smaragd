@@ -1,0 +1,28 @@
+en_US.aff/en_US.dic and nb_NO.aff/nb_NO.dic are PLACEHOLDER Hunspell-format
+dictionaries, not real spell-checking word lists — each is a tiny,
+hand-written set of common words in valid Hunspell `.aff`/`.dic` syntax
+(see `src/spellcheck.rs`), authored directly for this repository with no
+external sourcing, so they carry no licensing question of their own.
+
+This exists to let the spell-check feature (GitHub issue #47) be built,
+wired, and tested end to end — Settings, the Editor's inline underline
+rendering, the caching, the tokenizer — without yet resolving which real
+dictionary data to bundle. With only ~20 words known per language, nearly
+every real word in a document will be (correctly, if uselessly) flagged
+as unrecognized; this is expected and why `Settings::spell_check_language`
+still defaults to `Off`.
+
+Swapping in real dictionaries later is a drop-in replacement — same
+`Dictionary::new(aff, dic)` loading path in `src/spellcheck.rs`, just
+different bundled files. Do not treat that as done casually: a real
+Hunspell word list is copyrighted work with its own license, and needs
+checking for compatibility with smaragd's GPL-3.0-or-later before bundling.
+Candidates investigated for issue #47 (English `en_US` and Norwegian
+Bokmål `nb_NO`, both from JetBrains' `hunspell-dictionaries` GitHub repo,
+also the source `spellbook`'s own test/example dictionaries use) ship with
+a bare GNU GPL v2 `COPYING`/`license.txt` and no per-file "or any later
+version" grant found anywhere in the bundle — GPL-2.0-only is NOT
+automatically compatible with combining into a GPL-3.0-or-later work, so
+this needs an explicit compatibility check (or a differently-licensed
+source, e.g. an MPL/BSD-licensed dictionary) before real data replaces
+these placeholders.

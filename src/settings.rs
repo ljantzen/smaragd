@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::editor_font::EditorFont;
 use crate::shortcuts::{ShortcutAction, ShortcutMap};
+use crate::spellcheck::SpellCheckLanguage;
 
 /// egui's own default zoom factor — used when `Settings::ui_scale` is
 /// unconfigured (`0.0`), i.e. no change from `native_pixels_per_point`.
@@ -263,6 +264,16 @@ pub struct Settings {
     /// transforms the parsed `Block`/`Span` tree handed to a renderer, never the
     /// file on disk.
     pub typewriter_quotes: bool,
+    /// Which bundled Hunspell-compatible dictionary flags misspelled words with
+    /// an inline underline in the Editor — see `spellcheck::misspelled_word_spans`.
+    /// Off by default: v1 has no suggestions/ignore-word mechanism yet (a
+    /// deliberate, documented follow-up — see `spellcheck`'s module doc comment),
+    /// so an unfamiliar surname or invented word shows up as a false positive
+    /// with no way to silence it — opt-in until that lands. Also currently
+    /// backed by placeholder dictionaries with only a couple dozen known words
+    /// per language (see `assets/dictionaries/NOTICE`), so turning this on
+    /// today isn't yet meaningfully useful regardless of the default.
+    pub spell_check_language: SpellCheckLanguage,
     /// How long an error-severity toast notification (`app::Toast`) stays on
     /// screen before auto-dismissing, in seconds. `0` means "not yet
     /// configured," resolved to a real default at the point of use
@@ -523,6 +534,14 @@ mod tests {
         assert!(!settings.reopen_last_project);
         assert_eq!(settings.last_project_path, None);
         assert!(settings.recent_project_paths.is_empty());
+    }
+
+    #[test]
+    fn spell_check_defaults_to_off() {
+        assert_eq!(
+            Settings::default().spell_check_language,
+            SpellCheckLanguage::Off
+        );
     }
 
     #[test]
@@ -836,6 +855,7 @@ mod tests {
             pomodoro_cycles_before_long_break: 3,
             pomodoro_notifications_enabled: true,
             typewriter_quotes: true,
+            spell_check_language: SpellCheckLanguage::Off,
             toast_duration_secs: 10,
             status_message_duration_secs: 12,
             shortcuts_seen,

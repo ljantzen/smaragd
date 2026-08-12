@@ -6587,6 +6587,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
+ "spellbook",
  "tempfile",
  "thiserror 2.0.19",
  "tiny-skia 0.12.0",
@@ -6699,6 +6700,16 @@ name = "sorted-index-buffer"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea06cc588e43c632923a55450401b8f25e628131571d4e1baea1bdfdb2b5ed06"
+
+[[package]]
+name = "spellbook"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d204abcbdf8e88729306a8d0ca01a79d8a49969fe1f84696909d6dbc4321c1a"
+dependencies = [
+ "foldhash 0.2.0",
+ "hashbrown 0.17.1",
+]
 
 [[package]]
 name = "spez"

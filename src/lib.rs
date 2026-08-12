@@ -19,6 +19,7 @@ pub mod project_template;
 pub mod search;
 pub mod settings;
 pub mod shortcuts;
+pub mod spellcheck;
 pub mod streak;
 pub mod templates;
 pub mod ui;
