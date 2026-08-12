@@ -31,6 +31,10 @@ this file.
   background pill in the link color, matching how `[[wikilink]]`s already
   stand out from plain text — and are clickable, opening the Tags dock
   pre-filtered to that tag (#34).
+- The Tags dock now groups nested `#parent/child` tags hierarchically, the
+  way Obsidian's tag pane does: `#projects` shows as a collapsible section
+  with `#projects/tachylite` (and siblings) nested underneath, instead of
+  every tag — nested or not — sitting in one flat list (#38).
 
 ## v0.9.0 — 2026-08-11
 
