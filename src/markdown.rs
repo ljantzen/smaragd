@@ -429,9 +429,9 @@ fn has_image_extension(name: &str) -> bool {
 
 /// Replace `[[Topic]]` / `[[Topic|Alias]]` wikilinks (and `![[Topic]]` embeds) in
 /// `markdown` with placeholders pulldown-cmark's inline parser won't fragment,
-/// skipping fenced code blocks (whose content must stay literal). Returns the
-/// rewritten markdown plus a side table indexed by the number embedded in each
-/// placeholder.
+/// skipping fenced code blocks and single-backtick inline code spans (whose
+/// content must stay literal). Returns the rewritten markdown plus a side table
+/// indexed by the number embedded in each placeholder.
 fn extract_wikilinks(markdown: &str) -> (String, Vec<WikilinkPlaceholder>) {
     // WIKILINK_MARK is meant to appear only in placeholders *we* insert below, each
     // immediately followed by a decimal table index and a closing WIKILINK_MARK.
@@ -469,8 +469,21 @@ fn replace_wikilinks_in_line(
     table: &mut Vec<WikilinkPlaceholder>,
     output: &mut String,
 ) {
+    let code_ranges = inline_code_ranges(line);
     let mut rest = line;
-    while let Some(start) = rest.find("[[") {
+    loop {
+        let Some(start) = rest.find("[[") else {
+            output.push_str(rest);
+            return;
+        };
+        // `` `[[not a link]]` `` inside inline code: leave it as literal text
+        // (including the brackets themselves) rather than a wikilink, same as
+        // `wikilink_spans` does for the backlinks/cursor-lookup side.
+        if in_inline_code(&code_ranges, line.len() - rest.len() + start) {
+            output.push_str(&rest[..start + 2]);
+            rest = &rest[start + 2..];
+            continue;
+        }
         // A "!" immediately before "[[" marks an embed; it's part of the marker, not
         // literal text, so it isn't copied to `output`.
         let is_embed = start > 0 && rest.as_bytes()[start - 1] == b'!';
@@ -501,7 +514,6 @@ fn replace_wikilinks_in_line(
             }
         }
     }
-    output.push_str(rest);
 }
 
 /// Split `text` (already through pulldown-cmark) on wikilink placeholders inserted by
@@ -627,10 +639,41 @@ fn rename_wikilink_target_in_line(
     changed
 }
 
+/// Byte ranges (covering both backticks) of every single-backtick inline code
+/// span — `` `code` `` — on one line, used by `wikilink_spans`/
+/// `inline_tag_spans`/`replace_wikilinks_in_line` to leave `` `[[not a
+/// link]]` ``/`` `#not-a-tag` `` as literal text rather than a real wikilink/
+/// tag. Deliberately only single backticks, not the general N-backtick-fence
+/// CommonMark inline-code rule (which lets a span contain a literal backtick
+/// via `` ``like `this` `` ``) — a rare enough case not to be worth the extra
+/// complexity here. An unterminated trailing backtick (no closing partner on
+/// the line) opens no span and is simply left out of the result, same as it
+/// wouldn't open real code.
+fn inline_code_ranges(line: &str) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(offset) = line[cursor..].find('`') {
+        let open = cursor + offset;
+        match line[open + 1..].find('`') {
+            Some(close_offset) => {
+                let close = open + 1 + close_offset;
+                ranges.push(open..close + 1);
+                cursor = close + 1;
+            }
+            None => break,
+        }
+    }
+    ranges
+}
+
+fn in_inline_code(ranges: &[std::ops::Range<usize>], pos: usize) -> bool {
+    ranges.iter().any(|range| range.contains(&pos))
+}
+
 /// The byte range (covering the full `[[...]]`) and target of every wikilink in
-/// `markdown`, skipping fenced code blocks. `pub(crate)` rather than private since
-/// `project::backlinks` (a different module) needs the same byte ranges this crate's
-/// own `wikilink_target_at` already relies on.
+/// `markdown`, skipping fenced code blocks and single-backtick inline code spans.
+/// `pub(crate)` rather than private since `project::backlinks` (a different module)
+/// needs the same byte ranges this crate's own `wikilink_target_at` already relies on.
 pub(crate) fn wikilink_spans(markdown: &str) -> Vec<(std::ops::Range<usize>, String)> {
     let mut spans = Vec::new();
     let mut in_fence = false;
@@ -640,11 +683,16 @@ pub(crate) fn wikilink_spans(markdown: &str) -> Vec<(std::ops::Range<usize>, Str
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
             in_fence = !in_fence;
         } else if !in_fence {
+            let code_ranges = inline_code_ranges(line);
             let mut cursor = 0usize;
             while let Some(start) = line[cursor..].find("[[") {
                 let open_end = cursor + start + 2;
                 match line[open_end..].find("]]") {
                     Some(end) => {
+                        if in_inline_code(&code_ranges, cursor + start) {
+                            cursor = open_end + end + 2;
+                            continue;
+                        }
                         let inner = &line[open_end..open_end + end];
                         let target = inner.split_once('|').map_or(inner, |(t, _)| t).trim();
                         let abs_start = line_start + cursor + start;
@@ -768,16 +816,17 @@ fn is_tag_char(c: char) -> bool {
 }
 
 /// Every `#tag` marker in `markdown`'s raw source (byte range including the
-/// `#`, plus the tag text itself), skipping fenced code blocks the same way
-/// `extract_wikilinks`/`wikilink_spans` do. A `#` only starts a tag when the
-/// character immediately before it (if any) isn't itself alphanumeric — so
-/// `foo#bar` mid-word doesn't match, but `(#tag)`, a leading `#tag`, and
-/// `-#tag` do — and the run of `is_tag_char` characters after it must contain
-/// at least one ASCII letter or it's left as plain text: this rejects
-/// `#42`/`#1`-style numeric references (issue numbers, footnote markers),
-/// common in prose and never meant as tags, and also means an ATX heading's
-/// `#`/`##`/etc. (always followed by a space or end of line) never matches,
-/// with no separate heading-detection logic needed.
+/// `#`, plus the tag text itself), skipping fenced code blocks and
+/// single-backtick inline code spans the same way `extract_wikilinks`/
+/// `wikilink_spans` do. A `#` only starts a tag when the character
+/// immediately before it (if any) isn't itself alphanumeric — so `foo#bar`
+/// mid-word doesn't match, but `(#tag)`, a leading `#tag`, and `-#tag` do —
+/// and the run of `is_tag_char` characters after it must contain at least one
+/// ASCII letter or it's left as plain text: this rejects `#42`/`#1`-style
+/// numeric references (issue numbers, footnote markers), common in prose and
+/// never meant as tags, and also means an ATX heading's `#`/`##`/etc.
+/// (always followed by a space or end of line) never matches, with no
+/// separate heading-detection logic needed.
 pub(crate) fn inline_tag_spans(markdown: &str) -> Vec<(std::ops::Range<usize>, String)> {
     let mut spans = Vec::new();
     let mut in_fence = false;
@@ -787,6 +836,7 @@ pub(crate) fn inline_tag_spans(markdown: &str) -> Vec<(std::ops::Range<usize>, S
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
             in_fence = !in_fence;
         } else if !in_fence {
+            let code_ranges = inline_code_ranges(line);
             let mut cursor = 0usize;
             while let Some(offset) = line[cursor..].find('#') {
                 let hash_pos = cursor + offset;
@@ -799,7 +849,10 @@ pub(crate) fn inline_tag_spans(markdown: &str) -> Vec<(std::ops::Range<usize>, S
                     .find(|c: char| !is_tag_char(c))
                     .map_or(line.len(), |end| tag_start + end);
                 let tag = &line[tag_start..tag_end];
-                if !preceded_by_word_char && tag.chars().any(|c| c.is_ascii_alphabetic()) {
+                if !preceded_by_word_char
+                    && tag.chars().any(|c| c.is_ascii_alphabetic())
+                    && !in_inline_code(&code_ranges, hash_pos)
+                {
                     spans.push((line_start + hash_pos..line_start + tag_end, tag.to_string()));
                 }
                 cursor = tag_end.max(hash_pos + 1);
@@ -1131,6 +1184,31 @@ mod tests {
     }
 
     #[test]
+    fn wikilink_inside_inline_code_is_left_as_plain_text() {
+        let blocks = parse("See `[[not a link]]` here.");
+        let code_span = blocks[0]
+            .spans
+            .iter()
+            .find(|s| s.code)
+            .expect("inline code span");
+        assert_eq!(code_span.text, "[[not a link]]");
+        assert!(blocks[0].spans.iter().all(|s| s.wikilink.is_none()));
+    }
+
+    #[test]
+    fn wikilink_spans_skips_a_wikilink_inside_inline_code() {
+        assert_eq!(wikilink_spans("`[[not a link]]`"), Vec::new());
+    }
+
+    #[test]
+    fn wikilink_spans_still_finds_a_real_wikilink_on_a_line_with_unrelated_code() {
+        let text = "`code` and [[Topic]]";
+        let spans = wikilink_spans(text);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].1, "Topic");
+    }
+
+    #[test]
     fn a_literal_private_use_area_character_does_not_panic() {
         // Regression test: WIKILINK_MARK ('\u{E000}') is used internally as a
         // placeholder delimiter; a document that already contains one (e.g. from an
@@ -1367,6 +1445,31 @@ mod tests {
     #[test]
     fn inline_tag_spans_skips_fenced_code_blocks() {
         assert_eq!(inline_tag_spans("```\n#foo\n```\n"), Vec::new());
+    }
+
+    #[test]
+    fn inline_tag_spans_skips_a_tag_inside_inline_code() {
+        assert_eq!(inline_tag_spans("`#not-a-tag`"), Vec::new());
+    }
+
+    #[test]
+    fn inline_tag_spans_still_finds_a_real_tag_on_a_line_with_unrelated_code() {
+        let spans = inline_tag_spans("`code` and #foo");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].1, "foo");
+    }
+
+    #[test]
+    fn inline_code_ranges_finds_multiple_spans_on_one_line() {
+        let ranges = inline_code_ranges("`a` and `b`");
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(&"`a` and `b`"[ranges[0].clone()], "`a`");
+        assert_eq!(&"`a` and `b`"[ranges[1].clone()], "`b`");
+    }
+
+    #[test]
+    fn inline_code_ranges_ignores_an_unterminated_trailing_backtick() {
+        assert!(inline_code_ranges("some text with a stray ` backtick").is_empty());
     }
 
     #[test]

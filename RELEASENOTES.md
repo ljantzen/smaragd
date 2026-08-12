@@ -15,6 +15,9 @@ this file.
   neighbors, depending on the typesetting style's font. Every span in a line
   is now drawn as one combined block of text instead of gluing separate
   widgets together.
+- A `` `[[not a link]]` `` or `` `#not-a-tag` `` written inside inline code is
+  now left alone instead of being treated as a real wikilink/tag — matches
+  the existing behavior for fenced code blocks (#37).
 
 ## v0.9.0 — 2026-08-11
 
