@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v0.9.5 — 2026-08-13
+
 - Settings gains its own **Spell Check** category, with a **Dictionaries**
   list (part of the new, still early spell-check groundwork — see below): a
   "Download" button per supported language fetches a real, individually
