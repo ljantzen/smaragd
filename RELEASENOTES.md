@@ -5,6 +5,18 @@ this file.
 
 ## Unreleased
 
+## v1.0.2 — 2026-08-13
+
+- Fixed the Linux AppImage still refusing to run (v1.0.1's fix wasn't
+  enough) on distributions with a newer glibc (2.41+, e.g. Fedora 42 and
+  other current rolling-release distros). Every current AppImage runtime,
+  including upstream's newest builds, stamps its own identifying magic
+  bytes over the ELF header's ABI-version field; glibc now rejects that on
+  affected systems. The release pipeline zeroes that one byte after
+  building the AppImage, and the CI smoke test now asserts it directly
+  (the CI runner's own glibc is too old to have caught this by actually
+  running the AppImage).
+
 ## v1.0.1 — 2026-08-13
 
 - Fixed the Linux AppImage failing to run on some distributions with a
