@@ -43,6 +43,15 @@ impl Project {
                 &relative_key(&self.root, &new_path),
             );
         }
+        // Unlike `rewrite_relative_key_prefix` above (only meaningful for a
+        // folder, since files have no descendant keys to follow), this also
+        // covers a plain document rename: a bookmark's `path` names its
+        // document directly, so it needs to follow every rename, not just a
+        // folder's.
+        self.rewrite_bookmark_paths(
+            &relative_key(&self.root, path),
+            &relative_key(&self.root, &new_path),
+        );
 
         self.save_metadata()?;
         self.rescan();
@@ -286,6 +295,12 @@ impl Project {
                 &relative_key(&self.root, &dest),
             );
         }
+        // Covers a single moved document too, same reasoning as `rename`'s own
+        // call to this.
+        self.rewrite_bookmark_paths(
+            &relative_key(&self.root, path),
+            &relative_key(&self.root, &dest),
+        );
         // Appends `dest_name` after every one of `new_parent`'s *current*
         // children — tracked or not — rather than just whatever was already in
         // its (possibly sparse) `node_order` entry; see `reposition_in_order`'s

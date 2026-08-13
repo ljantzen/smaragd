@@ -10,6 +10,11 @@ this file.
   document row can show its line, word, and character count, right-aligned
   as `lines/words/chars`. Toggle it with `Ctrl+Alt+D`, remappable like any
   other shortcut under **Settings > Shortcuts**.
+- Fixed bookmarks losing track of their document on a rename or move: a
+  bookmark now follows its document through a rename, a drag-and-drop move,
+  and a trash/restore round trip, instead of quietly going stale. A
+  bookmark is only actually removed once its document is gone for good —
+  permanently deleted, or via **Empty Trash** (#71).
 
 ## v1.0.2 — 2026-08-13
 

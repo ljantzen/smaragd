@@ -710,8 +710,13 @@ fn show_node(
             let status_color = document_row_color(&node.path);
             let label = document_display_label(&node.name, git_dirty.contains(&node.path));
             let stats_label = document_stats_label(document_stats(&node.path));
-            let response =
-                document_row(ui, &label, stats_label.as_deref(), is_selected, status_color);
+            let response = document_row(
+                ui,
+                &label,
+                stats_label.as_deref(),
+                is_selected,
+                status_color,
+            );
             visible_rows.push((node.path.clone(), response.id));
             if response.clicked() {
                 *event = Some(BinderEvent::Selected(node.path.clone()));

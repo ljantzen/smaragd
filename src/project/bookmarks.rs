@@ -12,12 +12,13 @@ pub struct Bookmark {
     /// Project-root-relative `/`-joined key (via `relative_key`), the same
     /// portable convention `folder_roles`/`trashed_origins`/`node_order`
     /// already use — survives the whole project folder being relocated or
-    /// cloned elsewhere, unlike an absolute path. Deliberately *not* kept
-    /// in sync on a document rename/move/delete (v1 scope): a bookmark
-    /// whose document no longer resolves is left dangling, the same
-    /// tolerant-of-drift behavior `StoryCard::linked_document_stems`
-    /// already established (see `deleting_the_linked_document_leaves_a_dangling_but_harmless_link`
-    /// in `story_cards.rs`).
+    /// cloned elsewhere, unlike an absolute path. Kept in sync on a
+    /// document/folder rename or move — see `Project::rewrite_bookmark_paths`,
+    /// called from the same rename/move sites `Project::rewrite_relative_key_prefix`
+    /// is (including a trash/restore round trip, itself just a move) — so a
+    /// bookmark follows its document instead of dangling. Only actually
+    /// removed once the document is gone for good, via
+    /// `Project::remove_bookmarks_under_prefix` — see `permanently_delete`.
     pub path: String,
     /// 1-based logical line — a run of text ending in a real `\n`, the same
     /// definition `ui::editor_panel::paint_gutter` and `search::line_at`
@@ -86,6 +87,39 @@ impl Project {
     pub fn delete_bookmark(&mut self, id: Uuid) -> io::Result<()> {
         self.meta.bookmarks.retain(|b| b.id != id);
         self.save_metadata()
+    }
+
+    /// Follow a document/folder rename or move: any bookmark whose `path` is
+    /// exactly `old_prefix`, or nested under it (`old_prefix/...`, a
+    /// descendant inside a moved/renamed folder), is rewritten to sit under
+    /// `new_prefix` instead — the same "keep pointing at where the thing
+    /// actually is" job `rewrite_relative_key_prefix` does for
+    /// `node_order`/`folder_roles`/etc. Called from the same call sites that
+    /// one is (`rename`, `move_node_with`), plus the single-document (not
+    /// just folder) cases those skip it for, since a bookmark's `path` names
+    /// a document directly rather than being keyed by one. Does not persist
+    /// — callers already call `save_metadata` after the rest of the move.
+    pub(super) fn rewrite_bookmark_paths(&mut self, old_prefix: &str, new_prefix: &str) {
+        let nested_prefix = format!("{old_prefix}/");
+        for bookmark in self.meta.bookmarks.iter_mut() {
+            if bookmark.path == old_prefix {
+                bookmark.path = new_prefix.to_string();
+            } else if let Some(rest) = bookmark.path.strip_prefix(&nested_prefix) {
+                bookmark.path = format!("{new_prefix}/{rest}");
+            }
+        }
+    }
+
+    /// Drop every bookmark whose `path` is `prefix` itself or nested under it
+    /// (`prefix/...`) — called once the underlying file or folder is gone for
+    /// good (`permanently_delete`), unlike a move/rename/trash round trip
+    /// (see `rewrite_bookmark_paths`), where the bookmark should keep
+    /// pointing at its new location instead of being dropped.
+    pub(super) fn remove_bookmarks_under_prefix(&mut self, prefix: &str) {
+        let nested_prefix = format!("{prefix}/");
+        self.meta
+            .bookmarks
+            .retain(|b| b.path != prefix && !b.path.starts_with(&nested_prefix));
     }
 
     /// Every bookmark in the project, resolved against the current binder
@@ -197,21 +231,96 @@ mod tests {
     }
 
     #[test]
-    fn deleting_the_bookmarked_document_leaves_a_dangling_but_harmless_bookmark() {
+    fn permanently_deleting_the_bookmarked_document_removes_its_bookmark() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
         let doc = project.create_document(dir.path(), "Scene 1").unwrap();
         project.toggle_bookmark(&doc, 1).unwrap();
 
+        // No Trash folder is designated, so this goes straight to
+        // `permanently_delete` — the document is gone for good, so its
+        // bookmark should be too, not left dangling.
         project.delete(&doc).unwrap();
 
-        // The bookmark survives untouched; only resolution against the
-        // (now-gone) tree fails, mirroring how a dangling linked story-card
-        // document behaves elsewhere.
-        assert_eq!(project.meta.bookmarks.len(), 1);
+        assert!(project.meta.bookmarks.is_empty());
+    }
+
+    #[test]
+    fn moving_a_bookmarked_document_to_trash_keeps_its_bookmark_resolving() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let doc = project.create_document(dir.path(), "Scene 1").unwrap();
+        project.toggle_bookmark(&doc, 3).unwrap();
+
+        project.delete(&doc).unwrap();
+
+        let trashed = trash.join("Scene 1.md");
+        assert_eq!(project.bookmarked_lines_for(&trashed), HashSet::from([3]));
         let resolved = project.resolved_bookmarks();
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].document_stem, None);
+        assert_eq!(resolved[0].document_stem, Some("Scene 1".to_string()));
+    }
+
+    #[test]
+    fn emptying_trash_removes_bookmarks_of_the_documents_it_deletes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let trash = project.create_folder(dir.path(), "Trash").unwrap();
+        project
+            .set_folder_role(&trash, Some(FolderRole::Trash))
+            .unwrap();
+        let doc = project.create_document(dir.path(), "Scene 1").unwrap();
+        project.toggle_bookmark(&doc, 3).unwrap();
+        project.delete(&doc).unwrap();
+        assert_eq!(project.meta.bookmarks.len(), 1);
+
+        project.empty_trash().unwrap();
+
+        assert!(project.meta.bookmarks.is_empty());
+    }
+
+    #[test]
+    fn renaming_a_bookmarked_document_keeps_its_bookmark_resolving() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Scene 1").unwrap();
+        project.toggle_bookmark(&doc, 2).unwrap();
+
+        let renamed = project.rename(&doc, "Scene 1 Renamed").unwrap();
+
+        assert_eq!(project.bookmarked_lines_for(&renamed), HashSet::from([2]));
+        assert!(project.bookmarked_lines_for(&doc).is_empty());
+    }
+
+    #[test]
+    fn renaming_a_folder_keeps_a_descendant_documents_bookmark_resolving() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+        let doc = project.create_document(&chapter, "Scene 1").unwrap();
+        project.toggle_bookmark(&doc, 4).unwrap();
+
+        let renamed_chapter = project.rename(&chapter, "Chapter One").unwrap();
+
+        let moved_doc = renamed_chapter.join("Scene 1.md");
+        assert_eq!(project.bookmarked_lines_for(&moved_doc), HashSet::from([4]));
+    }
+
+    #[test]
+    fn moving_a_bookmarked_document_to_a_different_folder_keeps_its_bookmark_resolving() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Scene 1").unwrap();
+        project.toggle_bookmark(&doc, 1).unwrap();
+        let chapter = project.create_folder(dir.path(), "Chapter 1").unwrap();
+
+        let moved = project.move_item(&doc, &chapter).unwrap();
+
+        assert_eq!(project.bookmarked_lines_for(&moved), HashSet::from([1]));
     }
 
     #[test]

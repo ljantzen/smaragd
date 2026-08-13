@@ -95,7 +95,7 @@ impl Project {
         }
         let key = relative_key(&self.root, path);
         if is_dir {
-            let prefix = key;
+            let prefix = key.clone();
             let under_prefix = |k: &String| *k == prefix || k.starts_with(&format!("{prefix}/"));
             self.meta.node_order.retain(|k, _| !under_prefix(k));
             self.meta.folder_roles.retain(|k, _| !under_prefix(k));
@@ -105,6 +105,13 @@ impl Project {
             self.meta.folder_roles.remove(&key);
             self.meta.trashed_origins.remove(&key);
         }
+        // Unlike a move/rename/trash round trip (`rewrite_bookmark_paths`,
+        // which keeps a bookmark following its document), the document is
+        // actually gone for good here — permanently_delete is what both a
+        // no-Trash-configured delete and `empty_trash` (per child) bottom
+        // out in, so this is also what makes emptying Trash drop a trashed
+        // document's bookmarks.
+        self.remove_bookmarks_under_prefix(&key);
 
         self.save_metadata()?;
         self.rescan();
