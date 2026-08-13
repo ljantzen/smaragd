@@ -53,7 +53,8 @@ pub(super) struct MetadataState {
 /// from a single `fs::read_to_string` — `status` (the original reason
 /// `DocumentStatusCache` exists), plus `pov` and `word_count`/
 /// `word_count_target` (added for `BinderColorMode::Pov`/
-/// `WordCountProgress`) — so supporting two more color modes costs no
+/// `WordCountProgress`), and `line_count`/`char_count` (added for
+/// `Settings::show_document_stats_in_binder`) — so supporting these costs no
 /// additional per-row disk reads over what status-coloring already paid for.
 #[derive(Clone, Default)]
 struct CachedDocumentRow {
@@ -61,6 +62,8 @@ struct CachedDocumentRow {
     pov: Option<String>,
     word_count_target: Option<u32>,
     word_count: usize,
+    line_count: usize,
+    char_count: usize,
 }
 
 /// Lazily-populated, disk-backed cache of each *closed* document's
@@ -94,6 +97,8 @@ impl DocumentStatusCache {
             pov: meta.pov,
             word_count_target: meta.word_count_target,
             word_count: crate::frontmatter::count_words(&contents),
+            line_count: crate::frontmatter::count_lines(&contents),
+            char_count: crate::frontmatter::count_chars(&contents),
         };
         self.cache
             .borrow_mut()
@@ -116,6 +121,14 @@ impl DocumentStatusCache {
     pub(super) fn word_count_progress(&self, path: &Path) -> (usize, Option<u32>) {
         let row = self.row(path);
         (row.word_count, row.word_count_target)
+    }
+
+    /// `(line_count, word_count, char_count)` — the trailing readout
+    /// `Settings::show_document_stats_in_binder` shows on each closed
+    /// document's Binder row — see `row`.
+    pub(super) fn document_stats(&self, path: &Path) -> (usize, usize, usize) {
+        let row = self.row(path);
+        (row.line_count, row.word_count, row.char_count)
     }
 
     /// Drop `path`'s cached entry so the next lookup re-reads it from disk —

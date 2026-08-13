@@ -82,6 +82,9 @@ pub enum ShortcutAction {
     /// `dispatch_shortcut_action` pass like `GoBack`/`GoForward` above.
     NextBookmark,
     PreviousBookmark,
+    /// Flip `Settings::show_document_stats_in_binder` on/off — an ordinary
+    /// `Settings` bool toggle, same shape as `ToggleDarkMode`.
+    ToggleDocumentStats,
 }
 
 impl ShortcutAction {
@@ -127,6 +130,7 @@ impl ShortcutAction {
         Self::ToggleBookmarksPanel,
         Self::NextBookmark,
         Self::PreviousBookmark,
+        Self::ToggleDocumentStats,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -173,6 +177,7 @@ impl ShortcutAction {
             Self::ToggleBookmarksPanel => "Toggle Bookmarks",
             Self::NextBookmark => "Next Bookmark",
             Self::PreviousBookmark => "Previous Bookmark",
+            Self::ToggleDocumentStats => "Toggle Document Stats in Binder",
         }
     }
 
@@ -224,6 +229,7 @@ impl ShortcutAction {
             Self::ToggleBookmarksPanel => "toggle_bookmarks_panel",
             Self::NextBookmark => "next_bookmark",
             Self::PreviousBookmark => "previous_bookmark",
+            Self::ToggleDocumentStats => "toggle_document_stats",
         }
     }
 
@@ -265,7 +271,8 @@ impl ShortcutAction {
             | Self::ToggleBinderFocus
             | Self::ToggleFocusMode
             | Self::CycleBinderColorMode
-            | Self::ToggleBookmarksPanel => ShortcutCategory::View,
+            | Self::ToggleBookmarksPanel
+            | Self::ToggleDocumentStats => ShortcutCategory::View,
             Self::GitCommit | Self::GitPush => ShortcutCategory::Git,
             Self::CommandPrompt
             | Self::TogglePomodoro
@@ -372,6 +379,9 @@ impl ShortcutAction {
             // of visit history.
             Self::NextBookmark => KeyboardShortcut::new(Modifiers::ALT, Key::ArrowDown),
             Self::PreviousBookmark => KeyboardShortcut::new(Modifiers::ALT, Key::ArrowUp),
+            Self::ToggleDocumentStats => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::D)
+            }
         }
     }
 }

@@ -221,6 +221,28 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             }
                         }
                     };
+                    // Same open-vs-cached split `document_row_color` above uses:
+                    // the open document's stats come from the live buffer (may
+                    // include unsaved edits), every other document's from
+                    // `document_status_cache` (a single disk read, reused across
+                    // frames). Returns `None` entirely when the setting is off,
+                    // so `binder_panel::document_display_label` skips the
+                    // stats suffix rather than showing a hidden zeroed one.
+                    let document_stats = |path: &Path| -> Option<(usize, usize, usize)> {
+                        if !self.settings.show_document_stats_in_binder {
+                            return None;
+                        }
+                        let is_open = Some(path) == self.open_path.as_deref();
+                        Some(if is_open {
+                            (
+                                crate::frontmatter::count_lines(&self.editor.buffer),
+                                crate::frontmatter::count_words(&self.editor.buffer),
+                                crate::frontmatter::count_chars(&self.editor.buffer),
+                            )
+                        } else {
+                            self.document_status_cache.document_stats(path)
+                        })
+                    };
                     if let Some(event) = ui::binder_panel::show(
                         ui,
                         project,
@@ -231,6 +253,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         &document_row_color,
                         self.folder_word_counts,
                         self.git_dirty_paths,
+                        &document_stats,
                     ) {
                         self.actions.push(DockAction::Binder(event));
                     }

@@ -320,6 +320,19 @@ fn show_appearance_category(
          scale winit picks up). Leave at 100% if the UI already looks \
          right.",
     );
+    ui.add_space(12.0);
+    ui.heading("Binder");
+    ui.add_space(12.0);
+    changed |= ui
+        .checkbox(
+            &mut settings.show_document_stats_in_binder,
+            "Show document stats in binder",
+        )
+        .on_hover_text(
+            "Show each document's line, word, and character count on its \
+             Binder row.",
+        )
+        .changed();
     changed
 }
 

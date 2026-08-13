@@ -335,6 +335,14 @@ pub struct Settings {
     /// Story Grid columns the user has hidden via its "Columns" menu — a column
     /// absent from this set is shown. See [`StoryGridColumn`].
     pub story_grid_hidden_columns: BTreeSet<StoryGridColumn>,
+    /// Show each document's line/word/character count as a trailing readout on
+    /// its Binder row (see `ui::binder_panel::document_display_label`), sourced
+    /// from `frontmatter::count_lines`/`count_words`/`count_chars` over the
+    /// document body. Off by default, same opt-in convention
+    /// `show_editor_gutter` above uses: most of the time the binder is read as
+    /// a plain document outline, and a stats readout on every row adds visual
+    /// noise most authors won't want by default.
+    pub show_document_stats_in_binder: bool,
 }
 
 /// The full path to the settings file, e.g. `~/.config/smaragd/smaragd.toml` on
@@ -881,6 +889,7 @@ mod tests {
                 StoryGridColumn::Cause,
                 StoryGridColumn::Effect,
             ]),
+            show_document_stats_in_binder: true,
         };
 
         settings.save_to_path(&path).unwrap();

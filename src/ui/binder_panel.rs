@@ -4,6 +4,12 @@ use std::path::{Path, PathBuf};
 use crate::project::model::{BinderNode, BinderNodeKind, document_label};
 use crate::project::{BinderColorMode, FolderRole, PicklistField, Project};
 
+/// `(line_count, word_count, char_count)` for a document row, or `None` when
+/// `Settings::show_document_stats_in_binder` is off — the closure type shared
+/// by `show`/`show_node`, factored out purely to satisfy
+/// `clippy::type_complexity`.
+type DocumentStatsFn<'a> = dyn Fn(&Path) -> Option<(usize, usize, usize)> + 'a;
+
 /// Outcomes of user interaction with the binder tree, handled by the caller (`app.rs`)
 /// rather than mutated here — keeps this module a pure rendering layer over `&Project`.
 #[derive(Debug, PartialEq)]
@@ -100,6 +106,7 @@ pub fn show(
     document_row_color: &dyn Fn(&Path) -> Option<egui::Color32>,
     folder_word_counts: &HashMap<PathBuf, usize>,
     git_dirty: &std::collections::HashSet<PathBuf>,
+    document_stats: &DocumentStatsFn,
 ) -> Option<BinderEvent> {
     let mut event = None;
     let mut visible_rows: Vec<(PathBuf, egui::Id)> = Vec::new();
@@ -116,6 +123,7 @@ pub fn show(
         document_row_color,
         folder_word_counts,
         git_dirty,
+        document_stats,
     );
 
     // Up/Down move the keyboard cursor between rows, in the same top-to-bottom order
@@ -261,6 +269,16 @@ fn document_display_label(name: &str, dirty: bool) -> String {
     }
 }
 
+/// The compact `lines/words/chars` readout painted right-aligned on a
+/// document's Binder row (see `document_row`) when `stats` is `Some` —
+/// `Settings::show_document_stats_in_binder`'s on-off switch, resolved to
+/// `None` by the caller when the setting is off. Its own pure function (like
+/// `document_display_label`) so the exact `/`-separated format is unit
+/// testable without driving a full `egui::Ui` frame.
+fn document_stats_label(stats: Option<(usize, usize, usize)>) -> Option<String> {
+    stats.map(|(lines, words, chars)| format!("{lines}/{words}/{chars}"))
+}
+
 /// Paint a row's background: `status_color` (if any — see `ProjectMeta::status_colors`)
 /// as an always-on base fill, then the usual hover/focus/selection highlight
 /// layered on top when any of those apply. Interaction feedback always wins
@@ -386,9 +404,14 @@ fn folder_header(
 /// underneath the usual hover/selection highlight — see
 /// `paint_row_background`'s doc comment. Matches `Button::selectable`'s
 /// size/padding so switching to this doesn't shift the binder's layout.
+/// `stats` (see `document_stats_label`), when present, is painted right-aligned
+/// in a dimmer color, independent of `label`'s own left alignment — the two
+/// are separate galleys rather than one padded string so `stats` stays pinned
+/// to the row's right edge regardless of how long `label` is.
 fn document_row(
     ui: &mut egui::Ui,
     label: &str,
+    stats: Option<&str>,
     is_selected: bool,
     status_color: Option<egui::Color32>,
 ) -> egui::Response {
@@ -402,6 +425,14 @@ fn document_row(
         wrap_width,
         egui::TextStyle::Button,
     );
+    let stats_galley = stats.map(|stats| {
+        egui::WidgetText::from(stats).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            wrap_width,
+            egui::TextStyle::Button,
+        )
+    });
     let desired_size = egui::vec2(
         ui.available_width(),
         galley.size().y + 2.0 * button_padding.y,
@@ -416,6 +447,14 @@ fn document_row(
             rect.center().y - galley.size().y / 2.0,
         );
         ui.painter().galley(text_pos, galley, visuals.text_color());
+        if let Some(stats_galley) = stats_galley {
+            let stats_pos = egui::pos2(
+                rect.max.x - button_padding.x - stats_galley.size().x,
+                rect.center().y - stats_galley.size().y / 2.0,
+            );
+            ui.painter()
+                .galley(stats_pos, stats_galley, ui.visuals().weak_text_color());
+        }
     }
 
     response
@@ -435,6 +474,7 @@ fn show_node(
     document_row_color: &dyn Fn(&Path) -> Option<egui::Color32>,
     folder_word_counts: &HashMap<PathBuf, usize>,
     git_dirty: &std::collections::HashSet<PathBuf>,
+    document_stats: &DocumentStatsFn,
 ) {
     match &node.kind {
         BinderNodeKind::Folder { children } => {
@@ -660,6 +700,7 @@ fn show_node(
                         document_row_color,
                         folder_word_counts,
                         git_dirty,
+                        document_stats,
                     );
                 }
             });
@@ -668,7 +709,9 @@ fn show_node(
             let is_selected = selected == Some(node.path.as_path());
             let status_color = document_row_color(&node.path);
             let label = document_display_label(&node.name, git_dirty.contains(&node.path));
-            let response = document_row(ui, &label, is_selected, status_color);
+            let stats_label = document_stats_label(document_stats(&node.path));
+            let response =
+                document_row(ui, &label, stats_label.as_deref(), is_selected, status_color);
             visible_rows.push((node.path.clone(), response.id));
             if response.clicked() {
                 *event = Some(BinderEvent::Selected(node.path.clone()));
@@ -752,6 +795,19 @@ mod tests {
             document_display_label("01-opening.md", true),
             format!("01-opening{GIT_DIRTY_MARKER}")
         );
+    }
+
+    #[test]
+    fn document_stats_label_formats_as_slash_separated_lines_words_chars() {
+        assert_eq!(
+            document_stats_label(Some((53, 418, 2345))),
+            Some("53/418/2345".to_string())
+        );
+    }
+
+    #[test]
+    fn document_stats_label_is_none_when_stats_are_none() {
+        assert_eq!(document_stats_label(None), None);
     }
 
     #[test]
@@ -923,6 +979,7 @@ mod tests {
                     &|_| None,
                     &HashMap::new(),
                     &std::collections::HashSet::new(),
+                    &|_| None,
                 );
             });
             event

@@ -173,6 +173,30 @@ pub fn count_words(contents: &str) -> usize {
     strip(contents).split_whitespace().count()
 }
 
+/// A document's line count for display in the Binder (see
+/// `Settings::show_document_stats_in_binder`): logical (`\n`-delimited) lines
+/// in the body, after stripping frontmatter — same convention `count_words`
+/// uses, and the same "logical, not wrapped" definition
+/// `ui::editor_panel::paint_gutter`'s line numbers use. An empty body counts
+/// as zero lines rather than one, unlike the gutter (which always shows at
+/// least line 1 for the cursor to sit on) — there's no cursor here, just a
+/// document that may have no body at all.
+pub fn count_lines(contents: &str) -> usize {
+    let body = strip(contents);
+    if body.is_empty() {
+        0
+    } else {
+        body.matches('\n').count() + 1
+    }
+}
+
+/// A document's character count for display in the Binder (see
+/// `Settings::show_document_stats_in_binder`): every character in the body,
+/// after stripping frontmatter — same convention `count_words` uses.
+pub fn count_chars(contents: &str) -> usize {
+    strip(contents).chars().count()
+}
+
 /// Rewrite `contents`' leading frontmatter block — or add one, if it didn't have one
 /// and `meta` isn't entirely empty — to reflect `meta`, leaving the body untouched.
 ///
@@ -454,6 +478,35 @@ mod tests {
     #[test]
     fn count_words_is_zero_for_a_frontmatter_only_document_with_no_body() {
         assert_eq!(count_words("---\ntype: Scene\n---\n"), 0);
+    }
+
+    #[test]
+    fn count_lines_counts_logical_lines_in_the_body() {
+        assert_eq!(count_lines("One line.\n"), 2);
+        assert_eq!(count_lines("Line one.\nLine two."), 2);
+    }
+
+    #[test]
+    fn count_lines_excludes_the_frontmatter_block() {
+        let contents = "---\ntype: Scene\n---\nOne line.\n";
+        assert_eq!(count_lines(contents), 2);
+    }
+
+    #[test]
+    fn count_lines_is_zero_for_an_empty_document() {
+        assert_eq!(count_lines(""), 0);
+        assert_eq!(count_lines("---\ntype: Scene\n---\n"), 0);
+    }
+
+    #[test]
+    fn count_chars_counts_characters_in_the_body() {
+        assert_eq!(count_chars("caf\u{e9}"), 4);
+    }
+
+    #[test]
+    fn count_chars_excludes_the_frontmatter_block() {
+        let contents = "---\ntype: Scene\n---\nHi";
+        assert_eq!(count_chars(contents), 2);
     }
 
     #[test]

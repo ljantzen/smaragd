@@ -682,6 +682,11 @@ impl SmaragdApp {
             ShortcutAction::ToggleBookmarksPanel => self.toggle_dock_tab(DockTab::Bookmarks),
             ShortcutAction::NextBookmark => self.goto_next_bookmark(),
             ShortcutAction::PreviousBookmark => self.goto_previous_bookmark(),
+            ShortcutAction::ToggleDocumentStats => {
+                self.settings.show_document_stats_in_binder =
+                    !self.settings.show_document_stats_in_binder;
+                self.persist_settings();
+            }
         }
     }
 

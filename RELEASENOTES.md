@@ -5,6 +5,12 @@ this file.
 
 ## Unreleased
 
+- Added an optional per-document stats readout in the Binder (**Settings >
+  Appearance > Show document stats in binder**, off by default): each
+  document row can show its line, word, and character count, right-aligned
+  as `lines/words/chars`. Toggle it with `Ctrl+Alt+D`, remappable like any
+  other shortcut under **Settings > Shortcuts**.
+
 ## v1.0.2 — 2026-08-13
 
 - Fixed the Linux AppImage still refusing to run (v1.0.1's fix wasn't
