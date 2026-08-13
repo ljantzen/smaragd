@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.0.1 — 2026-08-13
+
 - Fixed the Linux AppImage failing to run on some distributions with a
   misleading "No such file or directory" error (actually an `ELF file ABI
   version invalid` rejection from the loader, caused by an outdated AppImage
