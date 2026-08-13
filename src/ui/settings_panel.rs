@@ -369,6 +369,17 @@ fn show_editor_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
              changed.",
         )
         .changed();
+    ui.add_space(12.0);
+    ui.heading("Gutter");
+    ui.add_space(12.0);
+    changed |= ui
+        .checkbox(&mut settings.show_editor_gutter, "Show line numbers")
+        .on_hover_text(
+            "A gutter down the left edge of the Editor showing each line's \
+             number. Counts logical lines, not wrapped rows — a long \
+             paragraph's wrapped continuation isn't numbered again.",
+        )
+        .changed();
     changed
 }
 

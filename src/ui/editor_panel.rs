@@ -141,6 +141,7 @@ pub fn show(
     font_size: f32,
     collaborating: bool,
     spell_check_language: SpellCheckLanguage,
+    show_gutter: bool,
 ) -> Option<EditorEvent> {
     // A joined collaboration session deliberately has no `open_path` (it
     // isn't tied to any of the joiner's own files — see `CollabSession`'s
@@ -274,27 +275,59 @@ pub fn show(
     let row_height = ui.fonts_mut(|f| f.row_height(&font.font_id(font_size)));
     let desired_rows = ((available_height / row_height).floor() as usize).max(1);
 
+    // Gutter sizing, done up front so it can be reserved (via `add_space`,
+    // below) before the `TextEdit` itself is laid out — it needs to already
+    // be narrower by this much for `editor_layouter`'s `wrap_width` to wrap
+    // text before it would run under the gutter. `icon_width` (a
+    // one-row-tall/wide blank square, left of the numbers) is unused today —
+    // reserved space for a future per-line bookmark icon, see `paint_gutter`.
+    // Numbers right-align, so the column only needs to be as wide as the
+    // document's own line count actually requires, not a fixed guess.
+    let icon_width = row_height;
+    let line_count = editor.buffer.matches('\n').count() + 1;
+    let digit_count = line_count.to_string().len().max(2);
+    let digit_width = ui.fonts_mut(|f| f.glyph_width(&font.font_id(font_size), '0'));
+    let number_width = digit_width * digit_count as f32;
+    let gutter_padding = 8.0;
+    let gutter_width = icon_width + number_width + gutter_padding;
+
     let output = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            // No border: `TextEdit`'s own frame only ever wraps its *content*
-            // height (a few short paragraphs, say), never the full `ScrollArea`
-            // around it — with the frame left on, a short document renders as a
-            // small boxed page sitting in a lot of otherwise-dead-looking empty
-            // space below it, rather than one editable area that fills the tab.
-            // `lock_focus` (normally bundled into `.code_editor()`, which also
-            // hardcodes the Monospace font — not wanted now that the font is
-            // configurable) keeps Tab inserting a tab character instead of
-            // leaving the field, still desirable for a plain-text editor.
-            let text_edit = egui::TextEdit::multiline(&mut editor.buffer)
-                .desired_width(f32::INFINITY)
-                .desired_rows(desired_rows)
-                .font(font.font_id(font_size))
-                .lock_focus(true)
-                .frame(egui::Frame::NONE)
-                .id(text_edit_id)
-                .layouter(&mut editor_layouter);
-            text_edit.show(ui)
+            ui.horizontal(|ui| {
+                if show_gutter {
+                    ui.add_space(gutter_width);
+                }
+                // No border: `TextEdit`'s own frame only ever wraps its *content*
+                // height (a few short paragraphs, say), never the full `ScrollArea`
+                // around it — with the frame left on, a short document renders as a
+                // small boxed page sitting in a lot of otherwise-dead-looking empty
+                // space below it, rather than one editable area that fills the tab.
+                // `lock_focus` (normally bundled into `.code_editor()`, which also
+                // hardcodes the Monospace font — not wanted now that the font is
+                // configurable) keeps Tab inserting a tab character instead of
+                // leaving the field, still desirable for a plain-text editor.
+                let text_edit = egui::TextEdit::multiline(&mut editor.buffer)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(desired_rows)
+                    .font(font.font_id(font_size))
+                    .lock_focus(true)
+                    .frame(egui::Frame::NONE)
+                    .id(text_edit_id)
+                    .layouter(&mut editor_layouter);
+                let text_output = text_edit.show(ui);
+                if show_gutter {
+                    paint_gutter(
+                        ui,
+                        &text_output.galley,
+                        text_output.galley_pos,
+                        text_output.galley_pos.x - gutter_padding,
+                        font.font_id(font_size),
+                    );
+                }
+                text_output
+            })
+            .inner
         })
         .inner;
 
@@ -538,6 +571,49 @@ fn build_editor_layout_job(
     job
 }
 
+/// Draws the line-number column to the left of the editor's `TextEdit`, one
+/// number per *logical* line — a run of text ending in a real `\n` — rather
+/// than one per wrapped visual row: a long paragraph's wrapped continuation
+/// rows get no number of their own, the convention word-wrap-aware code
+/// editors (VS Code, Sublime, etc.) use. Reads row positions straight off
+/// the `TextEdit`'s own just-shown `galley`/`galley_pos` (`ends_with_newline`
+/// on each `PlacedRow` marks the end of a logical line) instead of
+/// re-deriving them from the buffer itself, so numbering can never drift out
+/// of sync with what the `TextEdit` actually painted this frame.
+///
+/// `number_right_x` is where each number right-aligns to; the caller derives
+/// it from `galley_pos.x` (see `show`), since that already reflects however
+/// much space was reserved for the whole gutter. The reserved space further
+/// left of it (`icon_width` in `show`) is left blank here — a slot for a
+/// future per-line bookmark icon, not implemented yet.
+fn paint_gutter(
+    ui: &egui::Ui,
+    galley: &egui::Galley,
+    galley_pos: egui::Pos2,
+    number_right_x: f32,
+    font_id: egui::FontId,
+) {
+    let painter = ui.painter();
+    let color = ui.visuals().weak_text_color();
+    let mut line_number: usize = 1;
+    let mut at_line_start = true;
+    for row in &galley.rows {
+        if at_line_start {
+            painter.text(
+                egui::pos2(number_right_x, galley_pos.y + row.pos.y),
+                egui::Align2::RIGHT_TOP,
+                line_number.to_string(),
+                font_id.clone(),
+                color,
+            );
+        }
+        at_line_start = row.ends_with_newline;
+        if row.ends_with_newline {
+            line_number += 1;
+        }
+    }
+}
+
 /// Consume (and act on) a keypress meant for the autocomplete popup, so the `TextEdit`
 /// underneath never sees it — otherwise Enter would insert a newline and the arrow
 /// keys would move the text cursor instead of the popup's selection.
@@ -658,6 +734,7 @@ mod tests {
                 14.0,
                 false,
                 SpellCheckLanguage::Off,
+                false,
             );
         });
 
@@ -705,6 +782,7 @@ mod tests {
                 14.0,
                 true,
                 SpellCheckLanguage::Off,
+                false,
             );
         });
 
@@ -749,6 +827,7 @@ mod tests {
                 14.0,
                 false,
                 SpellCheckLanguage::Off,
+                false,
             );
         });
 
@@ -760,6 +839,85 @@ mod tests {
             "expected the editable area to fill most of a {viewport_height}px-tall \
              viewport for a one-line document, got {}px",
             response.rect.height()
+        );
+    }
+
+    /// `show_gutter: true` must reserve real horizontal space for the
+    /// line-number column *before* the `TextEdit` itself, not paint numbers
+    /// on top of the text — checked geometrically (the `TextEdit`'s own left
+    /// x-coordinate) since, like the title-heading regression test above,
+    /// there's no simpler way to assert "this took up space" than measuring
+    /// what it pushed the next thing away from.
+    #[test]
+    fn the_text_edit_starts_further_right_when_the_gutter_is_shown() {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+
+        let left_without_gutter = {
+            let ctx = egui::Context::default();
+            let mut editor = EditorState {
+                open_path: Some(std::path::PathBuf::from("scene.md")),
+                buffer: "One short line.".to_string(),
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input.clone(), |ui| {
+                show(
+                    ui,
+                    &mut editor,
+                    &[],
+                    &[],
+                    None,
+                    false,
+                    EditorFont::Monospace,
+                    14.0,
+                    false,
+                    SpellCheckLanguage::Off,
+                    false,
+                );
+            });
+            ctx.read_response(editor_text_edit_id())
+                .unwrap()
+                .rect
+                .left()
+        };
+
+        let left_with_gutter = {
+            let ctx = egui::Context::default();
+            let mut editor = EditorState {
+                open_path: Some(std::path::PathBuf::from("scene.md")),
+                buffer: "One short line.".to_string(),
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| {
+                show(
+                    ui,
+                    &mut editor,
+                    &[],
+                    &[],
+                    None,
+                    false,
+                    EditorFont::Monospace,
+                    14.0,
+                    false,
+                    SpellCheckLanguage::Off,
+                    true,
+                );
+            });
+            ctx.read_response(editor_text_edit_id())
+                .unwrap()
+                .rect
+                .left()
+        };
+
+        assert!(
+            left_with_gutter > left_without_gutter,
+            "expected the gutter to push the TextEdit right (without: {left_without_gutter}, \
+             with: {left_with_gutter})"
         );
     }
 
@@ -798,6 +956,7 @@ mod tests {
                 14.0,
                 true,
                 SpellCheckLanguage::Off,
+                false,
             );
         });
 
@@ -831,6 +990,7 @@ mod tests {
                 14.0,
                 false,
                 SpellCheckLanguage::Off,
+                false,
             );
         });
 
