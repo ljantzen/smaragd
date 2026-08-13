@@ -154,9 +154,11 @@ fn render_tag_group(
         if ui.link(format!("#{}", group.tag)).clicked() {
             *search_text = group.tag.clone();
         }
-        if ui.small_button("Rename…").clicked() {
-            *event = Some(TagsEvent::RenameTag(group.tag.clone()));
-        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("Rename…").clicked() {
+                *event = Some(TagsEvent::RenameTag(group.tag.clone()));
+            }
+        });
     });
     if group.documents.is_empty() {
         ui.label(egui::RichText::new("No other document shares this tag yet.").weak());
