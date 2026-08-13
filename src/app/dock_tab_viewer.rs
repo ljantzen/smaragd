@@ -380,6 +380,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     crate::editor_font::resolve_size(self.settings.editor_font_size),
                     self.collaborating,
                     self.settings.spell_check_language,
+                    self.settings.show_editor_gutter,
                 ) {
                     Some(EditorEvent::SaveError(err)) => {
                         self.actions.push(DockAction::EditorSaveError(err));

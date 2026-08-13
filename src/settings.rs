@@ -264,6 +264,16 @@ pub struct Settings {
     /// transforms the parsed `Block`/`Span` tree handed to a renderer, never the
     /// file on disk.
     pub typewriter_quotes: bool,
+    /// Show a line-number gutter to the left of the Editor's text — see
+    /// `ui::editor_panel::paint_gutter`. Off by default, same opt-in
+    /// convention `typewriter_quotes` above uses: smaragd is a prose editor
+    /// first, and line numbers are a code-editor convention most novelists
+    /// won't want cluttering the page by default. Numbers count logical
+    /// (`\n`-delimited) lines, not wrapped visual rows — a long paragraph's
+    /// wrapped continuation only gets a number on its first row. The gutter
+    /// also reserves a blank icon slot per line, to the left of the number,
+    /// for a future bookmark feature — not wired up to anything yet.
+    pub show_editor_gutter: bool,
     /// Which bundled Hunspell-compatible dictionary flags misspelled words with
     /// an inline underline in the Editor — see `spellcheck::misspelled_word_spans`.
     /// Off by default: v1 has no suggestions/ignore-word mechanism yet (a
@@ -855,6 +865,7 @@ mod tests {
             pomodoro_cycles_before_long_break: 3,
             pomodoro_notifications_enabled: true,
             typewriter_quotes: true,
+            show_editor_gutter: true,
             spell_check_language: SpellCheckLanguage::Off,
             toast_duration_secs: 10,
             status_message_duration_secs: 12,

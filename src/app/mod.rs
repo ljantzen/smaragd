@@ -1427,6 +1427,7 @@ impl eframe::App for SmaragdApp {
                     crate::editor_font::resolve_size(self.settings.editor_font_size),
                     self.collab.is_some(),
                     self.settings.spell_check_language,
+                    self.settings.show_editor_gutter,
                 ) {
                     Some(EditorEvent::SaveError(err)) => self.push_error_toast(err),
                     Some(EditorEvent::Wikilink(activation)) => self.activate_wikilink(activation),
