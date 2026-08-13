@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.0.0 — 2026-08-13
+
 - The Editor can now show a line-number gutter (**Settings > Editor > Show
   line numbers**, off by default). Numbers count logical lines, not wrapped
   visual rows, so a long paragraph that wraps across several rows only gets
