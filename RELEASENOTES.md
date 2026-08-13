@@ -5,6 +5,13 @@ this file.
 
 ## Unreleased
 
+- Fixed the Linux AppImage failing to run on some distributions with a
+  misleading "No such file or directory" error (actually an `ELF file ABI
+  version invalid` rejection from the loader, caused by an outdated AppImage
+  runtime). The release pipeline now builds the AppImage with a current,
+  version-pinned `appimagetool` instead of `linuxdeploy`'s bundled runtime,
+  and a CI smoke test runs the generated AppImage before it's published.
+
 ## v1.0.0 — 2026-08-13
 
 - The Editor can now show a line-number gutter (**Settings > Editor > Show
