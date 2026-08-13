@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use egui::text::{CCursor, CCursorRange};
 use egui::widgets::text_edit::TextEditOutput;
 use egui::{Id, Key, KeyboardShortcut, Modifiers};
@@ -17,6 +19,10 @@ use crate::ui::WikilinkActivation;
 pub enum EditorEvent {
     SaveError(String),
     Wikilink(WikilinkActivation),
+    /// A gutter click on a line's icon slot, or `ShortcutAction::ToggleBookmark`,
+    /// fired — the caller adds/removes a bookmark at this 1-based logical line
+    /// in whichever document is currently open. See `paint_gutter`.
+    ToggleBookmark(usize),
 }
 
 /// Cap on how many `[[wikilink]]`/`#tag` suggestions are shown at once, matching
@@ -142,6 +148,8 @@ pub fn show(
     collaborating: bool,
     spell_check_language: SpellCheckLanguage,
     show_gutter: bool,
+    bookmarked_lines: &HashSet<usize>,
+    toggle_bookmark_shortcut: Option<KeyboardShortcut>,
 ) -> Option<EditorEvent> {
     // A joined collaboration session deliberately has no `open_path` (it
     // isn't tied to any of the joiner's own files — see `CollabSession`'s
@@ -200,6 +208,8 @@ pub fn show(
     // newline.
     let pending_action = state.open.then(|| steal_popup_key(ui)).flatten();
     let activate_wikilink_requested = activate_wikilink_shortcut
+        .is_some_and(|shortcut| ui.ctx().input_mut(|i| i.consume_shortcut(&shortcut)));
+    let toggle_bookmark_requested = toggle_bookmark_shortcut
         .is_some_and(|shortcut| ui.ctx().input_mut(|i| i.consume_shortcut(&shortcut)));
 
     // Cursor position as of the *previous* frame (read from egui's own persisted
@@ -291,6 +301,7 @@ pub fn show(
     let gutter_padding = 8.0;
     let gutter_width = icon_width + number_width + gutter_padding;
 
+    let mut gutter_click: Option<usize> = None;
     let output = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -317,12 +328,16 @@ pub fn show(
                     .layouter(&mut editor_layouter);
                 let text_output = text_edit.show(ui);
                 if show_gutter {
-                    paint_gutter(
+                    gutter_click = paint_gutter(
                         ui,
                         &text_output.galley,
                         text_output.galley_pos,
                         text_output.galley_pos.x - gutter_padding,
+                        text_output.galley_pos.x - gutter_width,
+                        icon_width,
                         font.font_id(font_size),
+                        bookmarked_lines,
+                        text_edit_id,
                     );
                 }
                 text_output
@@ -351,6 +366,20 @@ pub fn show(
                 force_create: true,
             }));
         }
+    }
+
+    // A gutter click always wins over the keyboard shortcut (they can't both
+    // fire the same frame in practice, but a click is the more explicit
+    // signal if they somehow did). Both short-circuit the rest of the frame
+    // — autocomplete processing, the lost-focus save check below — the same
+    // way a Wikilink activation already does above.
+    if let Some(line) = gutter_click {
+        return Some(EditorEvent::ToggleBookmark(line));
+    }
+    if toggle_bookmark_requested && let Some(range) = output.cursor_range {
+        let cursor_byte = char_offset_to_byte(&editor.buffer, range.primary.index.0);
+        let line = editor.buffer[..cursor_byte].matches('\n').count() + 1;
+        return Some(EditorEvent::ToggleBookmark(line));
     }
 
     let active = output.cursor_range.and_then(|range| {
@@ -583,35 +612,87 @@ fn build_editor_layout_job(
 ///
 /// `number_right_x` is where each number right-aligns to; the caller derives
 /// it from `galley_pos.x` (see `show`), since that already reflects however
-/// much space was reserved for the whole gutter. The reserved space further
-/// left of it (`icon_width` in `show`) is left blank here — a slot for a
-/// future per-line bookmark icon, not implemented yet.
+/// much space was reserved for the whole gutter. `icon_left_x`/`icon_width`
+/// describe the reserved strip further left of the numbers (also derived by
+/// `show` from its own `gutter_width` math) — this paints a diamond there
+/// for each logical line present in `bookmarked_lines`, and hit-tests a
+/// click anywhere in that strip against each logical line's full vertical
+/// span (every one of its wrapped rows, not just the first), returning the
+/// clicked line if any — the caller (`show`) folds that into
+/// `EditorEvent::ToggleBookmark` alongside the keyboard shortcut. `gutter_id`
+/// salts the per-line `ui.interact` ids so they don't collide with anything
+/// else keyed off the same `TextEdit` id.
+#[allow(clippy::too_many_arguments)]
 fn paint_gutter(
     ui: &egui::Ui,
     galley: &egui::Galley,
     galley_pos: egui::Pos2,
     number_right_x: f32,
+    icon_left_x: f32,
+    icon_width: f32,
     font_id: egui::FontId,
-) {
+    bookmarked_lines: &HashSet<usize>,
+    gutter_id: Id,
+) -> Option<usize> {
     let painter = ui.painter();
     let color = ui.visuals().weak_text_color();
+    let bookmark_color = ui.visuals().warn_fg_color;
+    let mut clicked_line: Option<usize> = None;
     let mut line_number: usize = 1;
     let mut at_line_start = true;
-    for row in &galley.rows {
+    let mut line_top_y = galley_pos.y;
+    let last_row_index = galley.rows.len().saturating_sub(1);
+
+    for (row_index, row) in galley.rows.iter().enumerate() {
         if at_line_start {
+            line_top_y = galley_pos.y + row.pos.y;
             painter.text(
-                egui::pos2(number_right_x, galley_pos.y + row.pos.y),
+                egui::pos2(number_right_x, line_top_y),
                 egui::Align2::RIGHT_TOP,
                 line_number.to_string(),
                 font_id.clone(),
                 color,
             );
+            if bookmarked_lines.contains(&line_number) {
+                painter.text(
+                    egui::pos2(
+                        icon_left_x + icon_width / 2.0,
+                        line_top_y + row.size.y / 2.0,
+                    ),
+                    egui::Align2::CENTER_CENTER,
+                    "\u{25C6}",
+                    font_id.clone(),
+                    bookmark_color,
+                );
+            }
         }
+
+        // A `PlacedRow`'s own `ends_with_newline` is false for the galley's
+        // last row by construction — catch that case via `row_index` instead
+        // of relying on the flag alone, so the final logical line's icon
+        // still gets its clickable span.
+        if row.ends_with_newline || row_index == last_row_index {
+            let row_bottom_y = galley_pos.y + row.pos.y + row.size.y;
+            let line_rect = egui::Rect::from_min_max(
+                egui::pos2(icon_left_x, line_top_y),
+                egui::pos2(icon_left_x + icon_width, row_bottom_y),
+            );
+            let line_id = gutter_id.with(("bookmark_icon", line_number));
+            if ui
+                .interact(line_rect, line_id, egui::Sense::click())
+                .clicked()
+            {
+                clicked_line = Some(line_number);
+            }
+        }
+
         at_line_start = row.ends_with_newline;
         if row.ends_with_newline {
             line_number += 1;
         }
     }
+
+    clicked_line
 }
 
 /// Consume (and act on) a keypress meant for the autocomplete popup, so the `TextEdit`
@@ -681,8 +762,8 @@ pub fn move_cursor_to(ctx: &egui::Context, id: Id, text: &str, byte_offset: usiz
 #[cfg(test)]
 mod tests {
     use super::{
-        SpellCheckLanguage, build_editor_layout_job, editor_text_edit_id, paragraph_byte_range,
-        show,
+        EditorEvent, HashSet, Key, SpellCheckLanguage, build_editor_layout_job,
+        editor_text_edit_id, paragraph_byte_range, show,
     };
     use crate::editor::EditorState;
     use crate::editor_font::EditorFont;
@@ -735,6 +816,8 @@ mod tests {
                 false,
                 SpellCheckLanguage::Off,
                 false,
+                &HashSet::new(),
+                None,
             );
         });
 
@@ -783,6 +866,8 @@ mod tests {
                 true,
                 SpellCheckLanguage::Off,
                 false,
+                &HashSet::new(),
+                None,
             );
         });
 
@@ -828,6 +913,8 @@ mod tests {
                 false,
                 SpellCheckLanguage::Off,
                 false,
+                &HashSet::new(),
+                None,
             );
         });
 
@@ -878,6 +965,8 @@ mod tests {
                     false,
                     SpellCheckLanguage::Off,
                     false,
+                    &HashSet::new(),
+                    None,
                 );
             });
             ctx.read_response(editor_text_edit_id())
@@ -906,6 +995,8 @@ mod tests {
                     false,
                     SpellCheckLanguage::Off,
                     true,
+                    &HashSet::new(),
+                    None,
                 );
             });
             ctx.read_response(editor_text_edit_id())
@@ -919,6 +1010,269 @@ mod tests {
             "expected the gutter to push the TextEdit right (without: {left_without_gutter}, \
              with: {left_with_gutter})"
         );
+    }
+
+    /// Builds the standard test `RawInput` (a fixed 800x600 viewport, no
+    /// events) — every gutter-click test below reuses this for its
+    /// geometry-discovery frame and clones it (via `screen_rect`) for the
+    /// follow-up frame that actually synthesizes a click.
+    fn fixed_viewport_input() -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        }
+    }
+
+    /// A `PointerMoved` + press + release at `pos`, all in one frame's
+    /// events — the same single-frame click-synthesis pattern
+    /// `ui::binder_panel`'s own test harness uses for its manually
+    /// `ui.interact`-hit-tested rows.
+    fn click_events(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    /// A gutter click on a bookmarked-or-not line's icon area must resolve
+    /// to `EditorEvent::ToggleBookmark(that line)` — discovers the icon's
+    /// on-screen rect from a first, click-free frame (`paint_gutter`
+    /// registers one `ui.interact` response per logical line regardless of
+    /// input), then synthesizes a click at its center in a second frame.
+    #[test]
+    fn clicking_the_gutter_icon_area_toggles_a_bookmark_at_that_line() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let mut editor = EditorState {
+            open_path: Some(std::path::PathBuf::from("scene.md")),
+            buffer: "one\ntwo\nthree".to_string(),
+            ..Default::default()
+        };
+        let input = fixed_viewport_input();
+
+        let _ = ctx.run_ui(input.clone(), |ui| {
+            show(
+                ui,
+                &mut editor,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+                SpellCheckLanguage::Off,
+                true,
+                &HashSet::new(),
+                None,
+            );
+        });
+
+        let icon_rect = ctx
+            .read_response(editor_text_edit_id().with(("bookmark_icon", 2usize)))
+            .expect("line 2's gutter icon area registers a clickable response")
+            .rect;
+
+        let click_input = egui::RawInput {
+            events: click_events(icon_rect.center()),
+            ..input
+        };
+        let mut event = None;
+        let _ = ctx.run_ui(click_input, |ui| {
+            event = show(
+                ui,
+                &mut editor,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+                SpellCheckLanguage::Off,
+                true,
+                &HashSet::new(),
+                None,
+            );
+        });
+
+        assert!(matches!(event, Some(EditorEvent::ToggleBookmark(2))));
+    }
+
+    /// A long paragraph that wraps across several visual rows must still
+    /// resolve a click anywhere in its icon column — including near the
+    /// *bottom* of its accumulated span, well past the first (numbered) row
+    /// — to that one logical line, not a neighboring line or nothing at
+    /// all. Regression test for `paint_gutter`'s row-span accumulation
+    /// (`line_top_y` held from a logical line's first row through to
+    /// whichever row has `ends_with_newline`).
+    #[test]
+    fn clicking_near_the_bottom_of_a_wrapped_paragraphs_icon_area_still_hits_that_line() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let long_paragraph = "wrap ".repeat(80); // forces several visual rows at 260px wide
+        let mut editor = EditorState {
+            open_path: Some(std::path::PathBuf::from("scene.md")),
+            buffer: format!("first\n{long_paragraph}\nlast"),
+            ..Default::default()
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(260.0, 600.0),
+            )),
+            ..Default::default()
+        };
+
+        let _ = ctx.run_ui(input.clone(), |ui| {
+            show(
+                ui,
+                &mut editor,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+                SpellCheckLanguage::Off,
+                true,
+                &HashSet::new(),
+                None,
+            );
+        });
+
+        let icon_rect = ctx
+            .read_response(editor_text_edit_id().with(("bookmark_icon", 2usize)))
+            .expect("line 2's gutter icon area registers a clickable response")
+            .rect;
+        assert!(
+            icon_rect.height() > 30.0,
+            "test fixture assumption: line 2 should wrap across several rows, \
+             but its icon area is only {}px tall",
+            icon_rect.height()
+        );
+        let near_bottom = egui::pos2(icon_rect.center().x, icon_rect.bottom() - 2.0);
+
+        let click_input = egui::RawInput {
+            events: click_events(near_bottom),
+            ..input
+        };
+        let mut event = None;
+        let _ = ctx.run_ui(click_input, |ui| {
+            event = show(
+                ui,
+                &mut editor,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+                SpellCheckLanguage::Off,
+                true,
+                &HashSet::new(),
+                None,
+            );
+        });
+
+        assert!(matches!(event, Some(EditorEvent::ToggleBookmark(2))));
+    }
+
+    /// `ShortcutAction::ToggleBookmark` toggles at the cursor's current
+    /// logical line — driven here via `EditorState::pending_cursor` (the
+    /// same mechanism a real cursor-move/document-switch uses) rather than
+    /// a synthesized click, since it needs the `TextEdit`'s live cursor
+    /// position, not a screen position. `move_cursor_to`
+    /// (`pending_cursor.take()`'s handler) is a no-op the very first time a
+    /// `TextEdit` id has ever been shown (`egui::TextEdit::load_state` has
+    /// nothing persisted yet) — see its own doc comment — so this primes
+    /// real `TextEdit` state with one plain frame before the frame that
+    /// sets `pending_cursor` and fires the shortcut.
+    #[test]
+    fn toggle_bookmark_shortcut_toggles_at_the_cursors_current_line() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let buffer = "one\ntwo\nthree\nfour".to_string();
+        let cursor_on_line_3 = "one\ntwo\n".len(); // start of "three"
+        let mut editor = EditorState {
+            open_path: Some(std::path::PathBuf::from("scene.md")),
+            buffer,
+            ..Default::default()
+        };
+        let shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, Key::F2);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+
+        let _ = ctx.run_ui(input.clone(), |ui| {
+            show(
+                ui,
+                &mut editor,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+                SpellCheckLanguage::Off,
+                false,
+                &HashSet::new(),
+                None,
+            );
+        });
+
+        editor.pending_cursor = Some(cursor_on_line_3);
+        let shortcut_input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: Key::F2,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+            ..input
+        };
+        let mut event = None;
+        let _ = ctx.run_ui(shortcut_input, |ui| {
+            event = show(
+                ui,
+                &mut editor,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+                SpellCheckLanguage::Off,
+                false,
+                &HashSet::new(),
+                Some(shortcut),
+            );
+        });
+
+        assert!(matches!(event, Some(EditorEvent::ToggleBookmark(3))));
     }
 
     /// Regression test for a real bug: a joined collaboration session
@@ -957,6 +1311,8 @@ mod tests {
                 true,
                 SpellCheckLanguage::Off,
                 false,
+                &HashSet::new(),
+                None,
             );
         });
 
@@ -991,6 +1347,8 @@ mod tests {
                 false,
                 SpellCheckLanguage::Off,
                 false,
+                &HashSet::new(),
+                None,
             );
         });
 

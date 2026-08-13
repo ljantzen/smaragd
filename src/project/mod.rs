@@ -1,4 +1,5 @@
 mod binder_color_mode;
+mod bookmarks;
 mod create;
 mod folder_meta;
 mod meta;
@@ -17,6 +18,7 @@ mod trash;
 mod word_count;
 
 pub use binder_color_mode::BinderColorMode;
+pub use bookmarks::{Bookmark, ResolvedBookmark};
 pub use meta::ProjectMeta;
 pub use picklists::PicklistField;
 pub use queries::{BacklinkEntry, TagGroup};

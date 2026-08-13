@@ -2,6 +2,7 @@ pub mod about_panel;
 pub mod backlinks_panel;
 pub mod belief_timeline_panel;
 pub mod binder_panel;
+pub mod bookmarks_panel;
 pub mod collab_panel;
 pub mod command_prompt;
 pub mod corkboard_panel;

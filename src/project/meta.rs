@@ -221,4 +221,11 @@ pub struct ProjectMeta {
     /// the protagonist's arc.
     #[serde(default)]
     pub what_if: String,
+    /// User-defined jump-back-to-here markers, one per bookmarked line —
+    /// project-wide (one list spanning every document, not scoped to
+    /// whichever file happens to be open), edited from the Editor's
+    /// line-number gutter and the Bookmarks dock. See
+    /// [`crate::project::bookmarks::Bookmark`].
+    #[serde(default)]
+    pub bookmarks: Vec<Bookmark>,
 }

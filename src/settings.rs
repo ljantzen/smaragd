@@ -271,8 +271,12 @@ pub struct Settings {
     /// won't want cluttering the page by default. Numbers count logical
     /// (`\n`-delimited) lines, not wrapped visual rows — a long paragraph's
     /// wrapped continuation only gets a number on its first row. The gutter
-    /// also reserves a blank icon slot per line, to the left of the number,
-    /// for a future bookmark feature — not wired up to anything yet.
+    /// also carries a diamond icon, to the left of the number, on any
+    /// bookmarked line (`Project::bookmarked_lines_for`) — a click there
+    /// toggles a bookmark at that line, same as
+    /// `ShortcutAction::ToggleBookmark`. Also gates bookmark-icon visibility
+    /// entirely: with the gutter off, bookmarks are still manageable from
+    /// the Bookmarks dock, just not visible/clickable in the Editor itself.
     pub show_editor_gutter: bool,
     /// Which bundled Hunspell-compatible dictionary flags misspelled words with
     /// an inline underline in the Editor — see `spellcheck::misspelled_word_spans`.

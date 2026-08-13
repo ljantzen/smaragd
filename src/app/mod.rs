@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 mod backup;
+mod bookmarks;
 mod collab;
 mod dictionary_download;
 mod dock;
@@ -673,6 +674,14 @@ impl SmaragdApp {
             ShortcutAction::ToggleCollabPanel => self.toggle_dock_tab(DockTab::Collab),
             ShortcutAction::ToggleStreak => self.toggle_dock_tab(DockTab::Streak),
             ShortcutAction::CycleBinderColorMode => self.cycle_binder_color_mode(),
+            // Filtered out of the consumption pass above and handled inline in
+            // `editor_panel::show` instead — never actually reached, but the match
+            // above has to stay exhaustive over `ShortcutAction`, same as
+            // `ActivateWikilink` above.
+            ShortcutAction::ToggleBookmark => {}
+            ShortcutAction::ToggleBookmarksPanel => self.toggle_dock_tab(DockTab::Bookmarks),
+            ShortcutAction::NextBookmark => self.goto_next_bookmark(),
+            ShortcutAction::PreviousBookmark => self.goto_previous_bookmark(),
         }
     }
 
@@ -1314,11 +1323,14 @@ impl eframe::App for SmaragdApp {
                 .shortcuts
                 .bindings()
                 .into_iter()
-                // `ActivateWikilink` is consumed inline in `editor_panel::show`
-                // instead (see its doc comment) — including it here too would let
-                // this pass steal the key event first, so `editor_panel::show`
-                // would never see it.
-                .filter(|(action, _)| *action != ShortcutAction::ActivateWikilink)
+                // `ActivateWikilink`/`ToggleBookmark` are consumed inline in
+                // `editor_panel::show` instead (see their doc comments) —
+                // including either here too would let this pass steal the key
+                // event first, so `editor_panel::show` would never see it.
+                .filter(|(action, _)| {
+                    *action != ShortcutAction::ActivateWikilink
+                        && *action != ShortcutAction::ToggleBookmark
+                })
                 .map(|(action, shortcut)| (ShortcutTarget::BuiltIn(action), shortcut))
                 .collect();
             pairs.extend(
@@ -1416,6 +1428,15 @@ impl eframe::App for SmaragdApp {
                     .settings
                     .shortcuts
                     .get(ShortcutAction::ActivateWikilink);
+                let toggle_bookmark_shortcut =
+                    self.settings.shortcuts.get(ShortcutAction::ToggleBookmark);
+                let bookmarked_lines = self
+                    .editor
+                    .open_path
+                    .as_deref()
+                    .zip(self.project.as_ref())
+                    .map(|(path, project)| project.bookmarked_lines_for(path))
+                    .unwrap_or_default();
                 match ui::editor_panel::show(
                     &mut column_ui,
                     &mut self.editor,
@@ -1428,9 +1449,16 @@ impl eframe::App for SmaragdApp {
                     self.collab.is_some(),
                     self.settings.spell_check_language,
                     self.settings.show_editor_gutter,
+                    &bookmarked_lines,
+                    toggle_bookmark_shortcut,
                 ) {
                     Some(EditorEvent::SaveError(err)) => self.push_error_toast(err),
                     Some(EditorEvent::Wikilink(activation)) => self.activate_wikilink(activation),
+                    Some(EditorEvent::ToggleBookmark(line)) => {
+                        if let Some(path) = self.editor.open_path.clone() {
+                            self.toggle_bookmark(&path, line);
+                        }
+                    }
                     None => {}
                 }
             });
@@ -1531,6 +1559,12 @@ impl eframe::App for SmaragdApp {
                         DockAction::Streak(event) => self.handle_streak_event(event),
                         DockAction::RequestNewProject => self.start_new_project(),
                         DockAction::RequestOpenProject => self.browse_for_project(ui.ctx()),
+                        DockAction::ToggleBookmark(line) => {
+                            if let Some(path) = self.editor.open_path.clone() {
+                                self.toggle_bookmark(&path, line);
+                            }
+                        }
+                        DockAction::Bookmarks(event) => self.handle_bookmarks_event(event),
                     }
                 }
             });

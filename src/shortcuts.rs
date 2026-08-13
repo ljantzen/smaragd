@@ -64,6 +64,24 @@ pub enum ShortcutAction {
     /// same three options are also directly selectable from `View > Color
     /// Binder By`.
     CycleBinderColorMode,
+    /// Add/remove a bookmark at the cursor's current line in the editor —
+    /// like `ActivateWikilink`, this needs that frame's `TextEdit` cursor
+    /// position, so it's consumed inside `editor_panel::show` itself rather
+    /// than dispatched through `dispatch_shortcut_action` — see both call
+    /// sites.
+    ToggleBookmark,
+    /// Open/close the Bookmarks dock tab — an ordinary global action,
+    /// unlike `ToggleBookmark` above.
+    ToggleBookmarksPanel,
+    /// Jump to the next/previous bookmark, project-wide, ordered the same
+    /// way `Project::resolved_bookmarks` sorts (by document, then line) —
+    /// wrapping around at either end. Unlike `ToggleBookmark`, these don't
+    /// need the editor's live `TextEdit` cursor to *consume* the shortcut
+    /// (only `EditorState::cursor_byte`, already refreshed every frame
+    /// regardless), so they dispatch through the ordinary
+    /// `dispatch_shortcut_action` pass like `GoBack`/`GoForward` above.
+    NextBookmark,
+    PreviousBookmark,
 }
 
 impl ShortcutAction {
@@ -105,6 +123,10 @@ impl ShortcutAction {
         Self::ToggleCollabPanel,
         Self::ToggleStreak,
         Self::CycleBinderColorMode,
+        Self::ToggleBookmark,
+        Self::ToggleBookmarksPanel,
+        Self::NextBookmark,
+        Self::PreviousBookmark,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -147,6 +169,10 @@ impl ShortcutAction {
             Self::ToggleCollabPanel => "Toggle Collaboration Panel",
             Self::ToggleStreak => "Toggle Streak Tracking",
             Self::CycleBinderColorMode => "Cycle Binder Color Mode",
+            Self::ToggleBookmark => "Toggle Bookmark",
+            Self::ToggleBookmarksPanel => "Toggle Bookmarks",
+            Self::NextBookmark => "Next Bookmark",
+            Self::PreviousBookmark => "Previous Bookmark",
         }
     }
 
@@ -194,6 +220,10 @@ impl ShortcutAction {
             Self::ToggleCollabPanel => "toggle_collab_panel",
             Self::ToggleStreak => "toggle_streak",
             Self::CycleBinderColorMode => "cycle_binder_color_mode",
+            Self::ToggleBookmark => "toggle_bookmark",
+            Self::ToggleBookmarksPanel => "toggle_bookmarks_panel",
+            Self::NextBookmark => "next_bookmark",
+            Self::PreviousBookmark => "previous_bookmark",
         }
     }
 
@@ -216,10 +246,14 @@ impl ShortcutAction {
             | Self::OpenDocument
             | Self::CloseDocument
             | Self::GoBack
-            | Self::GoForward => ShortcutCategory::FilesAndFolders,
-            Self::Save | Self::FindReplace | Self::EditMetadata | Self::ActivateWikilink => {
-                ShortcutCategory::Editing
-            }
+            | Self::GoForward
+            | Self::NextBookmark
+            | Self::PreviousBookmark => ShortcutCategory::FilesAndFolders,
+            Self::Save
+            | Self::FindReplace
+            | Self::EditMetadata
+            | Self::ActivateWikilink
+            | Self::ToggleBookmark => ShortcutCategory::Editing,
             Self::TogglePreview
             | Self::ToggleCorkboard
             | Self::ToggleStoryGrid
@@ -230,7 +264,8 @@ impl ShortcutAction {
             | Self::ToggleFullscreen
             | Self::ToggleBinderFocus
             | Self::ToggleFocusMode
-            | Self::CycleBinderColorMode => ShortcutCategory::View,
+            | Self::CycleBinderColorMode
+            | Self::ToggleBookmarksPanel => ShortcutCategory::View,
             Self::GitCommit | Self::GitPush => ShortcutCategory::Git,
             Self::CommandPrompt
             | Self::TogglePomodoro
@@ -324,6 +359,19 @@ impl ShortcutAction {
             Self::CycleBinderColorMode => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::C)
             }
+            // Ctrl+F2, the conventional cross-editor "toggle bookmark" chord
+            // (Visual Studio/Rider) — distinct from the bare, unmodified F2
+            // `Rename` already owns above.
+            Self::ToggleBookmark => KeyboardShortcut::new(Modifiers::COMMAND, Key::F2),
+            Self::ToggleBookmarksPanel => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::B)
+            }
+            // Alt+Down/Up, deliberately paralleling GoBack/GoForward's
+            // Alt+Left/Right immediately above — both step through a
+            // project-wide list of positions, just a curated one instead
+            // of visit history.
+            Self::NextBookmark => KeyboardShortcut::new(Modifiers::ALT, Key::ArrowDown),
+            Self::PreviousBookmark => KeyboardShortcut::new(Modifiers::ALT, Key::ArrowUp),
         }
     }
 }

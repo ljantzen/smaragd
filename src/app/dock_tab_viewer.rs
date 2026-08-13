@@ -24,6 +24,15 @@ pub(super) enum DockAction {
     PreviewTagClicked(String),
     EditorSaveError(String),
     Wikilink(WikilinkActivation),
+    /// The Editor's gutter (a click on a bookmarked/unbookmarked line's
+    /// diamond slot) or its `ShortcutAction::ToggleBookmark` shortcut fired
+    /// — see `ui::editor_panel::EditorEvent::ToggleBookmark`. Carries the
+    /// 1-based logical line to toggle at whichever document is currently
+    /// open.
+    ToggleBookmark(usize),
+    /// A row action in the Bookmarks dock — see
+    /// `ui::bookmarks_panel::BookmarksEvent`.
+    Bookmarks(crate::ui::bookmarks_panel::BookmarksEvent),
     /// The Preview tab's inline Style picker (`ui::markdown_preview::show`)
     /// was switched to a different style this frame — persisted onto
     /// `ProjectMeta::book_style` via `Project::set_book_style`, the same
@@ -141,6 +150,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::WordCount => "Word Count".into(),
             DockTab::Collab => "Collaborate".into(),
             DockTab::Streak => "Streak".into(),
+            DockTab::Bookmarks => "Bookmarks".into(),
         }
     }
 
@@ -369,6 +379,15 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     .settings
                     .shortcuts
                     .get(ShortcutAction::ActivateWikilink);
+                let toggle_bookmark_shortcut =
+                    self.settings.shortcuts.get(ShortcutAction::ToggleBookmark);
+                let bookmarked_lines = self
+                    .editor
+                    .open_path
+                    .as_deref()
+                    .zip(self.project)
+                    .map(|(path, project)| project.bookmarked_lines_for(path))
+                    .unwrap_or_default();
                 match ui::editor_panel::show(
                     ui,
                     self.editor,
@@ -381,12 +400,17 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     self.collaborating,
                     self.settings.spell_check_language,
                     self.settings.show_editor_gutter,
+                    &bookmarked_lines,
+                    toggle_bookmark_shortcut,
                 ) {
                     Some(EditorEvent::SaveError(err)) => {
                         self.actions.push(DockAction::EditorSaveError(err));
                     }
                     Some(EditorEvent::Wikilink(activation)) => {
                         self.actions.push(DockAction::Wikilink(activation));
+                    }
+                    Some(EditorEvent::ToggleBookmark(line)) => {
+                        self.actions.push(DockAction::ToggleBookmark(line));
                     }
                     None => {}
                 }
@@ -430,6 +454,16 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                 Some(project) => {
                     if let Some(event) = ui::corkboard_panel::show(ui, project) {
                         self.actions.push(DockAction::Corkboard(event));
+                    }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
+            DockTab::Bookmarks => match self.project {
+                Some(project) => {
+                    if let Some(event) = ui::bookmarks_panel::show(ui, project) {
+                        self.actions.push(DockAction::Bookmarks(event));
                     }
                 }
                 None => {

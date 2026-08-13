@@ -286,6 +286,16 @@ impl SmaragdApp {
                         if nav.button(ui, "Tags").clicked() {
                             self.toggle_dock_tab(DockTab::Tags);
                         }
+                        let bookmarks_shortcut = self
+                            .settings
+                            .shortcuts
+                            .get(ShortcutAction::ToggleBookmarksPanel);
+                        if nav
+                            .shortcut_button(ui, "Bookmarks", bookmarks_shortcut)
+                            .clicked()
+                        {
+                            self.toggle_dock_tab(DockTab::Bookmarks);
+                        }
                         ui.separator();
                         nav_submenu(ui, nav, "Theme", |ui, nav| {
                             if nav.button(ui, "Reload Custom Themes").clicked() {

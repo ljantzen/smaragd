@@ -22,6 +22,7 @@ pub(super) enum DockTab {
     WordCount,
     Collab,
     Streak,
+    Bookmarks,
 }
 
 /// The initial dock layout for a fresh install (no persisted `dock_layout.json`
@@ -29,7 +30,7 @@ pub(super) enum DockTab {
 /// column on the left, Editor filling the middle, and a Metadata/Backlinks
 /// column on the right — enough for a first-time user to see what the app can
 /// do without opening any menus, while staying short of the full tab roster
-/// (Tags/Pomodoro/WordCount/Collab/Streak all still start closed, reachable
+/// (Tags/Pomodoro/WordCount/Collab/Streak/Bookmarks all still start closed, reachable
 /// from the Window menu).
 pub(super) fn default_dock_state() -> egui_dock::DockState<DockTab> {
     let mut state = egui_dock::DockState::new(vec![DockTab::Editor]);
