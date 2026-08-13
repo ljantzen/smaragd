@@ -5,6 +5,12 @@ this file.
 
 ## Unreleased
 
+- The Editor can now show a line-number gutter (**Settings > Editor > Show
+  line numbers**, off by default). Numbers count logical lines, not wrapped
+  visual rows, so a long paragraph that wraps across several rows only gets
+  numbered once. A blank strip to the left of the numbers is reserved for a
+  future per-line bookmark marker, not implemented yet.
+
 ## v0.9.5 — 2026-08-13
 
 - Settings gains its own **Spell Check** category, with a **Dictionaries**

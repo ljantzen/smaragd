@@ -15,6 +15,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Dockable views that can be moved freely around
 - Binder tree view of the writing project
 - Markdown text editor 
+- Optional line-number gutter in the editor
 - fzf-style quick-switcher between documents 
 - Browser-style Go Back/Go Forward document history, restoring your cursor position in each
 - Project templates 
