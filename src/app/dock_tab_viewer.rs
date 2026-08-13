@@ -423,6 +423,12 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         .project
                         .map(|project| project.tree.document_names())
                         .unwrap_or_default();
+                    let document_title = self
+                        .editor
+                        .open_path
+                        .as_deref()
+                        .and_then(|path| path.file_stem())
+                        .and_then(|stem| stem.to_str());
                     let outcome = ui::markdown_preview::show(
                         ui,
                         &self.editor.buffer,
@@ -433,6 +439,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         self.custom_fonts,
                         self.settings.typewriter_quotes,
                         &note_titles,
+                        document_title,
                     );
                     match outcome.click {
                         Some(ui::markdown_preview::PreviewClick::Wikilink(activation)) => {

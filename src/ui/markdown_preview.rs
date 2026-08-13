@@ -242,6 +242,12 @@ pub struct PreviewOutcome {
 /// the same list the Editor's wikilink autocomplete uses) decides which
 /// `[[wikilink]]`s render as ordinary links versus "broken" links,
 /// see `PreviewStyle::wikilink_color`.
+///
+/// `document_title` (the open document's filename stem, same as the
+/// Editor's own heading above its text — see `editor_panel::show`) is shown
+/// at the left of the top bar, alongside the Style picker, so it's clear
+/// which document is being previewed even though the Preview tab itself is
+/// just labeled "Preview".
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
@@ -253,6 +259,7 @@ pub fn show(
     custom_fonts: &[String],
     typewriter_quotes: bool,
     note_titles: &[String],
+    document_title: Option<&str>,
 ) -> PreviewOutcome {
     let base_dir = ImageContext {
         dir: base_dir,
@@ -270,6 +277,9 @@ pub fn show(
     // actually look like a slim top bar instead of pushing everything below
     // (the separator, the rendered document) down past the visible area.
     ui.horizontal(|ui| {
+        if let Some(title) = document_title {
+            ui.heading(title);
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             egui::ComboBox::from_id_salt("preview_style_combo")
                 .selected_text(current_label)
