@@ -1,0 +1,471 @@
+{
+  "schema_version": 2,
+  "notes": "Catalog of Hunspell dictionaries smaragd hosts and can download on request (Settings > Spell Check > Dictionaries, src/spellcheck.rs, GitHub issue #47). This file itself is compiled into the smaragd binary (include_str!), but each entry's actual dictionary files live in a separate repo, https://github.com/ljantzen/smaragd-dictionaries/<language_code>/, each with its own SOURCE (exact upstream commit pinned, never a moving branch) and LICENSE (the upstream license text, verbatim) -- see that repo's README.md for the full explanation of why redistributing a non-GPL or even GPL-2.0-only dictionary is fine (GPLv2's own 'mere aggregation' allowance: these stay independent, unmodified, un-linked data files, never compiled or linked into the application). `redistributable`/`review_status` reflect this project's own reading of the upstream license/README files at the pinned commit, not a legal opinion for any other use case.",
+  "dictionary_source_policy": {
+    "description": "Only individually reviewed dictionary artifacts -- pinned to an exact upstream commit, with their license text preserved verbatim and their copyright holder identified -- are distributed. A dictionary whose review_status starts with \"blocked\" is never offered for download regardless of what its own license technically permits.",
+    "application_license": "GPL-3.0-or-later",
+    "license_isolation": "Every dictionary is kept as a genuinely separate, unmodified file (own LICENSE/SOURCE, never compiled or linked into smaragd's own source or binary) so its license never applies to smaragd's own code, and smaragd's GPL-3.0-or-later never applies to it."
+  },
+  "dictionaries": [
+    {
+      "language": "English (American)",
+      "language_code": "en_US",
+      "files": ["en_US.aff", "en_US.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/en",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Copyright 2000-2016 by Kevin Atkinson (SCOWL word list); Copyright 1993, Geoff Kuenning (Ispell-derived affix file). Full attribution chain in en_US/LICENSE.",
+      "license_spdx": "(MIT AND BSD)",
+      "license_file": "en_US/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "Corroborated two independent ways: reading the dictionary's own upstream README directly (a permissive Kevin Atkinson grant, not GPL, despite an unrelated bare-GPLv2 file sitting elsewhere in a different upstream mirror of the same data), and wooorm/dictionaries -- a separately maintained aggregator -- independently classifying this exact file as \"(MIT AND BSD)\" in its own package metadata.",
+      "review_date": "2026-08-12",
+      "sha256": {
+        "en_US.aff": "8ae1f19d4840d957728ad90555d5a8dff6cc5c046279c95ff0c00fc0a0136c7b",
+        "en_US.dic": "f0b1a234bd178bdd01875b2a392a9647f888b8fe879f79c52aae62c2759b3647"
+      },
+      "download_urls": {
+        "en_US.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/en_US/en_US.aff",
+        "en_US.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/en_US/en_US.dic"
+      }
+    },
+    {
+      "language": "English (United Kingdom)",
+      "language_code": "en_GB",
+      "files": ["en_GB.aff", "en_GB.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/en-GB",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Copyright 2000-2016 by Kevin Atkinson (SCOWL word list); Copyright 1993, Geoff Kuenning (Ispell-derived affix file); Copyright 2016 by Benjamin Titze (VarCon locale variants). Full attribution chain in en_GB/LICENSE.",
+      "license_spdx": "(MIT AND BSD)",
+      "license_file": "en_GB/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "Same SCOWL/VarCon project and license terms as en_US (Kevin Atkinson's permissive word-list grant plus the Ispell-derived BSD-style affix file) -- this is the \"-ise\" spelling variant, the standard British form. wooorm/dictionaries' own package.json independently classifies this exact file as \"(MIT AND BSD)\", matching en_US. The .aff file is in fact byte-identical to en_US.aff: SCOWL/VarCon shares its affix rules across English locale variants, only the word list differs.",
+      "review_date": "2026-08-13",
+      "sha256": {
+        "en_GB.aff": "8ae1f19d4840d957728ad90555d5a8dff6cc5c046279c95ff0c00fc0a0136c7b",
+        "en_GB.dic": "869fe17ba4ee4b5401c60a666ee2d6a3dcc237f460b7294435df1cc6a799aa57"
+      },
+      "download_urls": {
+        "en_GB.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/en_GB/en_GB.aff",
+        "en_GB.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/en_GB/en_GB.dic"
+      }
+    },
+    {
+      "language": "Norwegian (Bokmål)",
+      "language_code": "nb_NO",
+      "files": ["nb_NO.aff", "nb_NO.dic"],
+      "source_repository": "https://github.com/JetBrains/hunspell-dictionaries",
+      "source_path": "no",
+      "source_commit": "d333eb4b532941468e9edaa7658cefaf4606714f",
+      "copyright": "Not explicitly stated beyond \"The spell-norwegian project\" / no.speling.org (publisher); nb_NO.aff credits Arno Teigseth for a specific rule addition (2010). Full text in nb_NO/LICENSE.",
+      "license_spdx": "GPL-2.0-only",
+      "license_file": "nb_NO/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "No per-file \"or any later version\" grant found anywhere upstream (corroborated by wooorm/dictionaries independently classifying its own copy as plain \"GPL-2.0\", not \"-or-later\") -- treated as GPL-2.0-only. Redistributable here specifically because it's kept as a genuinely separate, unmodified data file under GPLv2's own mere-aggregation allowance, not combined/linked into smaragd's GPL-3.0-or-later source or binary -- see dictionary_source_policy above and nb_NO/SOURCE.",
+      "review_date": "2026-08-12",
+      "sha256": {
+        "nb_NO.aff": "b9e828538222b3580d8adb4660d5bae9bc1fbe42e7c21fd3e01970efed96b4f8",
+        "nb_NO.dic": "e801e2c5e592e2c2b7d63685f3bffdd4db9615912f0826cd1ae0f4116c7d359d"
+      },
+      "download_urls": {
+        "nb_NO.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/nb_NO/nb_NO.aff",
+        "nb_NO.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/nb_NO/nb_NO.dic"
+      }
+    },
+    {
+      "language": "Norwegian (Nynorsk)",
+      "language_code": "nn_NO",
+      "files": ["nn_NO.aff", "nn_NO.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/nn",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Not explicitly stated beyond \"The spell-norwegian project\" / no.speling.org (publisher) -- the exact same upstream origin as nb_NO, just the Nynorsk variant. Full text in nn_NO/LICENSE.",
+      "license_spdx": "GPL-2.0-only",
+      "license_file": "nn_NO/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "Same upstream project and license terms as nb_NO (identical attribution stub, both dictionaries generated from spell-norwegian source v2.2): no per-file \"or any later version\" grant found upstream, and wooorm/dictionaries' own package.json for this package also declares plain \"GPL-2.0\", not \"-or-later\" -- treated as GPL-2.0-only. Redistributable here specifically because it's kept as a genuinely separate, unmodified data file under GPLv2's own mere-aggregation allowance, not combined/linked into smaragd's GPL-3.0-or-later source or binary -- see dictionary_source_policy above and nn_NO/SOURCE.",
+      "review_date": "2026-08-13",
+      "sha256": {
+        "nn_NO.aff": "e50821655063f5680a3e4cf775b0a69c87de74bd6d2bbbb5da14ff8de4633beb",
+        "nn_NO.dic": "eaf1dc7ee7c848358df9aa231640b054ca4e388f2a870185528e4b229626faa6"
+      },
+      "download_urls": {
+        "nn_NO.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/nn_NO/nn_NO.aff",
+        "nn_NO.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/nn_NO/nn_NO.dic"
+      }
+    },
+    {
+      "language": "Georgian",
+      "language_code": "ka_GE",
+      "files": ["ka_GE.aff", "ka_GE.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/ka",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "No explicit \"Copyright (c) <year> <name>\" line in the upstream license file; package author of record is Titus Wormer (wooorm/dictionaries maintainer). Full text in ka_GE/LICENSE.",
+      "license_spdx": "MIT",
+      "license_file": "ka_GE/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "",
+      "review_date": "2026-08-12",
+      "sha256": {
+        "ka_GE.aff": "f5c39986659f13d703d0bae0ac8856d58768ce2b8d1f5ab6fb1ca3487c5ede5a",
+        "ka_GE.dic": "5963f268e996f1e27e17163873b4d32f41fae2a1e5bef0117126caefe62f5857"
+      },
+      "download_urls": {
+        "ka_GE.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/ka_GE/ka_GE.aff",
+        "ka_GE.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/ka_GE/ka_GE.dic"
+      }
+    },
+    {
+      "language": "Lithuanian",
+      "language_code": "lt_LT",
+      "files": ["lt_LT.aff", "lt_LT.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/lt",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Copyright (c) 2000-2020, Albertas Agejevas and contributors. Full text in lt_LT/LICENSE.",
+      "license_spdx": "BSD-3-Clause",
+      "license_file": "lt_LT/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "",
+      "review_date": "2026-08-12",
+      "sha256": {
+        "lt_LT.aff": "79c6f8304490d1c8b27ec93e509b2f635d9bb21d45a2d41c15162b18c8ff897c",
+        "lt_LT.dic": "a751750b040623cf408cf1a3b6f6336141b55ac9519e54068dbeaa52eb395ccd"
+      },
+      "download_urls": {
+        "lt_LT.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/lt_LT/lt_LT.aff",
+        "lt_LT.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/lt_LT/lt_LT.dic"
+      }
+    },
+    {
+      "language": "Russian",
+      "language_code": "ru_RU",
+      "files": ["ru_RU.aff", "ru_RU.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/ru",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Copyright (c) 1997-2008, Alexander I. Lebedev, with later modifications credited to Laszlo Nemeth (2012). Full text in ru_RU/LICENSE.",
+      "license_spdx": "BSD-3-Clause",
+      "license_file": "ru_RU/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "",
+      "review_date": "2026-08-12",
+      "sha256": {
+        "ru_RU.aff": "38ce7d4af78e211e9bafe4bf7e3d6a2c420591136cb738ec6648f8fdf6524cd7",
+        "ru_RU.dic": "f6047416a0204adbecf3a451b874ec8a97ee37e2cbc714466ef04d8dbcc0d6fc"
+      },
+      "download_urls": {
+        "ru_RU.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/ru_RU/ru_RU.aff",
+        "ru_RU.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/ru_RU/ru_RU.dic"
+      }
+    },
+    {
+      "language": "Persian",
+      "language_code": "fa_IR",
+      "files": ["fa_IR.aff", "fa_IR.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/fa",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Lilak, Persian Spell Checking Dictionary. Copyright 2015 (Lilak project). Full text in fa_IR/LICENSE.",
+      "license_spdx": "Apache-2.0",
+      "license_file": "fa_IR/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "",
+      "review_date": "2026-08-12",
+      "sha256": {
+        "fa_IR.aff": "dba0980816354ad969aa46dda0c040eeebda4a9381be331e17eae8647a2a1e1c",
+        "fa_IR.dic": "314f31e059994f26e8016c834b14dfd10f74834b3f623a6040265b8f2a9dddab"
+      },
+      "download_urls": {
+        "fa_IR.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/fa_IR/fa_IR.aff",
+        "fa_IR.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/fa_IR/fa_IR.dic"
+      }
+    },
+    {
+      "language": "Interlingue",
+      "language_code": "ie",
+      "files": ["ie.aff", "ie.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/ie",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Standard Apache-2.0 boilerplate; no additional per-file copyright header found upstream. Full text in ie/LICENSE.",
+      "license_spdx": "Apache-2.0",
+      "license_file": "ie/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "",
+      "review_date": "2026-08-12",
+      "sha256": {
+        "ie.aff": "7dea5efa7b33134d370e64cf7b4c57b0cf19045d1bb155b36b7d16e2ff0f289d",
+        "ie.dic": "f44d9fad8b6a206f2d517624e70dc60426747d118f6674bd16a71cfedb8a6e6d"
+      },
+      "download_urls": {
+        "ie.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/ie/ie.aff",
+        "ie.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/ie/ie.dic"
+      }
+    },
+    {
+      "language": "Turkmen",
+      "language_code": "tk_TM",
+      "files": ["tk_TM.aff", "tk_TM.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/tk",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Standard Apache-2.0 boilerplate; no additional per-file copyright header found upstream. Full text in tk_TM/LICENSE.",
+      "license_spdx": "Apache-2.0",
+      "license_file": "tk_TM/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "",
+      "review_date": "2026-08-12",
+      "sha256": {
+        "tk_TM.aff": "c55a9e98cab463d6095920bc2f8f682837beb971c21a8ea37d8ef60d80133755",
+        "tk_TM.dic": "4c75d6e1c9f4e4780bd1a00828b37b8826232db4b204a96b30b841f94d2a0b81"
+      },
+      "download_urls": {
+        "tk_TM.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/tk_TM/tk_TM.aff",
+        "tk_TM.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/tk_TM/tk_TM.dic"
+      }
+    },
+    {
+      "language": "French",
+      "language_code": "fr_FR",
+      "files": ["fr_FR.aff", "fr_FR.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/fr",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Dictionnaires orthographiques francais (Grammalecte project), Olivier R. Full text in fr_FR/LICENSE.",
+      "license_spdx": "MPL-2.0",
+      "license_file": "fr_FR/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "",
+      "review_date": "2026-08-12",
+      "sha256": {
+        "fr_FR.aff": "05a735d34c912e4e381ff08ee7c747923ccf5cf9dca81d8467982fa1ca51c2b7",
+        "fr_FR.dic": "984e933237bc1224a48f42828233be9b03228260ef67aa8e2bdddcd03a26230d"
+      },
+      "download_urls": {
+        "fr_FR.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/fr_FR/fr_FR.aff",
+        "fr_FR.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/fr_FR/fr_FR.dic"
+      }
+    },
+    {
+      "language": "Spanish",
+      "language_code": "es_ES",
+      "files": ["es_ES.aff", "es_ES.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/es",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Community-maintained (sbosio/rla-es, \"Recursos Lingüísticos Abiertos del Español\"), coordinated by Santiago Bosio; no single named copyright holder. Full text in es_ES/LICENSE.",
+      "license_spdx": "(GPL-3.0-or-later OR LGPL-3.0-or-later OR MPL-1.1-or-later)",
+      "license_file": "es_ES/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "Freely selectable triple-license scheme, corroborated two independent ways: this dictionary's own bundled LICENSE text (\"Puede seleccionar libremente bajo cuál de estas licencias utilizará este diccionario\") and the further-upstream sbosio/rla-es repo's own LICENSE.md, which states the identical terms -- wooorm/dictionaries' package.json only lists a bare \"GPL-3.0\" without the \"-or-later\", the fuller upstream text is more authoritative (same kind of package.json/README gap already corrected for en_US). Recorded here under GPL-3.0-or-later, the same license as smaragd's own, so unlike every other entry in this catalog there is no compatibility question even setting aside the separate-file argument -- see es_ES/SOURCE.",
+      "review_date": "2026-08-13",
+      "sha256": {
+        "es_ES.aff": "892039d59db11d747061b81c3a92a52d48ba0e055b5835af1943cbd3c2fba85b",
+        "es_ES.dic": "907f786a8ceb3456722b20ad91dd4dbe99c5c16e45015ea63155e36f26b06d2c"
+      },
+      "download_urls": {
+        "es_ES.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/es_ES/es_ES.aff",
+        "es_ES.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/es_ES/es_ES.dic"
+      }
+    },
+    {
+      "language": "Portuguese (Brazil)",
+      "language_code": "pt_BR",
+      "files": ["pt_BR.aff", "pt_BR.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/pt",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Copyright (C) 2006-2013 by Raimundo Santos Moura, developed by the Brazilian LibreOffice community (VERO project). Full text in pt_BR/LICENSE.",
+      "license_spdx": "(LGPL-3.0-or-later OR MPL-2.0)",
+      "license_file": "pt_BR/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "Freely selectable dual-license scheme per wooorm/dictionaries' own package.json SPDX expression, corroborated by this dictionary's own bundled LICENSE text (\"licensed under the terms of the GNU Lesser General Public License version 3 (LGPLv3) ... and Mozilla Public License\" -- the common LibreOffice-extension dual-license convention, redistributable under either). Recorded under LGPL-3.0-or-later -- see pt_BR/SOURCE.",
+      "review_date": "2026-08-13",
+      "sha256": {
+        "pt_BR.aff": "a9f3621b94eb4d6838474bf9982027758e77dcb248815f49409b1a4a477dbd27",
+        "pt_BR.dic": "32e2edd83541d58613bcc83ef731a79aadf85ed57e977a16c6b5f711a7a36cee"
+      },
+      "download_urls": {
+        "pt_BR.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/pt_BR/pt_BR.aff",
+        "pt_BR.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/pt_BR/pt_BR.dic"
+      }
+    },
+    {
+      "language": "Portuguese (Portugal)",
+      "language_code": "pt_PT",
+      "files": ["pt_PT.aff", "pt_PT.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/pt-PT",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Copyright (C) 2006-2009 José João de Almeida, Rui Vilela, Alberto Simões (Dep. Informática, Universidade do Minho, Portugal). Full text in pt_PT/LICENSE.",
+      "license_spdx": "(GPL-2.0-only OR LGPL-2.1-or-later OR MPL-1.1)",
+      "license_file": "pt_PT/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "Freely selectable triple-license scheme, explicitly stated in this dictionary's own bundled LICENSE text: \"All dictionary files and associated programs are currently covered by the (GPL/LGPL/MPL), by this order\" -- GPL Version 2, LGPL Version 2.1, MPL Version 1.1. Recorded under GPL-2.0-only (no \"or later\" stated for that option) -- redistributed as a genuinely separate, unmodified data file under GPLv2's own mere-aggregation allowance, same reasoning as nb_NO/nn_NO, though the LGPL-2.1 or MPL-1.1 options would sidestep that question entirely if ever preferred -- see pt_PT/SOURCE.",
+      "review_date": "2026-08-13",
+      "sha256": {
+        "pt_PT.aff": "975a209fcc892cb382fa5f34a28c391a39668661ce373ae071287809c5fcae24",
+        "pt_PT.dic": "fcac21564163586df74ba88cde362bb75560548b35bcaa780558c8f97f43de04"
+      },
+      "download_urls": {
+        "pt_PT.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/pt_PT/pt_PT.aff",
+        "pt_PT.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/pt_PT/pt_PT.dic"
+      }
+    },
+    {
+      "language": "Swedish",
+      "language_code": "sv_SE",
+      "files": ["sv_SE.aff", "sv_SE.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/sv",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Copyright (C) 2003-19 Göran Andersson <goran@init.se>. Full text in sv_SE/LICENSE.",
+      "license_spdx": "LGPL-3.0-only",
+      "license_file": "sv_SE/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "Göran Andersson's \"Swedish Dictionary for Spell Checking\". wooorm/dictionaries' own package.json declares bare \"LGPL-3.0\", corroborated directly by this dictionary's own bundled LICENSE text (\"subject to the terms of GNU Lesser General Public License Version 3\"), with no \"or any later version\" clause found in the per-file grant -- treated as LGPL-3.0-only. A single named copyright holder, no freely-selectable multi-license scheme. Redistributed here as a genuinely separate, unmodified data file -- LGPL's own linking exception is if anything more permissive than GPL's mere-aggregation allowance for this kind of unmodified, un-linked redistribution -- see sv_SE/SOURCE.",
+      "review_date": "2026-08-13",
+      "sha256": {
+        "sv_SE.aff": "ff8ddb979daa9f128e7489ece5edd666ada7af787933221543b7cecb2b3ed478",
+        "sv_SE.dic": "540ff8d0d9b05aae66dd919625d3a0bd25026d1e157027e6602e5dd11a07b645"
+      },
+      "download_urls": {
+        "sv_SE.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/sv_SE/sv_SE.aff",
+        "sv_SE.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/sv_SE/sv_SE.dic"
+      }
+    },
+    {
+      "language": "Danish",
+      "language_code": "da_DK",
+      "files": ["da_DK.aff", "da_DK.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/da",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Copyright (C) 2020 Foreningen for frit tilgængelige sprogværktøjer. Full text in da_DK/LICENSE.",
+      "license_spdx": "GPL-2.0-only",
+      "license_file": "da_DK/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "Freely selectable triple-license scheme (GPL-2.0 / LGPL-2.1 / MPL-1.1), per wooorm/dictionaries' own package.json SPDX expression, corroborated by this dictionary's own bundled LICENSE text listing exactly the same three options -- same pattern as es_ES/pt_PT in this catalog. Recorded under GPL-2.0-only (no \"or later\" stated for that option); redistributed as a genuinely separate data file under GPLv2's own mere-aggregation allowance, same reasoning as nb_NO/nn_NO/pt_PT. Unlike every other entry in this catalog, index.dic here is NOT byte-identical to upstream: 4 of the original 173,515 entries failed to parse under standard Hunspell dic syntax (an upstream Stavekontrolden data bug, confirmed still present in their latest 2.8.116 release, not a wooorm packaging issue or something a newer pin would fix). 3 unescaped-slash abbreviations (\"A/S\", \"c/o\", \"I/S\") were fixed by escaping the slash per Hunspell's own dic-format convention -- same word, now parseable. 1 corrupted entry (two dictionary lines concatenated without a line break) was ambiguous to reconstruct and was deleted outright rather than guessed at. Full accounting in da_DK/SOURCE.",
+      "review_date": "2026-08-13",
+      "sha256": {
+        "da_DK.aff": "cb5ef704de0ab8575c883c97981d5d242260c7ebe47b28c15c205443aca15976",
+        "da_DK.dic": "adae86bb2bec940a3166d9e4456826af9ea74eb29c93b6bf150a732d41332ed2"
+      },
+      "download_urls": {
+        "da_DK.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/da_DK/da_DK.aff",
+        "da_DK.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/da_DK/da_DK.dic"
+      }
+    },
+    {
+      "language": "German",
+      "language_code": "de_DE",
+      "files": ["de_DE.aff", "de_DE.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/de",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Copyright (C) 1999-2016 Björn Jacke <bjoern@j3e.de>. Full text in de_DE/LICENSE.",
+      "license_spdx": "GPL-3.0-only",
+      "license_file": "de_DE/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "igerman98, the standard German Hunspell dictionary by Björn Jacke. wooorm/dictionaries' own package.json declares \"(GPL-2.0 OR GPL-3.0)\", corroborated directly by this dictionary's own bundled LICENSE text (\"under the terms of the GNU General Public License version 2 or 3\"). Freely selectable, no \"or later\" stated for either version. Recorded here as GPL-3.0-only -- one of the two options is exactly smaragd's own major license version, so unlike the GPL-2.0-only entries in this catalog there is no mere-aggregation question to fall back on even setting that argument aside -- see de_DE/SOURCE.",
+      "review_date": "2026-08-13",
+      "sha256": {
+        "de_DE.aff": "57fdd1b16aac2131003c91e0cf2a488becb970382a402a9ce089307301cb3ef0",
+        "de_DE.dic": "b5c781a0cf6f285fb6b9b8ab02fbea104b987104a1efdda8a835837e89e3ec77"
+      },
+      "download_urls": {
+        "de_DE.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/de_DE/de_DE.aff",
+        "de_DE.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/de_DE/de_DE.dic"
+      }
+    },
+    {
+      "language": "Dutch",
+      "language_code": "nl_NL",
+      "files": ["nl_NL.aff", "nl_NL.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/nl",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "© 2020 OpenTaal (Simon Brouwer, Sander van Geloven); © 2006-2011 OpenTaal (Ruud Baars, Simon Brouwer); © 2001-2005 Simon Brouwer and others; © 1996 Nederlandstalige TeX Gebruikersgroep. Full attribution chain in nl_NL/LICENSE.",
+      "license_spdx": "BSD-3-Clause",
+      "license_file": "nl_NL/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "OpenTaal's Dutch spelling dictionary. wooorm/dictionaries' own package.json declares \"(BSD-3-Clause OR CC-BY-3.0)\", corroborated directly by this dictionary's own bundled LICENSE.txt, which explicitly invites choosing either or both. Recorded here as BSD-3-Clause -- fully permissive, no copyleft question at all, same reasoning as en_US/en_GB in this catalog.",
+      "review_date": "2026-08-13",
+      "sha256": {
+        "nl_NL.aff": "b430d9cf5f4170d9e5072397927e1402b34aa877d1f4c8fbc00dab6370d87312",
+        "nl_NL.dic": "be192fdc36efd39dde0fb9a5a113143e0a906782e81ed68a74a710edced378d0"
+      },
+      "download_urls": {
+        "nl_NL.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/nl_NL/nl_NL.aff",
+        "nl_NL.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/nl_NL/nl_NL.dic"
+      }
+    },
+    {
+      "language": "Polish",
+      "language_code": "pl_PL",
+      "files": ["pl_PL.aff", "pl_PL.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/pl",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Dictionary maintainer Marek Futrega (spellchecker); corrections by Marcin Miłkowski. Full text in pl_PL/LICENSE.",
+      "license_spdx": "MPL-2.0",
+      "license_file": "pl_PL/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "Polish Native Lang Project / pl.openoffice.org. wooorm/dictionaries' own package.json declares \"(GPL-3.0 OR LGPL-3.0 OR MPL-2.0)\", corroborated by this dictionary's own bundled LICENSE text (\"licensed under GPL, LGPL, MPL ... and Creative Commons ShareAlike licenses\"), freely selectable. Recorded here as MPL-2.0 -- fully permissive weak-copyleft, sidesteps the GPL/LGPL version question entirely, same reasoning already used for fr_FR in this catalog.",
+      "review_date": "2026-08-13",
+      "sha256": {
+        "pl_PL.aff": "de7b54a8fa37562d58b481cf3d87a63e3dcc2d74021f6403eb0e4f5df9ecc225",
+        "pl_PL.dic": "74b6155391025419967c26913541b55b36d58e80b1028037d4a0b8ddcb18d0b7"
+      },
+      "download_urls": {
+        "pl_PL.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/pl_PL/pl_PL.aff",
+        "pl_PL.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/pl_PL/pl_PL.dic"
+      }
+    },
+    {
+      "language": "Italian",
+      "language_code": "it_IT",
+      "files": ["it_IT.aff", "it_IT.dic"],
+      "source_repository": "https://github.com/wooorm/dictionaries",
+      "source_path": "dictionaries/it",
+      "source_commit": "8cfea406b505e4d7df52d5a19bce525df98c54ab",
+      "copyright": "Copyright (C) 2010-2016 Andrea Pescetti (current maintainer); Copyright (C) 2001-2008 Gianluca Turconi and Davide Prina (original \"Dizionario italiano\"/\"Thesaurus italiano\" authors) and other contributors. Full attribution chain in it_IT/LICENSE.",
+      "license_spdx": "GPL-3.0-only",
+      "license_file": "it_IT/LICENSE",
+      "redistributable": true,
+      "review_status": "approved",
+      "review_status_notes": "Apache OpenOffice's \"Italian Writing Aids\" extension, maintained by Andrea Pescetti. wooorm/dictionaries' own package.json declares bare \"GPL-3.0\", corroborated directly by this dictionary's own bundled LICENSE text (\"under the terms and conditions of the GNU General Public License (GPL), version 3\" / \"as published by the Free Software Foundation\"), with no \"or any later version\" clause found in the per-file grant -- treated as GPL-3.0-only. Redistributable here specifically because it's kept as a genuinely separate, unmodified data file under GPLv3's own mere-aggregation allowance, not combined/linked into smaragd's GPL-3.0-or-later source or binary -- see dictionary_source_policy above and it_IT/SOURCE.",
+      "review_date": "2026-08-13",
+      "sha256": {
+        "it_IT.aff": "5770cd3e16d494c045b4a9a4a9fcd7962577e642d0384a7129c020a12cdd2c79",
+        "it_IT.dic": "b1348fbdb6f441ea9dd7e33b2cfcb96ead39ccd5e48bf894972774cd5aa86abb"
+      },
+      "download_urls": {
+        "it_IT.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/it_IT/it_IT.aff",
+        "it_IT.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/it_IT/it_IT.dic"
+      }
+    }
+  ]
+}

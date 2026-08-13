@@ -22,6 +22,7 @@ src/
   color_theme.rs          built-in + loaded-from-.toml color themes, egui::Visuals application
   shortcuts.rs            ShortcutAction <-> egui::KeyboardShortcut map, load/save, guards against binding a shortcut that would make some character untypable
   settings.rs             app-wide preferences: load/save smaragd.toml
+  spellcheck.rs           Hunspell-compatible spell-check (spellbook): misspelled_word_spans (pure tokenizer) + dictionary lookup, memoized and invalidatable; real, individually license-reviewed dictionaries are hosted in the separate github.com/ljantzen/smaragd-dictionaries repo, <code>/ (own LICENSE+SOURCE per language; indexed by dictionaries/catalog.json here) and not compiled into the binary -- fetched at runtime via download_dictionary (app/dictionary_download.rs, ui/settings_panel.rs's Dictionaries list) with SHA-256 verification against the catalog; English/Norwegian additionally fall back to a tiny bundled placeholder before either is downloaded
   templates.rs            `${{name}}`/`${{date}}` substitution for New From Template
   project_template.rs     Scrivener-style New Project templates: built-in Blank/Novel/Nonfiction/Screenplay/World-Building + loaded-from-disk custom ones, apply()/save_from_project()
   editor/mod.rs           EditorState: open/close document, dirty tracking, save

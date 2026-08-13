@@ -1,0 +1,18 @@
+See README.md in this directory for the current story: this directory holds
+`catalog.json`, the machine-readable index of every real, individually
+reviewed Hunspell dictionary smaragd can download on request, and
+`placeholders/`, the tiny bundled fallbacks below. The actual per-language
+dictionary files (`<language_code>/`, each with its own `LICENSE` and
+`SOURCE`) live in a separate repo,
+https://github.com/ljantzen/smaragd-dictionaries, not here — see that repo's
+own NOTICE for why redistributing them there, as genuinely separate files, is
+fine even where one (`nb_NO`, GPL-2.0-only) would be a real problem if it
+were ever combined or linked into smaragd's own binary.
+
+`placeholders/en_US.aff`/`.dic` and `placeholders/nb_NO.aff`/`.dic` are a
+different thing entirely: tiny (~20-word), hand-written word lists with no
+licensing question of their own, `include_bytes!`-bundled directly into the
+compiled binary so English/Norwegian have *something* working immediately,
+before either real dictionary has been downloaded. Every other language does
+nothing at all (flags no words) until its real dictionary is downloaded — see
+`src/spellcheck.rs`'s module doc comment for the full explanation of why.

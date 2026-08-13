@@ -1,6 +1,7 @@
 use crate::editor_font::EditorFont;
 use crate::settings::Settings;
 use crate::shortcuts::{ShortcutAction, ShortcutCategory, ShortcutTarget, is_safe_binding};
+use crate::spellcheck::SpellCheckLanguage;
 
 /// Keyboard filter claimed on every focused category row in the settings nav
 /// list — same mechanism `binder_panel.rs`'s `ARROW_KEYS_FILTER` uses and for
@@ -26,6 +27,7 @@ pub enum SettingsCategory {
     General,
     Appearance,
     Editor,
+    SpellCheck,
     Templates,
     History,
     Pomodoro,
@@ -33,10 +35,11 @@ pub enum SettingsCategory {
 }
 
 impl SettingsCategory {
-    pub const ALL: [SettingsCategory; 7] = [
+    pub const ALL: [SettingsCategory; 8] = [
         SettingsCategory::General,
         SettingsCategory::Appearance,
         SettingsCategory::Editor,
+        SettingsCategory::SpellCheck,
         SettingsCategory::Templates,
         SettingsCategory::History,
         SettingsCategory::Pomodoro,
@@ -48,6 +51,7 @@ impl SettingsCategory {
             SettingsCategory::General => "General",
             SettingsCategory::Appearance => "Appearance",
             SettingsCategory::Editor => "Editor",
+            SettingsCategory::SpellCheck => "Spell Check",
             SettingsCategory::Templates => "Templates",
             SettingsCategory::History => "History",
             SettingsCategory::Pomodoro => "Pomodoro",
@@ -77,6 +81,7 @@ impl SettingsCategory {
 /// on top visually. `Modal` adds the dimmed backdrop that actually captures
 /// that input, at the cost of the free resizing/dragging/title-bar chrome
 /// `Window` gave for nothing; those aren't essential for a settings dialog.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ctx: &egui::Context,
     open: &mut bool,
@@ -84,6 +89,8 @@ pub fn show(
     category: &mut SettingsCategory,
     recording_shortcut: &mut Option<ShortcutTarget>,
     plugin_shortcut_rows: &[(String, Option<egui::KeyboardShortcut>)],
+    dictionary_downloading: Option<SpellCheckLanguage>,
+    dictionary_download_request: &mut Option<SpellCheckLanguage>,
 ) -> bool {
     // Detects the dialog's closed->open transition (not persisted to disk, just
     // session-local `Context` memory) so `show_category_nav` can grab keyboard
@@ -141,6 +148,12 @@ pub fn show(
                     SettingsCategory::General => show_general_category(ui, settings),
                     SettingsCategory::Appearance => show_appearance_category(ctx, ui, settings),
                     SettingsCategory::Editor => show_editor_category(ui, settings),
+                    SettingsCategory::SpellCheck => show_spell_check_category(
+                        ui,
+                        settings,
+                        dictionary_downloading,
+                        dictionary_download_request,
+                    ),
                     SettingsCategory::Templates => show_templates_category(ui, settings),
                     SettingsCategory::History => show_history_category(ui, settings),
                     SettingsCategory::Pomodoro => show_pomodoro_category(ui, settings),
@@ -357,6 +370,125 @@ fn show_editor_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
         )
         .changed();
     changed
+}
+
+fn show_spell_check_category(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    dictionary_downloading: Option<SpellCheckLanguage>,
+    dictionary_download_request: &mut Option<SpellCheckLanguage>,
+) -> bool {
+    let mut changed = false;
+    ui.heading("Spell Check");
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        ui.label("Language:");
+        let previous = settings.spell_check_language;
+        egui::ComboBox::new("spell_check_language_combo", "")
+            .selected_text(settings.spell_check_language.label())
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut settings.spell_check_language,
+                    SpellCheckLanguage::Off,
+                    SpellCheckLanguage::Off.label(),
+                );
+                let mut languages: Vec<SpellCheckLanguage> = SpellCheckLanguage::ALL
+                    .into_iter()
+                    .filter(|lang| *lang != SpellCheckLanguage::Off)
+                    .collect();
+                languages.sort_by_key(|lang| lang.label());
+                for lang in languages {
+                    ui.selectable_value(&mut settings.spell_check_language, lang, lang.label());
+                }
+            });
+        changed |= settings.spell_check_language != previous;
+    })
+    .response
+    .on_hover_text(
+        "Underlines words not found in the selected dictionary while you type. \
+         No right-click suggestions or \"add to dictionary\" yet — expect false \
+         positives on names and invented words until a later update.",
+    );
+    ui.add_space(12.0);
+    ui.heading("Dictionaries");
+    ui.add_space(4.0);
+    ui.weak(
+        "Smaragd ships with tiny placeholder word lists only — download a real \
+         dictionary here to make spell-check actually useful.",
+    );
+    ui.add_space(8.0);
+    egui::ScrollArea::vertical()
+        .id_salt("dictionary_catalog_scroll")
+        .max_height(280.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            show_dictionary_catalog(ui, dictionary_downloading, dictionary_download_request);
+        });
+    changed
+}
+
+/// The "Dictionaries" list inside the Spell Check category: one row per
+/// `spellcheck::catalog()` entry that isn't `is_blocked()` — a blocked entry
+/// (this repo's own review found a license incompatibility) is never even
+/// shown here, let alone downloadable, regardless of what its `redistributable`
+/// field claims. Rows are sorted alphabetically by language name (not
+/// `catalog()`'s own order, which just reflects the order each was reviewed
+/// and added), and rendered inside `show_spell_check_category`'s own bounded,
+/// scrollable area rather than however tall the full list happens to be — with
+/// this many languages, an unbounded list would push the language picker
+/// above it off screen. Each row shows the language, its SPDX license
+/// identifier inline (full review status/copyright/notes as a hover
+/// tooltip), and either a "Download" button, a spinner while
+/// `dictionary_downloading` names this row's language, or "Downloaded" once
+/// `spellcheck::is_downloaded` confirms the files are already on disk.
+/// Clicking "Download" sets `*dictionary_download_request` rather than
+/// spawning anything itself — this module has no background-thread machinery
+/// of its own, that's `app::dictionary_download`'s job once the caller sees
+/// the request.
+fn show_dictionary_catalog(
+    ui: &mut egui::Ui,
+    dictionary_downloading: Option<SpellCheckLanguage>,
+    dictionary_download_request: &mut Option<SpellCheckLanguage>,
+) {
+    let mut entries: Vec<_> = crate::spellcheck::catalog().iter().collect();
+    entries.sort_by(|a, b| a.language.cmp(&b.language));
+    for entry in entries {
+        if entry.is_blocked() {
+            continue;
+        }
+        let Some(language) = SpellCheckLanguage::from_code(&entry.language_code) else {
+            continue;
+        };
+        let is_downloading = dictionary_downloading == Some(language);
+        let downloaded = crate::spellcheck::is_downloaded(language);
+        let row = ui.horizontal(|ui| {
+            ui.label(&entry.language);
+            ui.weak(format!("({})", entry.license_spdx));
+            if is_downloading {
+                ui.add(egui::Spinner::new().size(14.0));
+                ui.weak("Downloading…");
+            } else if downloaded {
+                ui.weak("✓ Downloaded");
+            } else {
+                let enabled = dictionary_downloading.is_none();
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Download"))
+                    .clicked()
+                {
+                    *dictionary_download_request = Some(language);
+                }
+            }
+        });
+        let notes = if entry.review_status_notes.is_empty() {
+            String::new()
+        } else {
+            format!("\n\n{}", entry.review_status_notes)
+        };
+        row.response.on_hover_text(format!(
+            "License: {}\nReview status: {}\nCopyright: {}{notes}",
+            entry.license_spdx, entry.review_status, entry.copyright
+        ));
+    }
 }
 
 fn show_templates_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
@@ -808,6 +940,7 @@ mod tests {
             ..Default::default()
         };
         let mut category = SettingsCategory::General;
+        let mut dictionary_download_request = None;
         let _ = ctx.run_ui(input, |ui| {
             show(
                 ui.ctx(),
@@ -816,6 +949,8 @@ mod tests {
                 &mut category,
                 recording_shortcut,
                 &[],
+                None,
+                &mut dictionary_download_request,
             );
         });
     }
@@ -918,8 +1053,18 @@ mod tests {
                 &mut self.category,
                 &mut self.recording_shortcut,
             );
+            let mut dictionary_download_request = None;
             let _ = self.ctx.run_ui(input, |ui| {
-                show(ui.ctx(), open, settings, category, recording_shortcut, &[]);
+                show(
+                    ui.ctx(),
+                    open,
+                    settings,
+                    category,
+                    recording_shortcut,
+                    &[],
+                    None,
+                    &mut dictionary_download_request,
+                );
             });
         }
 

@@ -9,6 +9,7 @@ use crate::autocomplete::{
 use crate::editor::EditorState;
 use crate::editor_font::EditorFont;
 use crate::markdown::{wikilink_resolves, wikilink_spans, wikilink_target_at};
+use crate::spellcheck::SpellCheckLanguage;
 use crate::ui::WikilinkActivation;
 
 /// What happened this frame, for the caller to react to: a failed autosave, or the
@@ -82,6 +83,27 @@ enum PopupAction {
     Dismiss,
 }
 
+/// Cross-frame memo of `spellcheck::misspelled_word_spans`'s result, stored in
+/// egui's temporary widget memory the same way `AutocompleteState` is — keyed
+/// off the editor's `TextEdit` id, not part of `EditorState`'s own data model.
+/// Dictionary lookups are real per-word CPU work (unlike the cheap regex-ish
+/// span scans `build_editor_layout_job` already runs every frame), so this
+/// avoids re-running them on every frame the buffer hasn't actually changed —
+/// recomputed only when the buffer's hash or the active language changes.
+#[derive(Clone, Default)]
+struct MisspelledCache {
+    text_hash: u64,
+    language: SpellCheckLanguage,
+    spans: Vec<std::ops::Range<usize>>,
+}
+
+fn hash_text(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Stable id for the document `TextEdit`, independent of whatever panel happens to
 /// host it this frame — lets `app.rs` move its cursor (e.g. jumping to a
 /// find-and-replace result) without needing a `Ui` of its own to derive an id from.
@@ -118,6 +140,7 @@ pub fn show(
     font: EditorFont,
     font_size: f32,
     collaborating: bool,
+    spell_check_language: SpellCheckLanguage,
 ) -> Option<EditorEvent> {
     // A joined collaboration session deliberately has no `open_path` (it
     // isn't tied to any of the joiner's own files — see `CollabSession`'s
@@ -190,8 +213,38 @@ pub fn show(
                 .map(|range| char_offset_to_byte(&editor.buffer, range.primary.index.0))
         })
         .flatten();
+    let misspelled_cache_id = text_edit_id.with("misspelled_cache");
     let mut editor_layouter = move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
         let text = buf.as_str();
+
+        let misspelled = if spell_check_language == SpellCheckLanguage::Off {
+            Vec::new()
+        } else {
+            let cache: MisspelledCache = ui
+                .ctx()
+                .data_mut(|d| d.get_temp(misspelled_cache_id))
+                .unwrap_or_default();
+            let text_hash = hash_text(text);
+            if cache.text_hash == text_hash && cache.language == spell_check_language {
+                cache.spans
+            } else {
+                let spans = crate::spellcheck::misspelled_word_spans(text, |word| {
+                    crate::spellcheck::is_misspelled(word, spell_check_language)
+                });
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(
+                        misspelled_cache_id,
+                        MisspelledCache {
+                            text_hash,
+                            language: spell_check_language,
+                            spans: spans.clone(),
+                        },
+                    )
+                });
+                spans
+            }
+        };
+
         let job = build_editor_layout_job(
             ui,
             text,
@@ -199,6 +252,7 @@ pub fn show(
             focus_mode_cursor_byte.map(|b| b.min(text.len())),
             note_titles,
             wrap_width,
+            &misspelled,
         );
         ui.fonts_mut(|f| f.layout_job(job))
     };
@@ -383,13 +437,19 @@ fn paragraph_byte_range(text: &str, cursor_byte: usize) -> std::ops::Range<usize
 /// target matches one of `note_titles`, or a distinct "broken link" color
 /// (`ui.visuals().error_fg_color`) otherwise — regardless of whether it falls
 /// inside or outside the dimmed range, so an unresolved link stays equally
-/// visible either way.
+/// visible either way. Composed further with a spell-check underline: each
+/// range in `misspelled` (see `spellcheck::misspelled_word_spans`, precomputed
+/// by the caller — this function does no dictionary lookups itself) gets a
+/// solid underline in `ui.visuals().warn_fg_color`, unless that run is already
+/// inside a wikilink — a wikilink keeps its link/broken-link color with no
+/// underline added even if its display text also happens to be a dictionary
+/// miss, so the two indicators never compete on the same text.
 ///
-/// Works by splitting `text` at every boundary either coloring rule cares
-/// about (the focus-paragraph edges, plus each wikilink's edges), then
-/// picking one color per resulting run: a run inside a wikilink always uses
-/// that link's color, overriding the dim/normal choice Focus Mode would
-/// otherwise make for it.
+/// Works by splitting `text` at every boundary any of these rules cares about
+/// (the focus-paragraph edges, each wikilink's edges, each misspelled word's
+/// edges), then picking one `TextFormat` per resulting run: a run inside a
+/// wikilink always uses that link's color, overriding the dim/normal choice
+/// Focus Mode would otherwise make for it.
 fn build_editor_layout_job(
     ui: &egui::Ui,
     text: &str,
@@ -397,6 +457,7 @@ fn build_editor_layout_job(
     focus_cursor_byte: Option<usize>,
     note_titles: &[String],
     wrap_width: f32,
+    misspelled: &[std::ops::Range<usize>],
 ) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob {
         wrap: egui::text::TextWrapping {
@@ -410,6 +471,7 @@ fn build_editor_layout_job(
     let dim = ui.visuals().weak_text_color();
     let link_color = ui.visuals().hyperlink_color;
     let broken_link_color = ui.visuals().error_fg_color;
+    let misspell_color = ui.visuals().warn_fg_color;
 
     let focus_range = focus_cursor_byte.map(|cursor_byte| paragraph_byte_range(text, cursor_byte));
     let wikilinks = wikilink_spans(text);
@@ -423,6 +485,10 @@ fn build_editor_layout_job(
         boundaries.push(range.start);
         boundaries.push(range.end);
     }
+    for range in misspelled {
+        boundaries.push(range.start);
+        boundaries.push(range.end);
+    }
     boundaries.sort_unstable();
     boundaries.dedup();
 
@@ -431,10 +497,10 @@ fn build_editor_layout_job(
         if start == end {
             continue;
         }
-        let color = if let Some((_, target)) = wikilinks
+        let wikilink_here = wikilinks
             .iter()
-            .find(|(range, _)| range.start <= start && end <= range.end)
-        {
+            .find(|(range, _)| range.start <= start && end <= range.end);
+        let color = if let Some((_, target)) = wikilink_here {
             if wikilink_resolves(target, note_titles) {
                 link_color
             } else {
@@ -449,12 +515,22 @@ fn build_editor_layout_job(
         } else {
             dim
         };
+        let underline = if wikilink_here.is_none()
+            && misspelled
+                .iter()
+                .any(|range| range.start <= start && end <= range.end)
+        {
+            egui::Stroke::new(1.0, misspell_color)
+        } else {
+            egui::Stroke::default()
+        };
         job.append(
             &text[start..end],
             0.0,
             egui::TextFormat {
                 font_id: font_id.clone(),
                 color,
+                underline,
                 ..Default::default()
             },
         );
@@ -528,7 +604,10 @@ pub fn move_cursor_to(ctx: &egui::Context, id: Id, text: &str, byte_offset: usiz
 
 #[cfg(test)]
 mod tests {
-    use super::{build_editor_layout_job, editor_text_edit_id, paragraph_byte_range, show};
+    use super::{
+        SpellCheckLanguage, build_editor_layout_job, editor_text_edit_id, paragraph_byte_range,
+        show,
+    };
     use crate::editor::EditorState;
     use crate::editor_font::EditorFont;
 
@@ -578,6 +657,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                SpellCheckLanguage::Off,
             );
         });
 
@@ -624,6 +704,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 true,
+                SpellCheckLanguage::Off,
             );
         });
 
@@ -667,6 +748,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                SpellCheckLanguage::Off,
             );
         });
 
@@ -715,6 +797,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 true,
+                SpellCheckLanguage::Off,
             );
         });
 
@@ -747,6 +830,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                SpellCheckLanguage::Off,
             );
         });
 
@@ -767,6 +851,88 @@ mod tests {
             .unwrap_or_else(|| panic!("no section covers byte {byte_offset}"))
             .format
             .color
+    }
+
+    /// `color_at`'s sibling for the spell-check underline stroke.
+    fn underline_at(sections: &[egui::text::LayoutSection], byte_offset: usize) -> egui::Stroke {
+        sections
+            .iter()
+            .find(|s| s.byte_range.start.0 <= byte_offset && byte_offset < s.byte_range.end.0)
+            .unwrap_or_else(|| panic!("no section covers byte {byte_offset}"))
+            .format
+            .underline
+    }
+
+    #[test]
+    fn a_misspelled_word_gets_the_warning_underline_stroke() {
+        let ctx = egui::Context::default();
+        let text = "The wrold is big.";
+        // A genuine `Vec<Range<usize>>` of misspelled-word spans, not (as the lint
+        // assumes) an attempt to collect the range's own contents.
+        #[allow(clippy::single_range_in_vec_init)]
+        let misspelled = vec![text.find("wrold").unwrap()..text.find("wrold").unwrap() + 5];
+        let (mut warn_color, mut sections) = (egui::Color32::TRANSPARENT, Vec::new());
+
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            warn_color = ui.visuals().warn_fg_color;
+            sections = build_editor_layout_job(
+                ui,
+                text,
+                egui::FontId::monospace(14.0),
+                None,
+                &[],
+                1000.0,
+                &misspelled,
+            )
+            .sections;
+        });
+
+        let stroke = underline_at(&sections, text.find("wrold").unwrap());
+        assert_eq!(stroke.color, warn_color);
+        assert!(stroke.width > 0.0);
+        // Plain text right before it stays un-underlined.
+        assert_eq!(
+            underline_at(&sections, 0),
+            egui::Stroke::default(),
+            "plain text should not get the misspelled-word underline"
+        );
+    }
+
+    /// A run inside a wikilink keeps its link/broken-link color with no
+    /// underline added, even when its byte range also appears in `misspelled`
+    /// — the two indicators must never compete on the same text.
+    #[test]
+    fn a_wikilink_run_never_gets_the_misspelled_underline_even_if_its_range_is_flagged() {
+        let ctx = egui::Context::default();
+        let text = "See [[Wrold]] for more.";
+        let target_start = text.find("Wrold").unwrap();
+        // The whole `[[Wrold]]` span, not just the word — matches how a real
+        // caller would report a wikilink target/tag span as "skip" rather than
+        // "flag" (see `spellcheck::misspelled_word_spans`), but this test
+        // deliberately still passes the range in to prove the renderer itself
+        // enforces the no-double-signal rule, not just the span-finder.
+        #[allow(clippy::single_range_in_vec_init)]
+        let misspelled = vec![target_start..target_start + 5];
+        let mut sections = Vec::new();
+
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            sections = build_editor_layout_job(
+                ui,
+                text,
+                egui::FontId::monospace(14.0),
+                None,
+                &[],
+                1000.0,
+                &misspelled,
+            )
+            .sections;
+        });
+
+        assert_eq!(
+            underline_at(&sections, target_start),
+            egui::Stroke::default(),
+            "a wikilink run must never get the misspelled-word underline"
+        );
     }
 
     #[test]
@@ -790,6 +956,7 @@ mod tests {
                 None,
                 &note_titles,
                 1000.0,
+                &[],
             )
             .sections;
         });
@@ -823,6 +990,7 @@ mod tests {
                 Some(cursor_byte),
                 &[],
                 1000.0,
+                &[],
             )
             .sections;
         });
