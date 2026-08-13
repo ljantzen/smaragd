@@ -39,4 +39,5 @@
 - [Themes and Appearance](themes.md)
 - [Keyboard Shortcuts](keyboard-shortcuts.md)
 - [Notifications](notifications.md)
+- [Spell Check](spell-check.md)
 - [Settings](settings.md)
