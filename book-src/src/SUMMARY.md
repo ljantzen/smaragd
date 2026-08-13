@@ -16,6 +16,7 @@
 - [Document Metadata (Frontmatter)](document-metadata.md)
 - [Project Metadata](project-metadata.md)
 - [Tags](tags.md)
+- [Bookmarks](bookmarks.md)
 - [Folder Roles](folder-roles.md)
 - [Import](import.md)
 - [Export](export.md)

@@ -8,8 +8,24 @@ this file.
 - The Editor can now show a line-number gutter (**Settings > Editor > Show
   line numbers**, off by default). Numbers count logical lines, not wrapped
   visual rows, so a long paragraph that wraps across several rows only gets
-  numbered once. A blank strip to the left of the numbers is reserved for a
-  future per-line bookmark marker, not implemented yet.
+  numbered once.
+- Added Bookmarks: mark a line in any document with `Ctrl+F2`, or by
+  clicking its line's icon slot in the gutter above (a bookmarked line gets
+  a diamond there) — the gutter needs to be turned on for the click/diamond,
+  but the shortcut and the rest of the feature work either way.
+  `Alt+Down`/`Alt+Up` step to the next/previous bookmark project-wide, in
+  document-then-line order, wrapping at either end. A new **Bookmarks** dock
+  (`View > Bookmarks`, `Ctrl+Alt+B`) lists every bookmark in the project as
+  a clickable link (jumps straight there) with a Delete button per row.
+  Stored per-project, alongside Story Cards; renaming, moving, or deleting a
+  bookmarked file leaves its bookmark dangling — shown as "not found" in the
+  dock, still deletable but no longer clickable — rather than kept in sync
+  automatically, a deliberate v1 scope cut.
+- The Preview tab now shows the open document's title at the top, next to
+  the Style picker, matching the Editor pane, which already did.
+- The Tags dock's "Rename…" button is now right-aligned in its row, like
+  every other per-row action button (Bookmarks' "Delete", Backlinks'/Tags'
+  own "Refresh") — it previously sat immediately after the tag link instead.
 
 ## v0.9.5 — 2026-08-13
 

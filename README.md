@@ -16,6 +16,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Binder tree view of the writing project
 - Markdown text editor 
 - Optional line-number gutter in the editor
+- Bookmarks: mark a line with a shortcut or a gutter click, jump back from a dedicated dock or Alt+Up/Alt+Down navigation
 - fzf-style quick-switcher between documents 
 - Browser-style Go Back/Go Forward document history, restoring your cursor position in each
 - Project templates 
