@@ -1,6 +1,6 @@
 # Spell Check
 
-Still early groundwork: smaragd underlines words it doesn't recognize while you type, in the editor's warning color — there's no right-click suggestions or "add to dictionary" yet, so expect false positives on names and invented words until a later update.
+Smaragd underlines words it doesn't recognize while you type, in the editor's warning color. Right-click an underlined word for a menu of Hunspell's own correction candidates — click one to replace the word on the spot — plus an **"Add to Dictionary"** entry for names and invented words that keep getting flagged: adding one stops it being underlined immediately, everywhere, and the word is remembered across restarts (**Settings > Spell Check** doesn't currently show or let you remove this list — for now, undoing an accidental add means editing `spell_check_custom_words` in `smaragd.toml` by hand).
 
 It's off by default. Turn it on in **Settings > Spell Check** (`Ctrl+,`) with the **Language** dropdown.
 

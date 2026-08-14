@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use egui::text::{CCursor, CCursorRange};
 use egui::widgets::text_edit::TextEditOutput;
@@ -23,6 +23,12 @@ pub enum EditorEvent {
     /// fired — the caller adds/removes a bookmark at this 1-based logical line
     /// in whichever document is currently open. See `paint_gutter`.
     ToggleBookmark(usize),
+    /// "Add to Dictionary" was clicked in a misspelled word's right-click menu
+    /// — the caller persists this word onto `Settings::spell_check_custom_words`.
+    /// A suggestion clicked in the same menu is applied directly to `editor.buffer`
+    /// instead (no event needed — unlike this, it doesn't touch app state outside
+    /// the open document).
+    AddToDictionary(String),
 }
 
 /// Cap on how many `[[wikilink]]`/`#tag` suggestions are shown at once, matching
@@ -95,11 +101,14 @@ enum PopupAction {
 /// Dictionary lookups are real per-word CPU work (unlike the cheap regex-ish
 /// span scans `build_editor_layout_job` already runs every frame), so this
 /// avoids re-running them on every frame the buffer hasn't actually changed —
-/// recomputed only when the buffer's hash or the active language changes.
+/// recomputed only when the buffer's hash, the active language, or the custom
+/// word set (`custom_words_hash`, so "Add to Dictionary" un-flags its word
+/// immediately rather than only after the buffer itself next changes) changes.
 #[derive(Clone, Default)]
 struct MisspelledCache {
     text_hash: u64,
     language: SpellCheckLanguage,
+    custom_words_hash: u64,
     spans: Vec<std::ops::Range<usize>>,
 }
 
@@ -108,6 +117,39 @@ fn hash_text(text: &str) -> u64 {
     let mut hasher = std::hash::DefaultHasher::new();
     text.hash(&mut hasher);
     hasher.finish()
+}
+
+fn hash_custom_words(words: &BTreeSet<String>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    words.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Whether `word` should get the misspelled-word underline: flagged by the
+/// dictionary (`spellcheck::is_misspelled`) and not one the user has already
+/// added via "Add to Dictionary" (`custom_words`, matched case-sensitively —
+/// see `Settings::spell_check_custom_words`'s doc comment).
+fn is_flagged_word(
+    word: &str,
+    language: SpellCheckLanguage,
+    custom_words: &BTreeSet<String>,
+) -> bool {
+    crate::spellcheck::is_misspelled(word, language) && !custom_words.contains(word)
+}
+
+/// The flagged word (and its byte range) that contains `byte`, if any — the
+/// pure lookup half of `handle_spell_check_context_menu`'s click handling,
+/// split out so it's testable without a real `egui::Galley` to click on.
+fn misspelled_word_at(
+    spans: &[std::ops::Range<usize>],
+    text: &str,
+    byte: usize,
+) -> Option<(std::ops::Range<usize>, String)> {
+    spans
+        .iter()
+        .find(|range| range.contains(&byte))
+        .map(|range| (range.clone(), text[range.clone()].to_string()))
 }
 
 /// Stable id for the document `TextEdit`, independent of whatever panel happens to
@@ -147,6 +189,7 @@ pub fn show(
     font_size: f32,
     collaborating: bool,
     spell_check_language: SpellCheckLanguage,
+    custom_words: &BTreeSet<String>,
     show_gutter: bool,
     bookmarked_lines: &HashSet<usize>,
     toggle_bookmark_shortcut: Option<KeyboardShortcut>,
@@ -236,11 +279,15 @@ pub fn show(
                 .data_mut(|d| d.get_temp(misspelled_cache_id))
                 .unwrap_or_default();
             let text_hash = hash_text(text);
-            if cache.text_hash == text_hash && cache.language == spell_check_language {
+            let custom_words_hash = hash_custom_words(custom_words);
+            if cache.text_hash == text_hash
+                && cache.language == spell_check_language
+                && cache.custom_words_hash == custom_words_hash
+            {
                 cache.spans
             } else {
                 let spans = crate::spellcheck::misspelled_word_spans(text, |word| {
-                    crate::spellcheck::is_misspelled(word, spell_check_language)
+                    is_flagged_word(word, spell_check_language, custom_words)
                 });
                 ui.ctx().data_mut(|d| {
                     d.insert_temp(
@@ -248,6 +295,7 @@ pub fn show(
                         MisspelledCache {
                             text_hash,
                             language: spell_check_language,
+                            custom_words_hash,
                             spans: spans.clone(),
                         },
                     )
@@ -356,6 +404,17 @@ pub fn show(
     // where they were leaving this one.
     if let Some(range) = output.cursor_range {
         editor.cursor_byte = char_offset_to_byte(&editor.buffer, range.primary.index.0);
+    }
+
+    if let Some(event) = handle_spell_check_context_menu(
+        ui,
+        editor,
+        &output,
+        text_edit_id,
+        misspelled_cache_id,
+        spell_check_language,
+    ) {
+        return Some(event);
     }
 
     if activate_wikilink_requested && let Some(range) = output.cursor_range {
@@ -476,6 +535,117 @@ pub fn show(
     }
 
     None
+}
+
+/// What a click in the spell-check right-click menu asked for — resolved into
+/// a buffer edit or an `EditorEvent` by `handle_spell_check_context_menu`'s
+/// caller.
+enum SpellMenuAction {
+    /// Replace the flagged word's byte range with a chosen suggestion.
+    Replace(std::ops::Range<usize>, String),
+    /// "Add to Dictionary" was clicked for this word.
+    AddToDictionary(String),
+}
+
+/// Right-click-on-a-flagged-word support: a context menu offering
+/// `spellcheck::suggest`'s corrections plus "Add to Dictionary", the
+/// interaction this module's own `EditorEvent::AddToDictionary` doc comment
+/// describes. Returns `Some` only for "Add to Dictionary" (the caller reports
+/// it up as an `EditorEvent` so `Settings::spell_check_custom_words` gets it);
+/// picking a suggestion is applied directly to `editor.buffer` here, since
+/// unlike adding a word, it doesn't need to reach outside the open document.
+///
+/// Which word was clicked has to be captured at the moment of the right-click
+/// itself (via `output.response.interact_pointer_pos()` mapped through
+/// `output.galley.cursor_from_pos` to a byte offset, then matched against
+/// `misspelled_cache_id`'s spans) and stashed in egui's temp memory, because
+/// `egui::Response::context_menu`'s `add_contents` closure keeps re-running on
+/// every later frame the menu stays open — by then the pointer has typically
+/// moved on to hovering a suggestion button, not the flagged word anymore.
+fn handle_spell_check_context_menu(
+    ui: &egui::Ui,
+    editor: &mut EditorState,
+    output: &TextEditOutput,
+    text_edit_id: Id,
+    misspelled_cache_id: Id,
+    spell_check_language: SpellCheckLanguage,
+) -> Option<EditorEvent> {
+    if spell_check_language == SpellCheckLanguage::Off {
+        return None;
+    }
+
+    let spell_menu_word_id = text_edit_id.with("spellcheck_menu_word");
+    if output.response.secondary_clicked() {
+        let clicked = output.response.interact_pointer_pos().and_then(|pos| {
+            let local = pos - output.galley_pos;
+            let click_byte = char_offset_to_byte(
+                &editor.buffer,
+                output.galley.cursor_from_pos(local).index.into(),
+            );
+            let cache: MisspelledCache = ui
+                .ctx()
+                .data_mut(|d| d.get_temp(misspelled_cache_id))
+                .unwrap_or_default();
+            misspelled_word_at(&cache.spans, &editor.buffer, click_byte)
+        });
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(spell_menu_word_id, clicked));
+    }
+    let clicked_word: Option<(std::ops::Range<usize>, String)> = ui
+        .ctx()
+        .data_mut(|d| d.get_temp(spell_menu_word_id))
+        .flatten();
+
+    let mut action = None;
+    output.response.context_menu(|ui| {
+        let Some((range, word)) = clicked_word.clone() else {
+            // The right-click landed outside any flagged word — nothing to
+            // offer, so close immediately rather than show an empty popup.
+            ui.close();
+            return;
+        };
+        let suggestions = crate::spellcheck::suggest(&word, spell_check_language);
+        if suggestions.is_empty() {
+            ui.weak("No suggestions");
+        } else {
+            for suggestion in suggestions {
+                // A fresh popup's `Ui` starts with no known content width yet (it
+                // grows to fit on this very frame), and the default `Button` wrap
+                // mode wraps to whatever width is available *right now* — without
+                // this, that first-frame near-zero width wraps every suggestion
+                // one character per line instead of growing the popup to fit.
+                if ui
+                    .add(egui::Button::new(&suggestion).wrap_mode(egui::TextWrapMode::Extend))
+                    .clicked()
+                {
+                    action = Some(SpellMenuAction::Replace(range.clone(), suggestion));
+                    ui.close();
+                }
+            }
+        }
+        ui.separator();
+        if ui
+            .add(
+                egui::Button::new(format!("Add \"{word}\" to Dictionary"))
+                    .wrap_mode(egui::TextWrapMode::Extend),
+            )
+            .clicked()
+        {
+            action = Some(SpellMenuAction::AddToDictionary(word.clone()));
+            ui.close();
+        }
+    });
+
+    match action? {
+        SpellMenuAction::Replace(range, replacement) => {
+            let new_cursor_byte = range.start + replacement.len();
+            editor.buffer.replace_range(range, &replacement);
+            editor.mark_dirty();
+            move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, new_cursor_byte);
+            None
+        }
+        SpellMenuAction::AddToDictionary(word) => Some(EditorEvent::AddToDictionary(word)),
+    }
 }
 
 /// The byte range `[start, end)` of the paragraph (a run of text between blank
@@ -762,8 +932,8 @@ pub fn move_cursor_to(ctx: &egui::Context, id: Id, text: &str, byte_offset: usiz
 #[cfg(test)]
 mod tests {
     use super::{
-        EditorEvent, HashSet, Key, SpellCheckLanguage, build_editor_layout_job,
-        editor_text_edit_id, paragraph_byte_range, show,
+        BTreeSet, EditorEvent, HashSet, Key, SpellCheckLanguage, build_editor_layout_job,
+        editor_text_edit_id, is_flagged_word, misspelled_word_at, paragraph_byte_range, show,
     };
     use crate::editor::EditorState;
     use crate::editor_font::EditorFont;
@@ -815,6 +985,7 @@ mod tests {
                 14.0,
                 false,
                 SpellCheckLanguage::Off,
+                &BTreeSet::new(),
                 false,
                 &HashSet::new(),
                 None,
@@ -865,6 +1036,7 @@ mod tests {
                 14.0,
                 true,
                 SpellCheckLanguage::Off,
+                &BTreeSet::new(),
                 false,
                 &HashSet::new(),
                 None,
@@ -912,6 +1084,7 @@ mod tests {
                 14.0,
                 false,
                 SpellCheckLanguage::Off,
+                &BTreeSet::new(),
                 false,
                 &HashSet::new(),
                 None,
@@ -964,6 +1137,7 @@ mod tests {
                     14.0,
                     false,
                     SpellCheckLanguage::Off,
+                    &BTreeSet::new(),
                     false,
                     &HashSet::new(),
                     None,
@@ -994,6 +1168,7 @@ mod tests {
                     14.0,
                     false,
                     SpellCheckLanguage::Off,
+                    &BTreeSet::new(),
                     true,
                     &HashSet::new(),
                     None,
@@ -1076,6 +1251,7 @@ mod tests {
                 14.0,
                 false,
                 SpellCheckLanguage::Off,
+                &BTreeSet::new(),
                 true,
                 &HashSet::new(),
                 None,
@@ -1104,6 +1280,7 @@ mod tests {
                 14.0,
                 false,
                 SpellCheckLanguage::Off,
+                &BTreeSet::new(),
                 true,
                 &HashSet::new(),
                 None,
@@ -1150,6 +1327,7 @@ mod tests {
                 14.0,
                 false,
                 SpellCheckLanguage::Off,
+                &BTreeSet::new(),
                 true,
                 &HashSet::new(),
                 None,
@@ -1185,6 +1363,7 @@ mod tests {
                 14.0,
                 false,
                 SpellCheckLanguage::Off,
+                &BTreeSet::new(),
                 true,
                 &HashSet::new(),
                 None,
@@ -1236,6 +1415,7 @@ mod tests {
                 14.0,
                 false,
                 SpellCheckLanguage::Off,
+                &BTreeSet::new(),
                 false,
                 &HashSet::new(),
                 None,
@@ -1266,6 +1446,7 @@ mod tests {
                 14.0,
                 false,
                 SpellCheckLanguage::Off,
+                &BTreeSet::new(),
                 false,
                 &HashSet::new(),
                 Some(shortcut),
@@ -1310,6 +1491,7 @@ mod tests {
                 14.0,
                 true,
                 SpellCheckLanguage::Off,
+                &BTreeSet::new(),
                 false,
                 &HashSet::new(),
                 None,
@@ -1346,6 +1528,7 @@ mod tests {
                 14.0,
                 false,
                 SpellCheckLanguage::Off,
+                &BTreeSet::new(),
                 false,
                 &HashSet::new(),
                 None,
@@ -1414,6 +1597,48 @@ mod tests {
             egui::Stroke::default(),
             "plain text should not get the misspelled-word underline"
         );
+    }
+
+    #[test]
+    fn is_flagged_word_skips_a_word_the_user_added_to_the_dictionary() {
+        let custom = BTreeSet::from(["Aslak".to_string()]);
+        assert!(is_flagged_word(
+            "Aslak",
+            SpellCheckLanguage::English,
+            &BTreeSet::new()
+        ));
+        assert!(!is_flagged_word(
+            "Aslak",
+            SpellCheckLanguage::English,
+            &custom
+        ));
+        // Case-sensitive, matching `spellcheck::is_misspelled`'s own KEEPCASE reasoning.
+        assert!(is_flagged_word(
+            "aslak",
+            SpellCheckLanguage::English,
+            &custom
+        ));
+    }
+
+    #[test]
+    fn misspelled_word_at_finds_the_range_containing_the_byte() {
+        let text = "The wrold is big.";
+        let range = text.find("wrold").unwrap()..text.find("wrold").unwrap() + 5;
+        let spans = vec![range.clone()];
+
+        assert_eq!(
+            misspelled_word_at(&spans, text, range.start + 2),
+            Some((range, "wrold".to_string()))
+        );
+    }
+
+    #[test]
+    fn misspelled_word_at_is_none_outside_any_flagged_span() {
+        let text = "The wrold is big.";
+        let range = text.find("wrold").unwrap()..text.find("wrold").unwrap() + 5;
+        let spans = vec![range];
+
+        assert_eq!(misspelled_word_at(&spans, text, 0), None);
     }
 
     /// A run inside a wikilink keeps its link/broken-link color with no

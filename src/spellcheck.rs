@@ -419,6 +419,27 @@ pub fn is_misspelled(word: &str, language: SpellCheckLanguage) -> bool {
     }
 }
 
+/// Cap on how many corrections [`suggest`] returns — enough to be useful in a
+/// right-click menu without turning it into a scrollable wall of low-confidence
+/// guesses.
+const MAX_SUGGESTIONS: usize = 6;
+
+/// Hunspell-style correction candidates for `word`, best guess first, capped at
+/// [`MAX_SUGGESTIONS`] — empty for `Off` or a language with no dictionary loaded
+/// yet, the same "do nothing rather than mislead" fallback `is_misspelled` uses.
+/// `word` doesn't need to actually be misspelled; asking anyway just tends to
+/// return `[word]` or nothing useful, so callers only bother for a word
+/// `is_misspelled` already flagged.
+pub fn suggest(word: &str, language: SpellCheckLanguage) -> Vec<String> {
+    let Some(dict) = dictionary_for(language) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    dict.suggest(word, &mut out);
+    out.truncate(MAX_SUGGESTIONS);
+    out
+}
+
 fn is_word_char(c: char) -> bool {
     c.is_alphabetic() || c == '\'' || c == '\u{2019}'
 }
@@ -767,6 +788,25 @@ mod tests {
     fn placeholder_norwegian_dictionary_recognizes_its_own_bundled_words() {
         assert!(!is_misspelled("hei", SpellCheckLanguage::Norwegian));
         assert!(is_misspelled("wrold", SpellCheckLanguage::Norwegian));
+    }
+
+    #[test]
+    fn suggest_offers_a_correction_for_a_misspelled_word() {
+        let suggestions = suggest("wrold", SpellCheckLanguage::English);
+        assert!(
+            suggestions.contains(&"world".to_string()),
+            "expected \"world\" among {suggestions:?}"
+        );
+    }
+
+    #[test]
+    fn suggest_is_empty_when_spell_check_is_off() {
+        assert!(suggest("wrold", SpellCheckLanguage::Off).is_empty());
+    }
+
+    #[test]
+    fn suggest_is_capped_at_max_suggestions() {
+        assert!(suggest("wrold", SpellCheckLanguage::English).len() <= MAX_SUGGESTIONS);
     }
 
     #[test]

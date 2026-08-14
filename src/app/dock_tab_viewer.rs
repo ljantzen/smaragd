@@ -42,6 +42,10 @@ pub(super) enum DockAction {
     /// `ui::markdown_preview::PreviewOutcome::zoom_changed`. Persisted onto
     /// `Settings::preview_zoom`, the same field the zoom shortcuts write.
     SetPreviewZoom(f32),
+    /// "Add to Dictionary" was clicked in the Editor's spell-check right-click
+    /// menu — see `ui::editor_panel::EditorEvent::AddToDictionary`. Persisted
+    /// onto `Settings::spell_check_custom_words`.
+    SpellCheckAddWord(String),
     Corkboard(CorkboardEvent),
     StoryGrid(crate::ui::story_grid_panel::StoryGridEvent),
     BeliefTimeline(crate::ui::belief_timeline_panel::BeliefTimelineEvent),
@@ -426,6 +430,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     crate::editor_font::resolve_size(self.settings.editor_font_size),
                     self.collaborating,
                     self.settings.spell_check_language,
+                    &self.settings.spell_check_custom_words,
                     self.settings.show_editor_gutter,
                     &bookmarked_lines,
                     toggle_bookmark_shortcut,
@@ -438,6 +443,9 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     }
                     Some(EditorEvent::ToggleBookmark(line)) => {
                         self.actions.push(DockAction::ToggleBookmark(line));
+                    }
+                    Some(EditorEvent::AddToDictionary(word)) => {
+                        self.actions.push(DockAction::SpellCheckAddWord(word));
                     }
                     None => {}
                 }

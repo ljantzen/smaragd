@@ -5,6 +5,12 @@ this file.
 
 ## Unreleased
 
+- Added right-click suggestions and "Add to Dictionary" for spell check:
+  right-clicking a misspelled (underlined) word in the Editor now offers
+  Hunspell's own correction candidates, plus an "Add to Dictionary" action
+  for names and invented words that keep triggering false positives — added
+  words are remembered across restarts and stop being flagged immediately,
+  no need to change the buffer first.
 - Added zooming to the Preview pane: Ctrl+scroll over the rendered document to
   scale its text up or down, or use `Ctrl++`/`Ctrl+-`/`Ctrl+0` (zoom
   in/out/reset), all remappable under **Settings > Shortcuts**. Only affects

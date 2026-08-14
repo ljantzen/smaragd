@@ -45,7 +45,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Writing Streak tracker 
 - Fully remappable keyboard shortcuts 
 - Real-time peer-to-peer private collaborative editing with no shared server infrastructure 
-- Spell check with on-demand Hunspell dictionary downloads for 20 languages (early groundwork: underlines misspelled words, no suggestions yet)
+- Spell check with on-demand Hunspell dictionary downloads for 20 languages, right-click suggestions, and "Add to Dictionary" for names and invented words
 
 ## Running
 

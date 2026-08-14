@@ -304,14 +304,22 @@ pub struct Settings {
     pub show_editor_gutter: bool,
     /// Which bundled Hunspell-compatible dictionary flags misspelled words with
     /// an inline underline in the Editor — see `spellcheck::misspelled_word_spans`.
-    /// Off by default: v1 has no suggestions/ignore-word mechanism yet (a
-    /// deliberate, documented follow-up — see `spellcheck`'s module doc comment),
-    /// so an unfamiliar surname or invented word shows up as a false positive
-    /// with no way to silence it — opt-in until that lands. Also currently
+    /// Off by default: right-clicking a flagged word offers Hunspell suggestions
+    /// and "Add to Dictionary" (`spell_check_custom_words` below), but is still
     /// backed by placeholder dictionaries with only a couple dozen known words
-    /// per language (see `dictionaries/NOTICE`), so turning this on
-    /// today isn't yet meaningfully useful regardless of the default.
+    /// per language until a real one is downloaded (see `dictionaries/NOTICE`),
+    /// so turning this on before that isn't yet meaningfully useful regardless
+    /// of the default.
     pub spell_check_language: SpellCheckLanguage,
+    /// Words added via the Editor's right-click "Add to Dictionary" on a
+    /// flagged word — checked alongside (not instead of) the active
+    /// dictionary, so a proper noun or invented word stops being flagged
+    /// without needing a real Hunspell entry for it. App-wide like
+    /// `spell_check_language` itself, not per-project: a name you've already
+    /// taught smaragd to recognize in one manuscript is exactly as much *not*
+    /// a typo in the next one. Matched case-sensitively, the same as
+    /// `spellcheck::is_misspelled` itself (see its doc comment on `KEEPCASE`).
+    pub spell_check_custom_words: BTreeSet<String>,
     /// How long an error-severity toast notification (`app::Toast`) stays on
     /// screen before auto-dismissing, in seconds. `0` means "not yet
     /// configured," resolved to a real default at the point of use
@@ -948,6 +956,7 @@ mod tests {
             typewriter_quotes: true,
             show_editor_gutter: true,
             spell_check_language: SpellCheckLanguage::Off,
+            spell_check_custom_words: BTreeSet::from(["Aslak".to_string(), "smaragd".to_string()]),
             toast_duration_secs: 10,
             status_message_duration_secs: 12,
             shortcuts_seen,

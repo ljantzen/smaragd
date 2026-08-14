@@ -1495,6 +1495,7 @@ impl eframe::App for SmaragdApp {
                     crate::editor_font::resolve_size(self.settings.editor_font_size),
                     self.collab.is_some(),
                     self.settings.spell_check_language,
+                    &self.settings.spell_check_custom_words,
                     self.settings.show_editor_gutter,
                     &bookmarked_lines,
                     toggle_bookmark_shortcut,
@@ -1505,6 +1506,10 @@ impl eframe::App for SmaragdApp {
                         if let Some(path) = self.editor.open_path.clone() {
                             self.toggle_bookmark(&path, line);
                         }
+                    }
+                    Some(EditorEvent::AddToDictionary(word)) => {
+                        self.settings.spell_check_custom_words.insert(word);
+                        self.persist_settings();
                     }
                     None => {}
                 }
@@ -1593,6 +1598,10 @@ impl eframe::App for SmaragdApp {
                         }
                         DockAction::SetPreviewZoom(zoom) => {
                             self.settings.preview_zoom = zoom;
+                            self.persist_settings();
+                        }
+                        DockAction::SpellCheckAddWord(word) => {
+                            self.settings.spell_check_custom_words.insert(word);
                             self.persist_settings();
                         }
                         DockAction::Corkboard(event) => self.handle_corkboard_event(event),
