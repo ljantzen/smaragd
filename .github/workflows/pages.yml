@@ -47,6 +47,10 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
+          # v4+ stopped including dotfiles by default; mdBook's own
+          # `book-src/book/.nojekyll` (copied into _site/manual/) needs to
+          # survive into the deployed artifact.
+          include-hidden-files: true
 
       - id: deployment
         uses: actions/deploy-pages@v5
