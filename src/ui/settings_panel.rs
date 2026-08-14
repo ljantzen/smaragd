@@ -965,7 +965,7 @@ mod tests {
         };
         let mut category = SettingsCategory::General;
         let mut dictionary_download_request = None;
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(ctx, input, |ui| {
             show(
                 ui.ctx(),
                 open,
@@ -1078,7 +1078,7 @@ mod tests {
                 &mut self.recording_shortcut,
             );
             let mut dictionary_download_request = None;
-            let _ = self.ctx.run_ui(input, |ui| {
+            crate::egui_test_support::run_ui_and_discard(&self.ctx, input, |ui| {
                 show(
                     ui.ctx(),
                     open,

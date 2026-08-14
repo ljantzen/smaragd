@@ -399,7 +399,7 @@ mod tests {
             ..Default::default()
         };
         let mut items = Vec::new();
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(ctx, input, |ui| {
             top_menu_button(ui, label, mnemonic, |ui, nav| {
                 nav.button(ui, "Alpha");
                 nav.button(ui, "Beta");
@@ -423,7 +423,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(ctx, input, |ui| {
             for (label, mnemonic) in TOP_MENUS {
                 top_menu_button(ui, label, mnemonic, |ui, nav| {
                     nav.button(ui, "Alpha");
@@ -545,7 +545,7 @@ mod tests {
         // do: egui drops focus from a widget that isn't shown in a pass, which
         // would trivially "pass" this test for the wrong reason.
         let mut other_id = None;
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
             let other_response = ui.button("Other Dialog");
             other_id = Some(other_response.id);
             other_response.request_focus();
@@ -560,7 +560,7 @@ mod tests {
 
         // Rendering both again — the still-nominally-open File dropdown must
         // not claw focus back to its own first item.
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
             let _ = ui.button("Other Dialog");
             top_menu_button(ui, "File", egui::Key::F, |ui, nav| {
                 nav.button(ui, "Alpha");
@@ -592,7 +592,7 @@ mod tests {
         };
         let mut items = Vec::new();
         let mut trigger = None;
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(ctx, input, |ui| {
             top_menu_button(ui, "File", egui::Key::F, |ui, nav| {
                 let t = nav_submenu(ui, nav, "Sub", |ui, sub_nav| {
                     sub_nav.button(ui, "Alpha");
@@ -616,7 +616,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(ctx, input, |ui| {
             top_menu_button(ui, "File", egui::Key::F, |ui, nav| {
                 nav_submenu(ui, nav, "Sub", |ui, sub_nav| {
                     sub_nav.button(ui, "Alpha");
@@ -751,7 +751,7 @@ mod tests {
         submenu_frame(&ctx, vec![]); // legitimate first-open auto-focus settle
 
         let mut other_id = None;
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
             let other_response = ui.button("Other Dialog");
             other_id = Some(other_response.id);
             other_response.request_focus();
@@ -766,7 +766,7 @@ mod tests {
         let other_id = other_id.unwrap();
         assert_eq!(ctx.memory(|m| m.focused()), Some(other_id));
 
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
             let _ = ui.button("Other Dialog");
             top_menu_button(ui, "File", egui::Key::F, |ui, nav| {
                 nav_submenu(ui, nav, "Sub", |ui, sub_nav| {
@@ -801,7 +801,7 @@ mod tests {
         let mut trigger2 = None;
         let mut items1 = Vec::new();
         let mut items2 = Vec::new();
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(ctx, input, |ui| {
             top_menu_button(ui, "File", egui::Key::F, |ui, nav| {
                 let t1 = nav_submenu(ui, nav, "Sub1", |ui, sub_nav| {
                     sub_nav.button(ui, "Alpha");

@@ -7,7 +7,7 @@ use super::*;
 /// `egui_dock::DockState`, so any of them can be freely dragged, split, and
 /// resized against any other — see `AppTabViewer` and the single
 /// `DockArea::show_inside` call in `eframe::App::ui`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(super) enum DockTab {
     Binder,
     Backlinks,

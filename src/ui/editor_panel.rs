@@ -973,7 +973,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
             show(
                 ui,
                 &mut editor,
@@ -1024,7 +1024,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
             show(
                 ui,
                 &mut editor,
@@ -1072,7 +1072,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
             show(
                 ui,
                 &mut editor,
@@ -1125,7 +1125,7 @@ mod tests {
                 buffer: "One short line.".to_string(),
                 ..Default::default()
             };
-            let _ = ctx.run_ui(input.clone(), |ui| {
+            crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
                 show(
                     ui,
                     &mut editor,
@@ -1156,7 +1156,7 @@ mod tests {
                 buffer: "One short line.".to_string(),
                 ..Default::default()
             };
-            let _ = ctx.run_ui(input, |ui| {
+            crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
                 show(
                     ui,
                     &mut editor,
@@ -1239,7 +1239,7 @@ mod tests {
         };
         let input = fixed_viewport_input();
 
-        let _ = ctx.run_ui(input.clone(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
             show(
                 ui,
                 &mut editor,
@@ -1268,7 +1268,7 @@ mod tests {
             ..input
         };
         let mut event = None;
-        let _ = ctx.run_ui(click_input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, click_input, |ui| {
             event = show(
                 ui,
                 &mut editor,
@@ -1315,7 +1315,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run_ui(input.clone(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
             show(
                 ui,
                 &mut editor,
@@ -1351,7 +1351,7 @@ mod tests {
             ..input
         };
         let mut event = None;
-        let _ = ctx.run_ui(click_input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, click_input, |ui| {
             event = show(
                 ui,
                 &mut editor,
@@ -1403,7 +1403,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run_ui(input.clone(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
             show(
                 ui,
                 &mut editor,
@@ -1434,7 +1434,7 @@ mod tests {
             ..input
         };
         let mut event = None;
-        let _ = ctx.run_ui(shortcut_input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, shortcut_input, |ui| {
             event = show(
                 ui,
                 &mut editor,
@@ -1479,7 +1479,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
             show(
                 ui,
                 &mut editor,
@@ -1516,7 +1516,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
             show(
                 ui,
                 &mut editor,
@@ -1574,7 +1574,7 @@ mod tests {
         let misspelled = vec![text.find("wrold").unwrap()..text.find("wrold").unwrap() + 5];
         let (mut warn_color, mut sections) = (egui::Color32::TRANSPARENT, Vec::new());
 
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
             warn_color = ui.visuals().warn_fg_color;
             sections = build_editor_layout_job(
                 ui,
@@ -1658,7 +1658,7 @@ mod tests {
         let misspelled = vec![target_start..target_start + 5];
         let mut sections = Vec::new();
 
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
             sections = build_editor_layout_job(
                 ui,
                 text,
@@ -1689,7 +1689,7 @@ mod tests {
             Vec::new(),
         );
 
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
             link_color = ui.visuals().hyperlink_color;
             broken_color = ui.visuals().error_fg_color;
             sections = build_editor_layout_job(
@@ -1723,7 +1723,7 @@ mod tests {
             Vec::new(),
         );
 
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
             broken_color = ui.visuals().error_fg_color;
             dim_color = ui.visuals().weak_text_color();
             sections = build_editor_layout_job(

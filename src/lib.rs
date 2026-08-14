@@ -24,4 +24,7 @@ pub mod streak;
 pub mod templates;
 pub mod ui;
 
+#[cfg(test)]
+pub(crate) mod egui_test_support;
+
 pub use app::SmaragdApp;

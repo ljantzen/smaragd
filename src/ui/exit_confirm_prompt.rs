@@ -56,9 +56,13 @@ mod tests {
     impl Harness {
         fn frame(&self, state: &mut ExitConfirmState) -> Option<ExitConfirmOutcome> {
             let mut outcome = None;
-            let _ = self.ctx.run_ui(egui::RawInput::default(), |ui| {
-                outcome = show(ui.ctx(), state);
-            });
+            crate::egui_test_support::run_ui_and_discard(
+                &self.ctx,
+                egui::RawInput::default(),
+                |ui| {
+                    outcome = show(ui.ctx(), state);
+                },
+            );
             outcome
         }
     }
