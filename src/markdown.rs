@@ -14,6 +14,20 @@ pub enum BlockKind {
     CodeBlock {
         language: Option<String>,
     },
+    /// A ` ```verse ` fenced block — poetry/verse content whose line breaks are
+    /// preserved verbatim (unlike an ordinary paragraph, where a single newline
+    /// collapses into a space). Reuses the fenced-code-block parsing mechanism
+    /// (see `parse`'s `Event::Start(Tag::CodeBlock(..))` handling) since
+    /// pulldown-cmark already gives verbatim, line-break-preserving text for a
+    /// fence — but unlike `CodeBlock`, a verse span's `code` field is `false`,
+    /// so typewriter-quote curling (`apply_typewriter_quotes`) still applies
+    /// and every renderer's "`span.code` forces monospace" special case
+    /// doesn't fire. Trade-off, accepted deliberately: no inline markdown
+    /// (bold/italic/wikilinks) inside a verse block — pulldown-cmark never
+    /// emits inline-formatting events inside a fence regardless of `code`, so
+    /// this is the same limitation a real code block already has, not
+    /// something extra being policed.
+    Verse,
     BlockQuote,
     ListItem {
         ordered: bool,
@@ -127,6 +141,7 @@ pub fn parse(markdown: &str) -> Vec<Block> {
     let mut italic_depth = 0u32;
     let mut strike_depth = 0u32;
     let mut in_code_block = false;
+    let mut in_verse_block = false;
     let mut link_stack: Vec<String> = Vec::new();
     let mut list_stack: Vec<ListLevel> = Vec::new();
     let mut current_table: Option<TableBuilder> = None;
@@ -182,15 +197,24 @@ pub fn parse(markdown: &str) -> Vec<Block> {
 
             Event::Start(Tag::CodeBlock(kind)) => {
                 flush!();
-                in_code_block = true;
                 let language = match kind {
                     CodeBlockKind::Fenced(lang) if !lang.is_empty() => Some(lang.to_string()),
                     _ => None,
                 };
-                current_kind = Some(BlockKind::CodeBlock { language });
+                if language
+                    .as_deref()
+                    .is_some_and(|l| l.eq_ignore_ascii_case("verse"))
+                {
+                    in_verse_block = true;
+                    current_kind = Some(BlockKind::Verse);
+                } else {
+                    in_code_block = true;
+                    current_kind = Some(BlockKind::CodeBlock { language });
+                }
             }
             Event::End(TagEnd::CodeBlock) => {
                 in_code_block = false;
+                in_verse_block = false;
                 flush!();
             }
 
@@ -331,7 +355,7 @@ pub fn parse(markdown: &str) -> Vec<Block> {
                         ..Default::default()
                     };
                     let target = current_sink(&mut current_table, &mut spans);
-                    if in_code_block {
+                    if in_code_block || in_verse_block {
                         target.push(Span {
                             text: text.to_string(),
                             ..template
@@ -1167,6 +1191,58 @@ mod tests {
             }
         );
         assert_eq!(blocks[0].spans[0].text, "fn main() {}\n");
+    }
+
+    #[test]
+    fn parses_fenced_verse_block_as_a_distinct_block_kind() {
+        let blocks = parse("```verse\nRoses are red,\nViolets are blue.\n```\n");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, BlockKind::Verse);
+        let joined: String = blocks[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(joined, "Roses are red,\nViolets are blue.\n");
+    }
+
+    #[test]
+    fn verse_block_language_tag_is_case_insensitive_but_not_a_prefix_match() {
+        assert_eq!(parse("```VERSE\nHi\n```\n")[0].kind, BlockKind::Verse);
+        assert_eq!(parse("```Verse\nHi\n```\n")[0].kind, BlockKind::Verse);
+        // A trailing suffix after "verse" is a different language tag entirely —
+        // falls through to an ordinary code block rather than fuzzy-matching.
+        assert_eq!(
+            parse("```verse-draft\nHi\n```\n")[0].kind,
+            BlockKind::CodeBlock {
+                language: Some("verse-draft".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn verse_spans_are_not_marked_as_code() {
+        let blocks = parse("```verse\nHi\n```\n");
+        assert!(
+            !blocks[0].spans[0].code,
+            "verse text must not be treated as code — that would force a \
+             monospace font and skip typewriter-quote curling, neither of \
+             which verse wants"
+        );
+    }
+
+    #[test]
+    fn verse_block_does_not_expand_wikilinks_or_tags() {
+        // Same limitation a real code block already has: pulldown-cmark never
+        // parses inline markdown/wikilinks/tags inside a fenced block's
+        // content, regardless of the fence's language tag.
+        let blocks = parse("```verse\n[[Not A Link]] #not-a-tag\n```\n");
+        let joined: String = blocks[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(joined, "[[Not A Link]] #not-a-tag\n");
+    }
+
+    #[test]
+    fn apply_typewriter_quotes_curls_verse_text() {
+        let mut blocks = parse("```verse\nHe said \"hello\" -- twice.\n```\n");
+        apply_typewriter_quotes(&mut blocks);
+        let joined: String = blocks[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(joined, "He said \u{201c}hello\u{201d} \u{2014} twice.\n");
     }
 
     #[test]

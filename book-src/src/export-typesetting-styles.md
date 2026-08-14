@@ -54,9 +54,14 @@ font = "DejaVu Sans Mono"
 size_pt = 10
 ```
 
-`id` and `label` are required, along with the `[page]`/`[body]`/`[headings]`/`[blockquote]`/`[code]` tables — `id` is what selects the style and is lowercased automatically. `sizes_pt` needs all six sizes (one per heading level, `h1`–`h6`). Two more tables are optional:
+`id` and `label` are required, along with the `[page]`/`[body]`/`[headings]`/`[blockquote]`/`[code]` tables — `id` is what selects the style and is lowercased automatically. `sizes_pt` needs all six sizes (one per heading level, `h1`–`h6`). Three more tables are optional:
 
 ```toml
+[verse]
+font = "Libertinus Serif"
+size_pt = 11
+italic = false
+
 [drop_cap]
 scale = 3.0  # first letter renders at 3x body size
 
@@ -64,6 +69,8 @@ scale = 3.0  # first letter renders at 3x body size
 left = "{author}"
 right = "{chapter}"
 ```
+
+`[verse]` styles a ` ```verse ` fenced block (see [Verse](markdown-preview.md#verse)) — same shape as `[blockquote]`/`[code]`, but unlike either, it's optional: a style file predating verse support that omits it falls back to a built-in default rather than failing to load.
 
 `{title}`/`{subtitle}`/`{author}` are substituted with whatever's typed into the export dialog; `{chapter}` (supported as a whole side's content, not mixed with other text) shows the current chapter on the print PDF specifically — DOCX and EPUB don't have a per-page "current chapter" concept, so a `{chapter}` token is just left blank there.
 
@@ -73,7 +80,7 @@ right = "{chapter}"
 
 Naming a font that isn't one of those three works for DOCX/EPUB/PDF as above, but the **Preview** tab can't render it — it only knows the fonts actually installed with smaragd, so it falls back to a generic face on-screen even though the exported file uses the real font.
 
-To make Preview (and PDF, without needing the font separately installed as a system font) use your own font file too, add a `font_file` key alongside `font` in any of `[body]`/`[headings]`/`[blockquote]`/`[code]`:
+To make Preview (and PDF, without needing the font separately installed as a system font) use your own font file too, add a `font_file` key alongside `font` in any of `[body]`/`[headings]`/`[blockquote]`/`[code]`/`[verse]`:
 
 ```toml
 [body]

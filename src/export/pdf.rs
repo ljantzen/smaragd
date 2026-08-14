@@ -346,6 +346,32 @@ fn append_typst_block(
             out.push_str(&text.replace("```", "` ` `"));
             out.push_str("\n```\n\n");
         }
+        BlockKind::Verse => {
+            let text: String = block.spans.iter().map(|s| s.text.as_str()).collect();
+            let lines: Vec<String> = text
+                .trim_end_matches('\n')
+                .split('\n')
+                .map(escape_typst)
+                .collect();
+            // `\` is Typst's explicit line-break marker — unlike a bare `\n`,
+            // which is only soft-wrap whitespace in markup mode, this is what
+            // actually preserves the verse's own line breaks. No `#show`-rule
+            // addition to `generate_preamble` (unlike blockquote/code, which
+            // hook Typst's own `quote`/`raw` built-in elements) — verse has no
+            // such built-in to hook, and `style` is already in scope here, so
+            // passing font/size/style straight to `#text` is simpler.
+            out.push_str(&format!(
+                "#text(font: \"{}\", size: {}pt, style: \"{}\")[{}]\n\n",
+                escape_typst(&style.verse.font),
+                style.verse.size_pt,
+                if style.verse.italic {
+                    "italic"
+                } else {
+                    "normal"
+                },
+                lines.join(" \\\n"),
+            ));
+        }
         BlockKind::BlockQuote => {
             out.push_str("#quote[");
             spans_to_typst(out, &block.spans, doc_dir, project_root);
@@ -567,7 +593,8 @@ mod tests {
         markdown::parse(
             "# Heading\n\nA *paragraph* with **bold**, `code`, and a [[Wikilink]].\n\n\
              > A quote\n\n- one\n- two\n\n1. first\n2. second\n\n---\n\n\
-             ```\ncode line\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n",
+             ```\ncode line\n```\n\n```verse\nline one\nline two\n```\n\n\
+             | a | b |\n|---|---|\n| 1 | 2 |\n",
         )
     }
 
@@ -719,6 +746,28 @@ mod tests {
         let spine = export_pdf(&docs, &meta, &manuscript_style(), dir.path(), &out).unwrap();
         assert!(out.exists());
         assert!(spine > 0.0);
+    }
+
+    #[test]
+    fn verse_block_emits_font_style_and_a_typst_line_break_between_lines() {
+        let style = manuscript_style();
+        let blocks = markdown::parse("```verse\nline one\nline two\n```\n");
+        let mut out = String::new();
+        append_typst_block(
+            &mut out,
+            &blocks[0],
+            false,
+            &style,
+            Path::new("."),
+            Path::new("."),
+        );
+        assert!(out.contains(&format!("font: \"{}\"", style.verse.font)));
+        assert!(out.contains(&format!("size: {}pt", style.verse.size_pt)));
+        assert!(out.contains("style: \"normal\""));
+        assert!(
+            out.contains("line one \\\nline two"),
+            "expected a Typst `\\` line break between lines, got: {out}"
+        );
     }
 
     #[test]

@@ -136,6 +136,16 @@ fn stylesheet(style: &TypesetStyle) -> String {
         style.code.font.replace('"', ""),
         style.code.size_pt.max(1)
     ));
+    css.push_str(&format!(
+        "p.verse {{ font-family: \"{}\", serif; font-size: {}pt; font-style: {}; }}\n",
+        style.verse.font.replace('"', ""),
+        style.verse.size_pt.max(1),
+        if style.verse.italic {
+            "italic"
+        } else {
+            "normal"
+        },
+    ));
     if let Some(drop_cap) = &style.drop_cap {
         css.push_str(&format!(
             "p.drop-cap::first-letter {{ font-size: {}em; float: left; line-height: 1; padding-right: 0.1em; }}\n",
@@ -194,6 +204,23 @@ fn append_epub_block(
         BlockKind::CodeBlock { .. } => {
             let text: String = block.spans.iter().map(|s| s.text.as_str()).collect();
             out.push_str(&format!("<pre><code>{}</code></pre>\n", escape_html(&text)));
+        }
+        BlockKind::Verse => {
+            let text: String = block.spans.iter().map(|s| s.text.as_str()).collect();
+            // Explicit `<br/>` between lines, not the `CodeBlock` arm's
+            // `<pre>` wrapping (semantically wrong for poetry, and defaults
+            // to a monospace font) and not CSS `white-space: pre-line`
+            // either — `<br/>` is universally supported and doesn't depend
+            // on an e-reader's CSS handling.
+            let lines: Vec<String> = text
+                .trim_end_matches('\n')
+                .split('\n')
+                .map(escape_html)
+                .collect();
+            out.push_str(&format!(
+                "<p class=\"verse\">{}</p>\n",
+                lines.join("<br/>\n")
+            ));
         }
         BlockKind::BlockQuote => {
             out.push_str("<blockquote>");
@@ -368,7 +395,8 @@ mod tests {
         markdown::parse(
             "# Heading\n\nA *paragraph* with **bold**, `code`, and a [[Wikilink]].\n\n\
              > A quote\n\n- one\n- two\n\n1. first\n2. second\n\n---\n\n\
-             ```\ncode line\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n",
+             ```\ncode line\n```\n\n```verse\nline one\nline two\n```\n\n\
+             | a | b |\n|---|---|\n| 1 | 2 |\n",
         )
     }
 
@@ -405,6 +433,39 @@ mod tests {
         assert_eq!(combined_title(&subtitle_only), "A Subtitle");
 
         assert_eq!(combined_title(&BookMeta::default()), "");
+    }
+
+    #[test]
+    fn stylesheet_emits_a_verse_rule_from_the_style() {
+        let style = manuscript_style();
+        let css = stylesheet(&style);
+        assert!(css.contains("p.verse"));
+        assert!(css.contains(&style.verse.font));
+        assert!(css.contains(&format!("{}pt", style.verse.size_pt)));
+    }
+
+    #[test]
+    fn verse_block_uses_br_between_lines_and_the_verse_class() {
+        let blocks = markdown::parse("```verse\nline one\nline two\n```\n");
+        let dir = tempfile::tempdir().unwrap();
+        let mut builder = EpubBuilder::new(ZipLibrary::new().unwrap()).unwrap();
+        let mut out = String::new();
+        append_epub_block(
+            &mut out,
+            &blocks[0],
+            false,
+            &HashMap::new(),
+            dir.path(),
+            dir.path(),
+            &mut builder,
+            &mut HashMap::new(),
+            &mut 0,
+        );
+        assert!(out.contains("class=\"verse\""));
+        assert!(
+            out.contains("line one<br/>\nline two"),
+            "expected a <br/> between lines, got: {out}"
+        );
     }
 
     #[test]

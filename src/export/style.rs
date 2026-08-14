@@ -33,6 +33,11 @@ pub struct TypesetStyle {
     pub headings: HeadingStyle,
     pub blockquote: BlockStyle,
     pub code: BlockStyle,
+    /// Styling for a ` ```verse ` fenced block (`BlockKind::Verse`) — same
+    /// shape as `blockquote`/`code`, but unlike either, an old custom style
+    /// `.toml` predating verse support won't have a `[verse]` table; see
+    /// `RawTypesetStyle::verse`'s `#[serde(default)]` fallback.
+    pub verse: BlockStyle,
     pub drop_cap: Option<DropCapStyle>,
     pub running_header: Option<RunningHeaderStyle>,
 }
@@ -153,6 +158,12 @@ fn manuscript() -> TypesetStyle {
             italic: false,
             font_file: None,
         },
+        verse: BlockStyle {
+            font: "Libertinus Serif".to_string(),
+            size_pt: 12,
+            italic: false,
+            font_file: None,
+        },
         drop_cap: None,
         running_header: None,
     }
@@ -189,6 +200,12 @@ fn trade_paperback() -> TypesetStyle {
         code: BlockStyle {
             font: "DejaVu Sans Mono".to_string(),
             size_pt: 10,
+            italic: false,
+            font_file: None,
+        },
+        verse: BlockStyle {
+            font: "Libertinus Serif".to_string(),
+            size_pt: 11,
             italic: false,
             font_file: None,
         },
@@ -236,6 +253,12 @@ fn mass_market_paperback() -> TypesetStyle {
             italic: false,
             font_file: None,
         },
+        verse: BlockStyle {
+            font: "Libertinus Serif".to_string(),
+            size_pt: 9,
+            italic: false,
+            font_file: None,
+        },
         drop_cap: Some(DropCapStyle { scale: 2.5 }),
         running_header: Some(RunningHeaderStyle {
             left: "{author}".to_string(),
@@ -277,6 +300,12 @@ fn digest() -> TypesetStyle {
         code: BlockStyle {
             font: "DejaVu Sans Mono".to_string(),
             size_pt: 10,
+            italic: false,
+            font_file: None,
+        },
+        verse: BlockStyle {
+            font: "Libertinus Serif".to_string(),
+            size_pt: 11,
             italic: false,
             font_file: None,
         },
@@ -328,6 +357,12 @@ fn hardcover() -> TypesetStyle {
             italic: false,
             font_file: None,
         },
+        verse: BlockStyle {
+            font: "Libertinus Serif".to_string(),
+            size_pt: 12,
+            italic: false,
+            font_file: None,
+        },
         drop_cap: Some(DropCapStyle { scale: 3.5 }),
         running_header: Some(RunningHeaderStyle {
             left: "{title}".to_string(),
@@ -373,6 +408,12 @@ fn academic() -> TypesetStyle {
             italic: false,
             font_file: None,
         },
+        verse: BlockStyle {
+            font: "Libertinus Serif".to_string(),
+            size_pt: 12,
+            italic: false,
+            font_file: None,
+        },
         drop_cap: None,
         running_header: None,
     }
@@ -414,6 +455,12 @@ fn large_print() -> TypesetStyle {
         code: BlockStyle {
             font: "DejaVu Sans Mono".to_string(),
             size_pt: 16,
+            italic: false,
+            font_file: None,
+        },
+        verse: BlockStyle {
+            font: "Atkinson Hyperlegible".to_string(),
+            size_pt: 18,
             italic: false,
             font_file: None,
         },
@@ -462,6 +509,12 @@ fn chapbook() -> TypesetStyle {
             italic: false,
             font_file: None,
         },
+        verse: BlockStyle {
+            font: "Libertinus Serif".to_string(),
+            size_pt: 11,
+            italic: false,
+            font_file: None,
+        },
         drop_cap: None,
         running_header: Some(RunningHeaderStyle {
             left: "{author}".to_string(),
@@ -504,6 +557,12 @@ fn uk_b_format() -> TypesetStyle {
         code: BlockStyle {
             font: "DejaVu Sans Mono".to_string(),
             size_pt: 9,
+            italic: false,
+            font_file: None,
+        },
+        verse: BlockStyle {
+            font: "Libertinus Serif".to_string(),
+            size_pt: 10,
             italic: false,
             font_file: None,
         },
@@ -552,6 +611,12 @@ fn uk_a_format() -> TypesetStyle {
             italic: false,
             font_file: None,
         },
+        verse: BlockStyle {
+            font: "Libertinus Serif".to_string(),
+            size_pt: 9,
+            italic: false,
+            font_file: None,
+        },
         drop_cap: Some(DropCapStyle { scale: 2.5 }),
         running_header: Some(RunningHeaderStyle {
             left: "{author}".to_string(),
@@ -594,6 +659,12 @@ fn a5() -> TypesetStyle {
         code: BlockStyle {
             font: "DejaVu Sans Mono".to_string(),
             size_pt: 9,
+            italic: false,
+            font_file: None,
+        },
+        verse: BlockStyle {
+            font: "Libertinus Serif".to_string(),
+            size_pt: 10,
             italic: false,
             font_file: None,
         },
@@ -640,6 +711,12 @@ fn manuscript_a4() -> TypesetStyle {
         code: BlockStyle {
             font: "DejaVu Sans Mono".to_string(),
             size_pt: 11,
+            italic: false,
+            font_file: None,
+        },
+        verse: BlockStyle {
+            font: "Libertinus Serif".to_string(),
+            size_pt: 12,
             italic: false,
             font_file: None,
         },
@@ -713,6 +790,19 @@ fn default_true() -> bool {
     true
 }
 
+/// `RawTypesetStyle::verse`'s fallback for a custom style `.toml` predating
+/// verse support — not meant to be seen by anyone who cares (they'd add their
+/// own `[verse]` table), just a sensible upright-serif default so an old file
+/// keeps loading unchanged.
+fn default_verse_block_style() -> RawBlockStyle {
+    RawBlockStyle {
+        font: "Libertinus Serif".to_string(),
+        size_pt: 12,
+        italic: false,
+        font_file: None,
+    }
+}
+
 #[derive(Deserialize)]
 struct RawBlockStyle {
     font: String,
@@ -746,6 +836,11 @@ struct RawTypesetStyle {
     headings: RawHeadingStyle,
     blockquote: RawBlockStyle,
     code: RawBlockStyle,
+    /// Optional, unlike `blockquote`/`code`: an existing custom style `.toml`
+    /// predates verse support and won't have a `[verse]` table, so this falls
+    /// back to `default_verse_block_style()` rather than failing to load.
+    #[serde(default = "default_verse_block_style")]
+    verse: RawBlockStyle,
     #[serde(default)]
     drop_cap: Option<RawDropCapStyle>,
     #[serde(default)]
@@ -794,6 +889,12 @@ impl RawTypesetStyle {
                 size_pt: self.code.size_pt,
                 italic: self.code.italic,
                 font_file: resolve_font_file(self.code.font_file, base_dir),
+            },
+            verse: BlockStyle {
+                font: self.verse.font,
+                size_pt: self.verse.size_pt,
+                italic: self.verse.italic,
+                font_file: resolve_font_file(self.verse.font_file, base_dir),
             },
             drop_cap: self.drop_cap.map(|d| DropCapStyle { scale: d.scale }),
             running_header: self.running_header.map(|h| RunningHeaderStyle {
@@ -1185,6 +1286,75 @@ size_pt = 10
         assert_eq!(minimal.body.line_height, 1.15);
         assert!(minimal.headings.page_break_before);
         assert!(!minimal.body.justify);
+        // A `.toml` with no `[verse]` table (predating verse support) falls
+        // back to `default_verse_block_style()` instead of failing to load.
+        let expected = default_verse_block_style();
+        assert_eq!(minimal.verse.font, expected.font);
+        assert_eq!(minimal.verse.size_pt, expected.size_pt);
+        assert_eq!(minimal.verse.italic, expected.italic);
+    }
+
+    #[test]
+    fn load_reads_a_custom_style_with_its_own_verse_table() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "with_verse.toml",
+            r#"
+id = "with_verse"
+label = "With Verse"
+
+[page]
+width_mm = 210.0
+height_mm = 297.0
+margin_mm = 20.0
+
+[body]
+font = "Libertinus Serif"
+size_pt = 11
+
+[headings]
+font = "Libertinus Serif"
+sizes_pt = [20, 18, 16, 14, 13, 12]
+
+[blockquote]
+font = "Libertinus Serif"
+size_pt = 11
+
+[code]
+font = "DejaVu Sans Mono"
+size_pt = 10
+
+[verse]
+font = "Atkinson Hyperlegible"
+size_pt = 13
+italic = true
+"#,
+        );
+
+        let (styles, errors) = load(&[dir.path()]);
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        let custom = find(&styles, "with_verse").unwrap();
+        assert_eq!(
+            custom.verse,
+            BlockStyle {
+                font: "Atkinson Hyperlegible".to_string(),
+                size_pt: 13,
+                italic: true,
+                font_file: None,
+            }
+        );
+    }
+
+    #[test]
+    fn every_built_in_preset_has_a_non_empty_verse_font() {
+        for style in built_in_styles() {
+            assert!(
+                !style.verse.font.is_empty(),
+                "{}'s verse.font is empty",
+                style.id
+            );
+        }
     }
 
     #[test]

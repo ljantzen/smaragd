@@ -82,6 +82,7 @@ struct PreviewStyle<'a> {
     heading_family: egui::FontFamily,
     quote_family: egui::FontFamily,
     code_family: egui::FontFamily,
+    verse_family: egui::FontFamily,
     text_color: Color32,
     quote_text_color: Color32,
     quote_bar_color: Color32,
@@ -146,6 +147,11 @@ impl<'a> PreviewStyle<'a> {
                 custom_fonts,
                 egui::FontFamily::Monospace,
             ),
+            verse_family: resolve_family(
+                &style.verse.font,
+                custom_fonts,
+                egui::FontFamily::Proportional,
+            ),
             text_color: visuals.text_color(),
             quote_text_color: visuals.weak_text_color(),
             quote_bar_color: visuals.weak_text_color(),
@@ -193,6 +199,13 @@ impl<'a> PreviewStyle<'a> {
         FontId::new(
             self.style.code.size_pt as f32 * self.zoom,
             self.code_family.clone(),
+        )
+    }
+
+    fn verse_font(&self) -> FontId {
+        FontId::new(
+            self.style.verse.size_pt as f32 * self.zoom,
+            self.verse_family.clone(),
         )
     }
 }
@@ -410,6 +423,10 @@ fn render_block(
             render_code_block(ui, ps, language.as_deref(), &block.spans);
             None
         }
+        BlockKind::Verse => {
+            render_verse_block(ui, ps, &block.spans);
+            None
+        }
         BlockKind::BlockQuote => render_blockquote(ui, ps, &block.spans, base_dir),
         BlockKind::ListItem {
             ordered,
@@ -536,6 +553,33 @@ fn render_code_block(ui: &mut egui::Ui, ps: &PreviewStyle, language: Option<&str
                     .color(ps.text_color),
             ));
         });
+}
+
+/// Renders a `BlockKind::Verse` block's raw joined text (embedded `\n`s
+/// preserved verbatim, same "join every span" trick `render_code_block` above
+/// uses) as one `LayoutJob` run in the verse font, upright/italic per
+/// `style.verse.italic` — deliberately not routed through
+/// `render_spans_wrapped`/`append_span` the way `render_blockquote` is, since
+/// a fenced verse block's spans carry only raw text (no bold/italic/wikilink
+/// formatting to preserve — see `BlockKind::Verse`'s doc comment), so there's
+/// only ever one formatting run to build. A literal `\n` inside `job.append`'s
+/// text already forces a real line break in egui's own layout — the same
+/// mechanism an explicit hard break (`Event::HardBreak`) already relies on
+/// when it flows through the ordinary paragraph pipeline, not a new trick.
+fn render_verse_block(ui: &mut egui::Ui, ps: &PreviewStyle, spans: &[Span]) {
+    let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+    let mut job = LayoutJob::default();
+    job.append(
+        text.trim_end_matches('\n'),
+        0.0,
+        TextFormat {
+            font_id: ps.verse_font(),
+            color: ps.text_color,
+            italics: ps.style.verse.italic,
+            ..Default::default()
+        },
+    );
+    ui.add(egui::Label::new(job));
 }
 
 fn render_blockquote(
@@ -1149,6 +1193,7 @@ mod tests {
         );
         assert_eq!(ps.quote_font().size, style.blockquote.size_pt as f32 * 2.0);
         assert_eq!(ps.code_font().size, style.code.size_pt as f32 * 2.0);
+        assert_eq!(ps.verse_font().size, style.verse.size_pt as f32 * 2.0);
     }
 
     fn wikilink_or_tag(click: PreviewClick) -> String {

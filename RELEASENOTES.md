@@ -5,6 +5,11 @@ this file.
 
 ## Unreleased
 
+- Added a `verse` block type for poetry: a ` ```verse ` fenced block preserves
+  its line breaks exactly as typed, instead of collapsing into a paragraph,
+  and renders in its own font/size/italic (a style's new `[verse]` table —
+  optional, older custom styles fall back to a sensible default) across
+  Preview, PDF, DOCX, and EPUB export.
 - Added right-click suggestions and "Add to Dictionary" for spell check:
   right-clicking a misspelled (underlined) word in the Editor now offers
   Hunspell's own correction candidates, plus an "Add to Dictionary" action

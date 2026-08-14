@@ -197,6 +197,34 @@ fn append_docx_block(
             }
             d
         }
+        BlockKind::Verse => {
+            let text: String = block.spans.iter().map(|s| s.text.as_str()).collect();
+            let verse_size = pt_to_half_points(style.verse.size_pt);
+            let lines: Vec<&str> = text.trim_end_matches('\n').split('\n').collect();
+            // One `Paragraph` with explicit `Break` runs between lines, not
+            // the `CodeBlock` arm's "one `Paragraph` per source line" trick —
+            // DOCX adds paragraph spacing above/below every `Paragraph`, fine
+            // for code, but it would make a poem's lines look like separate
+            // stanzas. `docx_run` isn't used here either: its `span.code`
+            // branch is irrelevant (verse spans are never `code: true`), but
+            // it has no line-splitting concept, so building runs directly is
+            // simpler than adapting it.
+            let mut p = Paragraph::new();
+            for (i, line) in lines.iter().enumerate() {
+                let mut run = Run::new()
+                    .add_text(line.to_string())
+                    .size(verse_size)
+                    .fonts(RunFonts::new().ascii(&style.verse.font));
+                if style.verse.italic {
+                    run = run.italic();
+                }
+                p = p.add_run(run);
+                if i + 1 < lines.len() {
+                    p = p.add_run(Run::new().add_break(docx_rs::BreakType::TextWrapping));
+                }
+            }
+            docx.add_paragraph(p)
+        }
         BlockKind::BlockQuote => {
             let quote_size = pt_to_half_points(style.blockquote.size_pt);
             let mut p = Paragraph::new().indent(Some(720), None, None, None);
@@ -320,7 +348,8 @@ mod tests {
         markdown::parse(
             "# Heading\n\nA *paragraph* with **bold**, `code`, and a [[Wikilink]].\n\n\
              > A quote\n\n- one\n- two\n\n1. first\n2. second\n\n---\n\n\
-             ```\ncode line\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n",
+             ```\ncode line\n```\n\n```verse\nline one\nline two\n```\n\n\
+             | a | b |\n|---|---|\n| 1 | 2 |\n",
         )
     }
 
@@ -361,6 +390,38 @@ mod tests {
         let out = dir.path().join("out.docx");
         export_docx(&docs, &meta, &manuscript_style(), dir.path(), &out).unwrap();
         assert!(out.exists());
+    }
+
+    #[test]
+    fn verse_block_is_one_paragraph_with_a_break_run_between_lines() {
+        let style = manuscript_style();
+        let blocks = markdown::parse("```verse\nline one\nline two\n```\n");
+        let dir = tempfile::tempdir().unwrap();
+        let body_size = pt_to_half_points(style.body.size_pt);
+        let docx = append_docx_block(
+            Docx::new(),
+            &blocks[0],
+            dir.path(),
+            dir.path(),
+            &style,
+            body_size,
+        );
+
+        let docx_rs::DocumentChild::Paragraph(p) = docx.document.children.last().unwrap() else {
+            panic!("expected the verse block to produce a single Paragraph");
+        };
+        assert_eq!(
+            p.children
+                .iter()
+                .filter(|c| matches!(
+                    c,
+                    docx_rs::ParagraphChild::Run(run)
+                        if run.children.iter().any(|rc| matches!(rc, docx_rs::RunChild::Break(_)))
+                ))
+                .count(),
+            1,
+            "expected exactly one Break run between the two verse lines"
+        );
     }
 
     #[test]
