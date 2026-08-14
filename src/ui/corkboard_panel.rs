@@ -758,7 +758,7 @@ mod tests {
             ..Default::default()
         };
         let mut outcome = None;
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(ctx, input, |ui| {
             outcome = show_card_editor(ui.ctx(), draft, note_titles, &[]);
         });
         outcome

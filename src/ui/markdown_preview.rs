@@ -1226,7 +1226,7 @@ mod tests {
             ..Default::default()
         };
         let mut start = egui::Pos2::ZERO;
-        let _ = ctx.run_ui(input.clone(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(ctx, input.clone(), |ui| {
             start = ui.cursor().min;
         });
         let pos = start
@@ -1254,7 +1254,7 @@ mod tests {
             events: vec![egui::Event::PointerMoved(pos)],
             ..input.clone()
         };
-        let _ = ctx.run_ui(move_input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(ctx, move_input, |ui| {
             render(ui);
         });
         let press_input = egui::RawInput {
@@ -1266,7 +1266,7 @@ mod tests {
             }],
             ..input.clone()
         };
-        let _ = ctx.run_ui(press_input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(ctx, press_input, |ui| {
             render(ui);
         });
         let release_input = egui::RawInput {
@@ -1278,7 +1278,7 @@ mod tests {
             }],
             ..input
         };
-        let _ = ctx.run_ui(release_input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(ctx, release_input, |ui| {
             clicked = render(ui);
         });
         clicked
@@ -1301,7 +1301,7 @@ mod tests {
         // call `editor_font::install` before measuring/rendering.
         let char_width = {
             let mut width = 0.0;
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
                 width = ui
                     .fonts_mut(|f| f.layout_no_wrap("A".into(), font_id.clone(), Color32::WHITE))
                     .size()
@@ -1362,7 +1362,7 @@ mod tests {
 
         let char_width = {
             let mut width = 0.0;
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
                 width = ui
                     .fonts_mut(|f| f.layout_no_wrap("A".into(), font_id.clone(), Color32::WHITE))
                     .size()

@@ -973,7 +973,7 @@ mod tests {
                 ..Default::default()
             };
             let mut event = None;
-            let _ = self.ctx.run_ui(input, |ui| {
+            crate::egui_test_support::run_ui_and_discard(&self.ctx, input, |ui| {
                 event = show(
                     ui,
                     project,
