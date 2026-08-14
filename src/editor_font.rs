@@ -284,7 +284,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |_ui| {});
+        crate::egui_test_support::run_ui_and_discard(&ctx, input, |_ui| {});
         ctx.fonts(|fonts| {
             for name in ["LibertinusSerif", "DejaVuSansMono", "AtkinsonHyperlegible"] {
                 let family = fonts
@@ -321,7 +321,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
             for font in EditorFont::ALL {
                 ui.label(egui::RichText::new("Sample").font(font.font_id(14.0)));
             }
@@ -349,7 +349,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
             ui.label(egui::RichText::new("Sample").font(egui::FontId::new(
                 14.0,
                 egui::FontFamily::Name("My Custom Font".into()),

@@ -162,6 +162,10 @@ mod dock_layout_persistence_tests {
     impl egui_dock::TabViewer for NoopViewer {
         type Tab = DockTab;
 
+        fn id(&mut self, tab: &mut DockTab) -> egui::Id {
+            egui::Id::new(*tab)
+        }
+
         fn title(&mut self, tab: &mut DockTab) -> egui::WidgetText {
             format!("{tab:?}").into()
         }
@@ -184,7 +188,7 @@ mod dock_layout_persistence_tests {
     /// tries to persist.
     fn rendered(mut state: egui_dock::DockState<DockTab>) -> egui_dock::DockState<DockTab> {
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
             egui_dock::DockArea::new(&mut state).show_inside(ui, &mut NoopViewer);
         });
         state
@@ -238,7 +242,7 @@ mod dock_layout_persistence_tests {
         // placement lands in egui's own Area memory, the same way it would
         // across real frames in one running session.
         let live_ctx = egui::Context::default();
-        let _ = live_ctx.run_ui(egui::RawInput::default(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&live_ctx, egui::RawInput::default(), |ui| {
             egui_dock::DockArea::new(&mut state).show_inside(ui, &mut NoopViewer);
         });
 
@@ -251,7 +255,7 @@ mod dock_layout_persistence_tests {
         // A brand-new `Context` — no memory of the previous session's Area
         // positions at all — mirrors an actual app restart.
         let fresh_ctx = egui::Context::default();
-        let _ = fresh_ctx.run_ui(egui::RawInput::default(), |ui| {
+        crate::egui_test_support::run_ui_and_discard(&fresh_ctx, egui::RawInput::default(), |ui| {
             egui_dock::DockArea::new(&mut restored).show_inside(ui, &mut NoopViewer);
         });
         let restored_rect = fresh_ctx

@@ -143,6 +143,12 @@ pub(super) struct AppTabViewer<'a> {
 impl egui_dock::TabViewer for AppTabViewer<'_> {
     type Tab = DockTab;
 
+    /// `DockTab` is a plain, `Hash`-derived enum, so its own identity is already
+    /// a stable, unique id — no need for a title- or index-derived one.
+    fn id(&mut self, tab: &mut DockTab) -> egui::Id {
+        egui::Id::new(*tab)
+    }
+
     fn title(&mut self, tab: &mut DockTab) -> egui::WidgetText {
         match tab {
             DockTab::Binder => "Binder".into(),
