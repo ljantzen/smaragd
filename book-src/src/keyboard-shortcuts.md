@@ -23,6 +23,7 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Toggle Story Grid | `Ctrl+Shift+G` |
 | Toggle Belief Timeline | `Ctrl+Shift+E` |
 | Cycle Binder Color Mode | `Ctrl+Shift+C` |
+| Toggle Document Stats in Binder | `Ctrl+Alt+D` |
 | Toggle Backlinks | `Ctrl+Shift+B` |
 | Toggle Tags | `Ctrl+Shift+T` |
 | Command Prompt | `Ctrl+:` |

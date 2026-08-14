@@ -32,3 +32,7 @@ A row with nothing relevant to the active mode — no status/POV assigned, or no
 Status and POV colors themselves are assigned from the Metadata dock: next to the `Status:`/`POV:` row (on both the document and folder forms), a color swatch button appears as soon as that field isn't blank — click it to open a color picker. Each status/POV value's color is shared project-wide, so coloring "draft" or "Alice" once colors every row carrying that value, document or folder alike.
 
 A file with uncommitted git changes (when [git integration](git-integration.md) is on, both app-wide and for the project) also gets a trailing "•" marker after its name — a folder shows the same marker if anything nested inside it is dirty. This is independent of the coloring modes above: it's a plain text suffix, not a color, so it shows alongside whichever `Color Binder By` mode is active rather than competing with it.
+
+## Document Stats
+
+**Settings > Appearance > Show document stats in binder** (off by default) adds a right-aligned `lines/words/chars` readout to every document row — e.g. `53/418/2345` for a 53-line, 418-word, 2,345-character document. The open document's numbers update live as you type; every other document's come from its file on disk, re-read only when it actually changes. Toggle it without opening Settings via the remappable **"Toggle Document Stats in Binder"** shortcut (default `Ctrl+Alt+D`).
