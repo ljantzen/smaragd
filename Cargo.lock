@@ -1865,15 +1865,15 @@ dependencies = [
 
 [[package]]
 name = "egui_extras"
-version = "0.35.0"
+version = "0.36.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2bd33be7338367bf21f54d62e069d58a5fb3ae033fa8bc6df7a77b9ef4cf957"
+checksum = "1e651e08ddf6bb8bfd964ad70e33bc721c093f2b77ab59580e7140c008dab68c"
 dependencies = [
  "ahash",
- "egui 0.35.0",
+ "egui 0.36.1",
  "enum-map",
  "image",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "mime_guess2",
  "profiling",
@@ -8353,7 +8353,7 @@ dependencies = [
  "log",
  "peniko",
  "smallvec",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
