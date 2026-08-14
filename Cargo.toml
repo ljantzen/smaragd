@@ -14,7 +14,7 @@ directories = "6.0"
 docx-rs = "0.4.22"
 eframe = "0.36"
 egui = { version = "0.36", features = ["serde"] }
-egui_dock = { version = "0.20", features = ["serde"] }
+egui_dock = { version = "0.21", features = ["serde"] }
 egui_extras = { version = "0.36.1", features = ["image", "file"] }
 epub-builder = "0.8.3"
 ignore = "0.4"
