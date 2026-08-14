@@ -27,17 +27,19 @@ Cards are independent of the binder tree: you can reorder them freely, create a 
 
 ## Story Grid
 
-**`View > Story Grid`** opens a second, read-only view of the same cards as a table — one row per card, in whatever order its earliest linked document sits in the binder today, rather than the freeform order you set on the Corkboard.
+**`View > Story Grid`** opens a second view of the same cards as a table — one row per card. An **Order** dropdown at the top picks what that row order means: **Manuscript** (the default) sorts by whatever order each card's earliest linked document sits in the binder today, read-only, same as before; **Manual** instead shows — and lets you reorder — the same freeform order you set on the Corkboard, with ⬆/⬇ buttons in the `#` column moving a row exactly the way Corkboard's own Up/Down buttons do (it's the same underlying order, just editable from either view). The chosen mode is remembered per project, like the rest of the Story Grid's ordering.
 
 Each row shows a computed manuscript position (`#`), the card's own `Scene #` label (unchanged, shown alongside rather than replaced), every one of its linked documents' titles, POV, and a word count summed across all of them (read live from disk, the same way the Metadata and Word Count panels do), and every field from the card — Cause, Effect, Why It Matters, Realization, And So, Prior Belief, New Belief, Value Shift, and subplot tags. The POV column prefers the card's own POV Character when it's set, falling back to the linked document's frontmatter POV otherwise.
 
 The columns shown, and their order, are configurable via the panel's own **Columns** menu — reorder or hide any of them to fit what you're working on.
 
-Cards with no linked document, or where every link is stale, group into an **Unplaced** section — a toggle at the top of the panel puts that section above or below the placed rows. Unlike everything else on this page, that toggle is an app-wide preference, not a per-project one: it's remembered across every project you open, the same way UI Scale or your theme choice is. Clicking a linked document's title opens it in the Editor, same as Corkboard's own 🔗 link; clicking a row's Scene # opens the card editor.
+In **Manuscript** order, cards with no linked document, or where every link is stale, group into an **Unplaced** section — a toggle at the top of the panel puts that section above or below the placed rows. Unlike everything else on this page, that toggle is an app-wide preference, not a per-project one: it's remembered across every project you open, the same way UI Scale or your theme choice is. It has no effect in **Manual** order, since every card shows in its own place in the freeform order rather than splitting out. Clicking a linked document's title opens it in the Editor, same as Corkboard's own 🔗 link; clicking a row's Scene # opens the card editor.
+
+Switching back to **Manuscript** always reproduces the same order, regardless of anything reordered while in **Manual**: two cards sharing a manuscript position, or two Unplaced cards with no position at all, fall back to a fixed tie-break rather than whatever order Manual reordering happened to leave them in.
 
 The **POV** and **Words** columns are colored the same way the [Binder](binder.md#binder-background-coloring) colors its own rows: a colored dot next to the POV name whenever that POV has an assigned color, and the word count itself tinted along the same red→yellow→green gradient toward the (first resolved) document's word count target. Unlike the Binder, this coloring isn't mode-switched — it's always on, independent of whatever `Color Binder By` mode is currently active.
 
-The Story Grid never reorders the manuscript itself — its row order is always a reflection of the binder, not something you can drag to change from here. To reorder scenes, reorder the documents in the Binder.
+The Story Grid never reorders the manuscript itself, in either order mode — its `#` column always shows a card's computed manuscript position where one resolves, and its Up/Down buttons (in Manual order) only move the card within the freeform Corkboard order, not the documents themselves. To reorder scenes in the manuscript, reorder the documents in the Binder.
 
 ## Belief Timeline
 
