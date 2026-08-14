@@ -17,6 +17,30 @@ use crate::spellcheck::SpellCheckLanguage;
 /// unconfigured (`0.0`), i.e. no change from `native_pixels_per_point`.
 const DEFAULT_UI_SCALE: f32 = 1.0;
 
+/// `Settings::preview_zoom`'s effective default, used whenever that field is
+/// `0.0` (unconfigured — see its own doc comment).
+const DEFAULT_PREVIEW_ZOOM: f32 = 1.0;
+
+/// Bounds `Settings::preview_zoom` is clamped to, both by
+/// `ui::markdown_preview::show`'s Ctrl+scroll handling and by
+/// `ShortcutAction::PreviewZoomIn`/`PreviewZoomOut` — far enough out either way
+/// to be useful without the rendered page becoming illegible or comically huge.
+const MIN_PREVIEW_ZOOM: f32 = 0.5;
+const MAX_PREVIEW_ZOOM: f32 = 3.0;
+
+/// Multiplicative step `ShortcutAction::PreviewZoomIn`/`PreviewZoomOut` apply per
+/// press — chosen to feel like one comfortable "notch," roughly matching what a
+/// single Ctrl+scroll-wheel tick does.
+pub const PREVIEW_ZOOM_KEY_STEP: f32 = 1.1;
+
+/// Clamp a candidate `Settings::preview_zoom` value to `MIN_PREVIEW_ZOOM.
+/// .MAX_PREVIEW_ZOOM` — shared by every site that can change it (Ctrl+scroll in
+/// the Preview tab, the zoom-in/out shortcuts) so they can't drift out of sync
+/// on what "too far" means.
+pub fn clamp_preview_zoom(zoom: f32) -> f32 {
+    zoom.clamp(MIN_PREVIEW_ZOOM, MAX_PREVIEW_ZOOM)
+}
+
 /// How many entries `Settings::recent_project_paths` keeps before dropping the
 /// oldest — enough to be useful without the File menu's submenu growing
 /// unwieldy.
@@ -324,6 +348,16 @@ pub struct Settings {
     /// pure multiplier on top of whatever the OS already reports, not a
     /// replacement for it.
     pub ui_scale: f32,
+    /// The Preview tab's own font-size multiplier — changed by Ctrl+scrolling
+    /// over the rendered document (`ui::markdown_preview::show`) or the
+    /// `ShortcutAction::PreviewZoomIn`/`PreviewZoomOut` shortcuts. Deliberately
+    /// separate from `ui_scale`: that one rescales the whole app's chrome for
+    /// HiDPI/legibility reasons, while this is just "I want to read this
+    /// document bigger/smaller right now," the same distinction a browser draws
+    /// between its own UI zoom and a page's. `0.0` means "not yet configured,"
+    /// resolved to `1.0` by `resolve_preview_zoom` — same blank-means-unset
+    /// convention as `ui_scale`.
+    pub preview_zoom: f32,
     /// Where unplaced cards sit in the Story Grid view — see
     /// [`UnplacedCardsPosition`].
     pub unplaced_story_cards_position: UnplacedCardsPosition,
@@ -445,6 +479,16 @@ impl Settings {
             self.ui_scale
         } else {
             DEFAULT_UI_SCALE
+        }
+    }
+
+    /// Resolve `preview_zoom`'s blank-means-unset (`0.0`) convention to an
+    /// actual multiplier — same shape as `resolve_ui_scale` just above.
+    pub fn resolve_preview_zoom(&self) -> f32 {
+        if self.preview_zoom > 0.0 {
+            self.preview_zoom
+        } else {
+            DEFAULT_PREVIEW_ZOOM
         }
     }
 
@@ -657,6 +701,31 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(settings.resolve_ui_scale(), 1.5);
+    }
+
+    #[test]
+    fn resolve_preview_zoom_falls_back_to_the_default_when_unconfigured() {
+        let settings = Settings {
+            preview_zoom: 0.0,
+            ..Default::default()
+        };
+        assert_eq!(settings.resolve_preview_zoom(), DEFAULT_PREVIEW_ZOOM);
+    }
+
+    #[test]
+    fn resolve_preview_zoom_uses_the_configured_value() {
+        let settings = Settings {
+            preview_zoom: 1.8,
+            ..Default::default()
+        };
+        assert_eq!(settings.resolve_preview_zoom(), 1.8);
+    }
+
+    #[test]
+    fn clamp_preview_zoom_bounds_both_directions() {
+        assert_eq!(clamp_preview_zoom(0.1), MIN_PREVIEW_ZOOM);
+        assert_eq!(clamp_preview_zoom(10.0), MAX_PREVIEW_ZOOM);
+        assert_eq!(clamp_preview_zoom(1.5), 1.5);
     }
 
     #[test]
@@ -883,6 +952,7 @@ mod tests {
             status_message_duration_secs: 12,
             shortcuts_seen,
             ui_scale: 1.25,
+            preview_zoom: 1.5,
             unplaced_story_cards_position: UnplacedCardsPosition::Bottom,
             story_grid_column_order: vec![StoryGridColumn::Words, StoryGridColumn::Scene],
             story_grid_hidden_columns: BTreeSet::from([

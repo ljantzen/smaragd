@@ -259,6 +259,15 @@ impl SmaragdApp {
             .unwrap_or_default();
         cc.egui_ctx.set_theme(settings.theme_preference);
         cc.egui_ctx.set_zoom_factor(settings.resolve_ui_scale());
+        // egui defaults to handling Ctrl+Plus/Minus/0 (and Ctrl+scroll) itself by
+        // rescaling the *whole* UI (`egui::gui_zoom`) — which would fight
+        // `ShortcutAction::PreviewZoomIn`/`PreviewZoomOut`/`PreviewZoomReset` and
+        // `ui::markdown_preview::show`'s own Ctrl+scroll handling for the exact
+        // same input, since both react to the same key/scroll events. Whole-UI
+        // zoom is still reachable, just through Settings > UI Scale instead of a
+        // shortcut egui would otherwise reserve unconditionally.
+        cc.egui_ctx
+            .options_mut(|options| options.zoom_with_keyboard = false);
         crate::editor_font::apply_ui_font(&cc.egui_ctx, settings.ui_font);
         let initial_pomodoro_durations = crate::pomodoro::resolve_durations(&settings);
         // Match the editor's background to the surrounding chrome instead of egui's
@@ -685,6 +694,22 @@ impl SmaragdApp {
             ShortcutAction::ToggleDocumentStats => {
                 self.settings.show_document_stats_in_binder =
                     !self.settings.show_document_stats_in_binder;
+                self.persist_settings();
+            }
+            ShortcutAction::PreviewZoomIn => {
+                self.settings.preview_zoom = crate::settings::clamp_preview_zoom(
+                    self.settings.resolve_preview_zoom() * crate::settings::PREVIEW_ZOOM_KEY_STEP,
+                );
+                self.persist_settings();
+            }
+            ShortcutAction::PreviewZoomOut => {
+                self.settings.preview_zoom = crate::settings::clamp_preview_zoom(
+                    self.settings.resolve_preview_zoom() / crate::settings::PREVIEW_ZOOM_KEY_STEP,
+                );
+                self.persist_settings();
+            }
+            ShortcutAction::PreviewZoomReset => {
+                self.settings.preview_zoom = 1.0;
                 self.persist_settings();
             }
         }
@@ -1343,6 +1368,23 @@ impl eframe::App for SmaragdApp {
                     .iter()
                     .map(|(name, shortcut)| (ShortcutTarget::Plugin(name.clone()), *shortcut)),
             );
+            // `PreviewZoomIn`'s default is `Ctrl+Plus`, but the `+` character needs
+            // Shift on most layouts (`Ctrl+Shift+=`) — most users instead just press
+            // the unshifted `Ctrl+=`, which egui reports as a different logical key
+            // (`Equals`, not `Plus`). egui's own built-in whole-UI zoom binds both
+            // for exactly this reason (`gui_zoom::kb_shortcuts::ZOOM_IN`/
+            // `ZOOM_IN_SECONDARY`); mirrored here, but only while the action is
+            // still at its default binding, so a user who's deliberately remapped
+            // `PreviewZoomIn` away from `Ctrl+Plus` doesn't have `Ctrl+Equals`
+            // silently keep firing it too.
+            if self.settings.shortcuts.get(ShortcutAction::PreviewZoomIn)
+                == Some(ShortcutAction::PreviewZoomIn.default_shortcut())
+            {
+                pairs.push((
+                    ShortcutTarget::BuiltIn(ShortcutAction::PreviewZoomIn),
+                    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Equals),
+                ));
+            }
             let bindings = sorted_by_specificity(pairs);
             let triggered: Vec<ShortcutTarget> = bindings
                 .into_iter()
@@ -1548,6 +1590,10 @@ impl eframe::App for SmaragdApp {
                             {
                                 self.push_error_toast(format!("Couldn't save settings: {err}"));
                             }
+                        }
+                        DockAction::SetPreviewZoom(zoom) => {
+                            self.settings.preview_zoom = zoom;
+                            self.persist_settings();
                         }
                         DockAction::Corkboard(event) => self.handle_corkboard_event(event),
                         DockAction::StoryGrid(event) => self.handle_story_grid_event(event),

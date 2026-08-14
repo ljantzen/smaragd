@@ -46,5 +46,8 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Toggle Bookmarks | `Ctrl+Alt+B` |
 | Next Bookmark | `Alt+Down` |
 | Previous Bookmark | `Alt+Up` |
+| Zoom In Preview | `Ctrl++` |
+| Zoom Out Preview | `Ctrl+-` |
+| Reset Preview Zoom | `Ctrl+0` |
 
 Two shortcuts can never overlap — rebinding one to a combo another action already owns automatically un-assigns it from the previous owner. This holds across built-ins and plugin shortcuts alike: if a loaded plugin registered a `:` command with its own shortcut (see [Plugins](plugins.md)), it shows up in its own "Plugin Shortcuts" section further down the same window, remappable/unbindable the same way.

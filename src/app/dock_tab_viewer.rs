@@ -38,6 +38,10 @@ pub(super) enum DockAction {
     /// `ProjectMeta::book_style` via `Project::set_book_style`, the same
     /// field the Export dialog reads/writes, so the two always agree.
     SetBookStyle(String),
+    /// The Preview tab was Ctrl+scrolled this frame — see
+    /// `ui::markdown_preview::PreviewOutcome::zoom_changed`. Persisted onto
+    /// `Settings::preview_zoom`, the same field the zoom shortcuts write.
+    SetPreviewZoom(f32),
     Corkboard(CorkboardEvent),
     StoryGrid(crate::ui::story_grid_panel::StoryGridEvent),
     BeliefTimeline(crate::ui::belief_timeline_panel::BeliefTimelineEvent),
@@ -463,6 +467,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         self.settings.typewriter_quotes,
                         &note_titles,
                         document_title,
+                        self.settings.resolve_preview_zoom(),
                     );
                     match outcome.click {
                         Some(ui::markdown_preview::PreviewClick::Wikilink(activation)) => {
@@ -475,6 +480,9 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     }
                     if let Some(style_id) = outcome.style_changed {
                         self.actions.push(DockAction::SetBookStyle(style_id));
+                    }
+                    if let Some(zoom) = outcome.zoom_changed {
+                        self.actions.push(DockAction::SetPreviewZoom(zoom));
                     }
                 } else {
                     ui.label("Select a file from the binder to preview.");

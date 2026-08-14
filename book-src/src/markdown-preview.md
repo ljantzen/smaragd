@@ -10,6 +10,10 @@ Images work two ways:
 
 Relative image paths resolve against the open document's own folder, and must stay inside the project (a path that tries to escape the project root — via `..` or a symlink — is refused). Remote `http(s)://` images are never fetched.
 
+## Zooming
+
+Hold Ctrl and scroll over the Preview pane to zoom the rendered text in and out — handy for proofreading at a larger size or fitting more of a page on screen. `Ctrl` + `+` and `Ctrl` + `-` do the same from the keyboard, and `Ctrl` + `0` resets back to 100%. This only scales what's shown in Preview; it doesn't change the [typesetting style](export-typesetting-styles.md)'s actual font sizes, so Export is unaffected, and your zoom level is remembered the next time you open the app.
+
 ## Typewriter Quotes
 
 **`File > Settings > Editor`** has a **"Typewriter quotes in Preview and export"** checkbox, off by default. When it's on, straight typewriter punctuation is rewritten wherever markdown gets rendered *from* — the Preview pane here, and every [Export](export.md) format:

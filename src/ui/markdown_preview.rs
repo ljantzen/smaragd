@@ -108,6 +108,12 @@ struct PreviewStyle<'a> {
     /// (every tag in a rendered document exists by definition), just a visually
     /// distinct kind of link.
     tag_bg_color: Color32,
+    /// `Settings::resolve_preview_zoom()` — a multiplier applied to every font
+    /// size this style would otherwise use (see `body_font`/`heading_font`/
+    /// `quote_font`/`code_font`), so Ctrl+scrolling or the zoom shortcuts scale
+    /// the rendered document without touching `style` itself (which stays
+    /// whatever it'll actually export at).
+    zoom: f32,
 }
 
 impl<'a> PreviewStyle<'a> {
@@ -116,6 +122,7 @@ impl<'a> PreviewStyle<'a> {
         style: &'a TypesetStyle,
         custom_fonts: &[String],
         note_titles: &'a [String],
+        zoom: f32,
     ) -> Self {
         Self {
             style,
@@ -148,6 +155,7 @@ impl<'a> PreviewStyle<'a> {
             note_titles,
             dark_mode: visuals.dark_mode,
             tag_bg_color: visuals.hyperlink_color.gamma_multiply(0.16),
+            zoom,
         }
     }
 
@@ -161,24 +169,31 @@ impl<'a> PreviewStyle<'a> {
         }
     }
 
+    /// `size` is the style's own, un-zoomed point size — every caller passes
+    /// through the raw `*.size_pt` a `TypesetStyle` (and thus an export) would
+    /// actually use; `zoom` is applied once, here, so it can't be missed at a
+    /// call site or double-applied by one that also scales its input.
     fn body_font(&self, size: f32) -> FontId {
-        FontId::new(size, self.body_family.clone())
+        FontId::new(size * self.zoom, self.body_family.clone())
     }
 
     fn heading_font(&self, level: u8) -> FontId {
         let size = self.style.headings.sizes_pt[(level.saturating_sub(1).min(5)) as usize] as f32;
-        FontId::new(size, self.heading_family.clone())
+        FontId::new(size * self.zoom, self.heading_family.clone())
     }
 
     fn quote_font(&self) -> FontId {
         FontId::new(
-            self.style.blockquote.size_pt as f32,
+            self.style.blockquote.size_pt as f32 * self.zoom,
             self.quote_family.clone(),
         )
     }
 
     fn code_font(&self) -> FontId {
-        FontId::new(self.style.code.size_pt as f32, self.code_family.clone())
+        FontId::new(
+            self.style.code.size_pt as f32 * self.zoom,
+            self.code_family.clone(),
+        )
     }
 }
 
@@ -213,6 +228,11 @@ pub enum PreviewClick {
 pub struct PreviewOutcome {
     pub click: Option<PreviewClick>,
     pub style_changed: Option<String>,
+    /// New value for `Settings::preview_zoom`, when Ctrl+scrolling over the
+    /// pane changed it this frame — see `show`'s doc comment on `preview_zoom`.
+    /// Like `style_changed`, the caller (`app::dock_tab_viewer`) is
+    /// responsible for persisting it.
+    pub zoom_changed: Option<f32>,
 }
 
 /// Render `markdown_text` styled as it will actually appear once exported: fonts,
@@ -248,6 +268,16 @@ pub struct PreviewOutcome {
 /// at the left of the top bar, alongside the Style picker, so it's clear
 /// which document is being previewed even though the Preview tab itself is
 /// just labeled "Preview".
+///
+/// `preview_zoom` is `Settings::resolve_preview_zoom()` — a multiplier applied
+/// on top of every font size `style` would otherwise use (see
+/// `PreviewStyle::zoom`). Ctrl+scrolling while the pointer is over this pane
+/// changes it live and reports the new value via `PreviewOutcome::zoom_changed`
+/// for the caller to persist, the same shape `style_changed` already uses;
+/// `ShortcutAction::PreviewZoomIn`/`PreviewZoomOut`/reset are the keyboard
+/// equivalent but — having no notion of "the pointer is over the Preview
+/// tab" — are dispatched unconditionally by `app::dispatch_shortcut_action`
+/// instead of routing through here.
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
@@ -260,11 +290,23 @@ pub fn show(
     typewriter_quotes: bool,
     note_titles: &[String],
     document_title: Option<&str>,
+    preview_zoom: f32,
 ) -> PreviewOutcome {
     let base_dir = ImageContext {
         dir: base_dir,
         project_root,
     };
+
+    // A ctrl-held wheel event never reaches the `ScrollArea` below as a pan —
+    // egui's `InputState::begin_pass` already diverts it into `zoom_delta()`
+    // instead of `smooth_scroll_delta` the moment ctrl is held, regardless of
+    // which widget is hovered — so the only thing left to do here is scope
+    // *that* to this pane specifically, by gating on the pointer actually
+    // being over it.
+    let zoom_changed = (ui.rect_contains_pointer(ui.clip_rect())
+        && ui.input(|i| i.zoom_delta()) != 1.0)
+        .then(|| crate::settings::clamp_preview_zoom(preview_zoom * ui.input(|i| i.zoom_delta())));
+    let preview_zoom = zoom_changed.unwrap_or(preview_zoom);
 
     let mut selected_id = style_id.to_string();
     let current_label = style::find(styles, &selected_id)
@@ -302,6 +344,7 @@ pub fn show(
         return PreviewOutcome {
             click: None,
             style_changed,
+            zoom_changed,
         };
     };
 
@@ -309,7 +352,7 @@ pub fn show(
     if typewriter_quotes {
         markdown::apply_typewriter_quotes(&mut blocks);
     }
-    let ps = PreviewStyle::new(ui.visuals(), style, custom_fonts, note_titles);
+    let ps = PreviewStyle::new(ui.visuals(), style, custom_fonts, note_titles, preview_zoom);
 
     let click = egui::ScrollArea::vertical()
         .id_salt("markdown_preview_scroll")
@@ -318,9 +361,15 @@ pub fn show(
                 ui.weak("Nothing to preview yet.");
                 return None;
             }
-            let content_width = ((style.page.width_mm - 2.0 * style.page.margin_mm) * PX_PER_MM)
-                .max(MIN_CONTENT_WIDTH)
-                .min(ui.available_width());
+            // Scaled by `preview_zoom` too, not just the fonts inside it — otherwise
+            // zooming in just wraps the now-larger text harder inside an
+            // unchanged-width column instead of also growing the column, leaving
+            // the extra pane width unused (up to `ui.available_width()`, same as
+            // at 100%).
+            let content_width =
+                ((style.page.width_mm - 2.0 * style.page.margin_mm) * PX_PER_MM * preview_zoom)
+                    .max(MIN_CONTENT_WIDTH)
+                    .min(ui.available_width());
             ui.set_max_width(content_width);
 
             let mut clicked = None;
@@ -343,6 +392,7 @@ pub fn show(
     PreviewOutcome {
         click,
         style_changed,
+        zoom_changed,
     }
 }
 
@@ -446,7 +496,7 @@ fn build_paragraph_job(
         && let Some(first) = spans.first()
         && let Some(ch) = first.text.chars().next()
     {
-        let cap_font = FontId::new(base_size * scale, ps.body_family.clone());
+        let cap_font = FontId::new(base_size * scale * ps.zoom, ps.body_family.clone());
         job.append(
             &ch.to_string(),
             0.0,
@@ -1080,7 +1130,25 @@ mod tests {
     }
 
     fn preview_style(style: &TypesetStyle) -> PreviewStyle<'_> {
-        PreviewStyle::new(&egui::Visuals::dark(), style, &[], &[])
+        PreviewStyle::new(&egui::Visuals::dark(), style, &[], &[], 1.0)
+    }
+
+    #[test]
+    fn zoom_scales_body_heading_quote_and_code_fonts() {
+        let styles = style::built_in_styles();
+        let style = style::find(&styles, "manuscript").unwrap();
+        let ps = PreviewStyle::new(&egui::Visuals::dark(), style, &[], &[], 2.0);
+
+        assert_eq!(
+            ps.body_font(style.body.size_pt as f32).size,
+            style.body.size_pt as f32 * 2.0
+        );
+        assert_eq!(
+            ps.heading_font(1).size,
+            style.headings.sizes_pt[0] as f32 * 2.0
+        );
+        assert_eq!(ps.quote_font().size, style.blockquote.size_pt as f32 * 2.0);
+        assert_eq!(ps.code_font().size, style.code.size_pt as f32 * 2.0);
     }
 
     fn wikilink_or_tag(click: PreviewClick) -> String {
@@ -1122,7 +1190,7 @@ mod tests {
                 ctx.fonts_mut(|f| f.row_height(font_id)) / 2.0,
             );
         let render = |ui: &mut egui::Ui| -> Option<PreviewClick> {
-            let ps = PreviewStyle::new(ui.visuals(), style, &[], note_titles);
+            let ps = PreviewStyle::new(ui.visuals(), style, &[], note_titles, 1.0);
             render_spans_wrapped(
                 ui,
                 &ps,
@@ -1305,7 +1373,7 @@ mod tests {
         let style = style::find(&styles, "manuscript").unwrap();
         let note_titles = vec!["Chapter 1".to_string()];
         let visuals = egui::Visuals::dark();
-        let ps = PreviewStyle::new(&visuals, style, &[], &note_titles);
+        let ps = PreviewStyle::new(&visuals, style, &[], &note_titles, 1.0);
 
         assert_eq!(ps.wikilink_color("Chapter 1"), visuals.hyperlink_color);
         assert_eq!(ps.wikilink_color("chapter 1"), visuals.hyperlink_color);
@@ -1317,7 +1385,7 @@ mod tests {
         let style = style::find(&styles, "manuscript").unwrap();
         let note_titles = vec!["Chapter 1".to_string()];
         let visuals = egui::Visuals::dark();
-        let ps = PreviewStyle::new(&visuals, style, &[], &note_titles);
+        let ps = PreviewStyle::new(&visuals, style, &[], &note_titles, 1.0);
 
         assert_eq!(ps.wikilink_color("Chapter 2"), visuals.error_fg_color);
     }

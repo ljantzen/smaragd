@@ -5,6 +5,11 @@ this file.
 
 ## Unreleased
 
+- Added zooming to the Preview pane: Ctrl+scroll over the rendered document to
+  scale its text up or down, or use `Ctrl++`/`Ctrl+-`/`Ctrl+0` (zoom
+  in/out/reset), all remappable under **Settings > Shortcuts**. Only affects
+  what Preview shows on screen — the underlying typesetting style, and thus
+  Export, is unaffected — and the zoom level is remembered across restarts.
 - Added an optional per-document stats readout in the Binder (**Settings >
   Appearance > Show document stats in binder**, off by default): each
   document row can show its line, word, and character count, right-aligned

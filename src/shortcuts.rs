@@ -85,6 +85,19 @@ pub enum ShortcutAction {
     /// Flip `Settings::show_document_stats_in_binder` on/off — an ordinary
     /// `Settings` bool toggle, same shape as `ToggleDarkMode`.
     ToggleDocumentStats,
+    /// Step `Settings::preview_zoom` up/down by a fixed multiplicative factor —
+    /// the keyboard counterpart to Ctrl+scroll-wheel zooming over the Preview
+    /// tab (see `ui::markdown_preview::show`'s doc comment). Dispatches
+    /// unconditionally like every other action here (no check that the Preview
+    /// tab is actually visible), same as e.g. `ToggleWordCount` targeting a dock
+    /// tab that might not be open.
+    PreviewZoomIn,
+    PreviewZoomOut,
+    /// Reset `Settings::preview_zoom` back to 100% — the keyboard-only
+    /// counterpart of a hypothetical "reset" button; there isn't one in the UI
+    /// today, so this is currently the only way back to 100% short of
+    /// scrolling by hand.
+    PreviewZoomReset,
 }
 
 impl ShortcutAction {
@@ -131,6 +144,9 @@ impl ShortcutAction {
         Self::NextBookmark,
         Self::PreviousBookmark,
         Self::ToggleDocumentStats,
+        Self::PreviewZoomIn,
+        Self::PreviewZoomOut,
+        Self::PreviewZoomReset,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -178,6 +194,9 @@ impl ShortcutAction {
             Self::NextBookmark => "Next Bookmark",
             Self::PreviousBookmark => "Previous Bookmark",
             Self::ToggleDocumentStats => "Toggle Document Stats in Binder",
+            Self::PreviewZoomIn => "Zoom In Preview",
+            Self::PreviewZoomOut => "Zoom Out Preview",
+            Self::PreviewZoomReset => "Reset Preview Zoom",
         }
     }
 
@@ -230,6 +249,9 @@ impl ShortcutAction {
             Self::NextBookmark => "next_bookmark",
             Self::PreviousBookmark => "previous_bookmark",
             Self::ToggleDocumentStats => "toggle_document_stats",
+            Self::PreviewZoomIn => "preview_zoom_in",
+            Self::PreviewZoomOut => "preview_zoom_out",
+            Self::PreviewZoomReset => "preview_zoom_reset",
         }
     }
 
@@ -272,7 +294,10 @@ impl ShortcutAction {
             | Self::ToggleFocusMode
             | Self::CycleBinderColorMode
             | Self::ToggleBookmarksPanel
-            | Self::ToggleDocumentStats => ShortcutCategory::View,
+            | Self::ToggleDocumentStats
+            | Self::PreviewZoomIn
+            | Self::PreviewZoomOut
+            | Self::PreviewZoomReset => ShortcutCategory::View,
             Self::GitCommit | Self::GitPush => ShortcutCategory::Git,
             Self::CommandPrompt
             | Self::TogglePomodoro
@@ -382,6 +407,14 @@ impl ShortcutAction {
             Self::ToggleDocumentStats => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::D)
             }
+            // Ctrl/Cmd+Plus and Ctrl/Cmd+Minus, mirroring the browser-style zoom
+            // chord egui itself binds globally (`egui::gui_zoom::kb_shortcuts`) —
+            // consuming them here first (see `sorted_by_specificity`'s doc
+            // comment on consumption order) keeps egui's own end-of-frame
+            // `zoom_with_keyboard` from also firing and rescaling the whole UI.
+            Self::PreviewZoomIn => KeyboardShortcut::new(Modifiers::COMMAND, Key::Plus),
+            Self::PreviewZoomOut => KeyboardShortcut::new(Modifiers::COMMAND, Key::Minus),
+            Self::PreviewZoomReset => KeyboardShortcut::new(Modifiers::COMMAND, Key::Num0),
         }
     }
 }

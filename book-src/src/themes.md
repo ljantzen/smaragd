@@ -58,7 +58,7 @@ Use **`View > Theme > Reload Custom Themes`** to pick up a new or edited file wi
 
 ## Editor Font
 
-**`File > Settings`** has a **Font** section with a font and size for the Editor. (The Preview tab's fonts come from the selected [typesetting style](export-typesetting-styles.md) instead — see [Markdown Preview](markdown-preview.md) — so this setting no longer affects Preview.)
+**`File > Settings`** has a **Font** section with a font and size for the Editor. (The Preview tab's fonts come from the selected [typesetting style](export-typesetting-styles.md) instead — see [Markdown Preview](markdown-preview.md) — so this setting no longer affects Preview; to resize Preview's text on the fly without changing that style, see [Zooming](markdown-preview.md#zooming).)
 
 | Font | What it looks like |
 |---|---|
