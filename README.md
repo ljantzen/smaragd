@@ -25,7 +25,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Per-document YAML frontmatter
 - Project-wide metadata (Title/Subtitle/Author/Logline/What if/Synopsis)
 - Story cards, Lisa Cron "Story Genius" style
-- Story Grid : A read-only view of the Story Cards as a table
+- Story Grid : A table view of the Story Cards, sorted by manuscript position or freely reordered manually
 - Project export to DOCX, EPUB, or PDF, using one of 12 built-in (or your own custom) typesetting styles 
 - Import an existing manuscript from DOCX, EPUB, a Scrivener project, or PDF
 - Live manuscript-styled markdown preview, tied to the selected export typesetting style

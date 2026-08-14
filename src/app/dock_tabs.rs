@@ -271,6 +271,16 @@ impl SmaragdApp {
                 self.settings.unplaced_story_cards_position = position;
                 self.persist_settings();
             }
+            StoryGridEvent::SetOrderMode(mode) => {
+                if let Some(project) = &mut self.project
+                    && let Err(err) = project.set_story_grid_order_mode(mode)
+                {
+                    self.push_error_toast(format!("Couldn't save Story Grid order: {err}"));
+                }
+            }
+            StoryGridEvent::MoveCard { id, new_index } => {
+                self.handle_corkboard_event(CorkboardEvent::MoveCard { id, new_index })
+            }
             StoryGridEvent::SetColumnHidden(kind, hidden) => {
                 if hidden {
                     self.settings.story_grid_hidden_columns.insert(kind);

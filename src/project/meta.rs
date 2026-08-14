@@ -69,6 +69,12 @@ pub struct ProjectMeta {
     /// entirely (see `frontmatter.rs`'s doc comment on why that isn't implemented).
     #[serde(default)]
     pub story_cards: Vec<StoryCard>,
+    /// Which order `ui::story_grid_panel` shows its rows in — see
+    /// `StoryGridOrderMode`. `#[default] Manuscript` preserves the view's
+    /// original read-only behavior for projects saved before this setting
+    /// existed.
+    #[serde(default)]
+    pub story_grid_order_mode: crate::project::StoryGridOrderMode,
     /// The protagonist's driving external/internal want — half of Lisa Cron's
     /// "Third Rail" (the other half is `protagonist_misbelief`): the throughline
     /// every scene's `StoryCard::why_it_matters` should ultimately test or advance.

@@ -179,6 +179,8 @@ impl Project {
 
     /// Move the card `id` to `new_index` in board order (clamped to the number of
     /// cards remaining after it's removed), and persist. A no-op if `id` isn't found.
+    /// Shared by Corkboard's own Up/Down buttons and, when `story_grid_order_mode`
+    /// is `Manual`, the Story Grid's — both just reorder this same underlying vec.
     pub fn move_story_card(&mut self, id: Uuid, new_index: usize) -> io::Result<()> {
         let Some(current_index) = self.meta.story_cards.iter().position(|c| c.id == id) else {
             return Ok(());
@@ -187,6 +189,46 @@ impl Project {
         let new_index = new_index.min(self.meta.story_cards.len());
         self.meta.story_cards.insert(new_index, card);
         self.save_metadata()
+    }
+
+    /// Switch how the Story Grid orders its rows — see [`StoryGridOrderMode`].
+    pub fn set_story_grid_order_mode(&mut self, mode: StoryGridOrderMode) -> io::Result<()> {
+        self.meta.story_grid_order_mode = mode;
+        self.save_metadata()
+    }
+}
+
+/// Which order the Story Grid (`ui::story_grid_panel`) shows its rows in. A
+/// per-project setting, unlike `UnplacedCardsPosition`/`StoryGridColumn` (both in
+/// `settings.rs`): it changes what the row order *means* for this manuscript, not
+/// just how the view is laid out — the same rationale `BinderColorMode` uses for
+/// living in `ProjectMeta` rather than `Settings`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum StoryGridOrderMode {
+    /// Rows sorted by each card's earliest linked document's manuscript position —
+    /// the view's original, read-only behavior: reordering still only happens on
+    /// the Binder or Corkboard. Default, so existing projects don't change
+    /// behavior until the user opts in.
+    #[default]
+    Manuscript,
+    /// Rows shown in the cards' own freeform order — the exact same order
+    /// Corkboard uses (`ProjectMeta::story_cards`'s own sequence) — with Up/Down
+    /// buttons in the Story Grid's own `#` column to reorder them, calling the
+    /// same `Project::move_story_card` Corkboard's buttons do. Cards with no
+    /// linked document group in normally rather than splitting into an Unplaced
+    /// section, since manuscript position no longer determines placement.
+    Manual,
+}
+
+impl StoryGridOrderMode {
+    pub const ALL: [StoryGridOrderMode; 2] = [Self::Manuscript, Self::Manual];
+
+    /// Short, user-facing name — shared by the Story Grid's own "Order:" combo box.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Manuscript => "Manuscript",
+            Self::Manual => "Manual",
+        }
     }
 }
 
@@ -371,6 +413,36 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(project.meta.story_cards.len(), 1);
+    }
+
+    #[test]
+    fn story_grid_order_mode_defaults_to_manuscript() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        assert_eq!(
+            project.meta.story_grid_order_mode,
+            StoryGridOrderMode::Manuscript
+        );
+    }
+
+    #[test]
+    fn set_story_grid_order_mode_persists_across_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        project
+            .set_story_grid_order_mode(StoryGridOrderMode::Manual)
+            .unwrap();
+
+        assert_eq!(
+            project.meta.story_grid_order_mode,
+            StoryGridOrderMode::Manual
+        );
+        let reloaded = Project::load_from_folder(dir.path()).unwrap();
+        assert_eq!(
+            reloaded.meta.story_grid_order_mode,
+            StoryGridOrderMode::Manual
+        );
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use egui_extras::{Column, TableBuilder};
 use uuid::Uuid;
 
-use crate::project::{Project, StoryCard};
+use crate::project::{Project, StoryCard, StoryGridOrderMode};
 use crate::settings::{StoryGridColumn, UnplacedCardsPosition};
 
 /// Outcomes of user interaction with the Story Grid, handled by the caller
@@ -17,6 +17,17 @@ pub enum StoryGridEvent {
     OpenLinkedDocument(PathBuf),
     EditCard(Uuid),
     SetUnplacedPosition(UnplacedCardsPosition),
+    /// Switch between manuscript-order and manual (Corkboard-order) rows — see
+    /// `StoryGridOrderMode`.
+    SetOrderMode(StoryGridOrderMode),
+    /// Reorder a card while `StoryGridOrderMode::Manual` is active — the Story
+    /// Grid's own Up/Down buttons in the `#` column, raised identically to
+    /// `CorkboardEvent::MoveCard` (same underlying `Project::move_story_card`),
+    /// since it's the same freeform order Corkboard edits, just viewed here too.
+    MoveCard {
+        id: Uuid,
+        new_index: usize,
+    },
     /// Show/hide a column via the "Columns" menu.
     SetColumnHidden(StoryGridColumn, bool),
     /// The full new column order, after a drag-free "Up"/"Down" reorder in the
@@ -94,6 +105,35 @@ pub(crate) fn resolve_row<'a>(
     ResolvedRow { card, links }
 }
 
+/// Orders resolved rows for display, per `StoryGridOrderMode`. `Manuscript`
+/// (the default) sorts by manuscript position, tie-broken by card id — a stable
+/// key, deliberately not "whatever order `rows` arrived in" (that's
+/// `ProjectMeta::story_cards`'s own vec order, which `Manual` mode's Up/Down
+/// buttons mutate): without this tie-break, cards sharing a manuscript position,
+/// or with none at all (Unplaced), would silently keep reflecting Manual mode's
+/// leftover order after switching back, rather than `Manuscript` always
+/// reproducing the same order regardless of what Manual mode last did. `Manual`
+/// shows `rows` as-is — no Unplaced split, since manuscript position no longer
+/// determines placement.
+pub(crate) fn order_rows(
+    rows: Vec<ResolvedRow>,
+    order_mode: StoryGridOrderMode,
+    unplaced_position: UnplacedCardsPosition,
+) -> Vec<ResolvedRow> {
+    if order_mode == StoryGridOrderMode::Manual {
+        return rows;
+    }
+    let (mut placed, mut unplaced): (Vec<_>, Vec<_>) = rows
+        .into_iter()
+        .partition(|row| row.min_position().is_some());
+    placed.sort_by_key(|row| (row.min_position(), row.card.id));
+    unplaced.sort_by_key(|row| row.card.id);
+    match unplaced_position {
+        UnplacedCardsPosition::Top => unplaced.into_iter().chain(placed).collect(),
+        UnplacedCardsPosition::Bottom => placed.into_iter().chain(unplaced).collect(),
+    }
+}
+
 /// A document's POV, word count, and word count target, read live from disk —
 /// same on-demand, never-persisted pattern `word_count.rs`/`metadata_panel.rs`
 /// use, reused here rather than caching anything on `StoryCard` itself.
@@ -136,11 +176,12 @@ fn aggregate_document_summary(paths: &[&Path]) -> (Option<String>, Option<usize>
     (pov, any_words.then_some(total_words), target)
 }
 
-/// Renders the Story Grid: a read-only, manuscript-ordered table view of the same
-/// cards Corkboard edits — see this module's doc comment on `StoryGridEvent`.
-/// Row order always mirrors wherever each card's linked document sits in the
-/// binder today; reordering the manuscript itself still happens from the Binder,
-/// not from here.
+/// Renders the Story Grid: a table view of the same cards Corkboard edits — see
+/// this module's doc comment on `StoryGridEvent`. Row order follows
+/// `project.meta.story_grid_order_mode`: `Manuscript` (the default) mirrors
+/// wherever each card's linked document sits in the binder today, read-only;
+/// `Manual` shows — and lets you reorder — the same freeform order Corkboard
+/// uses.
 pub fn show(
     ui: &mut egui::Ui,
     project: &Project,
@@ -149,23 +190,43 @@ pub fn show(
     hidden_columns: &BTreeSet<StoryGridColumn>,
 ) -> Option<StoryGridEvent> {
     let mut event = None;
+    let order_mode = project.meta.story_grid_order_mode;
 
     ui.horizontal(|ui| {
-        ui.label("Unplaced cards:");
-        let mut position = unplaced_position;
-        egui::ComboBox::new("story_grid_unplaced_position_combo", "")
-            .selected_text(position.label())
+        ui.label("Order:");
+        let mut mode = order_mode;
+        egui::ComboBox::new("story_grid_order_mode_combo", "")
+            .selected_text(mode.label())
             .show_ui(ui, |ui| {
-                for candidate in UnplacedCardsPosition::ALL {
-                    ui.selectable_value(&mut position, candidate, candidate.label());
+                for candidate in StoryGridOrderMode::ALL {
+                    ui.selectable_value(&mut mode, candidate, candidate.label());
                 }
             });
-        if position != unplaced_position {
-            event = Some(StoryGridEvent::SetUnplacedPosition(position));
+        if mode != order_mode {
+            event = Some(StoryGridEvent::SetOrderMode(mode));
         }
 
-        // Pushed to the dock's right edge, away from the left-aligned "Unplaced
-        // cards" control, rather than sitting immediately next to it.
+        ui.add_space(12.0);
+
+        // Only meaningful in `Manuscript` mode — `Manual` shows every card in its
+        // own freeform order, with no separate Unplaced section to place.
+        ui.add_enabled_ui(order_mode == StoryGridOrderMode::Manuscript, |ui| {
+            ui.label("Unplaced cards:");
+            let mut position = unplaced_position;
+            egui::ComboBox::new("story_grid_unplaced_position_combo", "")
+                .selected_text(position.label())
+                .show_ui(ui, |ui| {
+                    for candidate in UnplacedCardsPosition::ALL {
+                        ui.selectable_value(&mut position, candidate, candidate.label());
+                    }
+                });
+            if position != unplaced_position {
+                event = Some(StoryGridEvent::SetUnplacedPosition(position));
+            }
+        });
+
+        // Pushed to the dock's right edge, away from the left-aligned controls,
+        // rather than sitting immediately next to them.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // `egui::menu::MenuButton` directly, not the `ui.menu_button` shorthand:
             // that shorthand always uses `PopupCloseBehavior`'s default
@@ -234,15 +295,8 @@ pub fn show(
         .iter()
         .map(|card| resolve_row(project, &manuscript_order, card))
         .collect();
-    let (mut placed, unplaced): (Vec<_>, Vec<_>) = rows
-        .into_iter()
-        .partition(|row| row.min_position().is_some());
-    placed.sort_by_key(|row| row.min_position());
 
-    let ordered: Vec<ResolvedRow> = match unplaced_position {
-        UnplacedCardsPosition::Top => unplaced.into_iter().chain(placed).collect(),
-        UnplacedCardsPosition::Bottom => placed.into_iter().chain(unplaced).collect(),
-    };
+    let ordered = order_rows(rows, order_mode, unplaced_position);
 
     let visible_columns: Vec<StoryGridColumn> = column_order
         .iter()
@@ -272,8 +326,17 @@ pub fn show(
                 }
             })
             .body(|mut body| {
-                for row in &ordered {
-                    if let Some(row_event) = show_row(&mut body, project, row, &visible_columns) {
+                let count = ordered.len();
+                for (index, row) in ordered.iter().enumerate() {
+                    if let Some(row_event) = show_row(
+                        &mut body,
+                        project,
+                        row,
+                        &visible_columns,
+                        order_mode,
+                        index,
+                        count,
+                    ) {
                         event = Some(row_event);
                     }
                 }
@@ -293,7 +356,9 @@ fn column_size(kind: StoryGridColumn, is_last_visible: bool) -> Column {
         return Column::remainder().at_least(80.0);
     }
     match kind {
-        StoryGridColumn::Index => Column::auto().at_least(28.0),
+        // Wide enough for the `Manual`-mode Up/Down buttons alongside the number,
+        // not just the number alone.
+        StoryGridColumn::Index => Column::auto().at_least(60.0),
         StoryGridColumn::Scene => Column::initial(70.0).at_least(40.0),
         StoryGridColumn::Document => Column::initial(150.0).at_least(80.0),
         StoryGridColumn::Pov => Column::initial(90.0).at_least(60.0),
@@ -320,13 +385,23 @@ struct RowContext<'a> {
     pov_color: Option<egui::Color32>,
     words: Option<usize>,
     word_count_color: Option<egui::Color32>,
+    order_mode: StoryGridOrderMode,
+    /// This row's position within `ordered` — only meaningful (as an Up/Down
+    /// reorder target) when `order_mode` is `Manual`, where `ordered` is exactly
+    /// `project.meta.story_cards`'s own order.
+    row_index: usize,
+    row_count: usize,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn show_row(
     body: &mut egui_extras::TableBody,
     project: &Project,
     row: &ResolvedRow,
     visible_columns: &[StoryGridColumn],
+    order_mode: StoryGridOrderMode,
+    row_index: usize,
+    row_count: usize,
 ) -> Option<StoryGridEvent> {
     let mut event = None;
     let card = row.card;
@@ -349,6 +424,9 @@ fn show_row(
         pov_color,
         words,
         word_count_color,
+        order_mode,
+        row_index,
+        row_count,
     };
 
     body.row(22.0, |mut table_row| {
@@ -376,13 +454,34 @@ fn render_cell(
     let card = ctx.row.card;
     match kind {
         StoryGridColumn::Index => {
-            ui.label(
-                ctx.row
-                    .min_position()
-                    .map(|position| position.to_string())
-                    .unwrap_or_else(|| "\u{2014}".to_string()),
-            );
-            None
+            let mut event = None;
+            ui.horizontal(|ui| {
+                // Up/Down buttons only in `Manual` mode — same U+2B06/U+2B07 icons
+                // the Columns menu uses for the same purpose (see its doc comment
+                // for why those specific codepoints), reordering the same
+                // `ProjectMeta::story_cards` vec Corkboard's own Up/Down buttons do.
+                if ctx.order_mode == StoryGridOrderMode::Manual {
+                    if ui.small_button("\u{2b06}").clicked() && ctx.row_index > 0 {
+                        event = Some(StoryGridEvent::MoveCard {
+                            id: card.id,
+                            new_index: ctx.row_index - 1,
+                        });
+                    }
+                    if ui.small_button("\u{2b07}").clicked() && ctx.row_index + 1 < ctx.row_count {
+                        event = Some(StoryGridEvent::MoveCard {
+                            id: card.id,
+                            new_index: ctx.row_index + 1,
+                        });
+                    }
+                }
+                ui.label(
+                    ctx.row
+                        .min_position()
+                        .map(|position| position.to_string())
+                        .unwrap_or_else(|| "\u{2014}".to_string()),
+                );
+            });
+            event
         }
         StoryGridColumn::Scene => {
             if ui.link(&card.scene_number).clicked() {
@@ -586,6 +685,100 @@ mod tests {
         let row = resolve_row(&project, &order, &card);
 
         assert_eq!(row.min_position(), Some(1));
+    }
+
+    fn placed_row(card: &StoryCard, position: usize) -> ResolvedRow<'_> {
+        ResolvedRow {
+            card,
+            links: vec![ResolvedLink {
+                stem: "stub".to_string(),
+                path: None,
+                position: Some(position),
+            }],
+        }
+    }
+
+    fn unplaced_row(card: &StoryCard) -> ResolvedRow<'_> {
+        ResolvedRow {
+            card,
+            links: vec![],
+        }
+    }
+
+    fn row_ids(rows: &[ResolvedRow]) -> Vec<Uuid> {
+        rows.iter().map(|row| row.card.id).collect()
+    }
+
+    #[test]
+    fn order_rows_in_manuscript_mode_sorts_by_position_regardless_of_input_order() {
+        let a = StoryCard::new();
+        let b = StoryCard::new();
+        let rows = vec![placed_row(&b, 2), placed_row(&a, 1)];
+
+        let ordered = order_rows(
+            rows,
+            StoryGridOrderMode::Manuscript,
+            UnplacedCardsPosition::Bottom,
+        );
+
+        assert_eq!(row_ids(&ordered), vec![a.id, b.id]);
+    }
+
+    #[test]
+    fn order_rows_in_manuscript_mode_breaks_position_ties_by_card_id_not_input_order() {
+        // Sorted so the assertion doesn't depend on `Uuid::new_v4`'s randomness.
+        let (mut a, mut b) = (StoryCard::new(), StoryCard::new());
+        if a.id > b.id {
+            std::mem::swap(&mut a, &mut b);
+        }
+
+        let forward = order_rows(
+            vec![placed_row(&a, 1), placed_row(&b, 1)],
+            StoryGridOrderMode::Manuscript,
+            UnplacedCardsPosition::Bottom,
+        );
+        // Reversed input order, e.g. left behind by a `Manual`-mode reorder.
+        let reversed = order_rows(
+            vec![placed_row(&b, 1), placed_row(&a, 1)],
+            StoryGridOrderMode::Manuscript,
+            UnplacedCardsPosition::Bottom,
+        );
+
+        assert_eq!(row_ids(&forward), vec![a.id, b.id]);
+        assert_eq!(row_ids(&reversed), vec![a.id, b.id]);
+    }
+
+    #[test]
+    fn order_rows_in_manuscript_mode_breaks_unplaced_ties_by_card_id_not_input_order() {
+        let (mut a, mut b) = (StoryCard::new(), StoryCard::new());
+        if a.id > b.id {
+            std::mem::swap(&mut a, &mut b);
+        }
+
+        let forward = order_rows(
+            vec![unplaced_row(&a), unplaced_row(&b)],
+            StoryGridOrderMode::Manuscript,
+            UnplacedCardsPosition::Bottom,
+        );
+        let reversed = order_rows(
+            vec![unplaced_row(&b), unplaced_row(&a)],
+            StoryGridOrderMode::Manuscript,
+            UnplacedCardsPosition::Bottom,
+        );
+
+        assert_eq!(row_ids(&forward), vec![a.id, b.id]);
+        assert_eq!(row_ids(&reversed), vec![a.id, b.id]);
+    }
+
+    #[test]
+    fn order_rows_in_manual_mode_preserves_input_order() {
+        let a = StoryCard::new();
+        let b = StoryCard::new();
+        let rows = vec![placed_row(&b, 1), unplaced_row(&a)];
+
+        let ordered = order_rows(rows, StoryGridOrderMode::Manual, UnplacedCardsPosition::Top);
+
+        assert_eq!(row_ids(&ordered), vec![b.id, a.id]);
     }
 
     #[test]

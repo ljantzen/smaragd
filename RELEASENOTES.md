@@ -5,6 +5,17 @@ this file.
 
 ## Unreleased
 
+- Added a manual ordering mode to the Story Grid (#79): an **Order** dropdown
+  switches between **Manuscript** (the previous, read-only, binder-position
+  order) and **Manual**, which shows the same freeform order as Corkboard and
+  lets you reorder rows with ⬆/⬇ buttons in the `#` column — the same
+  underlying order Corkboard's own Up/Down buttons edit, so reordering from
+  either view stays in sync. Switching back to Manuscript always reproduces
+  the same order regardless of anything reordered in Manual — ties (cards
+  sharing a manuscript position, or with none at all) break by a fixed key,
+  not whatever order Manual reordering happened to leave behind. Manuscript
+  stays the default for existing projects; the chosen mode is remembered per
+  project.
 - Added a `verse` block type for poetry: a ` ```verse ` fenced block preserves
   its line breaks exactly as typed, instead of collapsing into a paragraph,
   and renders in its own font/size/italic (a style's new `[verse]` table —

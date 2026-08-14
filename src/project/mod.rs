@@ -23,7 +23,7 @@ pub use meta::ProjectMeta;
 pub use picklists::PicklistField;
 pub use queries::{BacklinkEntry, TagGroup};
 pub use roles::FolderRole;
-pub use story_cards::StoryCard;
+pub use story_cards::{StoryCard, StoryGridOrderMode};
 pub use word_count::WordCountScope;
 
 use std::collections::{BTreeMap, HashMap};
