@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.1.0 — 2026-08-17
+
 - Added a Recent Files switcher (`Ctrl+Shift+O`): opens a fuzzy quick-switcher
   like `Ctrl+P`'s Open Document, but scoped to this session's recent
   documents instead of the whole project. The first press shows recently

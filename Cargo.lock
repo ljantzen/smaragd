@@ -6541,7 +6541,7 @@ dependencies = [
 
 [[package]]
 name = "smaragd"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "blake3",
  "bs58",
