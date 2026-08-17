@@ -27,10 +27,17 @@ pub enum CollabStatus<'a> {
     Connected {
         peer_fingerprint: &'a str,
     },
-    /// The peer's connection genuinely ended (network drop, or the peer
-    /// closed their side) — distinct from `Idle`, so it's clear *something*
-    /// happened rather than nothing ever having connected. No automatic
-    /// reconnection in v1: Host/Join here start a fresh session, same as
+    /// The connection dropped and a reconnect attempt is under way — see
+    /// `collab::CollabSession::reconnecting`. Distinct from `Connecting`
+    /// (which never had a peer yet) and from `Disconnected` (which has given
+    /// up): the session is still live here, just not currently connected.
+    Reconnecting {
+        peer_fingerprint: Option<&'a str>,
+    },
+    /// The peer's connection genuinely ended for good — reconnection was
+    /// exhausted, or the session ended before ever connecting — distinct
+    /// from `Idle`, so it's clear *something* happened rather than nothing
+    /// ever having connected. Host/Join here start a fresh session, same as
     /// from `Idle`.
     Disconnected {
         peer_fingerprint: Option<&'a str>,
@@ -88,6 +95,22 @@ pub fn show(ui: &mut egui::Ui, status: CollabStatus) -> Option<CollabPanelEvent>
                 ui.label(format!("Connected to peer {peer_fingerprint}"));
                 ui.add_space(8.0);
                 if ui.button("End Session").clicked() {
+                    event = Some(CollabPanelEvent::EndRequested);
+                }
+            }
+            CollabStatus::Reconnecting { peer_fingerprint } => {
+                match peer_fingerprint {
+                    Some(fingerprint) => {
+                        ui.label(format!("Lost connection to peer {fingerprint}."));
+                    }
+                    None => {
+                        ui.label("Lost connection to your collaborator.");
+                    }
+                }
+                ui.add_space(4.0);
+                ui.weak("Trying to reconnect…");
+                ui.add_space(8.0);
+                if ui.button("Cancel").clicked() {
                     event = Some(CollabPanelEvent::EndRequested);
                 }
             }

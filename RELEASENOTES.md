@@ -5,6 +5,14 @@ this file.
 
 ## Unreleased
 
+- Collaboration sessions now survive a dropped connection (#81): losing your
+  collaborator (network loss, a laptop sleeping and waking, a phone switching
+  networks) no longer ends the session outright. The panel shows "Lost
+  connection to your collaborator — trying to reconnect…" and keeps trying
+  to get them back for about a minute, reusing the same connection code, with
+  edits typed on either side during the outage queued and sent once the
+  connection returns. Only after that window (or an explicit **Cancel**)
+  does the session end for good, same as before.
 - Added a `verse` block type for poetry: a ` ```verse ` fenced block preserves
   its line breaks exactly as typed, instead of collapsing into a paragraph,
   and renders in its own font/size/italic (a style's new `[verse]` table —
