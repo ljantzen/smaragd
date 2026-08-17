@@ -1,17 +1,15 @@
 use super::*;
 
 impl SmaragdApp {
-    /// Starts hosting a collaboration session against whatever document is
-    /// currently open — see `CollabSession::host`'s doc comment for why it
-    /// starts empty and lets the first `sync_local_collab_edit` bootstrap
-    /// the shared document from the live buffer.
-    /// Whether `self.collab` is a *live*, still-usable session. An ended one
-    /// (the peer disconnected, or a fatal error occurred — see
-    /// `CollabSession::session_ended`) is cleared silently here rather than
-    /// left blocking a fresh Host/Join with a stale "already active" error:
-    /// there's no automatic reconnection in v1, so the only way forward
-    /// after a disconnect is starting over, and that shouldn't require an
-    /// extra manual "End Session" click first.
+    /// Whether `self.collab` is a *live*, still-usable session — `true` for
+    /// a session that's still trying to reconnect (`session_ended` stays
+    /// `false` throughout, see `CollabSession::reconnecting`), not just one
+    /// that's currently connected. An ended one (reconnection was exhausted,
+    /// or a fatal error occurred — see `CollabSession::session_ended`) is
+    /// cleared silently here rather than left blocking a fresh Host/Join
+    /// with a stale "already active" error: once a session is truly over,
+    /// the only way forward is starting a new one, and that shouldn't
+    /// require an extra manual "End Session" click first.
     pub(super) fn collab_is_live(&mut self) -> bool {
         match &self.collab {
             Some(session) if !session.session_ended => true,
@@ -23,6 +21,10 @@ impl SmaragdApp {
         }
     }
 
+    /// Starts hosting a collaboration session against whatever document is
+    /// currently open — see `CollabSession::host`'s doc comment for why it
+    /// starts empty and lets the first `sync_local_collab_edit` bootstrap
+    /// the shared document from the live buffer.
     pub(super) fn start_collab_host(&mut self, ctx: &egui::Context) {
         if self.collab_is_live() {
             self.push_error_toast("A collaboration session is already active");
@@ -133,6 +135,11 @@ impl SmaragdApp {
                 }
                 SessionUpdate::PeerConnected { .. } => {
                     self.set_status_message("Collaborator connected");
+                }
+                SessionUpdate::Reconnecting => {
+                    self.push_error_toast(
+                        "Lost connection to your collaborator — trying to reconnect…",
+                    );
                 }
                 SessionUpdate::PeerDisconnected => {
                     self.push_error_toast("Collaboration peer disconnected");

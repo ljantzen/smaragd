@@ -19,7 +19,7 @@
 //! iroh's own transport security, wired into `net` so every frame exchanged
 //! between peers is ciphertext.
 //!
-//! Phase D (current): [`CollabSession`] — the `SmaragdApp`-facing surface
+//! Phase D: [`CollabSession`] — the `SmaragdApp`-facing surface
 //! tying `crdt`/`diff` to a running `net` session. Its `doc`/`last_synced`
 //! baseline always start empty regardless of role: whichever side already
 //! has the document open (normally the host) has its very next
@@ -28,6 +28,14 @@
 //! bootstraps the shared document — the ordinary per-frame diffing loop
 //! doubles as the initial sync, with no separate state-vector round trip
 //! needed for two peers.
+//!
+//! Phase E: dropping one side's `CollabSession` (not just an explicit
+//! `EndSession`) still closes its connection promptly — the command channel
+//! closing tears the whole session down, not just the reader half.
+//!
+//! Phase F (current): reconnection (`net`'s module doc has the details) — a
+//! dropped connection no longer ends the session outright, it tries to get
+//! the peer back first, bounded by `net::RECONNECT_TIMEOUT`.
 
 pub mod crdt;
 pub mod crypto;
@@ -56,7 +64,13 @@ pub enum CollabEvent {
     PeerConnected(String),
     /// An already-encoded update received from the peer.
     RemoteUpdate(Vec<u8>),
-    /// The peer's connection ended.
+    /// The connection dropped and the background thread is now trying to get
+    /// the peer back (see `net`'s module doc) — not fatal on its own; either
+    /// another `PeerConnected` (reconnected) or, if that doesn't happen
+    /// before `net::RECONNECT_TIMEOUT`, a `PeerDisconnected` follows.
+    Reconnecting,
+    /// The peer's connection ended for good — either reconnection was
+    /// exhausted, or the session ended before ever connecting.
     PeerDisconnected,
     /// Something went wrong; the session did not start or has ended.
     Error(String),
@@ -118,6 +132,11 @@ pub enum SessionUpdate {
     PeerConnected {
         fingerprint: String,
     },
+    /// The connection dropped and the background thread is trying to get the
+    /// peer back — see `CollabEvent::Reconnecting`. `reconnecting` stays
+    /// `true` (and `peer_connected` `false`) until either another
+    /// `PeerConnected` arrives or the session gives up for good.
+    Reconnecting,
     PeerDisconnected,
     Error(String),
 }
@@ -132,17 +151,23 @@ pub struct CollabSession {
     /// (see `CollabEvent::HostReady`) — always `None` for a joiner.
     pub code: Option<String>,
     pub peer_connected: bool,
+    /// The connection dropped and the background thread is trying to get the
+    /// peer back — see `CollabEvent::Reconnecting`. Mutually exclusive with
+    /// `peer_connected`: never both `true` at once.
+    pub reconnecting: bool,
     /// Short display fingerprint for the peer, set once `peer_connected`
     /// becomes true (see `CollabEvent::PeerConnected`) — kept (not cleared)
-    /// after a disconnect, so the `Disconnected` panel state can still name
-    /// who was lost.
+    /// while `reconnecting` or after a final disconnect, so those panel
+    /// states can still name who was lost.
     pub peer_fingerprint: Option<String>,
-    /// Set once the background thread has actually stopped — a real network
-    /// disconnect (not just "never connected yet"), after which this session
-    /// can no longer do anything and the caller should treat it as over
-    /// (see `ui::collab_panel::CollabStatus::Disconnected`). No automatic
-    /// reconnection in v1: the caller ends this session and starts a fresh
-    /// one instead.
+    /// Set once the background thread has actually stopped for good — a
+    /// dropped peer that reconnection couldn't get back, or a real network
+    /// disconnect before ever connecting — after which this session can no
+    /// longer do anything and the caller should treat it as over (see
+    /// `ui::collab_panel::CollabStatus::Disconnected`). Never set while
+    /// `reconnecting` is `true`: the background thread is still trying at
+    /// that point, and the caller should keep waiting rather than treat the
+    /// session as over.
     pub session_ended: bool,
     doc: crdt::CrdtDoc,
     last_synced_text: String,
@@ -157,6 +182,7 @@ impl CollabSession {
             role: CollabRole::Host,
             code: None,
             peer_connected: false,
+            reconnecting: false,
             peer_fingerprint: None,
             session_ended: false,
             doc: crdt::CrdtDoc::new(),
@@ -171,6 +197,7 @@ impl CollabSession {
             role: CollabRole::Joiner,
             code: None,
             peer_connected: false,
+            reconnecting: false,
             peer_fingerprint: None,
             session_ended: false,
             doc: crdt::CrdtDoc::new(),
@@ -192,6 +219,7 @@ impl CollabSession {
             role,
             code: None,
             peer_connected: true,
+            reconnecting: false,
             peer_fingerprint: None,
             session_ended: false,
             doc: crdt::CrdtDoc::new(),
@@ -229,6 +257,7 @@ impl CollabSession {
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.peer_connected = false;
+                    self.reconnecting = false;
                     self.session_ended = true;
                     updates.push(SessionUpdate::PeerDisconnected);
                     break;
@@ -238,8 +267,14 @@ impl CollabSession {
                 CollabEvent::HostReady(code) => self.code = Some(code),
                 CollabEvent::PeerConnected(fingerprint) => {
                     self.peer_connected = true;
+                    self.reconnecting = false;
                     self.peer_fingerprint = Some(fingerprint.clone());
                     updates.push(SessionUpdate::PeerConnected { fingerprint });
+                }
+                CollabEvent::Reconnecting => {
+                    self.peer_connected = false;
+                    self.reconnecting = true;
+                    updates.push(SessionUpdate::Reconnecting);
                 }
                 CollabEvent::RemoteUpdate(bytes) => match self.doc.apply_remote_update(&bytes) {
                     Ok(new_text) => {
@@ -256,6 +291,7 @@ impl CollabSession {
                 },
                 CollabEvent::PeerDisconnected => {
                     self.peer_connected = false;
+                    self.reconnecting = false;
                     self.session_ended = true;
                     updates.push(SessionUpdate::PeerDisconnected);
                 }
@@ -263,6 +299,7 @@ impl CollabSession {
                     // Every `CollabEvent::Error` net.rs sends is fatal — the
                     // background thread always exits shortly after, so this
                     // session is just as over as an explicit disconnect.
+                    self.reconnecting = false;
                     self.session_ended = true;
                     updates.push(SessionUpdate::Error(message));
                 }
@@ -307,6 +344,7 @@ mod tests {
             role: CollabRole::Host,
             code: None,
             peer_connected: true,
+            reconnecting: false,
             peer_fingerprint: Some("abcd1234".to_string()),
             session_ended: false,
             doc: crdt::CrdtDoc::new(),
@@ -325,6 +363,63 @@ mod tests {
             assert!(session.poll().is_empty());
         }
     }
+
+    fn fake_session(role: CollabRole) -> (CollabSession, std::sync::mpsc::Sender<CollabEvent>) {
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        let session = CollabSession {
+            handle: CollabHandle { cmd_tx, event_rx },
+            role,
+            code: None,
+            peer_connected: true,
+            reconnecting: false,
+            peer_fingerprint: Some("abcd1234".to_string()),
+            session_ended: false,
+            doc: crdt::CrdtDoc::new(),
+            last_synced_text: String::new(),
+        };
+        (session, event_tx)
+    }
+
+    /// A `Reconnecting` event flips `peer_connected` off and `reconnecting`
+    /// on, without touching `session_ended` — the session is still live, see
+    /// `CollabSession::session_ended`'s doc comment.
+    #[test]
+    fn poll_applies_a_reconnecting_event() {
+        let (mut session, event_tx) = fake_session(CollabRole::Host);
+
+        event_tx.send(CollabEvent::Reconnecting).unwrap();
+        let updates = session.poll();
+
+        assert!(matches!(updates.as_slice(), [SessionUpdate::Reconnecting]));
+        assert!(!session.peer_connected);
+        assert!(session.reconnecting);
+        assert!(!session.session_ended);
+    }
+
+    /// A `PeerConnected` arriving while `reconnecting` is `true` (a
+    /// successful reconnect, not the first connection) clears it, same as
+    /// any other `PeerConnected`.
+    #[test]
+    fn poll_clears_reconnecting_once_the_peer_is_back() {
+        let (mut session, event_tx) = fake_session(CollabRole::Host);
+        event_tx.send(CollabEvent::Reconnecting).unwrap();
+        session.poll();
+        assert!(session.reconnecting);
+
+        event_tx
+            .send(CollabEvent::PeerConnected("abcd1234".to_string()))
+            .unwrap();
+        let updates = session.poll();
+
+        assert!(matches!(
+            updates.as_slice(),
+            [SessionUpdate::PeerConnected { .. }]
+        ));
+        assert!(session.peer_connected);
+        assert!(!session.reconnecting);
+    }
+
     use std::time::{Duration, Instant};
 
     /// Exercises the full `SmaragdApp`-facing surface end to end over a real
@@ -417,12 +512,11 @@ mod tests {
     /// (`CollabHandle::cmd_tx` dropping closes the background thread's
     /// command channel, which now — via `net::run_session`'s
     /// `tokio::select!` — tears the whole session down, not just the reader
-    /// half), the surviving side observes `session_ended` become `true`
-    /// through `poll()`, and a brand new session can be started immediately
-    /// afterward with no restart of anything.
+    /// half), and a brand new session can be started immediately afterward
+    /// with no restart of anything.
     #[test]
     #[ignore = "requires real internet access to iroh's public relay infrastructure"]
-    fn a_dropped_peer_is_detected_and_a_fresh_session_can_start_immediately() {
+    fn dropping_a_session_tears_it_down_and_a_fresh_one_can_start_immediately() {
         let ctx = egui::Context::default();
         let timeout = Duration::from_secs(30);
 
@@ -438,20 +532,66 @@ mod tests {
         });
         assert!(!host.session_ended);
 
-        // Drop (not `.end()`) the joiner — simulates its side going away
-        // without a chance to clean up, e.g. a crash.
+        // Drop (not `.end()`) the joiner's own session — nothing left on
+        // this side to reconnect from, so its background thread just tears
+        // down (see the doc comment above).
         drop(joiner);
 
-        drain_until(&mut host, timeout, |session| {
-            session.session_ended.then_some(())
-        });
-        assert!(!host.peer_connected);
-
-        // A fresh session should work immediately — no leftover state from
-        // the dead one should block it.
+        // A fresh session should work immediately, independent of the
+        // dropped one's teardown/reconnect handling.
         let mut fresh_host = CollabSession::host(ctx.clone());
         let fresh_code = drain_until(&mut fresh_host, timeout, |session| session.code.clone());
         assert!(!fresh_code.is_empty());
         fresh_host.end();
+        host.end();
+    }
+
+    /// #81 regression test: dropping a peer's connection (network loss,
+    /// sleep/wake, a crash) no longer ends the *surviving* side's session
+    /// outright — it tries to reconnect first (see `net`'s module doc), and
+    /// `session_ended` stays `false` for as long as that attempt is still
+    /// under way. Full end-to-end coverage of an actual successful/canceled
+    /// reconnect lives in `net`'s own tests
+    /// (`a_dropped_connection_reconnects_with_the_same_ticket_and_keeps_working`
+    /// / `ending_the_session_while_reconnecting_stops_it_promptly`); this one
+    /// stays at the `CollabSession` level to check the flags a UI caller
+    /// (`ui::collab_panel::CollabStatus`) actually branches on.
+    #[test]
+    #[ignore = "requires real internet access to iroh's public relay infrastructure"]
+    fn a_dropped_peer_triggers_reconnecting_not_an_immediate_session_end() {
+        let ctx = egui::Context::default();
+        let timeout = Duration::from_secs(30);
+
+        let mut host = CollabSession::host(ctx.clone());
+        let code = drain_until(&mut host, timeout, |session| session.code.clone());
+        let mut joiner = CollabSession::join(code, ctx.clone());
+
+        drain_until(&mut joiner, timeout, |session| {
+            session.peer_connected.then_some(())
+        });
+        drain_until(&mut host, timeout, |session| {
+            session.peer_connected.then_some(())
+        });
+        assert!(!host.session_ended);
+
+        // Drop (not `.end()`) the joiner — simulates its connection going
+        // away without a chance to clean up, e.g. a crash or a laptop going
+        // to sleep.
+        drop(joiner);
+
+        drain_until(&mut host, timeout, |session| {
+            session.reconnecting.then_some(())
+        });
+        assert!(!host.peer_connected);
+        assert!(
+            !host.session_ended,
+            "a reconnect attempt is still under way, not over yet"
+        );
+
+        // Give up manually rather than waiting out the full reconnect
+        // window — cancellation itself is exercised end-to-end (down to the
+        // actual background thread exiting) by `net`'s own
+        // `ending_the_session_while_reconnecting_stops_it_promptly`.
+        host.end();
     }
 }

@@ -1521,6 +1521,9 @@ impl eframe::App for SmaragdApp {
                     Some(session) if session.session_ended => CollabStatus::Disconnected {
                         peer_fingerprint: session.peer_fingerprint.as_deref(),
                     },
+                    Some(session) if session.reconnecting => CollabStatus::Reconnecting {
+                        peer_fingerprint: session.peer_fingerprint.as_deref(),
+                    },
                     Some(session) if session.peer_connected => CollabStatus::Connected {
                         peer_fingerprint: session
                             .peer_fingerprint
