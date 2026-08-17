@@ -61,6 +61,24 @@ impl DocumentHistory {
         self.entries.get(index + 1).map(PathBuf::as_path)
     }
 
+    /// Visited documents, most-recently-visited first, deduplicated (a document
+    /// revisited later moves to the front rather than appearing twice) — the
+    /// "Opened" mode data source for the Recent Files switcher
+    /// (`ShortcutAction::RecentFiles`). Capped at `limit`.
+    pub(super) fn recent_documents(&self, limit: usize) -> Vec<&Path> {
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for entry in self.entries.iter().rev() {
+            if seen.insert(entry.as_path()) {
+                result.push(entry.as_path());
+                if result.len() == limit {
+                    break;
+                }
+            }
+        }
+        result
+    }
+
     pub(super) fn can_go_back(&self) -> bool {
         self.previous().is_some()
     }
@@ -191,6 +209,32 @@ mod tests {
         history.visit(Path::new("a.md"));
 
         assert!(history.previous().is_none());
+    }
+
+    #[test]
+    fn recent_documents_is_most_recent_first_and_deduplicated() {
+        let mut history = DocumentHistory::default();
+        history.visit(Path::new("a.md"));
+        history.visit(Path::new("b.md"));
+        history.visit(Path::new("a.md")); // revisit "a.md", should move to the front
+
+        assert_eq!(
+            history.recent_documents(10),
+            vec![Path::new("a.md"), Path::new("b.md")]
+        );
+    }
+
+    #[test]
+    fn recent_documents_respects_the_limit() {
+        let mut history = DocumentHistory::default();
+        history.visit(Path::new("a.md"));
+        history.visit(Path::new("b.md"));
+        history.visit(Path::new("c.md"));
+
+        assert_eq!(
+            history.recent_documents(2),
+            vec![Path::new("c.md"), Path::new("b.md")]
+        );
     }
 
     #[test]

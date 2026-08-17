@@ -42,6 +42,10 @@ pub enum ShortcutAction {
     ToggleFocusMode,
     OpenDocument,
     CloseDocument,
+    /// Open the Recent Files switcher — toggles between "recently edited" and
+    /// "recently opened" documents on repeated activation while the popup is
+    /// already open (see `ui::recent_files_prompt::RecentFilesMode`).
+    RecentFiles,
     /// Step to the previously/next visited document in `document_history`
     /// (browser-style Back/Forward) — see `SmaragdApp::go_back_document`/
     /// `go_forward_document`.
@@ -130,6 +134,7 @@ impl ShortcutAction {
         Self::ToggleFocusMode,
         Self::OpenDocument,
         Self::CloseDocument,
+        Self::RecentFiles,
         Self::GoBack,
         Self::GoForward,
         Self::ActivateWikilink,
@@ -180,6 +185,7 @@ impl ShortcutAction {
             Self::ToggleFocusMode => "Toggle Focus Mode",
             Self::OpenDocument => "Open Document",
             Self::CloseDocument => "Close Document",
+            Self::RecentFiles => "Recent Files",
             Self::GoBack => "Go Back",
             Self::GoForward => "Go Forward",
             Self::ActivateWikilink => "Activate Wikilink",
@@ -235,6 +241,7 @@ impl ShortcutAction {
             Self::ToggleFocusMode => "toggle_focus_mode",
             Self::OpenDocument => "open_document",
             Self::CloseDocument => "close_document",
+            Self::RecentFiles => "recent_files",
             Self::GoBack => "go_back",
             Self::GoForward => "go_forward",
             Self::ActivateWikilink => "activate_wikilink",
@@ -273,6 +280,7 @@ impl ShortcutAction {
             | Self::Restore
             | Self::OpenDocument
             | Self::CloseDocument
+            | Self::RecentFiles
             | Self::GoBack
             | Self::GoForward
             | Self::NextBookmark
@@ -368,6 +376,12 @@ impl ShortcutAction {
             Self::ToggleFocusMode => KeyboardShortcut::new(Modifiers::NONE, Key::F9),
             Self::OpenDocument => KeyboardShortcut::new(Modifiers::COMMAND, Key::P),
             Self::CloseDocument => KeyboardShortcut::new(Modifiers::COMMAND, Key::W),
+            // Ctrl+Shift+E, IntelliJ's own Recent Files chord, is already taken by
+            // `ToggleBeliefTimeline` above — Ctrl+Shift+O instead (unused; `O` is
+            // otherwise only bound bare-Ctrl, for `OpenProject`).
+            Self::RecentFiles => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::O)
+            }
             // Alt+Left/Right, the conventional browser/IDE Back-Forward chord —
             // safe (Alt is a modifier) and otherwise unused.
             Self::GoBack => KeyboardShortcut::new(Modifiers::ALT, Key::ArrowLeft),

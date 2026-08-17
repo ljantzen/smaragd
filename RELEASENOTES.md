@@ -5,6 +5,13 @@ this file.
 
 ## Unreleased
 
+- Added a Recent Files switcher (`Ctrl+Shift+O`): opens a fuzzy quick-switcher
+  like `Ctrl+P`'s Open Document, but scoped to this session's recent
+  documents instead of the whole project. The first press shows recently
+  *edited* documents; pressing the shortcut again while the popup is still
+  open toggles to recently *opened* documents instead (and back again on
+  further presses). `Up`/`Down` to navigate, `Enter` or a click to open,
+  `Escape` to cancel — same as Open Document.
 - Collaboration sessions now survive a dropped connection (#81): losing your
   collaborator (network loss, a laptop sleeping and waking, a phone switching
   networks) no longer ends the session outright. The panel shows "Lost

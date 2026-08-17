@@ -15,6 +15,12 @@ pub struct EditorState {
     /// which otherwise has nothing to point at since only one document is ever open
     /// (and thus `dirty`) at a time.
     pub modified_paths: BTreeSet<PathBuf>,
+    /// Documents edited this session, in edit order (oldest first) — a document
+    /// edited again moves to the end rather than appearing twice. Distinct from
+    /// `modified_paths` (unordered, backs the "Modified Files" search scope): this
+    /// backs the "Edited" mode of the Recent Files switcher, which needs edit
+    /// recency, not just set membership.
+    pub edited_order: Vec<PathBuf>,
     /// Byte offset of the text cursor in `buffer`, refreshed every frame the
     /// editor panel renders (see `editor_panel::show`). Lets document-history
     /// navigation (`SmaragdApp::document_history`) record "where was I" in the
@@ -43,7 +49,19 @@ impl EditorState {
         self.dirty = true;
         if let Some(path) = &self.open_path {
             self.modified_paths.insert(path.clone());
+            self.edited_order.retain(|p| p != path);
+            self.edited_order.push(path.clone());
         }
+    }
+
+    /// Edited documents, most-recently-edited first. Capped at `limit`.
+    pub fn recently_edited(&self, limit: usize) -> Vec<&Path> {
+        self.edited_order
+            .iter()
+            .rev()
+            .take(limit)
+            .map(PathBuf::as_path)
+            .collect()
     }
 
     /// Write the buffer to `open_path`. A no-op (not an error) if nothing is open.
@@ -173,6 +191,28 @@ mod tests {
         state.mark_dirty();
 
         assert!(state.modified_paths.contains(&path));
+    }
+
+    #[test]
+    fn mark_dirty_moves_a_reedited_path_to_the_end_of_edited_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first.md");
+        let second = dir.path().join("second.md");
+        fs::write(&first, "first original").unwrap();
+        fs::write(&second, "second original").unwrap();
+
+        let mut state = EditorState::default();
+        state.open(&first).unwrap();
+        state.mark_dirty();
+        state.open(&second).unwrap();
+        state.mark_dirty();
+        state.open(&first).unwrap();
+        state.mark_dirty();
+
+        assert_eq!(
+            state.recently_edited(10),
+            vec![first.as_path(), second.as_path()]
+        );
     }
 
     #[test]

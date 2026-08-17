@@ -40,6 +40,11 @@ use refresh::{
 };
 use toast::Toast;
 
+/// Cap on how many candidates the Recent Files switcher (`ShortcutAction::RecentFiles`)
+/// pulls from `DocumentHistory::recent_documents`/`EditorState::recently_edited` before
+/// fuzzy-filtering — mirrors `open_document_prompt`'s own `MAX_RESULTS`.
+const RECENT_FILES_LIMIT: usize = 20;
+
 use crate::collab::{CollabRole, CollabSession, SessionUpdate};
 use crate::editor::EditorState;
 use crate::frontmatter::DocumentMeta;
@@ -135,6 +140,7 @@ pub struct SmaragdApp {
     card_draft: Option<CardDraft>,
     command_prompt: CommandPromptState,
     open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState,
+    recent_files_prompt: ui::recent_files_prompt::RecentFilesPromptState,
     new_project_template_prompt: ui::new_project_template_prompt::NewProjectTemplatePromptState,
     /// Live editing buffers for the open document's frontmatter, always kept in
     /// sync with whichever document is open (see `refresh_metadata_if_needed`) —
@@ -302,6 +308,7 @@ impl SmaragdApp {
             card_draft: None,
             command_prompt: CommandPromptState::default(),
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
+            recent_files_prompt: ui::recent_files_prompt::RecentFilesPromptState::default(),
             new_project_template_prompt:
                 ui::new_project_template_prompt::NewProjectTemplatePromptState::default(),
             metadata: MetadataState::default(),
@@ -395,6 +402,7 @@ impl SmaragdApp {
             card_draft: None,
             command_prompt: CommandPromptState::default(),
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
+            recent_files_prompt: ui::recent_files_prompt::RecentFilesPromptState::default(),
             new_project_template_prompt:
                 ui::new_project_template_prompt::NewProjectTemplatePromptState::default(),
             metadata: MetadataState::default(),
@@ -632,6 +640,13 @@ impl SmaragdApp {
             ShortcutAction::OpenDocument => {
                 if self.project.is_some() {
                     self.open_document_prompt.request_open();
+                } else {
+                    self.push_error_toast("No project open");
+                }
+            }
+            ShortcutAction::RecentFiles => {
+                if self.project.is_some() {
+                    self.recent_files_prompt.request_open();
                 } else {
                     self.push_error_toast("No project open");
                 }
@@ -1084,6 +1099,46 @@ impl SmaragdApp {
                 &mut self.open_document_prompt,
                 &candidates,
             ) {
+                self.open_document(&path);
+            }
+        }
+
+        if self.recent_files_prompt.open {
+            // Only touch the history/edit lists while the dialog is actually
+            // visible, same reasoning as the Open Document quick-switcher above.
+            let candidates: Vec<(String, PathBuf)> = self
+                .project
+                .as_ref()
+                .map(|project| {
+                    let paths: Vec<PathBuf> = match self.recent_files_prompt.mode {
+                        ui::recent_files_prompt::RecentFilesMode::Edited => self
+                            .editor
+                            .recently_edited(RECENT_FILES_LIMIT)
+                            .into_iter()
+                            .map(Path::to_path_buf)
+                            .collect(),
+                        ui::recent_files_prompt::RecentFilesMode::Opened => self
+                            .document_history
+                            .recent_documents(RECENT_FILES_LIMIT)
+                            .into_iter()
+                            .map(Path::to_path_buf)
+                            .collect(),
+                    };
+                    paths
+                        .into_iter()
+                        .map(|path| {
+                            let relative = path.strip_prefix(&project.root).unwrap_or(&path);
+                            let display =
+                                crate::project::model::document_label(&relative.to_string_lossy())
+                                    .to_string();
+                            (display, path)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(path) =
+                ui::recent_files_prompt::show(ui.ctx(), &mut self.recent_files_prompt, &candidates)
+            {
                 self.open_document(&path);
             }
         }
