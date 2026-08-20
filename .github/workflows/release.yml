@@ -5,6 +5,11 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
       - "[0-9]+.[0-9]+.[0-9]+*"
+  # Lets the whole pipeline (including the packaging steps) be run manually
+  # from the Actions tab or `gh workflow run` for testing, without pushing a
+  # tag. The "Create GitHub release" steps below are gated to real tag
+  # pushes, so a manual run builds and uploads nothing to the Releases page.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -163,11 +168,12 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub \
             https://flathub.org/repo/flathub.flatpakrepo
 
-      - name: Install flatpak runtime and SDK
+      - name: Install flatpak runtime, SDK, and Rust extension
         run: |
           flatpak install --user -y --noninteractive flathub \
             "org.freedesktop.Platform//${FLATPAK_RUNTIME_VERSION}" \
-            "org.freedesktop.Sdk//${FLATPAK_RUNTIME_VERSION}"
+            "org.freedesktop.Sdk//${FLATPAK_RUNTIME_VERSION}" \
+            "org.freedesktop.Sdk.Extension.rust-stable//${FLATPAK_RUNTIME_VERSION}"
 
       - name: Build flatpak
         run: |
@@ -187,6 +193,7 @@ jobs:
         run: sha256sum * > SHA256SUMS-x86_64-linux
 
       - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
           files: dist/*
@@ -236,6 +243,7 @@ jobs:
         run: sha256sum * > SHA256SUMS-x86_64-windows
 
       - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
           files: dist/*
@@ -321,6 +329,7 @@ jobs:
         run: shasum -a 256 * > SHA256SUMS-universal-macos
 
       - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
           files: dist/*

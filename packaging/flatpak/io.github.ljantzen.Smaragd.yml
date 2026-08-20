@@ -2,6 +2,8 @@ app-id: io.github.ljantzen.Smaragd
 runtime: org.freedesktop.Platform
 runtime-version: "24.08"
 sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
 command: smaragd
 finish-args:
   - --share=ipc
@@ -9,25 +11,36 @@ finish-args:
   - --socket=wayland
   - --device=dri
   - --filesystem=home
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
 modules:
   - name: smaragd
     buildsystem: simple
-    # The binary is built by `cargo build --release` earlier in the release
-    # workflow and just packaged here, rather than compiled again inside the
-    # sandbox, to avoid needing network access or the rust-stable SDK
-    # extension during the flatpak build.
+    # Builds from source with all crates.io dependencies vendored ahead of
+    # time (cargo-sources.json, generated from Cargo.lock by
+    # https://github.com/flatpak/flatpak-builder-tools/tree/master/cargo),
+    # so the build runs fully offline inside the sandbox - this is what
+    # Flathub requires (no network access during build-commands).
+    #
+    # To regenerate cargo-sources.json after Cargo.lock changes:
+    #   python3 flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
     build-commands:
-      - install -Dm755 smaragd /app/bin/smaragd
-      - sed 's/^Icon=smaragd$/Icon=io.github.ljantzen.Smaragd/' smaragd.desktop > io.github.ljantzen.Smaragd.desktop
+      - CARGO_HOME=$PWD/cargo cargo build --offline --release --locked
+      - install -Dm755 target/release/smaragd /app/bin/smaragd
+      - sed 's/^Icon=smaragd$/Icon=io.github.ljantzen.Smaragd/' packaging/smaragd.desktop > io.github.ljantzen.Smaragd.desktop
       - install -Dm644 io.github.ljantzen.Smaragd.desktop /app/share/applications/io.github.ljantzen.Smaragd.desktop
-      - install -Dm644 smaragd-icon.svg /app/share/icons/hicolor/scalable/apps/io.github.ljantzen.Smaragd.svg
-      - install -Dm644 io.github.ljantzen.Smaragd.metainfo.xml /app/share/metainfo/io.github.ljantzen.Smaragd.metainfo.xml
+      - install -Dm644 assets/smaragd-icon.svg /app/share/icons/hicolor/scalable/apps/io.github.ljantzen.Smaragd.svg
+      - install -Dm644 packaging/flatpak/io.github.ljantzen.Smaragd.metainfo.xml /app/share/metainfo/io.github.ljantzen.Smaragd.metainfo.xml
     sources:
-      - type: file
-        path: ../../target/release/smaragd
-      - type: file
-        path: ../smaragd.desktop
-      - type: file
-        path: ../../assets/smaragd-icon.svg
-      - type: file
-        path: io.github.ljantzen.Smaragd.metainfo.xml
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - target
+          - dist
+          - AppDir
+          - flatpak-build
+          - flatpak-repo
+          - "*.AppImage"
+          - smaragd.png
+      - cargo-sources.json
