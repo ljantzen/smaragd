@@ -5,6 +5,13 @@ sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
 command: smaragd
+# The apt-installed flatpak-builder on ubuntu-22.04 predates appstreamcli's
+# `compose` subcommand and still execs the standalone `appstream-compose`
+# binary, which current appstream releases (as shipped by the 25.08 SDK) no
+# longer provide. This bundle is a direct-download sideload rather than
+# something served from a repo, so we don't need the composed AppStream
+# catalog data - skip the step rather than fighting the tool-version skew.
+appstream-compose: false
 finish-args:
   - --share=ipc
   - --socket=fallback-x11
