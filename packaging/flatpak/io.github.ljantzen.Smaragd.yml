@@ -1,0 +1,33 @@
+app-id: io.github.ljantzen.Smaragd
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+command: smaragd
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  - --filesystem=home
+modules:
+  - name: smaragd
+    buildsystem: simple
+    # The binary is built by `cargo build --release` earlier in the release
+    # workflow and just packaged here, rather than compiled again inside the
+    # sandbox, to avoid needing network access or the rust-stable SDK
+    # extension during the flatpak build.
+    build-commands:
+      - install -Dm755 smaragd /app/bin/smaragd
+      - sed 's/^Icon=smaragd$/Icon=io.github.ljantzen.Smaragd/' smaragd.desktop > io.github.ljantzen.Smaragd.desktop
+      - install -Dm644 io.github.ljantzen.Smaragd.desktop /app/share/applications/io.github.ljantzen.Smaragd.desktop
+      - install -Dm644 smaragd-icon.svg /app/share/icons/hicolor/scalable/apps/io.github.ljantzen.Smaragd.svg
+      - install -Dm644 io.github.ljantzen.Smaragd.metainfo.xml /app/share/metainfo/io.github.ljantzen.Smaragd.metainfo.xml
+    sources:
+      - type: file
+        path: ../../target/release/smaragd
+      - type: file
+        path: ../smaragd.desktop
+      - type: file
+        path: ../../assets/smaragd-icon.svg
+      - type: file
+        path: io.github.ljantzen.Smaragd.metainfo.xml

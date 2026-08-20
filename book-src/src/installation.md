@@ -24,8 +24,28 @@ macOS tags anything downloaded via a browser with a quarantine attribute (`com.a
 
 ## Linux
 
-The AppImage needs its executable bit set before it will run:
+Four package formats are published on the [Releases page](https://github.com/ljantzen/smaragd/releases/latest):
 
-```bash
-chmod +x Smaragd-*.AppImage
-```
+- **AppImage** — portable, no installation. Needs its executable bit set before it will run:
+
+  ```bash
+  chmod +x smaragd-*-x86_64.AppImage
+  ```
+
+- **.deb** — for Debian/Ubuntu and derivatives:
+
+  ```bash
+  sudo apt install ./smaragd-*-x86_64-linux.deb
+  ```
+
+- **.rpm** — for Fedora/openSUSE and derivatives:
+
+  ```bash
+  sudo dnf install ./smaragd-*-x86_64-linux.rpm
+  ```
+
+- **.flatpak** — sandboxed, works on any distro with Flatpak set up:
+
+  ```bash
+  flatpak install --user ./smaragd-*-x86_64.flatpak
+  ```

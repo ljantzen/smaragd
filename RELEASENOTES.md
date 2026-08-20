@@ -5,6 +5,9 @@ this file.
 
 ## Unreleased
 
+- Linux releases now also publish `.deb`, `.rpm`, and `.flatpak` packages
+  alongside the AppImage.
+
 ## v1.1.0 — 2026-08-17
 
 - Added a Recent Files switcher (`Ctrl+Shift+O`): opens a fuzzy quick-switcher

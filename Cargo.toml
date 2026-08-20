@@ -3,6 +3,7 @@ name = "smaragd"
 version = "1.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
+description = "A native desktop authoring tool for writers"
 repository = "https://github.com/ljantzen/smaragd"
 
 [dependencies]
@@ -51,3 +52,29 @@ usvg = "0.48"
 
 [dev-dependencies]
 tempfile = "3"
+
+# Debian package metadata, consumed by `cargo deb` in the release workflow.
+[package.metadata.deb]
+maintainer = "Leif Jantzen <ljantzen@gmail.com>"
+copyright = "2025, Leif Jantzen"
+license-file = ["LICENSE", "0"]
+extended-description = """\
+Smaragd is a native desktop authoring tool for writers. A project is a \
+folder of Markdown files with dockable views, a binder tree, bookmarks, \
+a quick-switcher, and export to PDF/EPUB/DOCX."""
+section = "editors"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/smaragd", "usr/bin/", "755"],
+    ["packaging/smaragd.desktop", "usr/share/applications/smaragd.desktop", "644"],
+    ["assets/smaragd-icon.svg", "usr/share/icons/hicolor/scalable/apps/smaragd.svg", "644"],
+]
+
+# RPM package metadata, consumed by `cargo generate-rpm` in the release workflow.
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/smaragd", dest = "/usr/bin/smaragd", mode = "755" },
+    { source = "packaging/smaragd.desktop", dest = "/usr/share/applications/smaragd.desktop", mode = "644" },
+    { source = "assets/smaragd-icon.svg", dest = "/usr/share/icons/hicolor/scalable/apps/smaragd.svg", mode = "644" },
+]
