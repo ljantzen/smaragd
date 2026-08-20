@@ -23,8 +23,10 @@ env:
   # reproducible and don't silently pick up a broken AppImage runtime.
   LINUXDEPLOY_VERSION: "1-alpha-20251107-1"
   APPIMAGETOOL_VERSION: "1.9.1"
-  # Runtime/SDK pair used to build the flatpak; both must match.
-  FLATPAK_RUNTIME_VERSION: "24.08"
+  # Runtime/SDK/rust-stable-extension branch used to build the flatpak; all
+  # three must match. Needs to track a Freedesktop SDK branch recent enough
+  # that its rust-stable extension satisfies the MSRV of egui/typst/iroh.
+  FLATPAK_RUNTIME_VERSION: "25.08"
 
 jobs:
   release:
