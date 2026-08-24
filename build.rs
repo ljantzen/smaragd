@@ -40,7 +40,7 @@ fn generate_icon() {
 
     // tiny-skia stores premultiplied alpha; egui::IconData wants it straight/unmultiplied.
     let mut rgba = pixmap.data().to_vec();
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         let a = px[3] as u32;
         for c in &mut px[..3] {
             let numerator = *c as u32 * 255 + a / 2;
