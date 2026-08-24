@@ -3,7 +3,7 @@
 Notable changes to Smaragd, most recent first. Versions before 0.5.1 predate
 this file.
 
-## Unreleased
+## v1.1.1 — 2026-08-24
 
 - Linux releases now also publish `.deb`, `.rpm`, and `.flatpak` packages
   alongside the AppImage.
