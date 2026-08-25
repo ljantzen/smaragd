@@ -12,6 +12,7 @@ mod dock_tab_viewer;
 mod dock_tabs;
 mod document_history;
 mod export;
+mod external_watch;
 mod find_replace;
 mod git;
 mod import;
@@ -253,6 +254,17 @@ pub struct SmaragdApp {
     /// `editor.dirty` or an open, uncommitted `card_draft` — see
     /// `has_unsaved_changes` and the `close_requested()` handling in `ui()`.
     exit_confirm: ui::exit_confirm_prompt::ExitConfirmState,
+    /// When `check_external_changes` last actually ran (rescanned the binder
+    /// tree and checked the open document's mtime), rather than every frame —
+    /// see `external_watch::EXTERNAL_SCAN_INTERVAL`. `None` until the first
+    /// check after a project's opened.
+    external_scan_at: Option<std::time::Instant>,
+    /// The open document, set when its on-disk content changed while
+    /// `editor.dirty` was still true — an external write racing an unsaved
+    /// local edit. Left for `external_conflict_prompt` to ask the user which
+    /// version wins, rather than either silently clobbering the other. `None`
+    /// the rest of the time.
+    external_conflict: Option<PathBuf>,
 }
 
 impl SmaragdApp {
@@ -333,6 +345,8 @@ impl SmaragdApp {
             focus_mode: false,
             collab: None,
             exit_confirm: ui::exit_confirm_prompt::ExitConfirmState::default(),
+            external_scan_at: None,
+            external_conflict: None,
         };
         app.reload_typeset_styles(&cc.egui_ctx);
         app.reload_project_templates();
@@ -427,6 +441,8 @@ impl SmaragdApp {
             focus_mode: false,
             collab: None,
             exit_confirm: ui::exit_confirm_prompt::ExitConfirmState::default(),
+            external_scan_at: None,
+            external_conflict: None,
         }
     }
 
@@ -1032,6 +1048,19 @@ impl SmaragdApp {
             }
         }
 
+        if let Some(path) = self.external_conflict.clone()
+            && let Some(outcome) = ui::external_conflict_prompt::show(ui.ctx(), &path)
+        {
+            match outcome {
+                ui::external_conflict_prompt::ExternalConflictOutcome::KeepMine => {
+                    self.resolve_external_conflict(false);
+                }
+                ui::external_conflict_prompt::ExternalConflictOutcome::ReloadFromDisk => {
+                    self.resolve_external_conflict(true);
+                }
+            }
+        }
+
         if let Some(event) = ui::find_replace_panel::show(ui.ctx(), &mut self.find_replace) {
             let ctx = ui.ctx().clone();
             self.handle_find_replace_event(&ctx, event);
@@ -1373,6 +1402,7 @@ impl eframe::App for SmaragdApp {
         self.poll_word_count();
         self.poll_collab_events(ui.ctx());
         self.tick_pomodoro(ui.ctx());
+        self.check_external_changes(ui.ctx());
         self.show_toasts(ui.ctx());
         self.clear_status_message_if_expired(ui.ctx());
 

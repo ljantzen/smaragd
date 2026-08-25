@@ -35,6 +35,8 @@ impl SmaragdApp {
         self.metadata.target = MetadataTarget::Document;
         self.metadata.folder_computed_for = None;
         self.document_status_cache.clear();
+        self.external_scan_at = None;
+        self.external_conflict = None;
         self.clear_status_message();
         self.settings.last_project_path = Some(path.to_path_buf());
         self.settings.record_recent_project(path);
@@ -277,6 +279,8 @@ impl SmaragdApp {
         self.backlinks = BacklinksState::default();
         self.tags = TagsState::default();
         self.word_count = WordCountState::default();
+        self.external_scan_at = None;
+        self.external_conflict = None;
         self.settings.last_project_path = None;
         self.persist_settings();
         self.reload_plugins();

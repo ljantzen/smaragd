@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// The single currently-open document. Milestone 1 supports editing one file at a
 /// time — no tabs, no split view.
@@ -32,6 +33,12 @@ pub struct EditorState {
     /// (or wants to reset) where the cursor belongs, e.g. restoring the last
     /// known position for a document reopened via Back/Forward.
     pub pending_cursor: Option<usize>,
+    /// `open_path`'s on-disk mtime as of the last time this state read or wrote
+    /// it (`open`/`save`/`reload_from_disk`/`acknowledge_disk_change`) — compared
+    /// against the file's *current* mtime by `changed_on_disk` to notice another
+    /// program (a sync tool, `git pull`, a hand edit) touched it since. `None`
+    /// with nothing open, or if the mtime couldn't be read.
+    pub disk_mtime: Option<SystemTime>,
 }
 
 impl EditorState {
@@ -42,6 +49,7 @@ impl EditorState {
         self.open_path = Some(path.to_path_buf());
         self.buffer = contents;
         self.dirty = false;
+        self.disk_mtime = read_mtime(path);
         Ok(())
     }
 
@@ -69,8 +77,45 @@ impl EditorState {
         if let Some(path) = &self.open_path {
             fs::write(path, &self.buffer)?;
             self.dirty = false;
+            self.disk_mtime = read_mtime(path);
         }
         Ok(())
+    }
+
+    /// Re-read `open_path` from disk into `buffer`, discarding any unsaved edits —
+    /// used both to silently pick up an external change when there was nothing
+    /// local to lose, and when the user explicitly chooses to discard their edits
+    /// in favor of one (see `SmaragdApp::resolve_external_conflict`). A no-op if
+    /// nothing is open.
+    pub fn reload_from_disk(&mut self) -> io::Result<()> {
+        let Some(path) = self.open_path.clone() else {
+            return Ok(());
+        };
+        self.buffer = fs::read_to_string(&path)?;
+        self.dirty = false;
+        self.disk_mtime = read_mtime(&path);
+        Ok(())
+    }
+
+    /// Whether `open_path`'s on-disk mtime has moved since it was last read or
+    /// written here — the signal that something external (another program, a
+    /// sync tool, a `git pull`) touched the file. `false` with nothing open, or
+    /// if the current mtime can't be read (e.g. the file was deleted).
+    pub fn changed_on_disk(&self) -> bool {
+        match &self.open_path {
+            Some(path) => read_mtime(path).is_some_and(|current| Some(current) != self.disk_mtime),
+            None => false,
+        }
+    }
+
+    /// Adopt `open_path`'s current on-disk mtime without touching `buffer`/
+    /// `dirty` — used when the user chooses to keep their own unsaved edits over
+    /// an external change, so the same on-disk write isn't flagged as "changed"
+    /// again on the next check. A no-op if nothing is open.
+    pub fn acknowledge_disk_change(&mut self) {
+        if let Some(path) = &self.open_path {
+            self.disk_mtime = read_mtime(path);
+        }
     }
 
     fn save_if_dirty(&mut self) -> io::Result<()> {
@@ -87,8 +132,13 @@ impl EditorState {
         self.dirty = false;
         self.cursor_byte = 0;
         self.pending_cursor = None;
+        self.disk_mtime = None;
         Ok(())
     }
+}
+
+fn read_mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|meta| meta.modified()).ok()
 }
 
 #[cfg(test)]
@@ -261,5 +311,84 @@ mod tests {
         assert!(state.close().is_ok());
         assert_eq!(state.open_path, None);
         assert_eq!(state.buffer, "");
+    }
+
+    #[test]
+    fn changed_on_disk_is_false_right_after_open_or_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scene.md");
+        fs::write(&path, "original").unwrap();
+
+        let mut state = EditorState::default();
+        state.open(&path).unwrap();
+        assert!(!state.changed_on_disk());
+
+        state.buffer = "edited".to_string();
+        state.mark_dirty();
+        state.save().unwrap();
+        assert!(!state.changed_on_disk());
+    }
+
+    #[test]
+    fn changed_on_disk_is_true_after_an_external_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scene.md");
+        fs::write(&path, "original").unwrap();
+
+        let mut state = EditorState::default();
+        state.open(&path).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(&path, "changed elsewhere").unwrap();
+
+        assert!(state.changed_on_disk());
+    }
+
+    #[test]
+    fn changed_on_disk_is_false_with_nothing_open() {
+        let state = EditorState::default();
+        assert!(!state.changed_on_disk());
+    }
+
+    #[test]
+    fn reload_from_disk_replaces_the_buffer_and_clears_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scene.md");
+        fs::write(&path, "original").unwrap();
+
+        let mut state = EditorState::default();
+        state.open(&path).unwrap();
+        state.buffer = "unsaved local edit".to_string();
+        state.mark_dirty();
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(&path, "changed elsewhere").unwrap();
+        state.reload_from_disk().unwrap();
+
+        assert_eq!(state.buffer, "changed elsewhere");
+        assert!(!state.dirty);
+        assert!(!state.changed_on_disk());
+    }
+
+    #[test]
+    fn acknowledge_disk_change_updates_the_mtime_without_touching_the_buffer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scene.md");
+        fs::write(&path, "original").unwrap();
+
+        let mut state = EditorState::default();
+        state.open(&path).unwrap();
+        state.buffer = "unsaved local edit".to_string();
+        state.mark_dirty();
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(&path, "changed elsewhere").unwrap();
+        assert!(state.changed_on_disk());
+
+        state.acknowledge_disk_change();
+
+        assert_eq!(state.buffer, "unsaved local edit");
+        assert!(state.dirty);
+        assert!(!state.changed_on_disk());
     }
 }

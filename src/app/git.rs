@@ -198,10 +198,12 @@ impl SmaragdApp {
     }
 
     /// Pulls, then (once `poll_git_operation` picks up the result) rescans the binder
-    /// tree so any files the pull added/removed show up. Deliberately doesn't reload
-    /// the currently open document even if its on-disk content changed — that could
-    /// silently clobber unsaved local edits; the user can reopen it themselves if they
-    /// want the pulled version.
+    /// tree so any files the pull added/removed show up. Doesn't itself reload the
+    /// currently open document even if its on-disk content changed — that's handled
+    /// uniformly (for a pull or any other external write) by
+    /// `external_watch::check_external_changes`'s own periodic check, which reloads
+    /// it automatically if there's nothing unsaved to lose, or prompts instead of
+    /// silently clobbering either version if there is.
     pub(super) fn run_git_pull(&mut self, ctx: &egui::Context) {
         let Some(project) = &self.project else {
             self.push_error_toast("No project open");

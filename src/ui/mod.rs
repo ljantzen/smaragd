@@ -9,6 +9,7 @@ pub mod corkboard_panel;
 pub mod editor_panel;
 pub mod exit_confirm_prompt;
 pub mod export_panel;
+pub mod external_conflict_prompt;
 pub mod find_replace_panel;
 pub mod markdown_preview;
 pub mod metadata_panel;
