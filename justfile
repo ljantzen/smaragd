@@ -16,6 +16,10 @@ build:
 build-release:
     cargo build --release
 
+# Install the release binary to ~/.cargo/bin
+install:
+    cargo install --path . --locked
+
 # Run the test suite (matches CI: cargo test --all-targets --all-features)
 test:
     cargo test --all-targets --all-features
