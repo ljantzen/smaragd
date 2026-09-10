@@ -167,6 +167,22 @@
     border-radius: 12px;
     padding: 24px 26px;
   }
+
+  .notice {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-left: 3px solid #d9a441;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 22px auto 0;
+    max-width: 620px;
+    text-align: left;
+    font-size: 0.9em;
+    color: var(--fg-dim);
+  }
+  .notice strong { color: var(--fg); }
+  .notice ul { margin: 8px 0 0; padding-left: 20px; }
+  .notice li { margin: 4px 0; }
   .license-box p { color: var(--fg-dim); margin: 0 0 12px; }
   .license-box p:last-child { margin-bottom: 0; }
 
@@ -207,6 +223,7 @@
         Smaragd
       </div>
       <nav>
+        <a href="app/">Try it Online</a>
         <a href="#collaboration">Collaboration</a>
         <a href="#screenshots">Screenshots</a>
         <a href="https://github.com/ljantzen/smaragd">GitHub</a>
@@ -243,8 +260,23 @@
         plain markdown files in plain folders; Smaragd adds the binder, the metadata, and the typesetting on top.
       </p>
       <div class="cta-row">
-        <a class="btn primary" href="https://github.com/ljantzen/smaragd/releases/latest">Download latest release</a>
+        <a class="btn primary" href="app/">Try it in your browser (experimental)</a>
+        <a class="btn secondary" href="https://github.com/ljantzen/smaragd/releases/latest">Download latest release</a>
         <a class="btn secondary" href="https://github.com/ljantzen/smaragd">View on GitHub</a>
+      </div>
+      <div class="notice">
+        <strong>The browser edition is an experimental preview, not a replacement for the native app.</strong>
+        It's for kicking the tires, not for writing a real manuscript in — expect
+        rough edges, and don't treat it as your only copy of anything you care about.
+        <ul>
+          <li><strong>Missing compared to native:</strong> git version control, peer-to-peer
+            collaboration, Scrivener import, native OS notifications, and plugin scripts
+            that run external programs.</li>
+          <li><strong>Everything stays on your device.</strong> Your project is stored only
+            in this browser's local storage — nothing is uploaded to a server. That also
+            means there's no cloud backup: clearing site data, using a private window, or
+            switching browsers or devices loses it. Export often.</li>
+        </ul>
       </div>
     </div>
 

@@ -103,7 +103,7 @@ impl Project {
         path: Option<&Path>,
     ) -> io::Result<()> {
         if let Some(path) = path
-            && !path.is_dir()
+            && !self.store.is_dir(path)
         {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a folder"));
         }

@@ -277,9 +277,10 @@ impl SmaragdApp {
         // longer exists — silently resurrecting a stray file there with the unsaved
         // content while the visible buffer quietly reverts to the pre-edit version.
         // Saving first means the rename carries the up-to-date content along.
+        let store = self.editor_store();
         if self.editor.open_path.as_deref() == Some(path)
             && self.editor.dirty
-            && let Err(err) = self.editor.save()
+            && let Err(err) = self.editor.save_with_store(store.as_ref())
         {
             self.push_error_toast(format!("Couldn't save before renaming: {err}"));
             return;
@@ -304,7 +305,7 @@ impl SmaragdApp {
                     // The rename may have rewritten a `[[wikilink]]` to this document
                     // on disk; reload it so the editor reflects that. Skipped while
                     // dirty so we don't clobber unsaved edits with the disk version.
-                    let _ = self.editor.open(&open_path);
+                    let _ = self.editor.open_with_store(&open_path, store.as_ref());
                 }
             }
             Err(err) => {
@@ -334,7 +335,8 @@ impl SmaragdApp {
         if !self.editor.dirty
             && let Some(open_path) = self.editor.open_path.clone()
         {
-            let _ = self.editor.open(&open_path);
+            let store = self.editor_store();
+            let _ = self.editor.open_with_store(&open_path, store.as_ref());
         }
     }
 

@@ -6,6 +6,11 @@ on:
     paths:
       - "docs/**"
       - "book-src/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "index.html"
+      - "assets/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -34,6 +39,22 @@ jobs:
       - name: Build the user manual
         run: mdbook build book-src
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32-unknown-unknown
+
+      - uses: taiki-e/install-action@trunk
+
+      # Served from a GitHub Pages project site, so the app lives under
+      # /smaragd/app/ rather than the domain root — trunk needs to know
+      # that to emit correct asset URLs in the built index.html.
+      - name: Build the browser edition
+        run: trunk build --release --public-url /smaragd/app/
+
       - name: Assemble the site
         run: |
           mkdir -p _site
@@ -41,6 +62,8 @@ jobs:
           rm -f _site/user-manual.md
           mkdir -p _site/manual
           cp -r book-src/book/. _site/manual/
+          mkdir -p _site/app
+          cp -r dist/. _site/app/
 
       - uses: actions/configure-pages@v6
 

@@ -8,6 +8,7 @@ impl SmaragdApp {
     /// I/O, so it never runs synchronously on the UI thread, mirroring
     /// `spawn_git_operation`. Refuses to start a second download while one is
     /// already in flight rather than queuing or racing it.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn spawn_dictionary_download(
         &mut self,
         ctx: &egui::Context,
@@ -26,6 +27,29 @@ impl SmaragdApp {
         });
         self.set_status_message(format!("Downloading {}…", language.label()));
         self.pending_dictionary_download = Some((language, receiver));
+    }
+
+    /// No threads on wasm32 (no atomics/shared memory in this build), and
+    /// `spellcheck::download_dictionary` already fails fast there anyway (no
+    /// `fetch`-based networking wired up yet — see its own wasm32 stub) — so
+    /// there's nothing to actually background; just call it synchronously and
+    /// report the result immediately instead of spawning a thread that would
+    /// panic on this target.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn spawn_dictionary_download(
+        &mut self,
+        _ctx: &egui::Context,
+        language: SpellCheckLanguage,
+    ) {
+        match crate::spellcheck::download_dictionary(language) {
+            Ok(()) => {
+                crate::spellcheck::invalidate_dictionary_cache(language);
+                self.set_status_message(format!("Downloaded {} dictionary", language.label()));
+            }
+            Err(err) => {
+                self.push_error_toast(format!("Couldn't download {}: {err}", language.label()));
+            }
+        }
     }
 
     /// Check whether the in-flight `pending_dictionary_download` (if any) has

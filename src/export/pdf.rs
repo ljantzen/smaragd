@@ -38,9 +38,8 @@ use super::style::{RunningHeaderStyle, TypesetStyle};
 use super::{BookMeta, ExportDoc, ExportError};
 use crate::markdown::{Block, BlockKind, Span};
 
-/// Renders `docs` to a single print-ready PDF file at `out_path`, and returns
-/// an estimated spine width in inches for the resulting page count (see
-/// [`spine_width_inches`]) — informational only, not written into the PDF.
+/// [`export_pdf_bytes`], written straight to a file at `out_path` — the
+/// native save-dialog path. See that function for what's actually rendered.
 pub fn export_pdf(
     docs: &[ExportDoc],
     meta: &BookMeta,
@@ -48,6 +47,22 @@ pub fn export_pdf(
     project_root: &Path,
     out_path: &Path,
 ) -> Result<f32, ExportError> {
+    let (bytes, spine_width_in) = export_pdf_bytes(docs, meta, style, project_root)?;
+    fs::write(out_path, bytes)?;
+    Ok(spine_width_in)
+}
+
+/// Renders `docs` to PDF bytes in memory, and returns them alongside an
+/// estimated spine width in inches for the resulting page count (see
+/// [`spine_width_inches`]) — informational only, not written into the PDF.
+/// The web build's browser-download save path uses this directly, with no
+/// file path involved at all.
+pub fn export_pdf_bytes(
+    docs: &[ExportDoc],
+    meta: &BookMeta,
+    style: &TypesetStyle,
+    project_root: &Path,
+) -> Result<(Vec<u8>, f32), ExportError> {
     let mut source = generate_preamble(meta, style);
     source.push_str(&title_page_typst(meta, style));
     for doc in docs {
@@ -89,9 +104,8 @@ pub fn export_pdf(
     let pdf_bytes = typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default())
         .map_err(|diags| ExportError::Pdf(format_diagnostics(&diags)))?;
     let page_count = doc.pages().len();
-    fs::write(out_path, pdf_bytes)?;
 
-    Ok(spine_width_inches(page_count))
+    Ok((pdf_bytes, spine_width_inches(page_count)))
 }
 
 /// `typst_pdf::pdf`'s error is a list of Typst source diagnostics with no

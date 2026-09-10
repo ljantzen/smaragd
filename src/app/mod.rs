@@ -95,7 +95,7 @@ pub struct SmaragdApp {
     /// When `status_message` was last set, so `clear_status_message_if_expired`
     /// knows when `Settings::status_message_duration_secs` has elapsed. `None`
     /// exactly when `status_message` is `None`.
-    status_message_set_at: Option<std::time::Instant>,
+    status_message_set_at: Option<web_time::Instant>,
     /// Error-severity notifications currently on screen — see `Toast` and
     /// `push_error_toast`/`show_toasts`.
     toasts: Vec<Toast>,
@@ -200,6 +200,37 @@ pub struct SmaragdApp {
         crate::spellcheck::SpellCheckLanguage,
         std::sync::mpsc::Receiver<Result<(), String>>,
     )>,
+    /// A [`crate::project::browser_store::BrowserStore`] load from IndexedDB
+    /// in flight, if any — kicked off at startup and by `browse_for_project`
+    /// on wasm32 (see `app::project_lifecycle`'s doc comments there), since
+    /// that load is unavoidably async (see the wasm feasibility plan; unlike
+    /// `pending_git`/`pending_dictionary_download` this isn't a real
+    /// background thread — wasm32 doesn't have those — just a same-thread
+    /// task polled the same way). `None` once `poll_browser_project_load`
+    /// has picked up its result. Always `None` on every other target.
+    /// The `bool` is whether a "no project found" result should surface as
+    /// an error toast — true for an explicit `browse_for_project` "Open
+    /// Project" click, false for the silent attempt at startup, where
+    /// finding nothing is the ordinary first-visit case, not a failure.
+    #[cfg(target_arch = "wasm32")]
+    pending_browser_project_load: Option<(bool, std::sync::mpsc::Receiver<Option<Project>>)>,
+    /// A browser save-file pick + [`rfd::FileHandle::write`] in flight, if
+    /// any — `finish_export`'s wasm32 path (see its own doc comment for why
+    /// this needs to be async there at all). `Ok(filename)` on success,
+    /// `Err(message)` on a real failure, `None` if the user closed the save
+    /// dialog without picking anywhere. `None` once
+    /// `poll_browser_download` has picked up its result.
+    #[cfg(target_arch = "wasm32")]
+    pending_browser_download: Option<std::sync::mpsc::Receiver<Option<Result<String, String>>>>,
+    /// A browser open-file pick + read + parse in flight, if any —
+    /// `import_docx`/`import_epub`/`import_pdf`'s wasm32 path. Parsing
+    /// happens inside the same background task (see `app::import`), since
+    /// it's the same `crate::import::{docx,epub,pdf}::parse` call either
+    /// way and doing it there avoids needing to carry "which format" back
+    /// out just to dispatch on it here. `None` once `poll_browser_import`
+    /// has picked up its result.
+    #[cfg(target_arch = "wasm32")]
+    pending_browser_import: Option<std::sync::mpsc::Receiver<Option<import::BrowserImportResult>>>,
     /// Loaded `.rhai` plugins — the global directory always, plus the open
     /// project's own `.smaragd/plugins` if it has opted in (see
     /// `ProjectMeta::plugins_enabled`). Rebuilt by `reload_plugins`.
@@ -258,7 +289,7 @@ pub struct SmaragdApp {
     /// tree and checked the open document's mtime), rather than every frame —
     /// see `external_watch::EXTERNAL_SCAN_INTERVAL`. `None` until the first
     /// check after a project's opened.
-    external_scan_at: Option<std::time::Instant>,
+    external_scan_at: Option<web_time::Instant>,
     /// The open document, set when its on-disk content changed while
     /// `editor.dirty` was still true — an external write racing an unsaved
     /// local edit. Left for `external_conflict_prompt` to ask the user which
@@ -333,6 +364,12 @@ impl SmaragdApp {
             saved_layouts: Self::load_saved_layouts(),
             pending_git: None,
             pending_dictionary_download: None,
+            #[cfg(target_arch = "wasm32")]
+            pending_browser_project_load: None,
+            #[cfg(target_arch = "wasm32")]
+            pending_browser_download: None,
+            #[cfg(target_arch = "wasm32")]
+            pending_browser_import: None,
             plugin_engine: crate::plugins::PluginEngine::default(),
             plugin_shortcuts: Vec::new(),
             color_themes: Vec::new(),
@@ -372,6 +409,15 @@ impl SmaragdApp {
         {
             app.open_project(&cc.egui_ctx, &path);
         }
+
+        // The wasm32 equivalent of "reopen last project": `settings.
+        // last_project_path` is always `None` here (settings never persist
+        // on wasm32 — see `settings::config_file_path`), so this is the only
+        // way a previous session's BrowserStore-backed project comes back.
+        // Silent either way (see `pending_browser_project_load`'s own doc
+        // comment): finding nothing is the ordinary first-visit case.
+        #[cfg(target_arch = "wasm32")]
+        app.spawn_browser_project_load(false);
 
         app
     }
@@ -429,6 +475,12 @@ impl SmaragdApp {
             saved_layouts: std::collections::BTreeMap::new(),
             pending_git: None,
             pending_dictionary_download: None,
+            #[cfg(target_arch = "wasm32")]
+            pending_browser_project_load: None,
+            #[cfg(target_arch = "wasm32")]
+            pending_browser_download: None,
+            #[cfg(target_arch = "wasm32")]
+            pending_browser_import: None,
             plugin_engine: crate::plugins::PluginEngine::default(),
             plugin_shortcuts: Vec::new(),
             color_themes: Vec::new(),
@@ -711,7 +763,13 @@ impl SmaragdApp {
             ShortcutAction::TogglePomodoro => self.toggle_dock_tab(DockTab::Pomodoro),
             ShortcutAction::ToggleWordCount => self.toggle_dock_tab(DockTab::WordCount),
             ShortcutAction::RefreshWordCount => self.spawn_word_count_recompute(ctx),
+            // No raw sockets in a browser (see menu_bar's own Collaborate-menu
+            // gate) — the shortcut alone shouldn't be able to reach the panel
+            // and its still-live Host/Join buttons when the menu can't.
+            #[cfg(not(target_arch = "wasm32"))]
             ShortcutAction::ToggleCollabPanel => self.toggle_dock_tab(DockTab::Collab),
+            #[cfg(target_arch = "wasm32")]
+            ShortcutAction::ToggleCollabPanel => {}
             ShortcutAction::ToggleStreak => self.toggle_dock_tab(DockTab::Streak),
             ShortcutAction::CycleBinderColorMode => self.cycle_binder_color_mode(),
             // Filtered out of the consumption pass above and handled inline in
@@ -774,7 +832,8 @@ impl SmaragdApp {
             self.editor.buffer = transformed;
             self.editor.mark_dirty();
         }
-        let result = self.editor.save();
+        let store = self.editor_store();
+        let result = self.editor.save_with_store(store.as_ref());
         // Only report a frontmatter problem if nothing else already claimed the
         // status message this save (a plugin error above, or an I/O failure below)
         // — a fresh hand-edit that broke the YAML block is worth flagging, but not
@@ -1400,6 +1459,12 @@ impl eframe::App for SmaragdApp {
         self.poll_git_operation(ui.ctx());
         self.poll_dictionary_download();
         self.poll_word_count();
+        #[cfg(target_arch = "wasm32")]
+        self.poll_browser_project_load(ui.ctx());
+        #[cfg(target_arch = "wasm32")]
+        self.poll_browser_download();
+        #[cfg(target_arch = "wasm32")]
+        self.poll_browser_import();
         self.poll_collab_events(ui.ctx());
         self.tick_pomodoro(ui.ctx());
         self.check_external_changes(ui.ctx());
@@ -1569,9 +1634,11 @@ impl eframe::App for SmaragdApp {
                     .zip(self.project.as_ref())
                     .map(|(path, project)| project.bookmarked_lines_for(path))
                     .unwrap_or_default();
+                let editor_store = self.editor_store();
                 match ui::editor_panel::show(
                     &mut column_ui,
                     &mut self.editor,
+                    editor_store.as_ref(),
                     &note_titles,
                     &tag_names,
                     activate_wikilink_shortcut,

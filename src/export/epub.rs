@@ -15,10 +15,8 @@ use super::style::TypesetStyle;
 use super::{BookMeta, ExportDoc, ExportError};
 use crate::markdown::{Block, BlockKind, Span};
 
-/// Renders `docs` to a single EPUB file at `out_path`. Each `ExportDoc` becomes
-/// one XHTML chapter; a `[[wikilink]]` whose target matches another exported
-/// document links to that document's chapter (case-insensitive, matching
-/// `BinderNode::find_document_by_stem`), otherwise it renders as plain text.
+/// [`export_epub_bytes`], written straight to a file at `out_path` — the
+/// native save-dialog path. See that function for what's actually rendered.
 pub fn export_epub(
     docs: &[ExportDoc],
     meta: &BookMeta,
@@ -26,6 +24,23 @@ pub fn export_epub(
     project_root: &Path,
     out_path: &Path,
 ) -> Result<(), ExportError> {
+    let bytes = export_epub_bytes(docs, meta, style, project_root)?;
+    fs::write(out_path, bytes)?;
+    Ok(())
+}
+
+/// Renders `docs` to EPUB bytes in memory. Each `ExportDoc` becomes one
+/// XHTML chapter; a `[[wikilink]]` whose target matches another exported
+/// document links to that document's chapter (case-insensitive, matching
+/// `BinderNode::find_document_by_stem`), otherwise it renders as plain text.
+/// The web build's browser-download save path uses this directly, with no
+/// file path involved at all.
+pub fn export_epub_bytes(
+    docs: &[ExportDoc],
+    meta: &BookMeta,
+    style: &TypesetStyle,
+    project_root: &Path,
+) -> Result<Vec<u8>, ExportError> {
     let chapter_files: HashMap<String, String> = docs
         .iter()
         .enumerate()
@@ -79,9 +94,9 @@ pub fn export_epub(
             .add_content(EpubContent::new(filename, xhtml.as_bytes()).title(doc.title.clone()))?;
     }
 
-    let file = fs::File::create(out_path)?;
-    builder.generate(file)?;
-    Ok(())
+    let mut buffer = Vec::new();
+    builder.generate(&mut buffer)?;
+    Ok(buffer)
 }
 
 /// The EPUB `dc:title` value: `"{title}: {subtitle}"` when both are set, or

@@ -4,6 +4,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::project::store::ProjectStore;
+
 /// The single currently-open document. Milestone 1 supports editing one file at a
 /// time — no tabs, no split view.
 #[derive(Debug, Default)]
@@ -44,8 +46,16 @@ pub struct EditorState {
 impl EditorState {
     /// Open `path` for editing, first saving the previously open file if it was dirty.
     pub fn open(&mut self, path: &Path) -> io::Result<()> {
-        self.save_if_dirty()?;
-        let contents = fs::read_to_string(path)?;
+        self.open_with_store(path, &crate::project::store::NativeStore)
+    }
+
+    /// [`Self::open`], against an explicitly chosen store rather than always
+    /// [`crate::project::store::NativeStore`] — the seam a future browser
+    /// build's storage backend would call through instead (see the wasm
+    /// feasibility plan).
+    pub fn open_with_store(&mut self, path: &Path, store: &dyn ProjectStore) -> io::Result<()> {
+        self.save_if_dirty_with_store(store)?;
+        let contents = store.read_to_string(path)?;
         self.open_path = Some(path.to_path_buf());
         self.buffer = contents;
         self.dirty = false;
@@ -74,8 +84,13 @@ impl EditorState {
 
     /// Write the buffer to `open_path`. A no-op (not an error) if nothing is open.
     pub fn save(&mut self) -> io::Result<()> {
+        self.save_with_store(&crate::project::store::NativeStore)
+    }
+
+    /// [`Self::save`], against an explicitly chosen store.
+    pub fn save_with_store(&mut self, store: &dyn ProjectStore) -> io::Result<()> {
         if let Some(path) = &self.open_path {
-            fs::write(path, &self.buffer)?;
+            store.write(path, self.buffer.as_bytes())?;
             self.dirty = false;
             self.disk_mtime = read_mtime(path);
         }
@@ -88,10 +103,15 @@ impl EditorState {
     /// in favor of one (see `SmaragdApp::resolve_external_conflict`). A no-op if
     /// nothing is open.
     pub fn reload_from_disk(&mut self) -> io::Result<()> {
+        self.reload_from_disk_with_store(&crate::project::store::NativeStore)
+    }
+
+    /// [`Self::reload_from_disk`], against an explicitly chosen store.
+    pub fn reload_from_disk_with_store(&mut self, store: &dyn ProjectStore) -> io::Result<()> {
         let Some(path) = self.open_path.clone() else {
             return Ok(());
         };
-        self.buffer = fs::read_to_string(&path)?;
+        self.buffer = store.read_to_string(&path)?;
         self.dirty = false;
         self.disk_mtime = read_mtime(&path);
         Ok(())
@@ -118,15 +138,24 @@ impl EditorState {
         }
     }
 
-    fn save_if_dirty(&mut self) -> io::Result<()> {
-        if self.dirty { self.save() } else { Ok(()) }
+    fn save_if_dirty_with_store(&mut self, store: &dyn ProjectStore) -> io::Result<()> {
+        if self.dirty {
+            self.save_with_store(store)
+        } else {
+            Ok(())
+        }
     }
 
     /// Close the currently open document, if any — saving first if dirty (same
     /// silent-autosave convention as `open`, no discard/cancel prompt). A no-op if
     /// nothing is open.
     pub fn close(&mut self) -> io::Result<()> {
-        self.save_if_dirty()?;
+        self.close_with_store(&crate::project::store::NativeStore)
+    }
+
+    /// [`Self::close`], against an explicitly chosen store.
+    pub fn close_with_store(&mut self, store: &dyn ProjectStore) -> io::Result<()> {
+        self.save_if_dirty_with_store(store)?;
         self.open_path = None;
         self.buffer.clear();
         self.dirty = false;

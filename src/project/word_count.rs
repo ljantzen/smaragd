@@ -46,7 +46,9 @@ impl Project {
     /// `frontmatter::count_words` instead of parsing markdown IR.
     fn word_count_from(&self, node: &BinderNode) -> usize {
         match &node.kind {
-            BinderNodeKind::Document => fs::read_to_string(&node.path)
+            BinderNodeKind::Document => self
+                .store
+                .read_to_string(&node.path)
                 .map(|contents| crate::frontmatter::count_words(&contents))
                 .unwrap_or(0),
             BinderNodeKind::Folder { children } => {
@@ -101,7 +103,8 @@ impl Project {
                 if !self.is_path_tracked(&node.path, WordCountScope::EverythingExceptTrash) {
                     return 0;
                 }
-                fs::read_to_string(&node.path)
+                self.store
+                    .read_to_string(&node.path)
                     .map(|contents| crate::frontmatter::count_words(&contents))
                     .unwrap_or(0)
             }

@@ -105,7 +105,7 @@ fn read_zip_entry<R: Read + Seek>(
 /// feature (enabled transitively in this build via `docx-rs`'s own quick-xml
 /// dependency — cargo unifies features crate-wide, so it's on for us too).
 fn attr_value(attr: &quick_xml::events::attributes::Attribute) -> Option<String> {
-    std::str::from_utf8(&attr.value).ok().map(str::to_string)
+    Some(attr.value.to_string())
 }
 
 /// The package document's path, from `META-INF/container.xml`'s
@@ -116,9 +116,9 @@ fn extract_opf_path(container_xml: &str) -> Option<String> {
     let mut reader = Reader::from_str(container_xml);
     loop {
         match reader.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) if e.name().as_ref() == b"rootfile" => {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) if e.name().as_ref() == "rootfile" => {
                 for attr in e.attributes().flatten() {
-                    if attr.key.as_ref() == b"full-path"
+                    if attr.key.as_ref() == "full-path"
                         && let Some(value) = attr_value(&attr)
                     {
                         return Some(value);
@@ -149,13 +149,13 @@ fn parse_opf(opf_xml: &str) -> (HashMap<String, String>, Vec<String>) {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => match e.name().as_ref() {
-                b"item" => {
+                "item" => {
                     let mut id = None;
                     let mut href = None;
                     for attr in e.attributes().flatten() {
                         match attr.key.as_ref() {
-                            b"id" => id = attr_value(&attr),
-                            b"href" => href = attr_value(&attr),
+                            "id" => id = attr_value(&attr),
+                            "href" => href = attr_value(&attr),
                             _ => {}
                         }
                     }
@@ -163,9 +163,9 @@ fn parse_opf(opf_xml: &str) -> (HashMap<String, String>, Vec<String>) {
                         manifest.insert(id, href);
                     }
                 }
-                b"itemref" => {
+                "itemref" => {
                     for attr in e.attributes().flatten() {
-                        if attr.key.as_ref() == b"idref"
+                        if attr.key.as_ref() == "idref"
                             && let Some(value) = attr_value(&attr)
                         {
                             spine.push(value);
@@ -186,7 +186,7 @@ fn parse_opf(opf_xml: &str) -> (HashMap<String, String>, Vec<String>) {
 /// own separate `Event::GeneralRef`, handled where that event is matched
 /// below), so only byte-decoding is needed here, not entity-unescaping.
 fn text_content(e: &quick_xml::events::BytesText) -> String {
-    e.decode().unwrap_or_default().into_owned()
+    e.as_ref().to_string()
 }
 
 /// Wraps `text` in markdown emphasis markers for whichever of bold/italic/
@@ -235,23 +235,23 @@ fn xhtml_to_markdown(xhtml: &str, chapter_index: usize) -> (String, String) {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => match e.name().as_ref() {
-                b"strong" | b"b" => bold += 1,
-                b"em" | b"i" => italic += 1,
-                b"s" | b"strike" | b"del" => strike += 1,
-                b"code" => code += 1,
-                b"h1" | b"h2" | b"h3" | b"h4" | b"h5" | b"h6" => {
-                    heading_level = Some(e.name().as_ref()[1] - b'0');
+                "strong" | "b" => bold += 1,
+                "em" | "i" => italic += 1,
+                "s" | "strike" | "del" => strike += 1,
+                "code" => code += 1,
+                "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                    heading_level = Some(e.name().as_ref().as_bytes()[1] - b'0');
                     block.clear();
                 }
-                b"p" | b"blockquote" | b"li" => block.clear(),
-                b"ol" => ordered_list = true,
-                b"ul" => ordered_list = false,
+                "p" | "blockquote" | "li" => block.clear(),
+                "ol" => ordered_list = true,
+                "ul" => ordered_list = false,
                 _ => {}
             },
-            Ok(Event::Empty(e)) if e.name().as_ref() == b"br" => {
+            Ok(Event::Empty(e)) if e.name().as_ref() == "br" => {
                 block.push_str("  \n");
             }
-            Ok(Event::Empty(e)) if e.name().as_ref() == b"hr" => {
+            Ok(Event::Empty(e)) if e.name().as_ref() == "hr" => {
                 out.push_str("---\n\n");
             }
             Ok(Event::Text(e)) => {
@@ -277,8 +277,8 @@ fn xhtml_to_markdown(xhtml: &str, chapter_index: usize) -> (String, String) {
                 let resolved = match e.resolve_char_ref() {
                     Ok(Some(ch)) => ch.to_string(),
                     _ => {
-                        let name = e.decode().unwrap_or_default();
-                        match quick_xml::escape::resolve_predefined_entity(&name) {
+                        let name = e.as_ref();
+                        match quick_xml::escape::resolve_predefined_entity(name) {
                             Some(resolved) => resolved.to_string(),
                             None => format!("&{name};"),
                         }
@@ -287,11 +287,11 @@ fn xhtml_to_markdown(xhtml: &str, chapter_index: usize) -> (String, String) {
                 block.push_str(&apply_emphasis(&resolved, bold, italic, strike, code));
             }
             Ok(Event::End(e)) => match e.name().as_ref() {
-                b"strong" | b"b" => bold = bold.saturating_sub(1),
-                b"em" | b"i" => italic = italic.saturating_sub(1),
-                b"s" | b"strike" | b"del" => strike = strike.saturating_sub(1),
-                b"code" => code = code.saturating_sub(1),
-                b"h1" | b"h2" | b"h3" | b"h4" | b"h5" | b"h6" => {
+                "strong" | "b" => bold = bold.saturating_sub(1),
+                "em" | "i" => italic = italic.saturating_sub(1),
+                "s" | "strike" | "del" => strike = strike.saturating_sub(1),
+                "code" => code = code.saturating_sub(1),
+                "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                     let level = heading_level.take().unwrap_or(1);
                     let text = block.trim().to_string();
                     block.clear();
@@ -304,14 +304,14 @@ fn xhtml_to_markdown(xhtml: &str, chapter_index: usize) -> (String, String) {
                         out.push_str("\n\n");
                     }
                 }
-                b"p" => {
+                "p" => {
                     if !block.trim().is_empty() {
                         out.push_str(block.trim());
                         out.push_str("\n\n");
                     }
                     block.clear();
                 }
-                b"blockquote" => {
+                "blockquote" => {
                     if !block.trim().is_empty() {
                         out.push_str("> ");
                         out.push_str(block.trim());
@@ -319,7 +319,7 @@ fn xhtml_to_markdown(xhtml: &str, chapter_index: usize) -> (String, String) {
                     }
                     block.clear();
                 }
-                b"li" => {
+                "li" => {
                     if !block.trim().is_empty() {
                         out.push_str(if ordered_list { "1. " } else { "- " });
                         out.push_str(block.trim());

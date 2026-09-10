@@ -40,7 +40,12 @@
 pub mod crdt;
 pub mod crypto;
 pub mod diff;
+// Both are iroh-only (raw QUIC/UDP transport and its pasteable connection
+// codes) — no wasm32-unknown-unknown story. `spawn_collab_session` below is
+// the only caller of either, and stubs itself out on wasm32 instead.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod net;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod ticket;
 
 /// Commands sent from the main thread to a session's background thread.
@@ -99,6 +104,7 @@ pub struct CollabHandle {
 /// never start one, and tearing the whole thread/runtime/endpoint down
 /// together on [`CollabCommand::EndSession`] gives a clean, total teardown
 /// with no lingering background state to reason about.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_collab_session(role: SessionRole, ctx: egui::Context) -> CollabHandle {
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     let (event_tx, event_rx) = std::sync::mpsc::channel();
@@ -107,6 +113,21 @@ pub fn spawn_collab_session(role: SessionRole, ctx: egui::Context) -> CollabHand
         net::run(role, cmd_rx, event_tx, ctx);
     });
 
+    CollabHandle { cmd_tx, event_rx }
+}
+
+/// No raw sockets and no OS threads to spawn in a browser — reports the
+/// session as failed immediately rather than pretending to connect. See the
+/// wasm feasibility plan for what a browser-native replacement would need
+/// (a relay/WebSocket/WebRTC-based transport, which is a different design
+/// from iroh's, not a port of it).
+#[cfg(target_arch = "wasm32")]
+pub fn spawn_collab_session(_role: SessionRole, _ctx: egui::Context) -> CollabHandle {
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (event_tx, event_rx) = std::sync::mpsc::channel();
+    let _ = event_tx.send(CollabEvent::Error(
+        "collaboration isn't available in the web build yet".to_string(),
+    ));
     CollabHandle { cmd_tx, event_rx }
 }
 

@@ -389,9 +389,17 @@ pub struct Settings {
 
 /// The full path to the settings file, e.g. `~/.config/smaragd/smaragd.toml` on
 /// Linux. `None` if the platform's config directory can't be determined.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn config_file_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.config_dir().join("smaragd.toml"))
+}
+
+/// No OS config directory in a browser; the web build will need a browser
+/// storage-backed settings store instead (see the wasm feasibility plan).
+#[cfg(target_arch = "wasm32")]
+pub fn config_file_path() -> Option<PathBuf> {
+    None
 }
 
 /// The full path to the persisted dock layout (which tabs are open, and how
@@ -401,9 +409,15 @@ pub fn config_file_path() -> Option<PathBuf> {
 /// derived `Serialize` impl emits constructs — like a sequence of tables mixed with
 /// non-table values — that TOML's format can't represent), but does through JSON.
 /// `None` if the platform's config directory can't be determined.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn dock_layout_file_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.config_dir().join("dock_layout.json"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn dock_layout_file_path() -> Option<PathBuf> {
+    None
 }
 
 /// The full path to the user's named, saved dock layouts (Window > Save Current
@@ -413,9 +427,15 @@ pub fn dock_layout_file_path() -> Option<PathBuf> {
 /// persisted immediately whenever the user explicitly saves one. Same JSON (not
 /// TOML) reasoning as `dock_layout_file_path`. `None` if the platform's config
 /// directory can't be determined.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn saved_layouts_file_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.config_dir().join("saved_layouts.json"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn saved_layouts_file_path() -> Option<PathBuf> {
+    None
 }
 
 impl Settings {
@@ -423,6 +443,18 @@ impl Settings {
     /// its contents can't be parsed — a first launch or a hand-edited file should
     /// never prevent the app from starting.
     pub fn load_from_path(path: &Path) -> Self {
+        Self::load_from_path_with_store(path, &crate::project::store::NativeStore)
+    }
+
+    /// [`Self::load_from_path`], against an explicitly chosen store rather than
+    /// always [`crate::project::store::NativeStore`] — the seam a future browser
+    /// build's storage backend would call through instead (see the wasm
+    /// feasibility plan). Reuses `project::store::ProjectStore` — narrow and
+    /// generic enough for settings' own point read/write despite the name.
+    pub fn load_from_path_with_store(
+        path: &Path,
+        store: &dyn crate::project::store::ProjectStore,
+    ) -> Self {
         // Checked before reading: `git_integration_disabled`'s derived `Default`
         // (`false`, i.e. enabled) has to stay that way for `unwrap_or_default()`
         // below to also cover an *existing* settings file that simply predates
@@ -432,7 +464,8 @@ impl Settings {
         // configured," which is why this is decided here rather than by
         // changing the field's own default.
         let is_new_install = !path.exists();
-        let mut settings: Self = std::fs::read_to_string(path)
+        let mut settings: Self = store
+            .read_to_string(path)
             .ok()
             .and_then(|contents| toml::from_str(&contents).ok())
             .unwrap_or_default();
@@ -543,12 +576,21 @@ impl Settings {
     }
 
     pub fn save_to_path(&self, path: &Path) -> io::Result<()> {
+        self.save_to_path_with_store(path, &crate::project::store::NativeStore)
+    }
+
+    /// [`Self::save_to_path`], against an explicitly chosen store.
+    pub fn save_to_path_with_store(
+        &self,
+        path: &Path,
+        store: &dyn crate::project::store::ProjectStore,
+    ) -> io::Result<()> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            store.create_dir_all(parent)?;
         }
         let contents =
             toml::to_string_pretty(self).expect("Settings always serializes to valid TOML");
-        std::fs::write(path, contents)
+        store.write(path, contents.as_bytes())
     }
 
     /// Bind a plugin `:` command's shortcut to `shortcut` (`None` to unbind it —

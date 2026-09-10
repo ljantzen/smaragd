@@ -15,7 +15,7 @@ impl Project {
         let parent = path
             .parent()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
-        let is_dir = path.is_dir();
+        let is_dir = self.store.is_dir(path);
         let new_name = if is_dir {
             new_name.to_string()
         } else {
@@ -23,9 +23,9 @@ impl Project {
         };
         ensure_simple_child_name(&new_name)?;
         let new_path = parent.join(&new_name);
-        ensure_does_not_exist(&new_path)?;
+        ensure_does_not_exist(self.store.as_ref(), &new_path)?;
 
-        fs::rename(path, &new_path)?;
+        self.store.rename(path, &new_path)?;
 
         if let Some(old_name) = path.file_name().and_then(|n| n.to_str()) {
             let parent_key = relative_key(&self.root, parent);
@@ -77,11 +77,11 @@ impl Project {
     /// itself, in case it links to itself).
     fn rename_wikilinks_everywhere(&self, old_target: &str, new_target: &str) -> io::Result<()> {
         for doc_path in self.tree.document_paths() {
-            let contents = fs::read_to_string(&doc_path)?;
+            let contents = self.store.read_to_string(&doc_path)?;
             if let Some(updated) =
                 crate::markdown::rename_wikilink_target(&contents, old_target, new_target)
             {
-                fs::write(&doc_path, updated)?;
+                self.store.write(&doc_path, updated.as_bytes())?;
             }
         }
         Ok(())
@@ -272,16 +272,16 @@ impl Project {
             .and_then(|n| n.to_str())
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
         let dest_name = match on_collision {
-            NameCollision::Uniquify => unique_child_name(new_parent, name),
+            NameCollision::Uniquify => unique_child_name(self.store.as_ref(), new_parent, name),
             NameCollision::Refuse => {
-                ensure_does_not_exist(&new_parent.join(name))?;
+                ensure_does_not_exist(self.store.as_ref(), &new_parent.join(name))?;
                 name.to_string()
             }
         };
         let dest = new_parent.join(&dest_name);
-        let is_dir = path.is_dir();
+        let is_dir = self.store.is_dir(path);
 
-        fs::rename(path, &dest)?;
+        self.store.rename(path, &dest)?;
 
         if let Some(parent) = path.parent() {
             let parent_key = relative_key(&self.root, parent);

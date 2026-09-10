@@ -5,7 +5,7 @@ use super::*;
 /// `SmaragdApp::push_error_toast`/`show_toasts`.
 pub(super) struct Toast {
     pub(super) message: String,
-    shown_at: std::time::Instant,
+    shown_at: web_time::Instant,
 }
 
 /// Built-in toast duration used when `Settings::toast_duration_secs` is
@@ -46,7 +46,7 @@ impl SmaragdApp {
     pub(super) fn push_error_toast(&mut self, message: impl Into<String>) {
         self.toasts.push(Toast {
             message: message.into(),
-            shown_at: std::time::Instant::now(),
+            shown_at: web_time::Instant::now(),
         });
     }
 
@@ -62,7 +62,7 @@ impl SmaragdApp {
     /// `tick_pomodoro`'s own `request_repaint_after`.
     pub(super) fn show_toasts(&mut self, ctx: &egui::Context) {
         let duration = resolve_toast_duration(&self.settings);
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         self.toasts
             .retain(|toast| now.duration_since(toast.shown_at) < duration);
         if self.toasts.is_empty() {
@@ -102,7 +102,7 @@ impl SmaragdApp {
     /// `clear_status_message_if_expired` can time it out on its own.
     pub(super) fn set_status_message(&mut self, message: impl Into<String>) {
         self.status_message = Some(message.into());
-        self.status_message_set_at = Some(std::time::Instant::now());
+        self.status_message_set_at = Some(web_time::Instant::now());
     }
 
     /// Clear `status_message` (and its timestamp) immediately, rather than

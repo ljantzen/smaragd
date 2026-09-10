@@ -222,8 +222,14 @@ pub fn built_in_themes() -> Vec<ColorTheme> {
 /// The always-loaded custom-theme directory: `<config_dir>/smaragd/themes`, the
 /// same base path `plugins::global_plugins_dir` uses for its own `plugins`
 /// subdirectory. `None` if the platform's config directory can't be determined.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn global_themes_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd").map(|dirs| dirs.config_dir().join("themes"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn global_themes_dir() -> Option<PathBuf> {
+    None
 }
 
 /// Parse a `"#RRGGBB"` (or `"RRGGBB"`, the `#` is optional) hex color.

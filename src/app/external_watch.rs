@@ -1,5 +1,7 @@
 use super::*;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use web_time::Instant;
 
 /// How often `check_external_changes` actually does any work — gates both the
 /// binder rescan (a directory walk; see `scan::scan_project`) and the open
@@ -65,7 +67,8 @@ impl SmaragdApp {
         let Some(path) = self.editor.open_path.clone() else {
             return;
         };
-        match self.editor.reload_from_disk() {
+        let store = self.editor_store();
+        match self.editor.reload_from_disk_with_store(store.as_ref()) {
             Ok(()) => {
                 self.document_status_cache.invalidate(&path);
                 let name = path
@@ -87,7 +90,8 @@ impl SmaragdApp {
     pub(super) fn resolve_external_conflict(&mut self, discard_local: bool) {
         self.external_conflict = None;
         if discard_local {
-            match self.editor.reload_from_disk() {
+            let store = self.editor_store();
+            match self.editor.reload_from_disk_with_store(store.as_ref()) {
                 Ok(()) => self.set_status_message("Reloaded from disk"),
                 Err(err) => self.push_error_toast(format!("Couldn't reload: {err}")),
             }

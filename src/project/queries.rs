@@ -88,7 +88,7 @@ impl Project {
             if doc_path == target_path {
                 continue;
             }
-            let Ok(contents) = fs::read_to_string(&doc_path) else {
+            let Ok(contents) = self.store.read_to_string(&doc_path) else {
                 continue;
             };
             // Strip frontmatter before scanning: without this, a wikilink close to
@@ -129,7 +129,7 @@ impl Project {
 
         let mut index = Vec::new();
         for doc_path in self.tree.document_paths() {
-            let Ok(contents) = fs::read_to_string(&doc_path) else {
+            let Ok(contents) = self.store.read_to_string(&doc_path) else {
                 continue;
             };
             let Some(title) = doc_path.file_stem().and_then(|stem| stem.to_str()) else {

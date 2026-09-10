@@ -21,11 +21,8 @@ const HEADING_STYLE_IDS: [&str; 6] = [
     "Heading1", "Heading2", "Heading3", "Heading4", "Heading5", "Heading6",
 ];
 
-/// Renders `docs` to a single DOCX file at `out_path`: each `ExportDoc` becomes
-/// a title heading followed by its body. Wikilinks render as plain
-/// (non-linked) text and list items as a `"• "`/`"N. "` text prefix rather
-/// than real DOCX list numbering — deliberate v1 simplifications, upgradable
-/// later without changing this walk.
+/// [`export_docx_bytes`], written straight to a file at `out_path` — the
+/// native save-dialog path. See that function for what's actually rendered.
 pub fn export_docx(
     docs: &[ExportDoc],
     meta: &BookMeta,
@@ -33,6 +30,23 @@ pub fn export_docx(
     project_root: &Path,
     out_path: &Path,
 ) -> Result<(), ExportError> {
+    let bytes = export_docx_bytes(docs, meta, style, project_root)?;
+    fs::write(out_path, bytes)?;
+    Ok(())
+}
+
+/// Renders `docs` to DOCX bytes in memory: each `ExportDoc` becomes a title
+/// heading followed by its body. Wikilinks render as plain (non-linked)
+/// text and list items as a `"• "`/`"N. "` text prefix rather than real
+/// DOCX list numbering — deliberate v1 simplifications, upgradable later
+/// without changing this walk. The web build's browser-download save path
+/// uses this directly, with no file path involved at all.
+pub fn export_docx_bytes(
+    docs: &[ExportDoc],
+    meta: &BookMeta,
+    style: &TypesetStyle,
+    project_root: &Path,
+) -> Result<Vec<u8>, ExportError> {
     let body_size = pt_to_half_points(style.body.size_pt);
     let mut docx = Docx::new().page_size(
         mm_to_twips(style.page.width_mm),
@@ -118,9 +132,11 @@ pub fn export_docx(
         }
     }
 
-    let file = fs::File::create(out_path)?;
-    docx.build().pack(file).map_err(DocxError::from)?;
-    Ok(())
+    let mut buffer = Vec::new();
+    docx.build()
+        .pack(std::io::Cursor::new(&mut buffer))
+        .map_err(DocxError::from)?;
+    Ok(buffer)
 }
 
 fn pt_to_half_points(pt: u32) -> usize {

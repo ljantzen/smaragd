@@ -233,9 +233,15 @@ pub fn built_in_templates() -> Vec<ProjectTemplate> {
 /// The always-loaded custom-template directory: `<config_dir>/smaragd/
 /// project_templates`, the same base path `color_theme::global_themes_dir` uses
 /// for its own `themes` subdirectory.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn global_project_templates_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.config_dir().join("project_templates"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn global_project_templates_dir() -> Option<PathBuf> {
+    None
 }
 
 /// The on-disk shape of a custom template's `template.toml`. A custom template's

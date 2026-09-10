@@ -116,22 +116,27 @@ impl SmaragdApp {
                             }
                         }
                         ui.separator();
-                        // A submenu, since a `.scriv` project needs a whole
-                        // folder picked (it's a directory, not a single file
-                        // with its own filter) unlike the other three formats.
+                        // A submenu, since a `.scriv` project needs a whole folder
+                        // picked (it's a directory, not a single file with its own
+                        // filter) unlike the other three formats — Scrivener import
+                        // stays native-only since folder-picking has no browser
+                        // equivalent (see the wasm feasibility plan), but the other
+                        // three formats only ever need a single-file pick, which
+                        // `rfd`'s web backend does support.
                         nav_submenu(ui, nav, "Import", |ui, nav| {
                             if nav.button(ui, "Word Document (.docx)…").clicked() {
-                                self.import_docx();
+                                self.import_docx(ui.ctx());
                                 ui.close();
                             }
                             if nav.button(ui, "EPUB (.epub)…").clicked() {
-                                self.import_epub();
+                                self.import_epub(ui.ctx());
                                 ui.close();
                             }
                             if nav.button(ui, "PDF (.pdf)…").clicked() {
-                                self.import_pdf();
+                                self.import_pdf(ui.ctx());
                                 ui.close();
                             }
+                            #[cfg(not(target_arch = "wasm32"))]
                             if nav.button(ui, "Scrivener Project…").clicked() {
                                 self.import_scrivener();
                                 ui.close();
@@ -429,6 +434,12 @@ impl SmaragdApp {
                     // Hidden entirely (not just disabled) when the Settings > History
                     // "Enable Git integration" flag is off — see
                     // `Settings::git_integration_disabled`'s doc comment.
+                    // Git needs a real on-disk working tree, which a browser build's
+                    // storage (IndexedDB/OPFS) fundamentally doesn't have — not a v1
+                    // cut awaiting a harder rework, permanently inapplicable to this
+                    // storage model (see the wasm feasibility plan). Hidden entirely
+                    // rather than shown-and-erroring.
+                    #[cfg(not(target_arch = "wasm32"))]
                     if self.settings.git_integration_enabled() {
                         top_menu_button(ui, "Versions", egui::Key::S, |ui, nav| {
                             let git_enabled = self
@@ -468,6 +479,12 @@ impl SmaragdApp {
                             }
                         });
                     }
+                    // Real-time p2p collaboration needs raw sockets (iroh/QUIC), which
+                    // browsers don't expose — spawn_collab_session already reports this
+                    // as an immediate, non-fatal failure on wasm32 (see collab::mod),
+                    // but hiding the menu entirely reads better than a session that
+                    // always fails right after "Host Session" is clicked.
+                    #[cfg(not(target_arch = "wasm32"))]
                     top_menu_button(ui, "Collaborate", egui::Key::C, |ui, nav| {
                         // A session that's already ended (peer disconnected, or a
                         // fatal error — see `CollabSession::session_ended`) doesn't

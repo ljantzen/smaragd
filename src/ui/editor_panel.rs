@@ -181,6 +181,7 @@ pub fn editor_text_edit_id() -> Id {
 pub fn show(
     ui: &mut egui::Ui,
     editor: &mut EditorState,
+    store: &dyn crate::project::store::ProjectStore,
     note_titles: &[String],
     tag_names: &[String],
     activate_wikilink_shortcut: Option<KeyboardShortcut>,
@@ -529,7 +530,7 @@ pub fn show(
     }
 
     if output.response.lost_focus()
-        && let Err(err) = editor.save()
+        && let Err(err) = editor.save_with_store(store)
     {
         return Some(EditorEvent::SaveError(format!("Save failed: {err}")));
     }
@@ -977,6 +978,7 @@ mod tests {
             show(
                 ui,
                 &mut editor,
+                &crate::project::store::NativeStore,
                 &[],
                 &[],
                 None,
@@ -1028,6 +1030,7 @@ mod tests {
             show(
                 ui,
                 &mut editor,
+                &crate::project::store::NativeStore,
                 &[],
                 &[],
                 None,
@@ -1076,6 +1079,7 @@ mod tests {
             show(
                 ui,
                 &mut editor,
+                &crate::project::store::NativeStore,
                 &[],
                 &[],
                 None,
@@ -1129,6 +1133,7 @@ mod tests {
                 show(
                     ui,
                     &mut editor,
+                    &crate::project::store::NativeStore,
                     &[],
                     &[],
                     None,
@@ -1160,6 +1165,7 @@ mod tests {
                 show(
                     ui,
                     &mut editor,
+                    &crate::project::store::NativeStore,
                     &[],
                     &[],
                     None,
@@ -1243,6 +1249,7 @@ mod tests {
             show(
                 ui,
                 &mut editor,
+                &crate::project::store::NativeStore,
                 &[],
                 &[],
                 None,
@@ -1272,6 +1279,7 @@ mod tests {
             event = show(
                 ui,
                 &mut editor,
+                &crate::project::store::NativeStore,
                 &[],
                 &[],
                 None,
@@ -1319,6 +1327,7 @@ mod tests {
             show(
                 ui,
                 &mut editor,
+                &crate::project::store::NativeStore,
                 &[],
                 &[],
                 None,
@@ -1355,6 +1364,7 @@ mod tests {
             event = show(
                 ui,
                 &mut editor,
+                &crate::project::store::NativeStore,
                 &[],
                 &[],
                 None,
@@ -1407,6 +1417,7 @@ mod tests {
             show(
                 ui,
                 &mut editor,
+                &crate::project::store::NativeStore,
                 &[],
                 &[],
                 None,
@@ -1438,6 +1449,7 @@ mod tests {
             event = show(
                 ui,
                 &mut editor,
+                &crate::project::store::NativeStore,
                 &[],
                 &[],
                 None,
@@ -1483,6 +1495,7 @@ mod tests {
             show(
                 ui,
                 &mut editor,
+                &crate::project::store::NativeStore,
                 &[],
                 &[],
                 None,
@@ -1520,6 +1533,7 @@ mod tests {
             show(
                 ui,
                 &mut editor,
+                &crate::project::store::NativeStore,
                 &[],
                 &[],
                 None,

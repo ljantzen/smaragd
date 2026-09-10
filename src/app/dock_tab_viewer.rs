@@ -425,9 +425,14 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     .zip(self.project)
                     .map(|(path, project)| project.bookmarked_lines_for(path))
                     .unwrap_or_default();
+                let editor_store: &dyn crate::project::store::ProjectStore = self
+                    .project
+                    .map(|p| p.store.as_ref())
+                    .unwrap_or(&crate::project::store::NativeStore);
                 match ui::editor_panel::show(
                     ui,
                     self.editor,
+                    editor_store,
                     &note_titles,
                     &tag_names,
                     activate_wikilink_shortcut,

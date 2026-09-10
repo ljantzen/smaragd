@@ -17,7 +17,7 @@ impl Project {
     /// `RefCell`.
     pub fn rename_tag(&self, old_tag: &str, new_tag: &str) -> io::Result<()> {
         for doc_path in self.tree.document_paths() {
-            let contents = fs::read_to_string(&doc_path)?;
+            let contents = self.store.read_to_string(&doc_path)?;
 
             let mut meta = crate::frontmatter::parse(&contents);
             let mut frontmatter_changed = false;
@@ -41,7 +41,7 @@ impl Project {
             } else {
                 merged
             };
-            fs::write(&doc_path, updated)?;
+            self.store.write(&doc_path, updated.as_bytes())?;
         }
         self.invalidate_tag_cache();
         Ok(())

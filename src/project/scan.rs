@@ -1,60 +1,23 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use ignore::WalkBuilder;
-
 use super::model::{BinderNode, BinderTree};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EntryKind {
-    Dir,
-    Doc,
-}
+use super::store::{ProjectStore, TreeEntryKind};
 
 /// Scan `root` into a `BinderTree`. Only directories and `.md` files are included.
 /// Hidden entries (dotfiles, including our own `.smaragd/` metadata dir) and anything
-/// matched by a `.gitignore`/`.ignore` file are skipped.
-///
-/// `require_git(false)` is set deliberately: the `ignore` crate only honors `.gitignore`
-/// files by default when the scanned folder is inside an actual `.git` repository. A
-/// project folder won't always be one (and isn't required to be), so gitignore rules
-/// must apply regardless.
-pub fn scan_project(root: &Path) -> BinderTree {
+/// matched by a `.gitignore`/`.ignore` file are skipped — see `store`'s
+/// `ProjectStore::list_tree` (which does the actual walking) for how, and what a
+/// non-native implementation would need to reproduce.
+pub fn scan_project(store: &dyn ProjectStore, root: &Path) -> BinderTree {
     let root = root.to_path_buf();
 
-    let mut kinds: HashMap<PathBuf, EntryKind> = HashMap::new();
+    let mut kinds: HashMap<PathBuf, TreeEntryKind> = HashMap::new();
     let mut children_of: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-    kinds.insert(root.clone(), EntryKind::Dir);
+    kinds.insert(root.clone(), TreeEntryKind::Dir);
 
-    let walker = WalkBuilder::new(&root).require_git(false).build();
-    for entry in walker {
-        let Ok(entry) = entry else { continue };
-        let path = entry.path().to_path_buf();
-        if path == root {
-            continue;
-        }
-
-        // `entry.file_type()` reports the entry's own type (a symlink is neither a
-        // dir nor a file here, since the walker isn't following links — see
-        // `require_git`'s doc comment above for why `follow_links` is left at its
-        // default `false`). Requiring `is_file()`, not just a `.md` extension, keeps
-        // a symlink named e.g. `Notes.md` out of the binder entirely: `EditorState`'s
-        // plain `fs::read_to_string`/`fs::write` would otherwise transparently follow
-        // it, silently reading or overwriting whatever it points at (e.g. a synced
-        // project pulled from a collaborator's git remote could plant a symlink to a
-        // file outside the project).
-        let file_type = entry.file_type();
-        let is_dir = file_type.is_some_and(|ft| ft.is_dir());
-        if is_dir {
-            kinds.insert(path.clone(), EntryKind::Dir);
-        } else if file_type.is_some_and(|ft| ft.is_file())
-            && path.extension().and_then(|ext| ext.to_str()) == Some("md")
-        {
-            kinds.insert(path.clone(), EntryKind::Doc);
-        } else {
-            continue;
-        }
-
+    for (path, kind) in store.list_tree(&root) {
+        kinds.insert(path.clone(), kind);
         if let Some(parent) = path.parent() {
             children_of
                 .entry(parent.to_path_buf())
@@ -71,7 +34,7 @@ pub fn scan_project(root: &Path) -> BinderTree {
 fn build_node(
     root: &Path,
     path: &Path,
-    kinds: &HashMap<PathBuf, EntryKind>,
+    kinds: &HashMap<PathBuf, TreeEntryKind>,
     children_of: &HashMap<PathBuf, Vec<PathBuf>>,
 ) -> BinderNode {
     let name = path
@@ -81,7 +44,7 @@ fn build_node(
         .to_string();
 
     match kinds.get(path) {
-        Some(EntryKind::Doc) => BinderNode::new_document(name, path.to_path_buf()),
+        Some(TreeEntryKind::Doc) => BinderNode::new_document(name, path.to_path_buf()),
         _ => {
             let mut child_paths = children_of.get(path).cloned().unwrap_or_default();
             child_paths.sort();
@@ -116,7 +79,7 @@ mod tests {
         fs::write(dir.path().join("Chapter 2/03-conflict.md"), "").unwrap();
         fs::write(dir.path().join("notes.md"), "").unwrap();
 
-        let tree = scan_project(dir.path());
+        let tree = scan_project(&crate::project::store::NativeStore, dir.path());
 
         assert_eq!(
             names(&tree.root),
@@ -141,7 +104,7 @@ mod tests {
         fs::write(dir.path().join("Chapter 1/scratch.md"), "").unwrap();
         fs::write(dir.path().join("Chapter 1/scene.md"), "").unwrap();
 
-        let tree = scan_project(dir.path());
+        let tree = scan_project(&crate::project::store::NativeStore, dir.path());
 
         assert_eq!(names(&tree.root), vec!["Chapter 1", "keep.md"]);
         let chapter1 = tree
@@ -157,7 +120,7 @@ mod tests {
         fs::write(dir.path().join("todo.txt"), "not markdown either").unwrap();
         fs::write(dir.path().join("chapter.md"), "").unwrap();
 
-        let tree = scan_project(dir.path());
+        let tree = scan_project(&crate::project::store::NativeStore, dir.path());
 
         assert_eq!(names(&tree.root), vec!["chapter.md"]);
     }
@@ -166,7 +129,7 @@ mod tests {
     fn empty_folder_scans_to_empty_tree() {
         let dir = tempfile::tempdir().unwrap();
 
-        let tree = scan_project(dir.path());
+        let tree = scan_project(&crate::project::store::NativeStore, dir.path());
 
         assert!(
             matches!(tree.root.kind, BinderNodeKind::Folder { ref children } if children.is_empty())
@@ -179,7 +142,7 @@ mod tests {
         fs::write(dir.path().join(".gitignore"), "*.md\n").unwrap();
         fs::write(dir.path().join("secret-draft.md"), "").unwrap();
 
-        let tree = scan_project(dir.path());
+        let tree = scan_project(&crate::project::store::NativeStore, dir.path());
 
         assert!(
             matches!(tree.root.kind, BinderNodeKind::Folder { ref children } if children.is_empty())
@@ -196,7 +159,7 @@ mod tests {
         std::os::unix::fs::symlink(&secret, dir.path().join("Notes.md")).unwrap();
         fs::write(dir.path().join("real.md"), "").unwrap();
 
-        let tree = scan_project(dir.path());
+        let tree = scan_project(&crate::project::store::NativeStore, dir.path());
 
         assert_eq!(names(&tree.root), vec!["real.md"]);
     }
@@ -208,7 +171,7 @@ mod tests {
         fs::write(dir.path().join(".smaragd/project.json"), "{}").unwrap();
         fs::write(dir.path().join("chapter.md"), "").unwrap();
 
-        let tree = scan_project(dir.path());
+        let tree = scan_project(&crate::project::store::NativeStore, dir.path());
 
         assert_eq!(names(&tree.root), vec!["chapter.md"]);
     }

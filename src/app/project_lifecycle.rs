@@ -1,6 +1,19 @@
 use super::*;
 
 impl SmaragdApp {
+    /// The store `self.editor`'s own I/O should go through — the open project's,
+    /// or `NativeStore` as a harmless fallback on the "nothing open" call sites
+    /// that can still technically reach an editor operation (e.g. `close()`
+    /// with nothing to close). Cloning the `Arc` here, before calling into
+    /// `self.editor`, sidesteps borrowing `self.project` and `self.editor`
+    /// simultaneously.
+    pub(super) fn editor_store(&self) -> std::sync::Arc<dyn crate::project::store::ProjectStore> {
+        self.project
+            .as_ref()
+            .map(|project| project.store.clone())
+            .unwrap_or_else(crate::project::store::native_store)
+    }
+
     /// Open `path` as a project. Used for the automatic "reopen last project" path at
     /// startup, where a missing `.smaragd` marker must just be reported (not
     /// interactively resolved) — the user didn't just explicitly ask to open this
@@ -103,9 +116,75 @@ impl SmaragdApp {
 
     /// Open the OS's native folder-picker dialog and, if the user selects a folder,
     /// open it as a project immediately (offering to adopt it if needed).
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn browse_for_project(&mut self, ctx: &egui::Context) {
         if let Some(path) = rfd::FileDialog::new().pick_folder() {
             self.open_project_or_offer_to_adopt(ctx, &path);
+        }
+    }
+
+    /// Folder picking has no browser equivalent (see the wasm feasibility
+    /// plan) — "Open Project" here instead re-loads whatever `BrowserStore`
+    /// last persisted to IndexedDB (see `project::browser_store`'s own doc
+    /// comment), the only "other project" a wasm32 build can point at. A
+    /// bundle-upload flow is still a separate, unbuilt piece of work for
+    /// anything beyond that one browser-local project.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn browse_for_project(&mut self, _ctx: &egui::Context) {
+        self.spawn_browser_project_load(true);
+    }
+
+    /// Kick off an async load of whatever `BrowserStore` last persisted to
+    /// IndexedDB — called once at startup (see `SmaragdApp::new`) and again
+    /// on every explicit "Open Project" click. `show_toast_if_none` controls
+    /// whether finding nothing is reported as an error (an explicit Open
+    /// Project genuinely found nothing) or stays silent (the startup
+    /// attempt, where "nothing yet" is the ordinary first-visit case, not a
+    /// failure). A no-op while a load is already in flight.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn spawn_browser_project_load(&mut self, show_toast_if_none: bool) {
+        if self.pending_browser_project_load.is_some() {
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        wasm_bindgen_futures::spawn_local(async move {
+            let store = crate::project::browser_store::BrowserStore::load_persisted().await;
+            let store: std::sync::Arc<dyn crate::project::store::ProjectStore> =
+                std::sync::Arc::new(store);
+            let root = Path::new("/browser-project");
+            let project = Project::load_from_folder_with_store(root, store).ok();
+            let _ = sender.send(project);
+        });
+        self.pending_browser_project_load = Some((show_toast_if_none, receiver));
+    }
+
+    /// Check whether `pending_browser_project_load` (if any) has finished,
+    /// and apply its result. Called every frame; a no-op whenever nothing is
+    /// pending or the load hasn't finished yet.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn poll_browser_project_load(&mut self, ctx: &egui::Context) {
+        let Some((show_toast_if_none, receiver)) = &self.pending_browser_project_load else {
+            return;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_browser_project_load = None;
+                return;
+            }
+        };
+        let show_toast_if_none = *show_toast_if_none;
+        self.pending_browser_project_load = None;
+        match result {
+            Some(project) => {
+                let root = project.root.clone();
+                self.set_project(ctx, project, &root);
+            }
+            None if show_toast_if_none => {
+                self.push_error_toast("No project found in browser storage yet");
+            }
+            None => {}
         }
     }
 
@@ -130,6 +209,26 @@ impl SmaragdApp {
     /// project is created directly in it, skipping the name-prompt modal. Otherwise
     /// (a non-empty folder, meant as the *parent* for a new subfolder), prompt for
     /// the new project's name via the existing name-prompt modal.
+    /// No folder to pick in a browser — every "New Project" here creates a
+    /// single, fixed, in-memory project instead (see `BrowserStore`'s own doc
+    /// comment for what "in-memory" means: real and fully usable for this
+    /// page's session, but lost on reload — there's no browser-storage
+    /// persistence layer under it yet). No name-prompt/parent-folder
+    /// distinction either, since there's no real filesystem location for a
+    /// name to disambiguate.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn start_new_project_with_template(
+        &mut self,
+        ctx: &egui::Context,
+        template_id: String,
+    ) {
+        let root = Path::new("/browser-project");
+        let store: std::sync::Arc<dyn crate::project::store::ProjectStore> =
+            std::sync::Arc::new(crate::project::browser_store::BrowserStore::new());
+        self.initialize_and_set_project(ctx, root, &template_id, store);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn start_new_project_with_template(
         &mut self,
         ctx: &egui::Context,
@@ -139,7 +238,12 @@ impl SmaragdApp {
             return;
         };
         if is_empty_dir(&location) {
-            self.initialize_and_set_project(ctx, &location, &template_id);
+            self.initialize_and_set_project(
+                ctx,
+                &location,
+                &template_id,
+                crate::project::store::native_store(),
+            );
             return;
         }
         self.prompt = Some(PendingPrompt {
@@ -166,14 +270,26 @@ impl SmaragdApp {
             self.push_error_toast(format!("{} already exists", root.display()));
             return;
         }
-        self.initialize_and_set_project(ctx, &root, template_id);
+        self.initialize_and_set_project(
+            ctx,
+            &root,
+            template_id,
+            crate::project::store::native_store(),
+        );
     }
 
-    /// Shared tail end of both "New Project" paths: initialize `root` as a fresh
-    /// smaragd project, apply `template_id`'s scaffolding, and make it the open
-    /// project.
-    fn initialize_and_set_project(&mut self, ctx: &egui::Context, root: &Path, template_id: &str) {
-        match Project::initialize(root) {
+    /// Shared tail end of every "New Project" path (native folder-based and
+    /// wasm32's fixed in-memory project alike): initialize `root` as a fresh
+    /// smaragd project against `store`, apply `template_id`'s scaffolding,
+    /// and make it the open project.
+    fn initialize_and_set_project(
+        &mut self,
+        ctx: &egui::Context,
+        root: &Path,
+        template_id: &str,
+        store: std::sync::Arc<dyn crate::project::store::ProjectStore>,
+    ) {
+        match Project::initialize_with_store(root, store) {
             Ok(mut project) => {
                 // An id that no longer resolves (e.g. a custom template deleted
                 // between picker and confirm) is treated as "no scaffolding" rather
@@ -254,7 +370,8 @@ impl SmaragdApp {
         if self.collab.is_some() {
             self.end_collab_session("Collaboration session ended: project closed");
         }
-        if let Err(err) = self.editor.close() {
+        let store = self.editor_store();
+        if let Err(err) = self.editor.close_with_store(store.as_ref()) {
             self.push_error_toast(format!("Couldn't save before closing project: {err}"));
             return;
         }
@@ -399,7 +516,8 @@ impl SmaragdApp {
             self.document_history
                 .record_cursor(previous, self.editor.cursor_byte);
         }
-        match self.editor.open(path) {
+        let store = self.editor_store();
+        match self.editor.open_with_store(path, store.as_ref()) {
             Ok(()) => {
                 self.selected_path = Some(path.to_path_buf());
                 self.metadata.target = MetadataTarget::Document;
@@ -430,7 +548,8 @@ impl SmaragdApp {
             self.document_history
                 .record_cursor(previous, self.editor.cursor_byte);
         }
-        if let Err(err) = self.editor.close() {
+        let store = self.editor_store();
+        if let Err(err) = self.editor.close_with_store(store.as_ref()) {
             self.push_error_toast(format!("Couldn't save before closing: {err}"));
             return;
         }
@@ -519,6 +638,7 @@ impl SmaragdApp {
 /// True if `path` is a directory containing no entries at all — including dotfiles,
 /// so a bare `.git` or `.smaragd` left behind still counts as "not empty" and routes
 /// through the name-prompt flow rather than being silently adopted in place.
+#[cfg(not(target_arch = "wasm32"))]
 fn is_empty_dir(path: &Path) -> bool {
     fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
 }
@@ -581,6 +701,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn is_empty_dir_is_true_only_for_a_directory_with_no_entries_at_all() {
         let dir = tempfile::tempdir().unwrap();
         assert!(is_empty_dir(dir.path()));

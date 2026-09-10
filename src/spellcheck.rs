@@ -39,6 +39,7 @@
 //! actually calls.
 
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -252,9 +253,17 @@ fn load_placeholder(language: SpellCheckLanguage) -> Option<spellbook::Dictionar
 /// convention. `None` only when the platform has no meaningful data directory
 /// (`directories` couldn't resolve one), in which case downloading is simply
 /// unavailable and every language falls back to its placeholder.
+#[cfg(not(target_arch = "wasm32"))]
 fn dictionaries_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.data_dir().join("dictionaries"))
+}
+
+/// No OS data directory in a browser; a web build would need a browser
+/// storage-backed dictionary cache instead (see the wasm feasibility plan).
+#[cfg(target_arch = "wasm32")]
+fn dictionaries_dir() -> Option<PathBuf> {
+    None
 }
 
 fn downloaded_file_path(language_code: &str, filename: &str) -> Option<PathBuf> {
@@ -279,6 +288,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
     let mut response = ureq::get(url)
         .call()
@@ -290,6 +300,13 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
         .read_to_end(&mut bytes)
         .map_err(|err| format!("reading response body: {err}"))?;
     Ok(bytes)
+}
+
+/// `ureq`'s blocking, socket-based client has no browser story; a web build
+/// would need a `fetch`-based replacement (see the wasm feasibility plan).
+#[cfg(target_arch = "wasm32")]
+fn fetch(_url: &str) -> Result<Vec<u8>, String> {
+    Err("dictionary downloads are not available in the web build".to_string())
 }
 
 /// Download every file in `language`'s catalog entry, verify each one's SHA-256
@@ -306,6 +323,18 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
 /// match the catalog's recorded SHA-256 is treated as corrupted or tampered
 /// with and rejected outright, not saved under a warning.
 pub fn download_dictionary(language: SpellCheckLanguage) -> Result<(), String> {
+    download_dictionary_with_store(language, &crate::project::store::NativeStore)
+}
+
+/// [`download_dictionary`], against an explicitly chosen store rather than
+/// always [`crate::project::store::NativeStore`] — the seam a future browser
+/// build's storage backend would call through instead (see the wasm
+/// feasibility plan). Reuses `project::store::ProjectStore` — narrow and
+/// generic enough for this module's own point read/write despite the name.
+pub fn download_dictionary_with_store(
+    language: SpellCheckLanguage,
+    store: &dyn crate::project::store::ProjectStore,
+) -> Result<(), String> {
     let entry = language
         .catalog_entry()
         .ok_or_else(|| "No catalog entry for this language".to_string())?;
@@ -318,7 +347,8 @@ pub fn download_dictionary(language: SpellCheckLanguage) -> Result<(), String> {
     let dir = dictionaries_dir()
         .ok_or_else(|| "Couldn't determine a data directory for this platform".to_string())?
         .join(&entry.language_code);
-    std::fs::create_dir_all(&dir)
+    store
+        .create_dir_all(&dir)
         .map_err(|err| format!("Couldn't create {}: {err}", dir.display()))?;
 
     for file in &entry.files {
@@ -345,8 +375,12 @@ pub fn download_dictionary(language: SpellCheckLanguage) -> Result<(), String> {
         // would then treat as complete.
         let dest = dir.join(file);
         let tmp = dest.with_extension("part");
-        std::fs::write(&tmp, &bytes).map_err(|err| format!("Writing {file}: {err}"))?;
-        std::fs::rename(&tmp, &dest).map_err(|err| format!("Saving {file}: {err}"))?;
+        store
+            .write(&tmp, &bytes)
+            .map_err(|err| format!("Writing {file}: {err}"))?;
+        store
+            .rename(&tmp, &dest)
+            .map_err(|err| format!("Saving {file}: {err}"))?;
     }
     Ok(())
 }

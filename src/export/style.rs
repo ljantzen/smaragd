@@ -749,8 +749,14 @@ pub fn built_in_styles() -> Vec<TypesetStyle> {
 /// The always-loaded custom-style directory: `<config_dir>/smaragd/styles`,
 /// the same base path `color_theme::global_themes_dir`/
 /// `plugins::global_plugins_dir` use for their own subdirectories.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn global_styles_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd").map(|dirs| dirs.config_dir().join("styles"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn global_styles_dir() -> Option<PathBuf> {
+    None
 }
 
 #[derive(Deserialize)]

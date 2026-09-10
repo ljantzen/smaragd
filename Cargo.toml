@@ -11,7 +11,6 @@ blake3 = "1.8.5"
 bs58 = "0.5.1"
 chacha20poly1305 = "0.11.0"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-directories = "6.0"
 docx-rs = "0.4.22"
 eframe = "0.36"
 egui = { version = "0.36", features = ["serde"] }
@@ -19,8 +18,6 @@ egui_dock = { version = "0.21", features = ["serde"] }
 egui_extras = { version = "0.36.1", features = ["image", "file"] }
 epub-builder = "0.8.3"
 ignore = "0.4"
-iroh = "1.0.3"
-notify-rust = { version = "4.18.0", default-features = false, features = ["d_vendored"] }
 nucleo-matcher = "0.3"
 pdf-extract = "0.12.0"
 postcard = { version = "1.1.3", features = ["use-std"] }
@@ -35,15 +32,47 @@ serde_norway = "0.9"
 sha2 = "0.11"
 spellbook = "0.4.2"
 thiserror = "2.0.19"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "time", "macros"] }
+# Just the channel types `collab` needs to keep its public API identical on
+# every target; the real async runtime (rt-multi-thread/net/time/macros) is
+# native-only, see below.
+tokio = { version = "1.53.1", features = ["sync"] }
 toml = "1.1"
+# Drop-in `Instant`/`SystemTime` that use `performance.now()`/`Date.now()` on
+# wasm32 instead of panicking — plain `std::time` has no clock implementation
+# there at all ("time not implemented on this platform"), confirmed by
+# actually loading the wasm build in a browser (compile checks don't catch
+# this, since it's a runtime panic, not a type error).
+web-time = "1"
 ttf-parser = "0.25"
 typst-as-lib = { version = "0.16.0", features = ["typst-kit-fonts", "typst-kit-embed-fonts"] }
 typst-pdf = "0.15.1"
-ureq = "3.4"
-uuid = { version = "1.24", features = ["v4", "serde"] }
+uuid = { version = "1.24", features = ["v4", "serde", "rng-getrandom"] }
 yrs = "0.27.3"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+# Native-only: raw sockets (iroh), the multi-threaded/net/time tokio runtime
+# built on them, OS config/data dirs, D-Bus desktop notifications, and a
+# blocking-socket HTTP client. None of these have a wasm32-unknown-unknown
+# story; see src/collab/net.rs, src/notifications.rs, and the
+# `directories`/`ureq` call sites for the native-only code they back.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+directories = "6.0"
+iroh = "1.0.3"
+notify-rust = { version = "4.18.0", default-features = false, features = ["d_vendored"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "time", "macros"] }
+ureq = "3.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+# The IndexedDB persistence layer for BrowserStore (project::browser_store) —
+# rexie for the actual database calls, serde-wasm-bindgen to convert stored
+# entries to/from the JsValue rexie's API speaks.
+rexie = "0.6.2"
+serde-wasm-bindgen = "0.6"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement", "console"] }
 
 [build-dependencies]
 resvg = "0.48"

@@ -57,11 +57,12 @@ impl SmaragdApp {
         });
     }
 
-    /// Handle an outcome from the export dialog: Docx/Epub/Pdf opens a native
-    /// save dialog and runs the export; Reload re-scans custom styles; Close
-    /// dismisses it. Title/Subtitle/Author/Style edits are persisted to the
-    /// project regardless of which button was pressed, since the fields may
-    /// have changed even if the user just closes the dialog.
+    /// Handle an outcome from the export dialog: Docx/Epub/Pdf opens a save
+    /// dialog (native, blocking; a browser download picker on wasm32 — see
+    /// the arms below) and runs the export; Reload re-scans custom styles;
+    /// Close dismisses it. Title/Subtitle/Author/Style edits are persisted
+    /// to the project regardless of which button was pressed, since the
+    /// fields may have changed even if the user just closes the dialog.
     pub(super) fn finish_export(
         &mut self,
         ctx: &egui::Context,
@@ -102,6 +103,11 @@ impl SmaragdApp {
             ui::export_panel::ExportAction::ReloadStyles => {
                 self.reload_typeset_styles(ctx);
             }
+            // Export currently writes straight to a path chosen via a native
+            // save dialog; the web build needs an in-memory-buffer + browser
+            // download rework instead (see the wasm feasibility plan). Cut
+            // for now rather than reworked.
+            #[cfg(not(target_arch = "wasm32"))]
             ui::export_panel::ExportAction::Docx => {
                 if let Some(out_path) = rfd::FileDialog::new()
                     .set_file_name(format!("{}.docx", meta.filename_stem()))
@@ -111,6 +117,7 @@ impl SmaragdApp {
                     self.run_export(&source, &meta, &style, &out_path);
                 }
             }
+            #[cfg(not(target_arch = "wasm32"))]
             ui::export_panel::ExportAction::Epub => {
                 if let Some(out_path) = rfd::FileDialog::new()
                     .set_file_name(format!("{}.epub", meta.filename_stem()))
@@ -120,6 +127,7 @@ impl SmaragdApp {
                     self.run_export_epub(&source, &meta, &style, &out_path);
                 }
             }
+            #[cfg(not(target_arch = "wasm32"))]
             ui::export_panel::ExportAction::Pdf => {
                 if let Some(out_path) = rfd::FileDialog::new()
                     .set_file_name(format!("{}.pdf", meta.filename_stem()))
@@ -129,9 +137,133 @@ impl SmaragdApp {
                     self.run_export_pdf(&source, &meta, &style, &out_path);
                 }
             }
+            // Same rendering as the native arms above (export_*_bytes is the
+            // shared core export_* itself now calls to write to a path — see
+            // export/{docx,epub,pdf}.rs), but the save step is a browser
+            // download instead of a native dialog + fs::write, and rfd's own
+            // wasm32 backend makes that unavoidably async (see
+            // spawn_browser_download's own doc comment).
+            #[cfg(target_arch = "wasm32")]
+            ui::export_panel::ExportAction::Docx => {
+                let Some(project) = &self.project else { return };
+                let Some(folder) = project.tree.find_by_path(&source) else {
+                    return;
+                };
+                let docs = crate::export::gather(project, folder, self.settings.typewriter_quotes);
+                match crate::export::docx::export_docx_bytes(&docs, &meta, &style, &project.root) {
+                    Ok(bytes) => {
+                        self.spawn_browser_download(
+                            ctx,
+                            format!("{}.docx", meta.filename_stem()),
+                            bytes,
+                        );
+                    }
+                    Err(err) => self.push_error_toast(format!("Export failed: {err}")),
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            ui::export_panel::ExportAction::Epub => {
+                let Some(project) = &self.project else { return };
+                let Some(folder) = project.tree.find_by_path(&source) else {
+                    return;
+                };
+                let docs = crate::export::gather(project, folder, self.settings.typewriter_quotes);
+                match crate::export::epub::export_epub_bytes(&docs, &meta, &style, &project.root) {
+                    Ok(bytes) => {
+                        self.spawn_browser_download(
+                            ctx,
+                            format!("{}.epub", meta.filename_stem()),
+                            bytes,
+                        );
+                    }
+                    Err(err) => self.push_error_toast(format!("Export failed: {err}")),
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            ui::export_panel::ExportAction::Pdf => {
+                let Some(project) = &self.project else { return };
+                let Some(folder) = project.tree.find_by_path(&source) else {
+                    return;
+                };
+                let docs = crate::export::gather(project, folder, self.settings.typewriter_quotes);
+                match crate::export::pdf::export_pdf_bytes(&docs, &meta, &style, &project.root) {
+                    Ok((bytes, _spine_width_in)) => {
+                        self.spawn_browser_download(
+                            ctx,
+                            format!("{}.pdf", meta.filename_stem()),
+                            bytes,
+                        );
+                    }
+                    Err(err) => self.push_error_toast(format!("Export failed: {err}")),
+                }
+            }
         }
     }
 
+    /// Kicks off a browser save-file pick, then writes `bytes` to it once
+    /// chosen — the wasm32 counterpart of a native save dialog + `fs::write`.
+    /// Unavoidably async here: per `rfd`'s own docs, `save_file` on wasm32
+    /// returns immediately with no dialog at all, and the browser only
+    /// actually prompts the user for a save location when
+    /// `FileHandle::write` is called — so the pick-and-write can't be split
+    /// into "get a path synchronously, write later" the way every native
+    /// backend allows. A no-op while a download is already in flight.
+    #[cfg(target_arch = "wasm32")]
+    fn spawn_browser_download(&mut self, ctx: &egui::Context, filename: String, bytes: Vec<u8>) {
+        if self.pending_browser_download.is_some() {
+            self.push_error_toast("An export is already in progress");
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let repaint_ctx = ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let Some(handle) = rfd::AsyncFileDialog::new()
+                .set_file_name(&filename)
+                .save_file()
+                .await
+            else {
+                let _ = sender.send(None);
+                repaint_ctx.request_repaint();
+                return;
+            };
+            let result = handle
+                .write(&bytes)
+                .await
+                .map(|()| filename)
+                .map_err(|err| err.to_string());
+            let _ = sender.send(Some(result));
+            repaint_ctx.request_repaint();
+        });
+        self.pending_browser_download = Some(receiver);
+    }
+
+    /// Check whether `pending_browser_download` (if any) has finished, and
+    /// apply its result. Called every frame; a no-op whenever nothing is
+    /// pending or the download hasn't finished yet.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn poll_browser_download(&mut self) {
+        let Some(receiver) = &self.pending_browser_download else {
+            return;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_browser_download = None;
+                return;
+            }
+        };
+        self.pending_browser_download = None;
+        match result {
+            Some(Ok(filename)) => self.set_status_message(format!("Exported {filename}")),
+            Some(Err(err)) => self.push_error_toast(format!("Export failed: {err}")),
+            // The user closed the save dialog without picking anywhere —
+            // an ordinary cancel, not a failure worth a toast.
+            None => {}
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_export(
         &mut self,
         source: &Path,
@@ -156,6 +288,7 @@ impl SmaragdApp {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_export_epub(
         &mut self,
         source: &Path,
@@ -180,6 +313,7 @@ impl SmaragdApp {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_export_pdf(
         &mut self,
         source: &Path,

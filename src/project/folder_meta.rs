@@ -20,7 +20,7 @@ impl Project {
     /// `set_folder_role`'s `None`-clears convention. Errors if `path` isn't a
     /// directory.
     pub fn set_folder_meta(&mut self, path: &Path, meta: DocumentMeta) -> io::Result<()> {
-        if !path.is_dir() {
+        if !self.store.is_dir(path) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a folder"));
         }
         let key = relative_key(&self.root, path);

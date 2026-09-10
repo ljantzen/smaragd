@@ -4,7 +4,9 @@
 //! it once per frame regardless of whether that panel is currently visible,
 //! so the timer keeps running while its dock tab is closed.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use web_time::Instant;
 
 use crate::settings::Settings;
 

@@ -143,17 +143,17 @@ fn parse_binder(scrivx_xml: &str) -> Vec<RawItem> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => match e.name().as_ref() {
-                b"BinderItem" => {
+                "BinderItem" => {
                     let mut kind = ItemKind::Other;
                     let mut uuid = String::new();
                     for attr in e.attributes().flatten() {
                         match attr.key.as_ref() {
-                            b"Type" => {
+                            "Type" => {
                                 if let Some(value) = attr_value(&attr) {
                                     kind = ItemKind::from_type_attr(&value);
                                 }
                             }
-                            b"UUID" => uuid = attr_value(&attr).unwrap_or_default(),
+                            "UUID" => uuid = attr_value(&attr).unwrap_or_default(),
                             _ => {}
                         }
                     }
@@ -164,16 +164,16 @@ fn parse_binder(scrivx_xml: &str) -> Vec<RawItem> {
                         children: Vec::new(),
                     });
                 }
-                b"Title" => in_title = true,
+                "Title" => in_title = true,
                 _ => {}
             },
             Ok(Event::Text(e)) if in_title => {
                 if let Some(frame) = stack.last_mut() {
-                    frame.title.push_str(&e.decode().unwrap_or_default());
+                    frame.title.push_str(e.as_ref());
                 }
             }
             Ok(Event::End(e)) => match e.name().as_ref() {
-                b"BinderItem" => {
+                "BinderItem" => {
                     if let Some(frame) = stack.pop() {
                         let item = RawItem {
                             kind: frame.kind,
@@ -187,7 +187,7 @@ fn parse_binder(scrivx_xml: &str) -> Vec<RawItem> {
                         }
                     }
                 }
-                b"Title" => in_title = false,
+                "Title" => in_title = false,
                 _ => {}
             },
             Ok(Event::Eof) | Err(_) => break,
@@ -198,7 +198,7 @@ fn parse_binder(scrivx_xml: &str) -> Vec<RawItem> {
 }
 
 fn attr_value(attr: &quick_xml::events::attributes::Attribute) -> Option<String> {
-    std::str::from_utf8(&attr.value).ok().map(str::to_string)
+    Some(attr.value.to_string())
 }
 
 // ---------------------------------------------------------------------

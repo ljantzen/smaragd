@@ -1,5 +1,6 @@
 mod binder_color_mode;
 mod bookmarks;
+pub mod browser_store;
 mod create;
 mod folder_meta;
 mod meta;
@@ -12,6 +13,7 @@ mod rename_tag;
 mod roles;
 mod scan;
 mod status_colors;
+pub mod store;
 mod story_cards;
 mod streak;
 mod trash;
@@ -23,14 +25,17 @@ pub use meta::ProjectMeta;
 pub use picklists::PicklistField;
 pub use queries::{BacklinkEntry, TagGroup};
 pub use roles::FolderRole;
+pub use store::ProjectStore;
 pub use story_cards::StoryCard;
 pub use word_count::WordCountScope;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+#[cfg(test)]
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -127,23 +132,41 @@ pub struct Project {
     /// to be `Send` — can still construct one; that snapshot never actually reads
     /// tags, so it's always built fresh/empty via `Default::default()`.
     pub(crate) tag_cache: std::cell::RefCell<queries::TagCache>,
+    /// Where this project's point reads/writes/deletes actually go — always
+    /// [`store::NativeStore`] today. See `store`'s module doc for why this
+    /// exists and what it deliberately doesn't cover yet (directory
+    /// walking). `pub(crate)` rather than private for the same reason as
+    /// `tag_cache`: `app::refresh::spawn_word_count_recompute`'s hand-built
+    /// snapshot needs to carry it along too.
+    pub(crate) store: Arc<dyn ProjectStore>,
 }
 
 impl Project {
-    /// Load a project from `root`. `root` must already be a smaragd project (i.e.
-    /// have a `.smaragd/project.json` marker) — use [`Project::initialize`] to
-    /// create one first. A *corrupt* (as opposed to absent) marker file is still not
-    /// an error, falling back to default metadata.
+    /// Load a project from `root`, using [`store::NativeStore`]. `root` must
+    /// already be a smaragd project (i.e. have a `.smaragd/project.json`
+    /// marker) — use [`Project::initialize`] to create one first. A *corrupt*
+    /// (as opposed to absent) marker file is still not an error, falling back
+    /// to default metadata.
     pub fn load_from_folder(root: &Path) -> Result<Project, LoadError> {
-        if !root.is_dir() {
+        Self::load_from_folder_with_store(root, store::native_store())
+    }
+
+    /// [`Self::load_from_folder`], against an explicitly chosen store rather
+    /// than always [`store::NativeStore`] — the seam a future browser build's
+    /// storage backend would call through instead.
+    pub fn load_from_folder_with_store(
+        root: &Path,
+        store: Arc<dyn ProjectStore>,
+    ) -> Result<Project, LoadError> {
+        if !store.is_dir(root) {
             return Err(LoadError::NotADirectory(root.to_path_buf()));
         }
-        if !metadata_path(root).is_file() {
+        if !store.exists(&metadata_path(root)) {
             return Err(LoadError::NotInitialized(root.to_path_buf()));
         }
 
-        let meta = load_metadata(root).unwrap_or_default();
-        let mut tree = scan_project(root);
+        let meta = load_metadata(store.as_ref(), root).unwrap_or_default();
+        let mut tree = scan_project(store.as_ref(), root);
         apply_order(&mut tree.root, root, &meta.node_order);
 
         Ok(Project {
@@ -151,28 +174,38 @@ impl Project {
             tree,
             meta,
             tag_cache: std::cell::RefCell::new(queries::TagCache::default()),
+            store,
         })
     }
 
     /// Ensure `root` exists and is marked as a smaragd project — creating it and/or
     /// writing a fresh `.smaragd/project.json` with default metadata if one isn't
-    /// already there — then load it. Never overwrites existing metadata, so calling
-    /// this on an already-initialized project is a no-op beyond a normal
-    /// `load_from_folder`. Backs both "New Project" (a path that doesn't exist yet)
-    /// and adopting an existing folder of markdown files as a project.
+    /// already there — then load it, using [`store::NativeStore`]. Never overwrites
+    /// existing metadata, so calling this on an already-initialized project is a
+    /// no-op beyond a normal `load_from_folder`. Backs both "New Project" (a path
+    /// that doesn't exist yet) and adopting an existing folder of markdown files as
+    /// a project.
     pub fn initialize(root: &Path) -> Result<Project, LoadError> {
-        fs::create_dir_all(root)?;
-        if !metadata_path(root).is_file() {
-            save_metadata(root, &ProjectMeta::default())?;
+        Self::initialize_with_store(root, store::native_store())
+    }
+
+    /// [`Self::initialize`], against an explicitly chosen store.
+    pub fn initialize_with_store(
+        root: &Path,
+        store: Arc<dyn ProjectStore>,
+    ) -> Result<Project, LoadError> {
+        store.create_dir_all(root)?;
+        if !store.exists(&metadata_path(root)) {
+            save_metadata(store.as_ref(), root, &ProjectMeta::default())?;
         }
-        Self::load_from_folder(root)
+        Self::load_from_folder_with_store(root, store)
     }
 
     /// Read and parse the YAML frontmatter of the document at `path`. On-demand
     /// only — nothing in `BinderNode`/`ProjectMeta` carries per-document metadata, so
     /// call this only when a specific document's metadata is actually needed.
     pub fn document_meta(&self, path: &Path) -> io::Result<crate::frontmatter::DocumentMeta> {
-        let contents = fs::read_to_string(path)?;
+        let contents = self.store.read_to_string(path)?;
         Ok(crate::frontmatter::parse(&contents))
     }
 
@@ -205,7 +238,7 @@ impl Project {
     }
 
     pub fn rescan(&mut self) {
-        let mut tree = scan_project(&self.root);
+        let mut tree = scan_project(self.store.as_ref(), &self.root);
         apply_order(&mut tree.root, &self.root, &self.meta.node_order);
         self.tree = tree;
         // Every create/rename/move/delete/trash operation calls `rescan` — the one
@@ -215,7 +248,7 @@ impl Project {
     }
 
     pub fn save_metadata(&self) -> io::Result<()> {
-        save_metadata(&self.root, &self.meta)
+        save_metadata(self.store.as_ref(), &self.root, &self.meta)
     }
 
     /// Turn git support on for this project and record that the user's been asked
@@ -357,8 +390,8 @@ fn ensure_simple_child_name(name: &str) -> io::Result<()> {
     }
 }
 
-fn ensure_does_not_exist(path: &Path) -> io::Result<()> {
-    if path.exists() {
+fn ensure_does_not_exist(store: &dyn ProjectStore, path: &Path) -> io::Result<()> {
+    if store.exists(path) {
         Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             format!("{} already exists", path.display()),
@@ -382,8 +415,8 @@ fn ensure_md_extension(filename: &str) -> String {
 /// (not just this module) so `import::write_imported_tree` can dedupe imported
 /// document/folder names the same way `ensure_role_folder` already does, rather
 /// than duplicating this logic.
-pub(crate) fn unique_child_name(parent: &Path, desired: &str) -> String {
-    if !parent.join(desired).exists() {
+pub(crate) fn unique_child_name(store: &dyn ProjectStore, parent: &Path, desired: &str) -> String {
+    if !store.exists(&parent.join(desired)) {
         return desired.to_string();
     }
     let (stem, ext) = match desired.rsplit_once('.') {
@@ -392,7 +425,7 @@ pub(crate) fn unique_child_name(parent: &Path, desired: &str) -> String {
     };
     for n in 2.. {
         let candidate = format!("{stem} ({n}){ext}");
-        if !parent.join(&candidate).exists() {
+        if !store.exists(&parent.join(&candidate)) {
             return candidate;
         }
     }
@@ -436,16 +469,16 @@ fn metadata_path(root: &Path) -> PathBuf {
     root.join(METADATA_DIR).join(METADATA_FILE)
 }
 
-fn load_metadata(root: &Path) -> Option<ProjectMeta> {
-    let contents = fs::read_to_string(metadata_path(root)).ok()?;
+fn load_metadata(store: &dyn ProjectStore, root: &Path) -> Option<ProjectMeta> {
+    let contents = store.read_to_string(&metadata_path(root)).ok()?;
     serde_json::from_str(&contents).ok()
 }
 
-fn save_metadata(root: &Path, meta: &ProjectMeta) -> io::Result<()> {
+fn save_metadata(store: &dyn ProjectStore, root: &Path, meta: &ProjectMeta) -> io::Result<()> {
     let dir = root.join(METADATA_DIR);
-    fs::create_dir_all(&dir)?;
+    store.create_dir_all(&dir)?;
     let contents = serde_json::to_string_pretty(meta)?;
-    fs::write(metadata_path(root), contents)
+    store.write(&metadata_path(root), contents.as_bytes())
 }
 
 #[cfg(test)]
@@ -470,8 +503,8 @@ mod tests {
             ..Default::default()
         };
 
-        save_metadata(dir.path(), &meta).unwrap();
-        let loaded = load_metadata(dir.path()).unwrap();
+        save_metadata(&store::NativeStore, dir.path(), &meta).unwrap();
+        let loaded = load_metadata(&store::NativeStore, dir.path()).unwrap();
 
         assert_eq!(loaded, meta);
     }
@@ -517,7 +550,7 @@ mod tests {
     #[test]
     fn missing_metadata_file_falls_back_to_none() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(load_metadata(dir.path()).is_none());
+        assert!(load_metadata(&store::NativeStore, dir.path()).is_none());
     }
 
     #[test]
@@ -527,7 +560,7 @@ mod tests {
         fs::create_dir_all(&meta_dir).unwrap();
         fs::write(meta_dir.join(METADATA_FILE), "{ this is not valid json").unwrap();
 
-        assert!(load_metadata(dir.path()).is_none());
+        assert!(load_metadata(&store::NativeStore, dir.path()).is_none());
     }
 
     #[test]
@@ -589,7 +622,7 @@ mod tests {
             node_order,
             ..Default::default()
         };
-        save_metadata(dir.path(), &meta).unwrap();
+        save_metadata(&store::NativeStore, dir.path(), &meta).unwrap();
 
         let project = Project::initialize(dir.path()).unwrap();
 
@@ -642,7 +675,7 @@ mod tests {
         )
         .unwrap();
 
-        let meta = load_metadata(dir.path()).unwrap();
+        let meta = load_metadata(&store::NativeStore, dir.path()).unwrap();
 
         assert_eq!(meta.node_order.get(""), Some(&vec!["a.md".to_string()]));
         assert!(meta.folder_roles.is_empty());
@@ -903,6 +936,7 @@ mod tests {
         let mut node_order = HashMap::new();
         node_order.insert("".to_string(), vec!["b.md".to_string()]);
         save_metadata(
+            &store::NativeStore,
             dir.path(),
             &ProjectMeta {
                 version: 1,

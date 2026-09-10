@@ -35,9 +35,9 @@ impl Project {
             return Err(RestoreError::NotTrashed);
         };
         let original_parent = original.parent().unwrap_or(&self.root).to_path_buf();
-        if !original_parent.is_dir() {
+        if !self.store.is_dir(&original_parent) {
             if recreate_missing_folder {
-                fs::create_dir_all(&original_parent)?;
+                self.store.create_dir_all(&original_parent)?;
             } else {
                 return Err(RestoreError::OriginalFolderMissing(original_parent));
             }
@@ -78,11 +78,11 @@ impl Project {
     /// used both when no Trash is configured and to actually clear something out of
     /// Trash (via [`Project::delete`]'s routing, or [`Project::empty_trash`]).
     pub(super) fn permanently_delete(&mut self, path: &Path) -> io::Result<()> {
-        let is_dir = path.is_dir();
+        let is_dir = self.store.is_dir(path);
         if is_dir {
-            fs::remove_dir_all(path)?;
+            self.store.remove_dir_all(path)?;
         } else {
-            fs::remove_file(path)?;
+            self.store.remove_file(path)?;
         }
 
         if let Some(parent) = path.parent()

@@ -16,6 +16,7 @@
 /// etc.) is returned as a string for the caller to decide whether it's worth
 /// surfacing, rather than panicking — a missed notification is never worth
 /// blocking on.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn show(summary: &str, body: &str) -> Result<(), String> {
     notify_rust::Notification::new()
         .summary(summary)
@@ -23,6 +24,13 @@ pub fn show(summary: &str, body: &str) -> Result<(), String> {
         .show()
         .map(|_| ())
         .map_err(|err| err.to_string())
+}
+
+/// No OS notification center to talk to in a browser; a future web build
+/// could route this through the Notifications API instead.
+#[cfg(target_arch = "wasm32")]
+pub fn show(_summary: &str, _body: &str) -> Result<(), String> {
+    Err("desktop notifications are not available in the web build".to_string())
 }
 
 #[cfg(test)]

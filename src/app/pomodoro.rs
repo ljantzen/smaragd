@@ -5,7 +5,7 @@ impl SmaragdApp {
         let durations = crate::pomodoro::resolve_durations(&self.settings);
         match event {
             ui::pomodoro_panel::PomodoroEvent::Start => {
-                self.pomodoro.start(std::time::Instant::now());
+                self.pomodoro.start(web_time::Instant::now());
             }
             ui::pomodoro_panel::PomodoroEvent::Pause => self.pomodoro.pause(),
             ui::pomodoro_panel::PomodoroEvent::Reset => self.pomodoro.reset(&durations),
@@ -28,7 +28,7 @@ impl SmaragdApp {
     /// notification isn't worth nagging about every time a phase ends.
     pub(super) fn tick_pomodoro(&mut self, ctx: &egui::Context) {
         let durations = crate::pomodoro::resolve_durations(&self.settings);
-        let transition = self.pomodoro.tick(std::time::Instant::now(), &durations);
+        let transition = self.pomodoro.tick(web_time::Instant::now(), &durations);
         if let Some(transition) = transition
             && self.settings.pomodoro_notifications_enabled
         {

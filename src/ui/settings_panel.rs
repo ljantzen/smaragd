@@ -607,6 +607,10 @@ fn show_history_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
                 false,
                 egui::TextEdit::singleline(&mut dir_text).desired_width(300.0),
             );
+            // Folder picking has no browser equivalent (the File System
+            // Access API's directory picker doesn't map onto "point at any
+            // folder on disk"); native-only for now.
+            #[cfg(not(target_arch = "wasm32"))]
             if ui.button("Browse…").clicked()
                 && let Some(picked) = rfd::FileDialog::new().pick_folder()
             {
@@ -673,12 +677,18 @@ fn show_pomodoro_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
         }
     });
     ui.add_space(12.0);
-    changed |= ui
-        .checkbox(
-            &mut settings.pomodoro_notifications_enabled,
-            "Show a desktop notification when a phase completes",
-        )
-        .changed();
+    // No OS notification center to talk to in a browser (see
+    // notifications::show's own wasm32 stub, which already no-ops this
+    // setting even when left on) — hidden rather than shown-and-inert.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        changed |= ui
+            .checkbox(
+                &mut settings.pomodoro_notifications_enabled,
+                "Show a desktop notification when a phase completes",
+            )
+            .changed();
+    }
     changed
 }
 

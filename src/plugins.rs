@@ -28,6 +28,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -41,8 +42,14 @@ use crate::shortcuts::is_safe_binding;
 /// The global, always-loaded plugin directory: `<config_dir>/smaragd/plugins`,
 /// the same base path `settings::config_file_path` uses for `smaragd.toml`.
 /// `None` if the platform's config directory can't be determined.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn global_plugins_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd").map(|dirs| dirs.config_dir().join("plugins"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn global_plugins_dir() -> Option<PathBuf> {
+    None
 }
 
 /// The live values a running plugin function reads/writes, shared with the
@@ -389,6 +396,20 @@ fn parse_shortcut_spec(spec: &str) -> Result<KeyboardShortcut, String> {
 /// directory) — it doesn't affect where `.rhai` files themselves are read from,
 /// that's `dirs`.
 pub fn load(dirs: &[&Path], working_dir: Option<&Path>) -> (PluginEngine, Vec<String>) {
+    load_with_store(&crate::project::store::NativeStore, dirs, working_dir)
+}
+
+/// [`load`], against an explicitly chosen store rather than always
+/// [`crate::project::store::NativeStore`] — the seam a future browser
+/// build's storage backend would call through instead (see the wasm
+/// feasibility plan). Reuses `project::store::ProjectStore` — narrow and
+/// generic enough for this module's own point read/write/list despite the
+/// name.
+pub fn load_with_store(
+    store: &dyn crate::project::store::ProjectStore,
+    dirs: &[&Path],
+    working_dir: Option<&Path>,
+) -> (PluginEngine, Vec<String>) {
     let io = Rc::new(RefCell::new(PluginIo::default()));
     let pending_commands = Rc::new(RefCell::new(Vec::new()));
     let pending_shortcuts = Rc::new(RefCell::new(Vec::new()));
@@ -405,12 +426,11 @@ pub fn load(dirs: &[&Path], working_dir: Option<&Path>) -> (PluginEngine, Vec<St
     let mut shortcut_owners: HashMap<KeyboardShortcut, String> = HashMap::new();
 
     for dir in dirs {
-        let Ok(entries) = fs::read_dir(dir) else {
+        let Ok(entries) = store.read_dir(dir) else {
             continue;
         };
         let mut paths: Vec<_> = entries
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
+            .into_iter()
             .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rhai"))
             .collect();
         paths.sort();
@@ -422,7 +442,7 @@ pub fn load(dirs: &[&Path], working_dir: Option<&Path>) -> (PluginEngine, Vec<St
                 .unwrap_or("plugin")
                 .to_string();
 
-            let source = match fs::read_to_string(&path) {
+            let source = match store.read_to_string(&path) {
                 Ok(source) => source,
                 Err(err) => {
                     errors.push(format!("{name}: couldn't read file: {err}"));

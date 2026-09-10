@@ -57,8 +57,14 @@ impl From<ignore::Error> for BackupError {
 /// `directories`-based path in `settings.rs`, which all use `config_dir()`
 /// instead — `data_dir()` here since these are archive files, not
 /// configuration).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn default_backup_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd").map(|dirs| dirs.data_dir().join("backups"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn default_backup_dir() -> Option<PathBuf> {
+    None
 }
 
 /// Zip `project_root` into a timestamped archive under `backup_dir`, named
@@ -129,10 +135,30 @@ pub fn create_backup(
 /// existing backup for this project; callers resolving "not yet configured"
 /// should do so before calling this (see `Settings::resolve_backup_keep_count`).
 pub fn prune_old_backups(backup_dir: &Path, project_name: &str, keep: usize) -> io::Result<()> {
+    prune_old_backups_with_store(
+        &crate::project::store::NativeStore,
+        backup_dir,
+        project_name,
+        keep,
+    )
+}
+
+/// [`prune_old_backups`], against an explicitly chosen store rather than
+/// always [`crate::project::store::NativeStore`] — the seam a future browser
+/// build's storage backend would call through instead (see the wasm
+/// feasibility plan). Reuses `project::store::ProjectStore` — narrow and
+/// generic enough for this module's own point read/write/list despite the
+/// name.
+pub fn prune_old_backups_with_store(
+    store: &dyn crate::project::store::ProjectStore,
+    backup_dir: &Path,
+    project_name: &str,
+    keep: usize,
+) -> io::Result<()> {
     let prefix = format!("{project_name}-");
-    let mut backups: Vec<PathBuf> = std::fs::read_dir(backup_dir)?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
+    let mut backups: Vec<PathBuf> = store
+        .read_dir(backup_dir)?
+        .into_iter()
         .filter(|path| {
             path.extension().and_then(|ext| ext.to_str()) == Some("zip")
                 && path
@@ -146,7 +172,7 @@ pub fn prune_old_backups(backup_dir: &Path, project_name: &str, keep: usize) -> 
     // to stat each file's mtime.
     backups.sort_unstable_by(|a, b| b.cmp(a));
     for stale in backups.into_iter().skip(keep) {
-        std::fs::remove_file(stale)?;
+        store.remove_file(&stale)?;
     }
     Ok(())
 }

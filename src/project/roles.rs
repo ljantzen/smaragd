@@ -47,7 +47,7 @@ impl Project {
     /// `Manuscript` isn't exclusive, so assigning it to a new folder leaves any
     /// other Manuscript folder untouched. Errors if `path` isn't a directory.
     pub fn set_folder_role(&mut self, path: &Path, role: Option<FolderRole>) -> io::Result<()> {
-        if !path.is_dir() {
+        if !self.store.is_dir(path) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a folder"));
         }
         let key = relative_key(&self.root, path);
@@ -86,15 +86,15 @@ impl Project {
             } else {
                 self.root.join(&key)
             };
-            if !path.is_dir() {
-                fs::create_dir_all(&path)?;
+            if !self.store.is_dir(&path) {
+                self.store.create_dir_all(&path)?;
                 self.rescan();
             }
             return Ok(());
         }
 
         let root = self.root.clone();
-        let name = unique_child_name(&root, default_name);
+        let name = unique_child_name(self.store.as_ref(), &root, default_name);
         let path = self.create_folder(&root, &name)?;
         self.set_folder_role(&path, Some(role))
     }

@@ -151,14 +151,18 @@ pub fn write_imported_tree(
                 role: None,
                 children,
             } => {
-                let name = crate::project::unique_child_name(parent, &node.name);
+                let name =
+                    crate::project::unique_child_name(project.store.as_ref(), parent, &node.name);
                 let path = project.create_folder(parent, &name)?;
                 summary.folders += 1;
                 summary.merge(write_imported_tree(project, &path, children)?);
             }
             ImportedKind::Document { markdown } => {
-                let filename =
-                    crate::project::unique_child_name(parent, &format!("{}.md", node.name));
+                let filename = crate::project::unique_child_name(
+                    project.store.as_ref(),
+                    parent,
+                    &format!("{}.md", node.name),
+                );
                 project.create_document_with_content(parent, &filename, markdown)?;
                 summary.documents += 1;
             }

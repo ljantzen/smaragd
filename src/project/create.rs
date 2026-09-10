@@ -21,7 +21,7 @@ impl Project {
         template_path: &Path,
         date_format: &str,
     ) -> io::Result<PathBuf> {
-        let contents = fs::read_to_string(template_path)?;
+        let contents = self.store.read_to_string(template_path)?;
         let name = filename.strip_suffix(".md").unwrap_or(filename);
         let contents = crate::templates::substitute(&contents, name, date_format);
         self.write_new_document(parent, filename, &contents)
@@ -51,8 +51,8 @@ impl Project {
         let filename = ensure_md_extension(filename);
         ensure_simple_child_name(&filename)?;
         let path = parent.join(&filename);
-        ensure_does_not_exist(&path)?;
-        fs::write(&path, contents)?;
+        ensure_does_not_exist(self.store.as_ref(), &path)?;
+        self.store.write(&path, contents.as_bytes())?;
         self.record_new_child(parent, &filename)?;
         self.rescan();
         Ok(path)
@@ -63,8 +63,8 @@ impl Project {
     pub fn create_folder(&mut self, parent: &Path, name: &str) -> io::Result<PathBuf> {
         ensure_simple_child_name(name)?;
         let path = parent.join(name);
-        ensure_does_not_exist(&path)?;
-        fs::create_dir_all(&path)?;
+        ensure_does_not_exist(self.store.as_ref(), &path)?;
+        self.store.create_dir_all(&path)?;
         self.record_new_child(parent, name)?;
         self.rescan();
         Ok(path)
