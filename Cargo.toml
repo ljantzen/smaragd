@@ -64,7 +64,7 @@ ureq = "3.4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
 # The IndexedDB persistence layer for BrowserStore (project::browser_store) —
 # rexie for the actual database calls, serde-wasm-bindgen to convert stored
 # entries to/from the JsValue rexie's API speaks.
