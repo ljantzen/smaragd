@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.2.0 — 2026-09-11
+
 - Added an experimental browser (WebAssembly) edition — try it at
   https://ljantzen.github.io/smaragd/app/, linked from the landing page's
   new "Try it in your browser" button. No install: the binder, editor,
