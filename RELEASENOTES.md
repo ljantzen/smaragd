@@ -3,6 +3,22 @@
 Notable changes to Smaragd, most recent first. Versions before 0.5.1 predate
 this file.
 
+## Unreleased
+
+- Added an experimental browser (WebAssembly) edition — try it at
+  https://ljantzen.github.io/smaragd/app/, linked from the landing page's
+  new "Try it in your browser" button. No install: the binder, editor,
+  dockable panels, story cards, and DOCX/EPUB/PDF export and import all run
+  client-side, with the project stored in this browser's own IndexedDB
+  storage rather than on disk — nothing is uploaded to a server, but there's
+  also no cloud backup, so clearing site data or switching browsers/devices
+  loses it (export regularly if you want a copy that survives outside the
+  browser). It's a preview, not a replacement for the native app: git
+  integration, peer-to-peer collaboration, Scrivener import, native OS
+  notifications, and plugin scripts that shell out to external programs are
+  all unavailable, and there's only one project per browser at a time (see
+  the manual's new [Browser Edition](https://ljantzen.github.io/smaragd/manual/browser-edition.html) page).
+
 ## v1.1.1 — 2026-08-24
 
 - Linux releases now also publish `.deb`, `.rpm`, and `.flatpak` packages

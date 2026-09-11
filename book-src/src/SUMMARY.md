@@ -3,6 +3,7 @@
 [Introduction](introduction.md)
 
 - [Installation](installation.md)
+- [Browser Edition](browser-edition.md)
 - [Projects](projects.md)
 - [Project Templates](project-templates.md)
 - [The Menu Bar](menu-bar.md)

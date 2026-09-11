@@ -41,6 +41,8 @@ src/
     epub.rs                 EPUB rendering (epub_builder)
     pdf.rs                  print-PDF rendering via the embedded Typst compiler (typst-as-lib)
   project/
+    store.rs               ProjectStore trait (read/write/list/rename/delete by path) + NativeStore (std::fs); the I/O boundary all of project/, settings.rs, backup.rs, plugins.rs, and spellcheck.rs go through instead of touching the filesystem directly
+    browser_store.rs        BrowserStore: the wasm32 ProjectStore impl, an in-memory HashMap<PathBuf, Entry> synced to IndexedDB (browser_store/idb.rs, via rexie) on every mutation
     model.rs              BinderTree/BinderNode data model
     scan.rs                folder -> BinderTree via ignore::WalkBuilder
     mod.rs                 Project: type defs (FolderRole, ProjectMeta, StoryCard, ...) + core lifecycle/CRUD (load/initialize/rescan, create/rename/delete/move)
@@ -76,3 +78,7 @@ src/
 ```
 
 Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, Story Grid, Belief Timeline, Pomodoro, Word Count, Collaborate, and Streak all dock together in one shared area via [`egui_dock`](https://github.com/Adanos020/egui_dock), wired up in `app.rs`'s `DockTab`/`AppTabViewer`.
+
+## The wasm32 (browser) build
+
+The same crate also targets `wasm32-unknown-unknown`, built with [`trunk`](https://trunkrs.dev/) from the repo-root `index.html` (`trunk build`/`trunk serve`; the [Pages workflow](.github/workflows/pages.yml) publishes a release build to https://ljantzen.github.io/smaragd/app/). `Cargo.toml`'s `[target.'cfg(...)'.dependencies]` tables split native-only deps (iroh, tokio, directories, notify-rust, ureq, rfd's native dialogs) from wasm32-only ones (rexie, serde-wasm-bindgen, wasm-bindgen(-futures), console_error_panic_hook). Features with no browser equivalent — git, p2p collaboration, native notifications, plugin subprocess execution, Scrivener import — are `#[cfg(not(target_arch = "wasm32"))]`-gated out of the UI rather than attempted; see `project/store.rs`/`browser_store.rs` above for the storage side of that split. Synchronous fs-shaped call sites keep working unchanged on both targets through the `ProjectStore` trait; the few genuinely async boundaries (project bundle load, browser file pick/save, IndexedDB persistence) use a `wasm_bindgen_futures::spawn_local` + `std::sync::mpsc::channel` + poll-once-per-frame pattern instead of threading async through the whole app (see `app/project_lifecycle.rs`'s `spawn_browser_project_load`/`poll_browser_project_load` for the shape).

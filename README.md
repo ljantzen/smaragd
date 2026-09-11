@@ -10,6 +10,8 @@ See the [User Manual](https://ljantzen.github.io/smaragd/manual/) for a full use
 
 Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https://github.com/ljantzen/smaragd/releases/latest). They aren't signed with a paid code-signing certificate, so Windows and macOS show a first-run warning — expected, not a broken download. See [Installation](https://ljantzen.github.io/smaragd/manual/installation.html) in the user manual for how to get past it on each OS.
 
+There's also an experimental [browser edition](https://ljantzen.github.io/smaragd/app/) — no install, runs entirely client-side, project stored in the browser's own local storage rather than on disk. It's a preview, not a replacement for the native app: no git, no collaboration, no Scrivener import. See [Browser Edition](https://ljantzen.github.io/smaragd/manual/browser-edition.html) in the user manual.
+
 ## Features
 
 - Dockable views that can be moved freely around
@@ -46,6 +48,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Fully remappable keyboard shortcuts 
 - Real-time peer-to-peer private collaborative editing with no shared server infrastructure 
 - Spell check with on-demand Hunspell dictionary downloads for 20 languages, right-click suggestions, and "Add to Dictionary" for names and invented words
+- An experimental browser (WebAssembly) edition — try it at https://ljantzen.github.io/smaragd/app/ with no install, project stored locally in the browser
 
 ## Running
 
