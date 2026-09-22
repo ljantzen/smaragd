@@ -65,6 +65,15 @@ ureq = "3.4"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
 getrandom = { version = "0.4", features = ["wasm_js"] }
+# ahash (via eframe/egui) transitively pulls in its own getrandom, on the
+# semver-incompatible 0.3 line — Cargo doesn't unify features across
+# different major versions of the same crate, so enabling "wasm_js" above
+# only covers our direct 0.4 dependency. This second, aliased dependency
+# gives the 0.3 line the same feature so it also finds a wasm backend
+# (paired with the `--cfg getrandom_backend="wasm_js"` RUSTFLAGS in
+# .cargo/config.toml, which both versions need — the Cargo feature alone
+# isn't enough, per https://docs.rs/getrandom/latest/getrandom/#webassembly-support).
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # The IndexedDB persistence layer for BrowserStore (project::browser_store) —
 # rexie for the actual database calls, serde-wasm-bindgen to convert stored
 # entries to/from the JsValue rexie's API speaks.

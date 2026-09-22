@@ -1,0 +1,7 @@
+# getrandom (pulled in both directly and transitively, e.g. via ahash) needs
+# this cfg flag to select its wasm_js backend on wasm32-unknown-unknown —
+# enabling the crate's own "wasm_js" Cargo feature alone is not enough, per
+# https://docs.rs/getrandom/latest/getrandom/#webassembly-support. Scoped to
+# the wasm32 target only so it doesn't affect native builds.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]

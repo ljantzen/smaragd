@@ -5,6 +5,15 @@ this file.
 
 ## Unreleased
 
+- Fixed the browser (WebAssembly) edition failing to build (and so failing
+  to deploy to GitHub Pages) since v1.2.0: `getrandom` needs a
+  `--cfg getrandom_backend="wasm_js"` RUSTFLAG on top of its own `wasm_js`
+  Cargo feature to target `wasm32-unknown-unknown`, which nothing set, and
+  a transitive copy pulled in via `ahash` (on the semver-incompatible 0.3
+  line) needed that feature enabled separately from our direct 0.4
+  dependency, since Cargo doesn't unify features across incompatible major
+  versions of the same crate.
+
 ## v1.2.1 — 2026-09-22
 
 - Fixed the release pipeline: `v1.2.0`'s release build failed because the
