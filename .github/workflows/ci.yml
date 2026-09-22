@@ -28,6 +28,23 @@ jobs:
       - name: cargo test
         run: cargo test --all-targets --all-features
 
+  flatpak-sources:
+    name: Flatpak vendored sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # packaging/flatpak/cargo-sources.json is a vendored snapshot of
+      # Cargo.lock's dependencies that only the release workflow's flatpak
+      # build reads. Nothing regenerates it automatically (e.g. a
+      # Dependabot bump), so it drifts silently until a release build fails
+      # months later. Regenerate it here and fail if that changes anything,
+      # so drift is caught on the PR that introduced it instead.
+      - name: Regenerate and diff cargo-sources.json
+        run: |
+          ./scripts/update-flatpak-sources.sh
+          git diff --exit-code packaging/flatpak/cargo-sources.json
+
   coverage:
     name: Coverage (Linux)
     runs-on: ubuntu-latest

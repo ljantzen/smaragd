@@ -32,8 +32,6 @@ clippy:
 fmt:
     cargo fmt
 
-install:
-    cargo install --locked --path .
 # Check formatting without modifying files (matches CI)
 fmt-check:
     cargo fmt --check
@@ -48,6 +46,10 @@ coverage:
 # Cut a release: bump version, roll RELEASENOTES.md, check, commit, tag, push. Usage: just release 0.6.2 [--dry-run|--yes]
 release version *args:
     ./scripts/release.sh {{ version }} {{ args }}
+
+# Regenerate the flatpak build's vendored cargo sources from Cargo.lock (run after any Cargo.lock change)
+flatpak-sources:
+    ./scripts/update-flatpak-sources.sh
 
 # Build the user manual locally (requires `cargo install mdbook` once)
 book:

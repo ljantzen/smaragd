@@ -5,6 +5,16 @@ this file.
 
 ## Unreleased
 
+- Fixed the release pipeline: `v1.2.0`'s release build failed because the
+  flatpak build's vendored dependency snapshot
+  (`packaging/flatpak/cargo-sources.json`) had gone stale relative to
+  `Cargo.lock` (nothing regenerated it after a routine Dependabot bump), and
+  because the Windows and macOS release jobs depended on the Linux job, that
+  one packaging failure blocked the release entirely — no `v1.2.0` build was
+  ever published for any platform. Regenerated the vendored snapshot, added
+  a CI check that fails a PR if it drifts from `Cargo.lock` again, and
+  decoupled the three platform release jobs so a single platform's failure
+  can no longer block the others.
 - Added install target to justfile
 - Fixed the "New From Template" name prompt: the suggested name (the
   template's own name, e.g. "Location") now clears as soon as the field

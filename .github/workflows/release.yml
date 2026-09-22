@@ -204,7 +204,12 @@ jobs:
 
   release-windows:
     name: Build and release (Windows x86_64)
-    needs: release
+    # Deliberately not `needs: release`: each platform builds and publishes
+    # independently, so a Linux-only packaging failure (e.g. a stale flatpak
+    # vendor file) can't block Windows/macOS from releasing too, as it did
+    # for v1.2.0 — softprops/action-gh-release creates the release on
+    # whichever job's "Create GitHub release" step runs first and appends to
+    # it on the others, so order doesn't matter.
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -254,7 +259,7 @@ jobs:
 
   release-macos:
     name: Build and release (macOS universal)
-    needs: release
+    # See release-windows above: deliberately not `needs: release`.
     runs-on: macos-15
     steps:
       - name: Checkout
