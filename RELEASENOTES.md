@@ -5,6 +5,12 @@ this file.
 
 ## Unreleased
 
+- Added install target to justfile
+- Fixed the "New From Template" name prompt: the suggested name (the
+  template's own name, e.g. "Location") now clears as soon as the field
+  takes focus, instead of sitting there as text you had to select and
+  delete before typing the document's real name.
+
 ## v1.2.0 — 2026-09-11
 
 - Added an experimental browser (WebAssembly) edition — try it at

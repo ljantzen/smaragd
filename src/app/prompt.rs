@@ -65,9 +65,10 @@ impl SmaragdApp {
     }
 
     /// Open the "New From Template" name-prompt modal for a document to be created
-    /// inside `parent`, copying `template_path`'s content — pre-filled with the
-    /// template's own stem, same as `prompt_rename` pre-fills from the renamed
-    /// item's current name.
+    /// inside `parent`, copying `template_path`'s content. The field shows the
+    /// template's own stem (e.g. "Location") as a placeholder-like suggestion,
+    /// but that text is cleared the moment the field takes focus (unlike
+    /// `prompt_rename`, which keeps its pre-fill since it's the item's real name).
     pub(super) fn prompt_new_file_from_template(
         &mut self,
         parent: PathBuf,
@@ -83,7 +84,8 @@ impl SmaragdApp {
                 parent,
                 template_path,
             },
-            state: NamePromptState::new("New From Template", "Create", name),
+            state: NamePromptState::new("New From Template", "Create", name)
+                .with_clear_on_focus(),
         });
     }
 

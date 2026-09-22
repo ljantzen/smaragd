@@ -32,6 +32,8 @@ clippy:
 fmt:
     cargo fmt
 
+install:
+    cargo install --locked --path .
 # Check formatting without modifying files (matches CI)
 fmt-check:
     cargo fmt --check

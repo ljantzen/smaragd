@@ -7,6 +7,7 @@ pub struct NamePromptState {
     pub confirm_label: String,
     pub name: String,
     focus_requested: bool,
+    clear_on_focus: bool,
 }
 
 impl NamePromptState {
@@ -20,7 +21,18 @@ impl NamePromptState {
             confirm_label: confirm_label.into(),
             name: name.into(),
             focus_requested: true,
+            clear_on_focus: false,
         }
+    }
+
+    /// Wipe the pre-filled `name` the moment the text field takes focus, so a
+    /// suggested value (e.g. a template's own name) acts like a placeholder the
+    /// user types over rather than text they must first select and delete. Used
+    /// for "New From Template", where the pre-fill is just the template's name,
+    /// not a value worth keeping.
+    pub fn with_clear_on_focus(mut self) -> Self {
+        self.clear_on_focus = true;
+        self
     }
 }
 
@@ -48,6 +60,9 @@ pub fn show(ctx: &egui::Context, state: &mut NamePromptState) -> Option<NameProm
         // Enter un-confirmable. See `command_prompt.rs`/`find_replace_panel.rs`
         // for the same one-shot pattern.
         if state.focus_requested {
+            if state.clear_on_focus {
+                state.name.clear();
+            }
             response.request_focus();
             state.focus_requested = false;
         }
@@ -113,6 +128,23 @@ mod tests {
                 }],
             )
         }
+    }
+
+    #[test]
+    fn clear_on_focus_wipes_the_pre_filled_name_on_the_first_frame() {
+        let harness = Harness::default();
+        let mut state = NamePromptState::new("New From Template", "Create", "Location")
+            .with_clear_on_focus();
+        harness.idle(&mut state);
+        assert_eq!(state.name, "");
+    }
+
+    #[test]
+    fn without_clear_on_focus_the_pre_filled_name_is_kept() {
+        let harness = Harness::default();
+        let mut state = NamePromptState::new("Rename", "Rename", "scene6");
+        harness.idle(&mut state);
+        assert_eq!(state.name, "scene6");
     }
 
     #[test]
