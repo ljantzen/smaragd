@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.2.1 — 2026-09-22
+
 - Fixed the release pipeline: `v1.2.0`'s release build failed because the
   flatpak build's vendored dependency snapshot
   (`packaging/flatpak/cargo-sources.json`) had gone stale relative to
