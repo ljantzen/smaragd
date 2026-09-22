@@ -133,8 +133,8 @@ mod tests {
     #[test]
     fn clear_on_focus_wipes_the_pre_filled_name_on_the_first_frame() {
         let harness = Harness::default();
-        let mut state = NamePromptState::new("New From Template", "Create", "Location")
-            .with_clear_on_focus();
+        let mut state =
+            NamePromptState::new("New From Template", "Create", "Location").with_clear_on_focus();
         harness.idle(&mut state);
         assert_eq!(state.name, "");
     }

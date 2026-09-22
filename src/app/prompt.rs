@@ -84,8 +84,7 @@ impl SmaragdApp {
                 parent,
                 template_path,
             },
-            state: NamePromptState::new("New From Template", "Create", name)
-                .with_clear_on_focus(),
+            state: NamePromptState::new("New From Template", "Create", name).with_clear_on_focus(),
         });
     }
 
