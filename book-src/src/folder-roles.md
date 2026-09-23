@@ -1,11 +1,12 @@
-# Folder Roles: Research, Trash, Templates, Manuscript
+# Folder Roles: Research, Trash, Templates, Manuscript, World
 
-Right-click a folder and choose **Folder Role** to designate it as one of four special folders. A folder with a role assigned shows a leading icon in the binder (🔍/🗑/📋/📖) instead of a text label. Research, Trash, and Templates are exclusive — at most one folder per role, project-wide — but Manuscript isn't: several folders can hold it at once, e.g. one per book in a series.
+Right-click a folder and choose **Folder Role** to designate it as one of five special folders. A folder with a role assigned shows a leading icon in the binder (🔍/🗑/📋/📖/🌐) instead of a text label. Research, Trash, Templates, and World are exclusive — at most one folder per role, project-wide — but Manuscript isn't: several folders can hold it at once, e.g. one per book in a series.
 
 - **Trash**: deleting a file or folder moves it here instead of removing it from disk. Right-click the Trash folder for **Empty Trash** (permanent, with confirmation), or right-click a trashed item for **Restore**.
 - **Templates**: any document placed directly inside this folder (not in a subfolder of it) shows up in every other folder's right-click **"New From Template"** submenu. Picking one creates a new document from a copy of it — frontmatter included, with [template variables](#template-variables) substituted — after prompting you for a name. The template itself is never modified.
 - **Research**: currently just a marker with no behavior yet attached — reserved for future features like word-count rollups. Unlike Trash and Templates, [Export](export.md) does *not* skip a Research-role folder — right-clicking one to export it exports it like any other folder.
 - **Manuscript**: designates a folder as your project's primary manuscript content, mirroring Scrivener's Draft folder. **`File > Export Manuscript…`** compiles straight from it instead of you having to right-click and find the folder yourself: if no folder has the role yet, it falls back to exporting the whole project; if exactly one does, it exports that folder directly; if more than one does, it opens a submenu to pick which one. It's also what the [Word Count](word-count.md) panel's "Manuscript folders only" tracking scope sums.
+- **World**: like Research, currently just a marker with no behavior yet attached — for a project's worldbuilding content (characters, locations, items). The [World-Building project template](project-templates.md) tags its `World` folder with this role automatically.
 
 ## Template Variables
 

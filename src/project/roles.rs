@@ -2,24 +2,26 @@ use super::*;
 
 /// A Scrivener-Research/Trash/Templates/Manuscript-style role assigned to a folder,
 /// decoupled from its position in the tree. At most one folder project-wide holds
-/// `Research`/`Trash`/`Templates` at a time (see [`FolderRole::is_exclusive`]);
-/// `Manuscript` is the one exception — a project can have several Manuscript
-/// folders at once (e.g. one per book in a series, or per POV thread), so
-/// assigning it to a new folder never clears it from any other. `Research` is
-/// currently just a marker — a forward-looking extension point for features
-/// (Compile, word-count rollups) that don't exist yet. `Trash` has a real
-/// behavior change: see [`Project::delete`]. `Templates`'s direct child
-/// documents become the candidate list for "New From Template": see
-/// [`Project::template_documents`]. `Manuscript` designates one or more
+/// `Research`/`Trash`/`Templates`/`World` at a time (see
+/// [`FolderRole::is_exclusive`]); `Manuscript` is the one exception — a project
+/// can have several Manuscript folders at once (e.g. one per book in a series,
+/// or per POV thread), so assigning it to a new folder never clears it from any
+/// other. `Research` is currently just a marker — a forward-looking extension
+/// point for features (Compile, word-count rollups) that don't exist yet.
+/// `Trash` has a real behavior change: see [`Project::delete`]. `Templates`'s
+/// direct child documents become the candidate list for "New From Template":
+/// see [`Project::template_documents`]. `Manuscript` designates one or more
 /// Scrivener-Draft-style primary content folders — see
 /// [`Project::folder_role_paths`] and its use as the source list for "Export
-/// Manuscript…".
+/// Manuscript…". `World` is, like `Research`, currently just a marker — for a
+/// project's worldbuilding folder (characters, locations, items).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FolderRole {
     Research,
     Trash,
     Templates,
     Manuscript,
+    World,
 }
 
 impl FolderRole {

@@ -237,6 +237,7 @@ fn role_prefix(role: Option<FolderRole>) -> &'static str {
         Some(FolderRole::Trash) => "🗑 ",
         Some(FolderRole::Templates) => "📋 ",
         Some(FolderRole::Manuscript) => "📖 ",
+        Some(FolderRole::World) => "🌐 ",
         None => "",
     }
 }
@@ -645,6 +646,13 @@ fn show_node(
                             *event = Some(BinderEvent::SetFolderRole {
                                 path: node.path.clone(),
                                 role: Some(FolderRole::Manuscript),
+                            });
+                            ui.close();
+                        }
+                        if ui.radio(role == Some(FolderRole::World), "World").clicked() {
+                            *event = Some(BinderEvent::SetFolderRole {
+                                path: node.path.clone(),
+                                role: Some(FolderRole::World),
                             });
                             ui.close();
                         }

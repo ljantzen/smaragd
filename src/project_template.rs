@@ -213,6 +213,7 @@ fn world_building_template() -> ProjectTemplate {
             ("Research".to_string(), FolderRole::Research),
             ("Templates".to_string(), FolderRole::Templates),
             ("Trash".to_string(), FolderRole::Trash),
+            ("World".to_string(), FolderRole::World),
         ]),
     }
 }
@@ -704,6 +705,10 @@ mod tests {
         assert_eq!(
             project.folder_role(&dir.path().join("Trash")),
             Some(FolderRole::Trash)
+        );
+        assert_eq!(
+            project.folder_role(&dir.path().join("World")),
+            Some(FolderRole::World)
         );
     }
 

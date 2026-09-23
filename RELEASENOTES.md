@@ -5,6 +5,7 @@ this file.
 
 ## Unreleased
 
+- Added a `World` folder role (🌐), alongside Research/Trash/Templates/Manuscript, for a project's worldbuilding content. The World-Building project template now tags its `World` folder with it.
 - Fixed the browser (WebAssembly) edition failing to build (and so failing
   to deploy to GitHub Pages) since v1.2.0: `getrandom` needs a
   `--cfg getrandom_backend="wasm_js"` RUSTFLAG on top of its own `wasm_js`

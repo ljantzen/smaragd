@@ -14,7 +14,7 @@ The left-hand panel is the **binder** — a tree view of your project folder, on
   - **Delete** — shows a native confirmation dialog; if a Trash folder is configured, it's worded as a move to Trash rather than a permanent delete
   - **Restore** (on a trashed item) — moves it back to its original folder, offering to recreate that folder if it's gone since
   - **Folder Role** / **Dropdown Source** / **Empty Trash** (folders only) — see [Folder Roles](folder-roles.md) and [Dropdown Source Folders](document-metadata.md#dropdown-source-folders)
-- A folder with a role assigned shows a leading icon instead of a text label: 🔍 Research, 🗑 Trash, 📋 Templates, 📖 Manuscript
+- A folder with a role assigned shows a leading icon instead of a text label: 🔍 Research, 🗑 Trash, 📋 Templates, 📖 Manuscript, 🌐 World
 - **Click the root row** (the project itself, at the very top of the tree) to switch the Metadata dock over to project-wide fields — see [Project Metadata](project-metadata.md). The row gets the same persistent highlight a selected document gets, and clicking it also toggles the whole tree open/closed, the same as clicking any other folder row does
 - **Click any other folder row** to switch the Metadata dock to that folder's own metadata instead — the same `Type`/`Status`/`POV`/`Word Count Target`/`Tags` fields and form documents use (see [Document Metadata](document-metadata.md)), just without a live word count of its own since a folder has no body to count. The form's heading reads "Folder Metadata" instead of the document's title, so it's always clear which kind of row you're editing
 
