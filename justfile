@@ -20,6 +20,11 @@ build-release:
 install:
     cargo install --path . --locked
 
+# Remove build artifacts: cargo's target/, the built manual, and dist/
+clean:
+    cargo clean
+    rm -rf book-src/book dist
+
 # Run the test suite (matches CI: cargo test --all-targets --all-features)
 test:
     cargo test --all-targets --all-features
