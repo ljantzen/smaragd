@@ -17,6 +17,8 @@
 //! - [`crypto`] — passphrase → key derivation (Argon2id) and sealing/opening the
 //!   per-update envelope (XChaCha20-Poly1305, random nonce, AAD-bound to the
 //!   vault and document).
+//! - [`meta_crdt`] — `project.json` as a CRDT: settings, prose, ordering, story cards and
+//!   bookmarks merge; per-device fields never sync; paths become stable ids.
 //! - [`engine`] — one reconcile pass between a project folder and a vault: capture
 //!   local edits, pull and merge remote ones, apply renames/deletes, push.
 //! - [`transport`] — the engine's blocking view of the server, so it's testable
@@ -31,6 +33,7 @@ pub mod crdt;
 pub mod crypto;
 pub mod engine;
 pub mod manifest;
+pub mod meta_crdt;
 pub mod state;
 pub mod transport;
 

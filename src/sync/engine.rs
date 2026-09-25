@@ -54,12 +54,21 @@ use super::crypto::{CryptoError, VaultKey};
 use super::manifest::{
     EntryKind, ManifestDoc, ManifestEntry, is_safe_relative_dir_path, is_safe_relative_path,
 };
+use super::meta_crdt::{MetaDoc, PathIds, SyncedFields};
 use super::state::StateStore;
 use super::transport::{SyncTransport, TransportError};
+use crate::project::ProjectMeta;
 use crate::project::store::{ProjectStore, TreeEntryKind};
 
 const MANIFEST_KEY: &str = "manifest";
 const DIRS_KEY: &str = "dirs";
+const META_KEY: &str = "meta";
+const META_PATHS_KEY: &str = "meta_paths";
+/// Where the project's metadata lives, relative to the project root.
+const META_PATH: &str = ".smaragd/project.json";
+/// A local `project.json` is saved here, once, before a first sync replaces it with
+/// the vault's version, so nothing the user had there is ever silently lost.
+const META_BACKUP_PATH: &str = ".smaragd/project.json.before-sync";
 
 fn doc_key(id: DocId) -> String {
     format!("doc/{id}")
@@ -128,6 +137,9 @@ pub struct SyncReport {
     pub dirs_removed: usize,
     /// Local folder deletions announced to the vault.
     pub dirs_tombstoned: usize,
+    /// `project.json` was rewritten with merged remote changes. The app must reload
+    /// its in-memory project metadata when this is set, or it will overwrite them.
+    pub meta_written: bool,
 }
 
 impl SyncReport {
@@ -150,6 +162,16 @@ trait Crdt {
 }
 
 impl Crdt for FileDoc {
+    fn apply(&mut self, update: &[u8]) -> Result<(), yrs::error::Error> {
+        self.apply_update(update)
+    }
+
+    fn state(&self) -> Vec<u8> {
+        self.encode_state()
+    }
+}
+
+impl Crdt for MetaDoc {
     fn apply(&mut self, update: &[u8]) -> Result<(), yrs::error::Error> {
         self.apply_update(update)
     }
@@ -402,11 +424,17 @@ pub struct SyncEngine {
     files: Arc<dyn ProjectStore>,
     state: Box<dyn StateStore>,
     manifest: Tracked<ManifestDoc>,
+    /// The project metadata document (`DocId::PROJECT_META`).
+    meta: Tracked<MetaDoc>,
     docs: BTreeMap<DocId, Tracked<FileDoc>>,
     /// Where this device has each synced folder on disk (folders carry no content,
     /// so unlike files they need no CRDT state of their own).
     dir_paths: BTreeMap<DocId, String>,
     dirs_dirty: bool,
+    /// The path -> id layout `project.json` was last brought in line with (see
+    /// `PathIds::with_previous`).
+    meta_paths: BTreeMap<String, DocId>,
+    meta_paths_dirty: bool,
 }
 
 impl SyncEngine {
@@ -445,7 +473,26 @@ impl SyncEngine {
                 );
             }
         }
+        let meta = match state.get(META_KEY)? {
+            Some(bytes) => {
+                let saved = load_persisted(&bytes)?;
+                Tracked {
+                    doc: MetaDoc::from_state(&saved.yrs_state)?,
+                    last_seq: saved.last_seq,
+                    pending: saved.pending,
+                    local_path: None,
+                    dirty: false,
+                }
+            }
+            None => Tracked::new(MetaDoc::new()),
+        };
         let dir_paths = match state.get(DIRS_KEY)? {
+            Some(bytes) => {
+                postcard::from_bytes(&bytes).map_err(|err| SyncError::State(err.to_string()))?
+            }
+            None => BTreeMap::new(),
+        };
+        let meta_paths = match state.get(META_PATHS_KEY)? {
             Some(bytes) => {
                 postcard::from_bytes(&bytes).map_err(|err| SyncError::State(err.to_string()))?
             }
@@ -456,6 +503,9 @@ impl SyncEngine {
             files,
             state,
             manifest,
+            meta,
+            meta_paths,
+            meta_paths_dirty: false,
             docs,
             dir_paths,
             dirs_dirty: false,
@@ -499,6 +549,7 @@ impl SyncEngine {
         for entry in self.live_entries(report) {
             self.sync_doc(&entry, transport, remote.as_ref(), report)?;
         }
+        self.sync_meta(transport, remote.as_ref(), report)?;
         if remote.is_some() {
             self.push_all(transport, report)?;
         }
@@ -511,11 +562,20 @@ impl SyncEngine {
                 .put(MANIFEST_KEY, &persist_bytes(&self.manifest))?;
             self.manifest.dirty = false;
         }
+        if self.meta.dirty {
+            self.state.put(META_KEY, &persist_bytes(&self.meta))?;
+            self.meta.dirty = false;
+        }
         for (id, tracked) in &mut self.docs {
             if tracked.dirty {
                 self.state.put(&doc_key(*id), &persist_bytes(tracked))?;
                 tracked.dirty = false;
             }
+        }
+        if self.meta_paths_dirty {
+            let bytes = postcard::to_stdvec(&self.meta_paths).expect("meta paths always serialize");
+            self.state.put(META_PATHS_KEY, &bytes)?;
+            self.meta_paths_dirty = false;
         }
         if self.dirs_dirty {
             let bytes = postcard::to_stdvec(&self.dir_paths).expect("dir paths always serialize");
@@ -536,7 +596,7 @@ impl SyncEngine {
     fn live_of_kind(&self, kind: EntryKind, report: &mut SyncReport) -> Vec<ManifestEntry> {
         let mut out = Vec::new();
         for entry in self.manifest.doc.entries() {
-            if entry.deleted || entry.kind != kind {
+            if entry.deleted || entry.kind != kind || entry.doc_id.is_reserved() {
                 continue;
             }
             let safe = match kind {
@@ -1106,6 +1166,157 @@ impl SyncEngine {
         Ok(())
     }
 
+    /// The live files and folders as ids, for translating project metadata.
+    fn path_ids(&self) -> PathIds {
+        let usable: Vec<ManifestEntry> = self
+            .manifest
+            .doc
+            .entries()
+            .into_iter()
+            .filter(|entry| match entry.kind {
+                EntryKind::Doc => is_safe_relative_path(&entry.path),
+                EntryKind::Dir => is_safe_relative_dir_path(&entry.path),
+            })
+            .collect();
+        PathIds::from_entries(&usable)
+    }
+
+    /// Syncs `.smaragd/project.json`. Local edits are captured first (as a diff against
+    /// the CRDT, field by field), then remote changes are merged in and written back
+    /// with every per-device field left as it was.
+    ///
+    /// Three ways this could destroy data are closed off explicitly: a `project.json`
+    /// that doesn't parse is skipped (capturing "defaults" would delete the vault's
+    /// metadata everywhere); a missing one is never captured as "everything was
+    /// deleted" (it is simply restored from the vault); and joining a vault that has
+    /// metadata adopts the vault's rather than pushing local defaults over it — after
+    /// saving the local file to `project.json.before-sync`.
+    fn sync_meta(
+        &mut self,
+        transport: &dyn SyncTransport,
+        remote: Option<&HashMap<DocId, u64>>,
+        report: &mut SyncReport,
+    ) -> Result<(), SyncError> {
+        let online = remote.is_some();
+        let remote_latest = remote
+            .and_then(|r| r.get(&DocId::PROJECT_META))
+            .copied()
+            .unwrap_or(0);
+        let fresh =
+            self.meta.last_seq == 0 && self.meta.pending.is_empty() && self.meta.doc.is_empty();
+        if fresh {
+            if !online {
+                return Ok(());
+            }
+            if remote_latest > 0 {
+                report.pulled_updates += pull_into(
+                    &self.cfg.key,
+                    self.cfg.vault,
+                    self.cfg.device,
+                    transport,
+                    DocId::PROJECT_META,
+                    &mut self.meta,
+                )?;
+            }
+        }
+
+        let (local_text, local_meta) = match read_disk(&*self.files, &self.cfg.root, META_PATH) {
+            Disk::Missing => (None, None),
+            Disk::Unreadable => {
+                report.skipped_paths.push(META_PATH.to_string());
+                return Ok(());
+            }
+            Disk::Text(text) => match serde_json::from_str::<ProjectMeta>(&text) {
+                Ok(meta) => (Some(text), Some(meta)),
+                Err(_) => {
+                    report.skipped_paths.push(META_PATH.to_string());
+                    return Ok(());
+                }
+            },
+        };
+
+        let ids = self.path_ids().with_previous(self.meta_paths.clone());
+        let adopting = fresh && !self.meta.doc.is_empty();
+        if let Some(meta) = &local_meta
+            && !adopting
+            && let Some(update) = self.meta.doc.write(&SyncedFields::from_meta(meta, &ids))
+        {
+            self.meta.pending.push(update);
+            self.meta.dirty = true;
+            report.local_edits += 1;
+        }
+        if !fresh && online && remote_latest > self.meta.last_seq {
+            report.pulled_updates += pull_into(
+                &self.cfg.key,
+                self.cfg.vault,
+                self.cfg.device,
+                transport,
+                DocId::PROJECT_META,
+                &mut self.meta,
+            )?;
+        }
+
+        let merged = self.meta.doc.read();
+        if local_meta.is_none() && merged == SyncedFields::default() {
+            self.remember_layout(&ids);
+            return Ok(());
+        }
+        let mut updated = local_meta.clone().unwrap_or_default();
+        if merged.into_meta(&mut updated, &ids).is_err() {
+            report
+                .skipped_paths
+                .push("(unreadable remote project metadata)".into());
+            return Ok(());
+        }
+        if local_meta.as_ref() == Some(&updated) {
+            self.remember_layout(&ids);
+            return Ok(());
+        }
+
+        // Only replace what we actually read; if the app saved in the meantime, the
+        // next pass merges that instead.
+        let unchanged = match (
+            &local_text,
+            read_disk(&*self.files, &self.cfg.root, META_PATH),
+        ) {
+            (Some(before), Disk::Text(now)) => *before == now,
+            (None, Disk::Missing) => true,
+            _ => false,
+        };
+        if !unchanged {
+            return Ok(());
+        }
+        if adopting
+            && let (Some(text), Some(meta)) = (&local_text, &local_meta)
+            && SyncedFields::from_meta(meta, &ids) != merged
+            && !self.files.exists(&abs(&self.cfg.root, META_BACKUP_PATH))
+        {
+            let backup = abs(&self.cfg.root, META_BACKUP_PATH);
+            ensure_parent(&*self.files, &backup)?;
+            self.files.write(&backup, text.as_bytes())?;
+            report.conflict_copies.push(META_BACKUP_PATH.to_string());
+        }
+        let json = serde_json::to_string_pretty(&updated)
+            .map_err(|err| SyncError::State(err.to_string()))?;
+        let target = abs(&self.cfg.root, META_PATH);
+        ensure_parent(&*self.files, &target)?;
+        let tmp = target.with_extension("json.sync-tmp");
+        self.files.write(&tmp, json.as_bytes())?;
+        self.files.rename(&tmp, &target)?;
+        self.remember_layout(&ids);
+        report.meta_written = true;
+        Ok(())
+    }
+
+    /// Records that `project.json` now uses `ids`' paths.
+    fn remember_layout(&mut self, ids: &PathIds) {
+        let layout = ids.snapshot();
+        if layout != self.meta_paths {
+            self.meta_paths = layout;
+            self.meta_paths_dirty = true;
+        }
+    }
+
     fn push_all(
         &mut self,
         transport: &dyn SyncTransport,
@@ -1117,6 +1328,13 @@ impl SyncEngine {
             transport,
             DocId::MANIFEST,
             &mut self.manifest,
+        )?;
+        report.pushed_updates += push_from(
+            &self.cfg.key,
+            self.cfg.vault,
+            transport,
+            DocId::PROJECT_META,
+            &mut self.meta,
         )?;
         for (id, tracked) in &mut self.docs {
             report.pushed_updates +=
@@ -1228,6 +1446,24 @@ mod tests {
 
         fn try_sync(&mut self) -> Result<SyncReport, SyncError> {
             self.engine.sync_once(&self.transport)
+        }
+
+        fn write_meta(&self, value: serde_json::Value) {
+            self.write(".smaragd/project.json", &value.to_string());
+        }
+
+        fn meta(&self) -> ProjectMeta {
+            serde_json::from_str(&self.read(".smaragd/project.json")).unwrap()
+        }
+
+        /// Edits this device's project.json the way the app would.
+        fn edit_meta(&self, change: impl FnOnce(&mut ProjectMeta)) {
+            let mut meta = self.meta();
+            change(&mut meta);
+            self.write(
+                ".smaragd/project.json",
+                &serde_json::to_string_pretty(&meta).unwrap(),
+            );
         }
 
         fn mkdir(&self, rel: &str) {
@@ -1905,6 +2141,214 @@ mod tests {
             map_through_pairs("Other", &[("A".into(), "B".into())]),
             None
         );
+    }
+
+    fn card(n: u128, cause: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": Uuid::from_u128(n).to_string(), "scene_number": "1", "alpha_point": "",
+            "subplot_tags": [], "cause": cause, "effect": "e", "realization": "r", "and_so": "a",
+        })
+    }
+
+    fn base_meta() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "node_order": { "": ["Draft"], "Draft": ["Ch1.md", "Ch2.md"] },
+            "folder_roles": { "Draft": "Manuscript" },
+            "folder_meta": { "Draft": { "status": "draft" } },
+            "story_cards": [card(1, "first")],
+            "logline": "A girl and a fjord.",
+            "git_enabled": true,
+            "plugins_enabled": true,
+            "session_baseline_words": 4242,
+        })
+    }
+
+    /// Two synced devices that both have the Draft folder and a project.json.
+    fn synced_pair(server: &MemoryServer) -> (Device, Device) {
+        let mut a = Device::new(server);
+        let mut b = Device::new(server);
+        a.write("Draft/Ch1.md", "one\n");
+        a.write("Draft/Ch2.md", "two\n");
+        a.write_meta(base_meta());
+        b.write_meta(serde_json::json!({ "version": 1, "node_order": {} }));
+        converge(&mut [&mut a, &mut b]);
+        (a, b)
+    }
+
+    #[test]
+    fn project_metadata_syncs_but_per_device_settings_stay_put() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        a.write("Draft/Ch1.md", "one\n");
+        a.write("Draft/Ch2.md", "two\n");
+        a.write_meta(base_meta());
+        a.sync();
+
+        // B has no project.json at all yet: the vault's is written for it.
+        let mut b = Device::new(&server);
+        converge(&mut [&mut a, &mut b]);
+        let meta = b.meta();
+        assert_eq!(meta.logline, "A girl and a fjord.");
+        assert_eq!(meta.story_cards.len(), 1);
+        assert_eq!(meta.node_order["Draft"], vec!["Ch1.md", "Ch2.md"]);
+        assert!(meta.folder_roles.contains_key("Draft"));
+        // A's per-device state did not follow.
+        assert!(!meta.git_enabled);
+        assert!(!meta.plugins_enabled, "plugin consent must stay local");
+        assert_eq!(meta.session_baseline_words, 0);
+
+        // B turns plugins on for itself; that never reaches A.
+        b.edit_meta(|m| m.plugins_enabled = true);
+        b.edit_meta(|m| m.logline = "Edited on B.".into());
+        converge(&mut [&mut a, &mut b]);
+        assert_eq!(a.meta().logline, "Edited on B.");
+        assert!(a.meta().plugins_enabled, "A's own value is unchanged");
+        assert_eq!(a.meta().session_baseline_words, 4242);
+        let a_again = a.meta();
+        assert!(a_again.git_enabled);
+    }
+
+    #[test]
+    fn concurrent_metadata_edits_on_two_devices_merge() {
+        let server = MemoryServer::default();
+        let (mut a, mut b) = synced_pair(&server);
+
+        a.edit_meta(|m| {
+            m.logline = "A girl, a fjord and a storm.".into();
+            m.status_colors.insert("final".into(), "#00ff00".into());
+        });
+        b.edit_meta(|m| {
+            m.book_title = Some("Fjord".into());
+            m.synopsis = "Once upon a time.".into();
+        });
+        converge(&mut [&mut a, &mut b]);
+
+        for device in [&a, &b] {
+            let meta = device.meta();
+            assert_eq!(meta.logline, "A girl, a fjord and a storm.");
+            assert_eq!(meta.book_title.as_deref(), Some("Fjord"));
+            assert_eq!(meta.synopsis, "Once upon a time.");
+            assert!(meta.status_colors.contains_key("final"));
+        }
+    }
+
+    #[test]
+    fn a_folder_rename_keeps_its_metadata_and_a_concurrent_edit_to_it() {
+        let server = MemoryServer::default();
+        let (mut a, mut b) = synced_pair(&server);
+
+        // A renames the folder (the app rewrites the path keys as it does so)...
+        a.rename("Draft/Ch1.md", "Manuscript/Ch1.md");
+        a.rename("Draft/Ch2.md", "Manuscript/Ch2.md");
+        std::fs::remove_dir_all(a.path("Draft")).unwrap();
+        a.edit_meta(|m| {
+            let mut value = serde_json::to_value(&*m).unwrap();
+            let text = value.to_string().replace("\"Draft\"", "\"Manuscript\"");
+            value = serde_json::from_str(&text).unwrap();
+            *m = serde_json::from_value(value).unwrap();
+        });
+        // ...while B, still using the old name, sets the folder's status.
+        b.edit_meta(|m| {
+            m.folder_meta.get_mut("Draft").unwrap().status = Some("final".into());
+        });
+        converge(&mut [&mut a, &mut b]);
+
+        for device in [&a, &b] {
+            let meta = device.meta();
+            assert!(
+                !meta.node_order.contains_key("Draft"),
+                "{:?}",
+                meta.node_order
+            );
+            assert_eq!(meta.node_order["Manuscript"], vec!["Ch1.md", "Ch2.md"]);
+            assert!(meta.folder_roles.contains_key("Manuscript"));
+            assert_eq!(
+                meta.folder_meta["Manuscript"].status.as_deref(),
+                Some("final"),
+                "B's edit follows the folder to its new name"
+            );
+        }
+        assert_eq!(a.files(), b.files());
+    }
+
+    #[test]
+    fn joining_a_vault_with_metadata_keeps_a_backup_of_the_local_project_json() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        a.write("a.md", "x\n");
+        a.write_meta(
+            serde_json::json!({ "version": 1, "node_order": {}, "logline": "the vault's" }),
+        );
+        a.sync();
+
+        let mut b = Device::new(&server);
+        b.write("a.md", "x\n");
+        b.write_meta(serde_json::json!({
+            "version": 1, "node_order": {}, "logline": "b's own", "story_cards": [card(9, "mine")],
+        }));
+        let report = b.sync();
+
+        assert_eq!(b.meta().logline, "the vault's");
+        assert!(b.meta().story_cards.is_empty());
+        assert!(report.meta_written);
+        assert!(
+            report
+                .conflict_copies
+                .iter()
+                .any(|c| c.ends_with("project.json.before-sync"))
+        );
+        let backup = b.read(".smaragd/project.json.before-sync");
+        assert!(
+            backup.contains("b's own") && backup.contains("mine"),
+            "{backup}"
+        );
+    }
+
+    #[test]
+    fn a_corrupt_project_json_is_left_alone_and_never_wipes_the_vault() {
+        let server = MemoryServer::default();
+        let (mut a, mut b) = synced_pair(&server);
+
+        a.write(".smaragd/project.json", "{ this is not json");
+        let report = a.sync();
+        assert!(
+            report
+                .skipped_paths
+                .contains(&".smaragd/project.json".to_string()),
+            "{report:?}"
+        );
+        assert_eq!(a.read(".smaragd/project.json"), "{ this is not json");
+
+        b.sync();
+        assert_eq!(
+            b.meta().story_cards.len(),
+            1,
+            "the vault's metadata is intact"
+        );
+        assert_eq!(b.meta().logline, "A girl and a fjord.");
+    }
+
+    #[test]
+    fn a_deleted_project_json_is_restored_from_the_vault_not_synced_as_empty() {
+        let server = MemoryServer::default();
+        let (mut a, mut b) = synced_pair(&server);
+
+        a.remove(".smaragd/project.json");
+        converge(&mut [&mut a, &mut b]);
+
+        assert_eq!(a.meta().logline, "A girl and a fjord.");
+        assert_eq!(a.meta().story_cards.len(), 1);
+        assert_eq!(b.meta().story_cards.len(), 1);
+    }
+
+    #[test]
+    fn metadata_state_survives_a_restart_and_a_quiet_pass_stays_quiet() {
+        let server = MemoryServer::default();
+        let (mut a, _b) = synced_pair(&server);
+        a.restart();
+        let report = a.sync();
+        assert!(report.is_quiet(), "{report:?}");
     }
 
     #[test]

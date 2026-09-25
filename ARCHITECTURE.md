@@ -39,8 +39,9 @@ src/
     mod.rs                 module overview; the sync core is pure and wasm-compatible, only client.rs is native-only
     crypto.rs               passphrase -> key (NFKC + Argon2id + blake3 subkey) and sealing/opening updates (XChaCha20-Poly1305, random nonce, AAD bound to vault + doc + key version)
     crdt.rs                 FileDoc: one synced markdown file as a CRDT (frontmatter keys as per-key registers + body as text)
-    manifest.rs             ManifestDoc: doc id -> {path, deleted} CRDT (renames/deletes merge; deletes are tombstones) + is_safe_relative_path for untrusted paths
-    engine.rs               SyncEngine::sync_once: one reconcile pass between a project folder and a vault (capture local edits, pull/merge, apply renames/deletes, push); transport-agnostic
+    manifest.rs             ManifestDoc: doc id -> {path, kind (file/folder), deleted} CRDT (renames/deletes merge; deletes are tombstones) + path-safety checks for untrusted paths
+    meta_crdt.rs            project.json (ProjectMeta) as a CRDT: SyncedFields (id-keyed snapshot; per-device fields like plugins_enabled never sync; paths <-> stable ids via PathIds) + MetaDoc (settings as registers, prose as text, order/cards/bookmarks as arrays)
+    engine.rs               SyncEngine::sync_once: one reconcile pass between a project folder and a vault (files, folders and project.json: capture local edits, pull/merge, apply renames/deletes, push); transport-agnostic
     transport.rs            the SyncTransport trait: the engine's blocking, data-plane-only view of the server
     state.rs                StateStore (+ DirStateStore over ProjectStore, MemoryStateStore for tests): local CRDT state between runs
     client.rs               native-only ureq HttpClient/HttpTransport: control plane (create vault, pairing, devices) + data plane

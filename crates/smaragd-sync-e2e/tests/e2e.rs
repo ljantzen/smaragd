@@ -181,6 +181,10 @@ fn two_devices_sync_a_project_through_the_real_server() {
         "Notes/Idea.md",
         "---\nstatus: draft\npov: Anna\n---\nWhat if?\n",
     );
+    a.write(
+        ".smaragd/project.json",
+        r#"{ "version": 1, "node_order": { "": ["Notes"] }, "logline": "A girl and a fjord.", "git_enabled": true }"#,
+    );
     let report = a.sync().unwrap();
     assert!(report.pushed_updates >= 3, "{report:?}");
 
