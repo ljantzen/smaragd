@@ -173,6 +173,23 @@ impl StoryGridColumn {
     }
 }
 
+/// A string that must never appear in logs or `{:?}` output — used for the sync
+/// passphrase, since `Settings` derives `Debug`. Serialized as a plain string like
+/// every other setting (see `Settings::sync_passphrase` for why it's stored in the clear).
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SecretString(pub String);
+
+impl std::fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_empty() {
+            "SecretString(<unset>)"
+        } else {
+            "SecretString(<redacted>)"
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -293,6 +310,37 @@ pub struct Settings {
     /// configured," resolved to `backup::default_backup_dir()` at the point
     /// of use (`resolve_backup_dir`).
     pub backup_dir: Option<PathBuf>,
+    /// Master switch for background sync through a self-hosted sync server (see
+    /// `crate::sync` and the manual's Sync chapter), set via Settings > Sync. A global
+    /// kill switch in the same relationship to per-project pairing that
+    /// `git_integration_enabled()` has to `ProjectMeta::git_enabled`: a project only
+    /// syncs when this is on *and* it has been paired with a vault. A brand new opt-in
+    /// feature, so the ordinary derived `Default` (`false`) applies.
+    pub sync_enabled: bool,
+    /// The sync server's host name (no scheme, no path). Blank means "not configured".
+    /// Used when *creating or joining* a vault; a paired project then remembers the
+    /// server it was paired with.
+    pub sync_server_host: String,
+    /// The sync server's port. `0` means "not yet configured," resolved by
+    /// `resolve_sync_server_port` (443 with TLS, 8080 without) — same blank-means-unset
+    /// convention as `backup_keep_count`.
+    pub sync_server_port: u16,
+    /// Connect over plain HTTP instead of HTTPS. Stored inverted, like
+    /// `git_integration_disabled`, because this struct's derived `Default` makes every
+    /// bool `false` and the safe default here is TLS *on*; see `sync_use_tls`.
+    pub sync_plain_http: bool,
+    /// Path prefix when the server sits behind a reverse proxy at a sub-path
+    /// (e.g. `smaragd` for `https://example.com/smaragd/`). Usually blank.
+    pub sync_server_path: String,
+    /// The end-to-end encryption passphrase, identical on every device that syncs. The
+    /// server never sees it; a key is derived from it in memory (Argon2id) and never
+    /// written to disk. Like every other setting it is stored in the clear in
+    /// `smaragd.toml` (there is no OS-keyring integration yet) — the same trust level as
+    /// the project's own plaintext files. It cannot be recovered if lost.
+    pub sync_passphrase: SecretString,
+    /// How this device shows up in the vault's device list. Blank resolves to
+    /// "Smaragd on <OS>" (`resolve_sync_device_name`).
+    pub sync_device_name: String,
     /// Pomodoro timer durations (minutes) and long-break cadence. `0` means
     /// "not yet configured," resolved to a real default at the point of use
     /// (`pomodoro::resolve_durations`) — same blank-means-unset convention as
@@ -602,6 +650,60 @@ impl Settings {
             .or_else(crate::backup::default_backup_dir)
     }
 
+    /// Whether to talk to the sync server over TLS (the default).
+    pub fn sync_use_tls(&self) -> bool {
+        !self.sync_plain_http
+    }
+
+    /// Resolve `sync_server_port`'s blank-means-unset (`0`) convention.
+    pub fn resolve_sync_server_port(&self) -> u16 {
+        match (self.sync_server_port, self.sync_use_tls()) {
+            (0, true) => 443,
+            (0, false) => 8080,
+            (port, _) => port,
+        }
+    }
+
+    /// Resolve `sync_device_name`'s blank-means-unset convention.
+    pub fn resolve_sync_device_name(&self) -> String {
+        let name = self.sync_device_name.trim();
+        if name.is_empty() {
+            format!("Smaragd on {}", std::env::consts::OS)
+        } else {
+            name.to_string()
+        }
+    }
+
+    /// Why sync can't be used with the current settings, in words for the user, or `None`
+    /// if the server and passphrase are both filled in sensibly.
+    pub fn sync_config_problem(&self) -> Option<&'static str> {
+        let host = self.sync_server_host.trim();
+        if host.is_empty() {
+            return Some("Enter the sync server's host name in Settings > Sync.");
+        }
+        if host.contains("://") || host.contains('/') || host.contains(char::is_whitespace) {
+            return Some(
+                "The sync server's host should be just a name like sync.example.com \
+                 (no http://, no path) — use the Path field for a sub-path.",
+            );
+        }
+        if self.sync_passphrase.0.is_empty() {
+            return Some("Enter your encryption passphrase in Settings > Sync.");
+        }
+        None
+    }
+
+    /// The configured sync server, or `None` if the host is blank.
+    pub fn sync_server_addr(&self) -> Option<smaragd_sync_protocol::ticket::ServerAddr> {
+        let host = self.sync_server_host.trim();
+        (!host.is_empty()).then(|| smaragd_sync_protocol::ticket::ServerAddr {
+            host: host.to_string(),
+            port: self.resolve_sync_server_port(),
+            use_tls: self.sync_use_tls(),
+            path: self.sync_server_path.trim().trim_matches('/').to_string(),
+        })
+    }
+
     /// The full Story Grid column order, every `StoryGridColumn` present — the
     /// "Columns" menu needs to list hidden columns too, only
     /// `story_grid_hidden_columns` controls visibility. Appends any variant
@@ -822,6 +924,103 @@ mod tests {
     }
 
     #[test]
+    fn the_sync_passphrase_never_shows_up_in_debug_output() {
+        let settings = Settings {
+            sync_passphrase: SecretString("hunter2".into()),
+            ..Default::default()
+        };
+        let shown = format!("{settings:?}");
+        assert!(!shown.contains("hunter2"), "{shown}");
+        assert!(shown.contains("redacted"));
+    }
+
+    #[test]
+    fn the_sync_passphrase_round_trips_through_toml_as_a_plain_string() {
+        let settings = Settings {
+            sync_passphrase: SecretString("correct horse".into()),
+            sync_server_host: "sync.example.com".into(),
+            ..Default::default()
+        };
+        let text = toml::to_string_pretty(&settings).unwrap();
+        assert!(
+            text.contains("sync_passphrase = \"correct horse\""),
+            "{text}"
+        );
+        let back: Settings = toml::from_str(&text).unwrap();
+        assert_eq!(back.sync_passphrase.0, "correct horse");
+    }
+
+    #[test]
+    fn sync_is_off_and_uses_tls_by_default() {
+        let settings = Settings::default();
+        assert!(!settings.sync_enabled);
+        assert!(settings.sync_use_tls());
+        assert_eq!(settings.resolve_sync_server_port(), 443);
+        assert!(settings.sync_server_addr().is_none());
+    }
+
+    #[test]
+    fn the_sync_port_defaults_follow_the_scheme_unless_set() {
+        let mut settings = Settings {
+            sync_plain_http: true,
+            ..Default::default()
+        };
+        assert_eq!(settings.resolve_sync_server_port(), 8080);
+        settings.sync_server_port = 9000;
+        assert_eq!(settings.resolve_sync_server_port(), 9000);
+    }
+
+    #[test]
+    fn the_sync_server_addr_is_built_from_the_fields() {
+        let settings = Settings {
+            sync_server_host: "  sync.example.com ".into(),
+            sync_server_path: "/smaragd/".into(),
+            ..Default::default()
+        };
+        let addr = settings.sync_server_addr().unwrap();
+        assert_eq!(addr.base_url(), "https://sync.example.com:443/smaragd");
+    }
+
+    #[test]
+    fn sync_config_problems_are_explained_in_order() {
+        let mut settings = Settings::default();
+        assert!(
+            settings
+                .sync_config_problem()
+                .unwrap()
+                .contains("host name")
+        );
+        settings.sync_server_host = "https://sync.example.com/x".into();
+        assert!(
+            settings
+                .sync_config_problem()
+                .unwrap()
+                .contains("just a name")
+        );
+        settings.sync_server_host = "sync.example.com".into();
+        assert!(
+            settings
+                .sync_config_problem()
+                .unwrap()
+                .contains("passphrase")
+        );
+        settings.sync_passphrase = SecretString("pw".into());
+        assert_eq!(settings.sync_config_problem(), None);
+    }
+
+    #[test]
+    fn a_blank_sync_device_name_gets_a_sensible_default() {
+        let mut settings = Settings::default();
+        assert!(
+            settings
+                .resolve_sync_device_name()
+                .starts_with("Smaragd on ")
+        );
+        settings.sync_device_name = "  Anna's laptop ".into();
+        assert_eq!(settings.resolve_sync_device_name(), "Anna's laptop");
+    }
+
+    #[test]
     fn resolve_backup_keep_count_falls_back_to_the_default_when_unconfigured() {
         let settings = Settings {
             backup_keep_count: 0,
@@ -1025,6 +1224,13 @@ mod tests {
             backup_on_manual_save: false,
             backup_keep_count: 5,
             backup_dir: Some(PathBuf::from("/home/author/backups")),
+            sync_enabled: true,
+            sync_server_host: "sync.example.com".into(),
+            sync_server_port: 8443,
+            sync_plain_http: true,
+            sync_server_path: "smaragd".into(),
+            sync_passphrase: SecretString("a long passphrase".into()),
+            sync_device_name: "Anna's laptop".into(),
             shortcuts,
             theme_preference: egui::ThemePreference::Dark,
             color_theme: Some("dracula".to_string()),

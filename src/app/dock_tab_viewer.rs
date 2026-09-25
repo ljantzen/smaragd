@@ -52,6 +52,7 @@ pub(super) enum DockAction {
     Pomodoro(crate::ui::pomodoro_panel::PomodoroEvent),
     WordCount(crate::ui::word_count_panel::WordCountEvent),
     Collab(CollabPanelEvent),
+    Sync(crate::ui::sync_panel::SyncPanelEvent),
     Streak(crate::ui::streak_panel::StreakEvent),
     /// Raised by the Binder tab's empty state (no project open) when the user
     /// clicks "New Project" / "Open Project" — routed through `DockAction`
@@ -135,6 +136,8 @@ pub(super) struct AppTabViewer<'a> {
     pub(super) focus_binder_requested: bool,
     /// Derived from `SmaragdApp::collab` — see `CollabStatus`.
     pub(super) collab_status: CollabStatus<'a>,
+    /// Derived from `SmaragdApp::sync` — see `sync.rs`.
+    pub(super) sync_view: crate::ui::sync_panel::SyncPanelData<'a>,
     /// Whether a collaboration session is active — see `editor_panel::show`'s
     /// `collaborating` parameter.
     pub(super) collaborating: bool,
@@ -163,6 +166,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::Pomodoro => "Pomodoro".into(),
             DockTab::WordCount => "Word Count".into(),
             DockTab::Collab => "Collaborate".into(),
+            DockTab::Sync => "Sync".into(),
             DockTab::Streak => "Streak".into(),
             DockTab::Bookmarks => "Bookmarks".into(),
         }
@@ -580,6 +584,11 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::Collab => {
                 if let Some(event) = ui::collab_panel::show(ui, self.collab_status) {
                     self.actions.push(DockAction::Collab(event));
+                }
+            }
+            DockTab::Sync => {
+                if let Some(event) = ui::sync_panel::show(ui, &self.sync_view) {
+                    self.actions.push(DockAction::Sync(event));
                 }
             }
             DockTab::Streak => match self.project {

@@ -140,6 +140,9 @@ pub struct SyncReport {
     /// `project.json` was rewritten with merged remote changes. The app must reload
     /// its in-memory project metadata when this is set, or it will overwrite them.
     pub meta_written: bool,
+    /// Files whose merged text was not written because the app reported them as having
+    /// unsaved edits (see `set_held_paths`); they're written once the app releases them.
+    pub files_held: usize,
 }
 
 impl SyncReport {
@@ -200,6 +203,11 @@ struct Tracked<D> {
     pending: Vec<Vec<u8>>,
     /// Where this device has the file on disk, `None` if not materialized here.
     local_path: Option<String>,
+    /// A file document's state as of the last time it was known to match the file on
+    /// disk. Local edits are diffed against *this*, then merged into the live document,
+    /// so an edit made while remote changes were waiting (see `set_held_paths`) is
+    /// merged with them instead of reverting them.
+    base: Option<Vec<u8>>,
     dirty: bool,
 }
 
@@ -207,6 +215,7 @@ impl<D> Tracked<D> {
     fn new(doc: D) -> Self {
         Self {
             doc,
+            base: None,
             last_seq: 0,
             pending: Vec::new(),
             local_path: None,
@@ -231,6 +240,8 @@ struct Persisted {
     last_seq: u64,
     pending: Vec<Vec<u8>>,
     local_path: Option<String>,
+    /// Empty when there is none (see `Tracked::base`).
+    base: Vec<u8>,
 }
 
 fn persist_bytes<D: Crdt>(tracked: &Tracked<D>) -> Vec<u8> {
@@ -239,6 +250,7 @@ fn persist_bytes<D: Crdt>(tracked: &Tracked<D>) -> Vec<u8> {
         last_seq: tracked.last_seq,
         pending: tracked.pending.clone(),
         local_path: tracked.local_path.clone(),
+        base: tracked.base.clone().unwrap_or_default(),
     })
     .expect("Persisted always serializes")
 }
@@ -370,6 +382,23 @@ fn collision_path(path: &str, id: DocId) -> String {
     format!("{stem} (conflict {short}).md")
 }
 
+/// Records a local edit: `text` is what's on disk now. The edit is computed against the
+/// document as it stood when the file last matched it (`base`), then applied to the live
+/// document, which may have moved on since. Returns the update to push, if any.
+fn capture_local(tracked: &mut Tracked<FileDoc>, text: &str) -> Option<Vec<u8>> {
+    if let Some(base) = &tracked.base
+        && let Ok(mut fork) = FileDoc::from_state(base)
+    {
+        let update = fork.set_text(text)?;
+        tracked
+            .doc
+            .apply_update(&update)
+            .expect("an update made on a fork of this document applies to it");
+        return Some(update);
+    }
+    tracked.doc.set_text(text)
+}
+
 fn pull_into<D: Crdt>(
     key: &VaultKey,
     vault: VaultId,
@@ -435,6 +464,8 @@ pub struct SyncEngine {
     /// `PathIds::with_previous`).
     meta_paths: BTreeMap<String, DocId>,
     meta_paths_dirty: bool,
+    /// Paths the app has open with unsaved edits; never overwritten on disk.
+    held: BTreeSet<String>,
 }
 
 impl SyncEngine {
@@ -452,6 +483,7 @@ impl SyncEngine {
                     last_seq: saved.last_seq,
                     pending: saved.pending,
                     local_path: None,
+                    base: None,
                     dirty: false,
                 }
             }
@@ -468,6 +500,7 @@ impl SyncEngine {
                         last_seq: saved.last_seq,
                         pending: saved.pending,
                         local_path: saved.local_path,
+                        base: (!saved.base.is_empty()).then_some(saved.base),
                         dirty: false,
                     },
                 );
@@ -481,6 +514,7 @@ impl SyncEngine {
                     last_seq: saved.last_seq,
                     pending: saved.pending,
                     local_path: None,
+                    base: None,
                     dirty: false,
                 }
             }
@@ -506,10 +540,20 @@ impl SyncEngine {
             meta,
             meta_paths,
             meta_paths_dirty: false,
+            held: BTreeSet::new(),
             docs,
             dir_paths,
             dirs_dirty: false,
         })
+    }
+
+    /// Tells the engine which files (project-relative, `/`-separated) the user has open
+    /// with unsaved edits. Their merged text is *not* written to disk while held — the
+    /// buffer isn't on disk yet, so writing would clobber it or raise a conflict — and
+    /// once the user saves and the path is released, their edit is merged with whatever
+    /// arrived meanwhile.
+    pub fn set_held_paths(&mut self, paths: BTreeSet<String>) {
+        self.held = paths;
     }
 
     /// Every manifest entry (tombstones included), for status displays and tests.
@@ -1047,6 +1091,7 @@ impl SyncEngine {
             tracked.pending.push(update);
         }
         tracked.local_path = Some(path.to_string());
+        tracked.base = Some(tracked.doc.encode_state());
         self.docs.insert(id, tracked);
         id
     }
@@ -1114,15 +1159,16 @@ impl SyncEngine {
         };
 
         if let Some(text) = &disk {
-            let held = &self.docs[&id];
+            let known = &self.docs[&id];
             let differs_from_vault =
-                held.local_path.is_none() && !held.doc.is_empty() && *text != held.doc.render();
+                known.local_path.is_none() && !known.doc.is_empty() && *text != known.doc.render();
             if differs_from_vault {
                 let copy = self.unique_path(&conflict_copy_path(&entry.path));
                 write_file(&*self.files, &self.cfg.root, &copy, text)?;
                 self.create_local_doc(&copy, text);
                 report.conflict_copies.push(copy);
-            } else if let Some(update) = self.docs.get_mut(&id).expect("present").doc.set_text(text)
+            } else if let Some(update) =
+                capture_local(self.docs.get_mut(&id).expect("present"), text)
             {
                 let tracked = self.docs.get_mut(&id).expect("present");
                 tracked.pending.push(update);
@@ -1152,15 +1198,20 @@ impl SyncEngine {
             (Disk::Missing, None) => true,
             _ => false,
         };
-        if !already_current && safe_to_write {
+        let held = self.held.contains(&entry.path) && !already_current;
+        if held {
+            report.files_held += 1;
+        }
+        if !already_current && safe_to_write && !held {
             write_file(&*self.files, &self.cfg.root, &entry.path, &merged)?;
             report.files_written += 1;
         }
-        if already_current || safe_to_write {
+        if already_current || (safe_to_write && !held) {
             let tracked = self.docs.get_mut(&id).expect("present");
             if tracked.local_path.as_deref() != Some(entry.path.as_str()) {
                 tracked.local_path = Some(entry.path.clone());
             }
+            tracked.base = Some(tracked.doc.encode_state());
             tracked.dirty = true;
         }
         Ok(())
@@ -2349,6 +2400,37 @@ mod tests {
         a.restart();
         let report = a.sync();
         assert!(report.is_quiet(), "{report:?}");
+    }
+
+    #[test]
+    fn a_file_with_unsaved_edits_is_held_and_then_merged_with_what_arrived() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        let mut b = Device::new(&server);
+        a.write("a.md", "line one\n\nline two\n");
+        converge(&mut [&mut a, &mut b]);
+
+        // B has the file open and is typing (nothing saved yet); A edits the top.
+        b.engine
+            .set_held_paths(BTreeSet::from(["a.md".to_string()]));
+        a.write("a.md", "line one, from A\n\nline two\n");
+        a.sync();
+        let report = b.sync();
+        assert_eq!(report.files_held, 1, "{report:?}");
+        assert_eq!(
+            b.read("a.md"),
+            "line one\n\nline two\n",
+            "the file on disk must not be touched while B has unsaved edits"
+        );
+
+        // B saves (its buffer = the old text plus its own edit), then the app releases it.
+        b.write("a.md", "line one\n\nline two, from B\n");
+        b.engine.set_held_paths(BTreeSet::new());
+        converge(&mut [&mut a, &mut b]);
+
+        let merged = "line one, from A\n\nline two, from B\n";
+        assert_eq!(a.read("a.md"), merged);
+        assert_eq!(b.read("a.md"), merged, "A's edit must not be reverted");
     }
 
     #[test]

@@ -65,6 +65,11 @@ impl MemoryTransport {
         }
     }
 
+    /// The switch behind [`Self::set_online`], for tests that hand the transport away.
+    pub fn online_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.online)
+    }
+
     pub fn set_online(&self, online: bool) {
         self.online.store(online, Ordering::SeqCst);
     }

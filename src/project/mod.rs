@@ -268,6 +268,24 @@ impl Project {
         self.save_metadata()
     }
 
+    /// Re-reads `.smaragd/project.json` from disk, replacing the in-memory metadata if it
+    /// changed — needed when something other than this `Project` wrote it (background
+    /// sync merging another device's edits), because the next `save_metadata` would
+    /// otherwise overwrite them with the stale in-memory copy. Re-applies the manual
+    /// binder ordering. Returns whether anything changed. An unreadable file leaves the
+    /// current metadata alone.
+    pub fn reload_metadata(&mut self) -> bool {
+        let Some(meta) = load_metadata(self.store.as_ref(), &self.root) else {
+            return false;
+        };
+        if meta == self.meta {
+            return false;
+        }
+        self.meta = meta;
+        self.rescan();
+        true
+    }
+
     /// Turn git support on for this project and record that the user's been asked
     /// (so the one-time "enable git support?" dialog never asks again).
     pub fn enable_git_support(&mut self) -> io::Result<()> {
@@ -501,6 +519,32 @@ fn save_metadata(store: &dyn ProjectStore, root: &Path, meta: &ProjectMeta) -> i
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reload_metadata_picks_up_an_outside_change_and_ignores_no_change() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".smaragd")).unwrap();
+        std::fs::write(
+            dir.path().join(".smaragd/project.json"),
+            r#"{ "version": 1, "node_order": {} }"#,
+        )
+        .unwrap();
+        let mut project = Project::load_from_folder(dir.path()).unwrap();
+        assert!(!project.reload_metadata(), "nothing changed on disk");
+
+        // Another writer (background sync) edits the file behind the project's back.
+        let mut outside = project.meta.clone();
+        outside.logline = "changed elsewhere".into();
+        save_metadata(project.store.as_ref(), &project.root, &outside).unwrap();
+        assert!(project.reload_metadata());
+        assert_eq!(project.meta.logline, "changed elsewhere");
+        assert!(!project.reload_metadata(), "already up to date");
+
+        // A corrupt file must not wipe what we have.
+        std::fs::write(dir.path().join(".smaragd/project.json"), "{ nope").unwrap();
+        assert!(!project.reload_metadata());
+        assert_eq!(project.meta.logline, "changed elsewhere");
+    }
 
     #[test]
     fn metadata_round_trips_through_disk() {

@@ -35,6 +35,13 @@ pub(super) enum PromptAction {
     /// Join a collaboration session using the pasted connection code (see
     /// `start_collab_join`).
     JoinCollabSession,
+    /// Join a sync vault using the pasted pairing ticket (see `sync_join_with_ticket`).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    SyncJoinTicket,
+    /// Create a sync vault on a server that needs its admin token (see
+    /// `sync_create_vault_with_token`).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    SyncAdminToken,
     /// Save the current project's structure as a new custom template under the
     /// confirmed name (see `save_project_as_template`).
     SaveProjectAsTemplate,
@@ -269,6 +276,8 @@ impl SmaragdApp {
             PromptAction::SaveLayout => self.save_named_layout(ctx, name),
             PromptAction::SaveProjectAsTemplate => self.save_project_as_template(name),
             PromptAction::JoinCollabSession => self.start_collab_join(ctx, name),
+            PromptAction::SyncJoinTicket => self.sync_join_with_ticket(ctx, name),
+            PromptAction::SyncAdminToken => self.sync_create_vault_with_token(ctx, name),
         }
     }
 
