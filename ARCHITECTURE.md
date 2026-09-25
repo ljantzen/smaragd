@@ -35,6 +35,16 @@ src/
     ticket.rs                the pasteable connection code: iroh EndpointAddr + session secret, postcard + base58
     crypto.rs                app-level end-to-end encryption layered on top of iroh's transport security (directional keys, implicit counter nonces, host identity folded into key derivation)
     net.rs                   iroh networking on its own background thread/tokio runtime: pairing handshake, encrypted frame exchange
+  sync/
+    mod.rs                 module overview; the sync core is pure and wasm-compatible, only client.rs is native-only
+    crypto.rs               passphrase -> key (NFKC + Argon2id + blake3 subkey) and sealing/opening updates (XChaCha20-Poly1305, random nonce, AAD bound to vault + doc + key version)
+    crdt.rs                 FileDoc: one synced markdown file as a CRDT (frontmatter keys as per-key registers + body as text)
+    manifest.rs             ManifestDoc: doc id -> {path, deleted} CRDT (renames/deletes merge; deletes are tombstones) + is_safe_relative_path for untrusted paths
+    engine.rs               SyncEngine::sync_once: one reconcile pass between a project folder and a vault (capture local edits, pull/merge, apply renames/deletes, push); transport-agnostic
+    transport.rs            the SyncTransport trait: the engine's blocking, data-plane-only view of the server
+    state.rs                StateStore (+ DirStateStore over ProjectStore, MemoryStateStore for tests): local CRDT state between runs
+    client.rs               native-only ureq HttpClient/HttpTransport: control plane (create vault, pairing, devices) + data plane
+    fake.rs                 (tests only) in-memory server for simulating several devices
   export/
     mod.rs                 gather() (binder walk, Trash/Templates-skipping) + shared ExportDoc/BookMeta/ExportError
     style.rs                TypesetStyle: built-in + loaded-from-.toml typesetting styles shared by all 3 formats
@@ -81,6 +91,24 @@ src/
 
 Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, Story Grid, Belief Timeline, Pomodoro, Word Count, Collaborate, and Streak all dock together in one shared area via [`egui_dock`](https://github.com/Adanos020/egui_dock), wired up in `app.rs`'s `DockTab`/`AppTabViewer`.
 
+## Sync (self-hosted server)
+
+Sync keeps a project identical across a user's own devices through a **blind** server: it stores and relays sealed CRDT updates and can read none of them (contrast `collab/`, which is live, peer-to-peer and serverless). All merging happens on the clients. Files are CRDT documents (`sync/crdt.rs`); a manifest CRDT (`sync/manifest.rs`) maps stable document ids to paths, so renames and deletes merge too. See the module docs in `src/sync/engine.rs` for the reconcile pass, the join/adoption rules, and the safety rails.
+
+The repository is a Cargo workspace with **three deliberately separate lockfiles**:
+
+```
+Cargo.toml / Cargo.lock       the desktop app (+ crates/smaragd-sync-protocol as a workspace member)
+crates/
+  smaragd-sync-protocol/      wire types shared by client and server: ids, encrypted-envelope layout + AAD, the SyncTicket pairing code, HTTP API request/response types (wasm32-compatible; its rustdoc is the protocol reference)
+  smaragd-sync-server/        the axum + SQLite server, its Dockerfile/compose file and self-hosting README. Its OWN workspace and Cargo.lock
+  smaragd-sync-e2e/           end-to-end tests: the real client + engine (from the app crate) against the real server. Its OWN workspace and Cargo.lock
+```
+
+The server and e2e crates are `exclude`d from the root workspace because `scripts/update-flatpak-sources.sh` feeds the *entire* root `Cargo.lock` to the flatpak generator (CI diffs the result): server dependencies (axum, rusqlite, ...) must not enter it. The e2e crate is separate from the server so the server's Docker build (which cannot see the app) never has to resolve a path dependency on the app. `just check` runs all three; `.github/workflows/sync-server.yml` runs the server and e2e jobs and builds/publishes the image.
+
+Where state lives: nothing secret goes inside the project folder (`git.rs` runs `git add -A`; `backup.rs` zips `.smaragd/`). The engine's CRDT state goes through `sync::state::StateStore` (an OS data-dir location, chosen by the app), keys are derived in memory from the passphrase and never written to disk, and the server holds only hashes of device tokens and pairing codes.
+
 ## The wasm32 (browser) build
 
-The same crate also targets `wasm32-unknown-unknown`, built with [`trunk`](https://trunkrs.dev/) from the repo-root `index.html` (`trunk build`/`trunk serve`; the [Pages workflow](.github/workflows/pages.yml) publishes a release build to https://ljantzen.github.io/smaragd/app/ each time a version is tagged). `Cargo.toml`'s `[target.'cfg(...)'.dependencies]` tables split native-only deps (iroh, tokio, directories, notify-rust, ureq, rfd's native dialogs) from wasm32-only ones (rexie, serde-wasm-bindgen, wasm-bindgen(-futures), console_error_panic_hook). Features with no browser equivalent — git, p2p collaboration, native notifications, plugin subprocess execution, Scrivener import — are `#[cfg(not(target_arch = "wasm32"))]`-gated out of the UI rather than attempted; see `project/store.rs`/`browser_store.rs` above for the storage side of that split. Synchronous fs-shaped call sites keep working unchanged on both targets through the `ProjectStore` trait; the few genuinely async boundaries (project bundle load, browser file pick/save, IndexedDB persistence) use a `wasm_bindgen_futures::spawn_local` + `std::sync::mpsc::channel` + poll-once-per-frame pattern instead of threading async through the whole app (see `app/project_lifecycle.rs`'s `spawn_browser_project_load`/`poll_browser_project_load` for the shape).
+The same crate also targets `wasm32-unknown-unknown`, built with [`trunk`](https://trunkrs.dev/) from the repo-root `index.html` (`trunk build`/`trunk serve`; the [Pages workflow](.github/workflows/pages.yml) publishes a release build to https://ljantzen.github.io/smaragd/app/ each time a version is tagged). `Cargo.toml`'s `[target.'cfg(...)'.dependencies]` tables split native-only deps (iroh, tokio, directories, notify-rust, ureq, rfd's native dialogs) from wasm32-only ones (rexie, serde-wasm-bindgen, wasm-bindgen(-futures), console_error_panic_hook). Features with no browser equivalent — git, p2p collaboration, the HTTP sync client (the rest of `src/sync/` is pure and compiles for wasm32; a `fetch`-based `SyncTransport` is future work), native notifications, plugin subprocess execution, Scrivener import — are `#[cfg(not(target_arch = "wasm32"))]`-gated out of the UI rather than attempted; see `project/store.rs`/`browser_store.rs` above for the storage side of that split. Synchronous fs-shaped call sites keep working unchanged on both targets through the `ProjectStore` trait; the few genuinely async boundaries (project bundle load, browser file pick/save, IndexedDB persistence) use a `wasm_bindgen_futures::spawn_local` + `std::sync::mpsc::channel` + poll-once-per-frame pattern instead of threading async through the whole app (see `app/project_lifecycle.rs`'s `spawn_browser_project_load`/`poll_browser_project_load` for the shape).

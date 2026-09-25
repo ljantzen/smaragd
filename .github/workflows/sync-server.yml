@@ -36,9 +36,6 @@ jobs:
         with:
           workspaces: crates/smaragd-sync-server
 
-      # The end-to-end test links the whole desktop app crate (it exercises the
-      # real client against the real server), which needs the same system
-      # libraries the main CI job installs implicitly on ubuntu-latest.
       - name: cargo fmt --check
         working-directory: crates/smaragd-sync-server
         run: cargo fmt --check
@@ -51,10 +48,38 @@ jobs:
         working-directory: crates/smaragd-sync-server
         run: cargo test --locked
 
+  e2e:
+    name: End-to-end (real client + real server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/smaragd-sync-e2e
+
+      # Links the whole desktop app plus the server, so it's about as heavy as the
+      # main CI job; that's why it's a crate (and a job) of its own.
+      - name: cargo fmt --check
+        working-directory: crates/smaragd-sync-e2e
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        working-directory: crates/smaragd-sync-e2e
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: cargo test
+        working-directory: crates/smaragd-sync-e2e
+        run: cargo test --locked
+
   docker:
     name: Docker image
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, e2e]
     permissions:
       contents: read
       packages: write

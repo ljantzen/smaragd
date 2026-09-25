@@ -197,7 +197,11 @@ app's lockfile):
 ```sh
 cd crates/smaragd-sync-server
 cargo build --release      # target/release/smaragd-sync-server
-cargo test                 # unit + HTTP tests, plus an end-to-end test with the real client
+cargo test                 # unit + HTTP tests
+
+# End-to-end tests (real Smaragd client + engine against this server) live in a
+# crate of their own, because they link the whole desktop app:
+cd ../smaragd-sync-e2e && cargo test
 SMARAGD_SYNC_ALLOW_OPEN_REGISTRATION=true cargo run
 ```
 

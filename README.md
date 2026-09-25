@@ -61,11 +61,16 @@ cargo run
 A [`justfile`](justfile) wraps the common commands (`just --list` to see all of them):
 
 ```sh
-just check      # fmt-check + clippy + test — same as CI, run before committing
-just test       # cargo test --all-targets --all-features
-just clippy     # cargo clippy --all-targets --all-features -- -D warnings
-just fmt        # cargo fmt
+just check         # fmt-check + clippy + test (app, sync server, end-to-end) — same as CI, run before committing
+just test          # cargo test --workspace --all-targets --all-features
+just clippy        # cargo clippy --workspace --all-targets --all-features -- -D warnings
+just fmt           # cargo fmt --all
+just server-check  # fmt-check + clippy + test for the sync server (its own Cargo workspace)
+just e2e           # end-to-end tests: the real sync client against the real server
+just docker-build  # build the sync server's Docker image
 ```
+
+The sync server and its end-to-end tests are separate Cargo workspaces under `crates/` (see [ARCHITECTURE.md](ARCHITECTURE.md#sync-self-hosted-server) for why); the server has its own [self-hosting guide](crates/smaragd-sync-server/README.md).
 
 (Equivalent plain `cargo` commands work too, if you don't have [`just`](https://github.com/casey/just) installed — see the justfile for the exact invocations.)
 

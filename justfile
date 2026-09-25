@@ -42,7 +42,7 @@ fmt-check:
     cargo fmt --all --check
 
 # Run everything CI runs: fmt-check, clippy, test (app + sync server) — use before committing
-check: fmt-check clippy test server-check
+check: fmt-check clippy test server-check e2e
 
 # --- Sync server (crates/smaragd-sync-server is its own Cargo workspace) ---
 
@@ -57,6 +57,10 @@ server-run:
 # Format-check, lint and test the sync server (matches CI's "Sync server" job)
 server-check:
     cd crates/smaragd-sync-server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+
+# End-to-end tests: the real sync client/engine against the real server (heavy: links the whole app)
+e2e:
+    cd crates/smaragd-sync-e2e && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 
 # Build the sync server's Docker image (context must be the repo root)
 docker-build:

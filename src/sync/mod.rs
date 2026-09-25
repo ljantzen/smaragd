@@ -10,6 +10,8 @@
 //! native-only dependencies so the same core compiles for the browser build; only
 //! the eventual HTTP transport is native-only.
 //!
+//! - `client` (native only) — the blocking `ureq` implementation of the transport, plus
+//!   the control-plane calls (create a vault, pair and manage devices).
 //! - [`crdt`] — the CRDT document behind one synced markdown file (frontmatter keys
 //!   as per-key registers, body as text).
 //! - [`crypto`] — passphrase → key derivation (Argon2id) and sealing/opening the
@@ -23,6 +25,8 @@
 //! - [`manifest`] — which documents exist, where they live, and whether they were
 //!   deleted (tombstones), itself a CRDT so renames and deletes merge.
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod client;
 pub mod crdt;
 pub mod crypto;
 pub mod engine;
