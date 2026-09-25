@@ -10,8 +10,25 @@
 //! native-only dependencies so the same core compiles for the browser build; only
 //! the eventual HTTP transport is native-only.
 //!
+//! - [`crdt`] — the CRDT document behind one synced markdown file (frontmatter keys
+//!   as per-key registers, body as text).
 //! - [`crypto`] — passphrase → key derivation (Argon2id) and sealing/opening the
 //!   per-update envelope (XChaCha20-Poly1305, random nonce, AAD-bound to the
 //!   vault and document).
+//! - [`engine`] — one reconcile pass between a project folder and a vault: capture
+//!   local edits, pull and merge remote ones, apply renames/deletes, push.
+//! - [`transport`] — the engine's blocking view of the server, so it's testable
+//!   against an in-memory fake with several simulated devices.
+//! - [`state`] — where the engine keeps its local CRDT state between runs.
+//! - [`manifest`] — which documents exist, where they live, and whether they were
+//!   deleted (tombstones), itself a CRDT so renames and deletes merge.
 
+pub mod crdt;
 pub mod crypto;
+pub mod engine;
+pub mod manifest;
+pub mod state;
+pub mod transport;
+
+#[cfg(test)]
+mod fake;

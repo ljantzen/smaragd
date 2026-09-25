@@ -151,6 +151,14 @@ fn derive_with_params(
     Ok(VaultKey { key, key_version })
 }
 
+/// A key derived with the cheapest legal Argon2 parameters, for other modules'
+/// tests (the production cost would make every simulated device take a second).
+#[cfg(test)]
+pub(crate) fn cheap_test_key(passphrase: &str, salt: &[u8]) -> VaultKey {
+    let params = Params::new(8, 1, 1, Some(KEY_LEN)).unwrap();
+    derive_with_params(passphrase, salt, KEY_VERSION, params).unwrap()
+}
+
 impl VaultKey {
     pub fn key_version(&self) -> u8 {
         self.key_version

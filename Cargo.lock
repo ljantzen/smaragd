@@ -6587,6 +6587,7 @@ name = "smaragd"
 version = "1.2.1"
 dependencies = [
  "argon2",
+ "base64 0.22.1",
  "blake3",
  "bs58",
  "chacha20poly1305",

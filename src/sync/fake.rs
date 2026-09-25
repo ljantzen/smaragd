@@ -1,0 +1,137 @@
+//! An in-memory stand-in for the sync server, for simulating several devices.
+//!
+//! Mirrors the real server's contract exactly where the engine depends on it:
+//! per-document sequence numbers that are gap-free and start at 1, snapshots that
+//! replace the updates they cover, and no ability to read any blob. Each
+//! [`MemoryTransport`] is one device's connection and can be switched offline.
+
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+use smaragd_sync_protocol::api::{DocSummary, PullUpdatesResponse, Snapshot, StoredUpdate};
+use smaragd_sync_protocol::{DeviceId, DocId};
+
+use super::transport::{SyncTransport, TransportError};
+
+#[derive(Debug, Default)]
+struct DocLog {
+    snapshot: Option<Snapshot>,
+    updates: Vec<StoredUpdate>,
+    latest_seq: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MemoryServer {
+    docs: Arc<Mutex<BTreeMap<DocId, DocLog>>>,
+}
+
+impl MemoryServer {
+    /// Every blob the server currently stores, for asserting it's all ciphertext.
+    pub fn all_blobs(&self) -> Vec<Vec<u8>> {
+        let docs = self.docs.lock().unwrap();
+        docs.values()
+            .flat_map(|log| {
+                log.snapshot
+                    .iter()
+                    .map(|s| s.blob.clone())
+                    .chain(log.updates.iter().map(|u| u.blob.clone()))
+            })
+            .collect()
+    }
+
+    pub fn update_count(&self, doc: DocId) -> usize {
+        self.docs
+            .lock()
+            .unwrap()
+            .get(&doc)
+            .map_or(0, |log| log.updates.len())
+    }
+}
+
+#[derive(Debug)]
+pub struct MemoryTransport {
+    server: MemoryServer,
+    device: DeviceId,
+    online: Arc<AtomicBool>,
+}
+
+impl MemoryTransport {
+    pub fn new(server: &MemoryServer, device: DeviceId) -> Self {
+        Self {
+            server: server.clone(),
+            device,
+            online: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    pub fn set_online(&self, online: bool) {
+        self.online.store(online, Ordering::SeqCst);
+    }
+
+    fn check_online(&self) -> Result<(), TransportError> {
+        if self.online.load(Ordering::SeqCst) {
+            Ok(())
+        } else {
+            Err(TransportError::Offline("simulated outage".into()))
+        }
+    }
+}
+
+impl SyncTransport for MemoryTransport {
+    fn list_docs(&self) -> Result<Vec<DocSummary>, TransportError> {
+        self.check_online()?;
+        let docs = self.server.docs.lock().unwrap();
+        Ok(docs
+            .iter()
+            .map(|(doc_id, log)| DocSummary {
+                doc_id: *doc_id,
+                latest_seq: log.latest_seq,
+            })
+            .collect())
+    }
+
+    fn pull(&self, doc: DocId, since: u64) -> Result<PullUpdatesResponse, TransportError> {
+        self.check_online()?;
+        let docs = self.server.docs.lock().unwrap();
+        let Some(log) = docs.get(&doc) else {
+            return Ok(PullUpdatesResponse {
+                snapshot: None,
+                updates: vec![],
+            });
+        };
+        let snapshot = log.snapshot.clone().filter(|s| s.upto_seq > since);
+        let floor = snapshot.as_ref().map_or(since, |s| s.upto_seq.max(since));
+        Ok(PullUpdatesResponse {
+            snapshot,
+            updates: log
+                .updates
+                .iter()
+                .filter(|u| u.seq > floor)
+                .cloned()
+                .collect(),
+        })
+    }
+
+    fn push(&self, doc: DocId, sealed: &[u8]) -> Result<u64, TransportError> {
+        self.check_online()?;
+        let mut docs = self.server.docs.lock().unwrap();
+        let log = docs.entry(doc).or_default();
+        log.latest_seq += 1;
+        log.updates.push(StoredUpdate {
+            seq: log.latest_seq,
+            device_id: self.device,
+            blob: sealed.to_vec(),
+        });
+        Ok(log.latest_seq)
+    }
+
+    fn put_snapshot(&self, doc: DocId, snapshot: &Snapshot) -> Result<(), TransportError> {
+        self.check_online()?;
+        let mut docs = self.server.docs.lock().unwrap();
+        let log = docs.entry(doc).or_default();
+        log.updates.retain(|u| u.seq > snapshot.upto_seq);
+        log.snapshot = Some(snapshot.clone());
+        Ok(())
+    }
+}
