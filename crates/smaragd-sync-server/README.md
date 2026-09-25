@@ -179,9 +179,9 @@ server refuses to open a database written by a *newer* version.
 
 - Each pushed update or snapshot is at most **8 MiB**.
 - Each vault may store up to `SMARAGD_SYNC_VAULT_QUOTA_MB` of ciphertext; over that,
-  pushes fail with `507`. The protocol lets clients replace old updates with a
-  compact snapshot (`PUT .../snapshot`), which is how a vault's size is kept in
-  check.
+  pushes fail with `507`. Smaragd clients replace a document's old updates with a
+  compact snapshot (`PUT .../snapshot`) once it has about 64 of them, which is how a
+  vault's size is kept in check.
 
 ### Devices and vaults
 
@@ -214,7 +214,6 @@ SMARAGD_SYNC_ALLOW_OPEN_REGISTRATION=true cargo run
 - **"sync passphrase doesn't match this vault"** — reported by Smaragd, not the
   server: a device is using a different passphrase than the one the vault was
   created with.
-- **`507`** — the vault hit its quota; raise `SMARAGD_SYNC_VAULT_QUOTA_MB`, or have clients compact old updates into a
-  snapshot.
+- **`507`** — the vault hit its quota. Clients compact old updates on their own, but a vault that is full of current content needs more room: raise `SMARAGD_SYNC_VAULT_QUOTA_MB`.
 - **Container marked unhealthy** — `docker logs smaragd-sync`; the health check calls
   `GET /v1/health` on the loopback interface.

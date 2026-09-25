@@ -319,3 +319,38 @@ fn edits_made_while_the_server_is_down_sync_when_it_returns() {
     assert_eq!(b.read("new.md"), "created while offline\n");
     assert_eq!(a.files(), b.files());
 }
+
+#[test]
+fn a_busy_document_is_compacted_on_the_real_server_and_new_devices_catch_up() {
+    let data = tempfile::tempdir().unwrap();
+    let server = start_in_background(server_config(data.path().into(), "127.0.0.1:0")).unwrap();
+
+    let mut a = first_device(&server, PASSPHRASE);
+    let mut text = String::from("start\n");
+    let mut snapshots = 0;
+    for n in 0..80 {
+        text.push_str(&format!("line {n}\n"));
+        a.write("busy.md", &text);
+        snapshots += a.sync().unwrap().snapshots_uploaded;
+    }
+    assert!(snapshots >= 1, "80 edits should have triggered a snapshot");
+
+    // The busy document's history on the server is now a snapshot plus a short tail.
+    let mut most_updates = 0;
+    let mut saw_snapshot = false;
+    for summary in a.transport.list_docs().unwrap() {
+        let pulled = a.transport.pull(summary.doc_id, 0).unwrap();
+        saw_snapshot |= pulled.snapshot.is_some();
+        most_updates = most_updates.max(pulled.updates.len());
+    }
+    assert!(saw_snapshot);
+    assert!(most_updates < 64, "{most_updates} updates left uncompacted");
+
+    let mut b = pair(&server, &a, "desktop", PASSPHRASE);
+    converge(&mut [&mut a, &mut b]);
+    assert_eq!(b.read("busy.md"), text);
+
+    b.write("busy.md", &format!("{text}from B\n"));
+    converge(&mut [&mut a, &mut b]);
+    assert_eq!(a.read("busy.md"), format!("{text}from B\n"));
+}

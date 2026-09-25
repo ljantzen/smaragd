@@ -46,6 +46,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use smaragd_sync_protocol::api::Snapshot;
 use smaragd_sync_protocol::{DeviceId, DocId, VaultId};
 use uuid::Uuid;
 
@@ -60,6 +61,10 @@ use super::transport::{SyncTransport, TransportError};
 use crate::project::ProjectMeta;
 use crate::project::store::{ProjectStore, TreeEntryKind};
 
+/// How many updates a document may accumulate on the server before a client replaces
+/// them with a snapshot. Bounds both the vault's size and how long a new device takes to
+/// catch up.
+const COMPACT_AFTER_UPDATES: u32 = 64;
 const MANIFEST_KEY: &str = "manifest";
 const DIRS_KEY: &str = "dirs";
 const META_KEY: &str = "meta";
@@ -143,6 +148,8 @@ pub struct SyncReport {
     /// Files whose merged text was not written because the app reported them as having
     /// unsaved edits (see `set_held_paths`); they're written once the app releases them.
     pub files_held: usize,
+    /// Documents whose accumulated updates were replaced by a snapshot on the server.
+    pub snapshots_uploaded: usize,
 }
 
 impl SyncReport {
@@ -208,6 +215,10 @@ struct Tracked<D> {
     /// so an edit made while remote changes were waiting (see `set_held_paths`) is
     /// merged with them instead of reverting them.
     base: Option<Vec<u8>>,
+    /// Updates the server has accumulated for this document since its last snapshot
+    /// (pulled or pushed by us); when it passes [`COMPACT_AFTER_UPDATES`] the client
+    /// replaces them with a snapshot (see `compact_if_due`).
+    since_snapshot: u32,
     dirty: bool,
 }
 
@@ -216,6 +227,7 @@ impl<D> Tracked<D> {
         Self {
             doc,
             base: None,
+            since_snapshot: 0,
             last_seq: 0,
             pending: Vec::new(),
             local_path: None,
@@ -242,6 +254,7 @@ struct Persisted {
     local_path: Option<String>,
     /// Empty when there is none (see `Tracked::base`).
     base: Vec<u8>,
+    since_snapshot: u32,
 }
 
 fn persist_bytes<D: Crdt>(tracked: &Tracked<D>) -> Vec<u8> {
@@ -251,6 +264,7 @@ fn persist_bytes<D: Crdt>(tracked: &Tracked<D>) -> Vec<u8> {
         pending: tracked.pending.clone(),
         local_path: tracked.local_path.clone(),
         base: tracked.base.clone().unwrap_or_default(),
+        since_snapshot: tracked.since_snapshot,
     })
     .expect("Persisted always serializes")
 }
@@ -413,9 +427,11 @@ fn pull_into<D: Crdt>(
         let plain = key.open(vault, id, &snapshot.blob)?;
         tracked.doc.apply(&plain)?;
         tracked.last_seq = tracked.last_seq.max(snapshot.upto_seq);
+        tracked.since_snapshot = 0;
         applied += 1;
     }
     for update in response.updates {
+        tracked.since_snapshot = tracked.since_snapshot.saturating_add(1);
         if update.device_id != device {
             let plain = key.open(vault, id, &update.blob)?;
             tracked.doc.apply(&plain)?;
@@ -440,12 +456,51 @@ fn push_from<D: Crdt>(
         let seq = transport.push(id, &sealed)?;
         tracked.pending.remove(0);
         tracked.dirty = true;
+        tracked.since_snapshot = tracked.since_snapshot.saturating_add(1);
         pushed += 1;
         if seq == tracked.last_seq + 1 {
             tracked.last_seq = seq;
         }
     }
     Ok(pushed)
+}
+
+/// Replaces a document's accumulated updates on the server with one snapshot of its
+/// current state, once it has [`COMPACT_AFTER_UPDATES`] of them. A blind server can't
+/// merge, so the client does it: the snapshot covers exactly the updates this device has
+/// applied (`last_seq`), so anything pushed by others meanwhile is kept and merges on top.
+/// Safe if two devices compact at once — the server keeps the newer snapshot and ignores
+/// the other. Only done with nothing left to push, so the snapshot never gets ahead of
+/// what the server has. Returns whether a snapshot was uploaded.
+fn compact_if_due<D: Crdt>(
+    key: &VaultKey,
+    vault: VaultId,
+    transport: &dyn SyncTransport,
+    id: DocId,
+    tracked: &mut Tracked<D>,
+) -> Result<bool, SyncError> {
+    if tracked.since_snapshot < COMPACT_AFTER_UPDATES
+        || !tracked.pending.is_empty()
+        || tracked.last_seq == 0
+    {
+        return Ok(false);
+    }
+    let blob = match key.seal(vault, id, &tracked.doc.state()) {
+        Ok(blob) => blob,
+        // Too big for one blob: leave the updates as they are.
+        Err(CryptoError::TooLarge(_)) => return Ok(false),
+        Err(other) => return Err(other.into()),
+    };
+    transport.put_snapshot(
+        id,
+        &Snapshot {
+            upto_seq: tracked.last_seq,
+            blob,
+        },
+    )?;
+    tracked.since_snapshot = 0;
+    tracked.dirty = true;
+    Ok(true)
 }
 
 pub struct SyncEngine {
@@ -484,6 +539,7 @@ impl SyncEngine {
                     pending: saved.pending,
                     local_path: None,
                     base: None,
+                    since_snapshot: saved.since_snapshot,
                     dirty: false,
                 }
             }
@@ -501,6 +557,7 @@ impl SyncEngine {
                         pending: saved.pending,
                         local_path: saved.local_path,
                         base: (!saved.base.is_empty()).then_some(saved.base),
+                        since_snapshot: saved.since_snapshot,
                         dirty: false,
                     },
                 );
@@ -515,6 +572,7 @@ impl SyncEngine {
                     pending: saved.pending,
                     local_path: None,
                     base: None,
+                    since_snapshot: saved.since_snapshot,
                     dirty: false,
                 }
             }
@@ -596,6 +654,7 @@ impl SyncEngine {
         self.sync_meta(transport, remote.as_ref(), report)?;
         if remote.is_some() {
             self.push_all(transport, report)?;
+            self.compact_all(transport, report)?;
         }
         listing.map(|_| ()).map_err(SyncError::from)
     }
@@ -1366,6 +1425,44 @@ impl SyncEngine {
             self.meta_paths = layout;
             self.meta_paths_dirty = true;
         }
+    }
+
+    /// Compacts any document that has accumulated enough updates. A failed attempt is
+    /// just retried on a later pass — except a rejected token, which ends the pass.
+    fn compact_all(
+        &mut self,
+        transport: &dyn SyncTransport,
+        report: &mut SyncReport,
+    ) -> Result<(), SyncError> {
+        let (key, vault) = (&self.cfg.key, self.cfg.vault);
+        let mut outcomes = vec![compact_if_due(
+            key,
+            vault,
+            transport,
+            DocId::MANIFEST,
+            &mut self.manifest,
+        )];
+        outcomes.push(compact_if_due(
+            key,
+            vault,
+            transport,
+            DocId::PROJECT_META,
+            &mut self.meta,
+        ));
+        for (id, tracked) in &mut self.docs {
+            outcomes.push(compact_if_due(key, vault, transport, *id, tracked));
+        }
+        for outcome in outcomes {
+            match outcome {
+                Ok(true) => report.snapshots_uploaded += 1,
+                Ok(false) => {}
+                Err(SyncError::Transport(TransportError::Unauthorized)) => {
+                    return Err(SyncError::Transport(TransportError::Unauthorized));
+                }
+                Err(_) => {}
+            }
+        }
+        Ok(())
     }
 
     fn push_all(
@@ -2431,6 +2528,62 @@ mod tests {
         let merged = "line one, from A\n\nline two, from B\n";
         assert_eq!(a.read("a.md"), merged);
         assert_eq!(b.read("a.md"), merged, "A's edit must not be reverted");
+    }
+
+    #[test]
+    fn a_busy_document_is_compacted_into_a_snapshot_and_nothing_is_lost() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        let mut b = Device::new(&server);
+        a.write("long.md", "start\n");
+        converge(&mut [&mut a, &mut b]);
+        let doc = a
+            .engine
+            .manifest_entries()
+            .into_iter()
+            .find(|e| e.path == "long.md")
+            .unwrap()
+            .doc_id;
+
+        let mut uploaded = 0;
+        let mut text = String::from("start\n");
+        for n in 0..(COMPACT_AFTER_UPDATES + 6) {
+            text.push_str(&format!("line {n}\n"));
+            a.write("long.md", &text);
+            uploaded += a.sync().snapshots_uploaded;
+        }
+        assert!(uploaded >= 1, "a snapshot should have been uploaded");
+        assert!(
+            server.update_count(doc) < COMPACT_AFTER_UPDATES as usize,
+            "compaction should have replaced the old updates, {} remain",
+            server.update_count(doc)
+        );
+
+        // A device that joins afterwards gets everything from the snapshot + the tail.
+        let mut c = Device::new(&server);
+        converge(&mut [&mut a, &mut b, &mut c]);
+        assert_eq!(c.read("long.md"), text);
+        assert_eq!(b.read("long.md"), text);
+
+        // And edits keep flowing in both directions after compaction.
+        c.write("long.md", &format!("{text}from C\n"));
+        converge(&mut [&mut a, &mut b, &mut c]);
+        assert_eq!(a.read("long.md"), format!("{text}from C\n"));
+    }
+
+    #[test]
+    fn compaction_state_survives_a_restart_and_a_quiet_pass_stays_quiet() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        let mut text = String::new();
+        for n in 0..(COMPACT_AFTER_UPDATES + 2) {
+            text.push_str(&format!("{n}\n"));
+            a.write("x.md", &text);
+            a.sync();
+        }
+        a.restart();
+        let report = a.sync();
+        assert!(report.is_quiet(), "{report:?}");
     }
 
     #[test]

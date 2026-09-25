@@ -120,7 +120,7 @@ Sync copies *every* change, including a mistake or a deletion, to all your devic
 
 ## Good to know
 
-- **The vault grows over time.** Every change is kept; there's a quota per vault on the server (1 GiB by default). Old changes will be compacted in a future version.
+- **The vault stays compact.** As a file accumulates changes, Smaragd periodically replaces the old ones on the server with a single snapshot, so the vault doesn't grow without bound and a new device catches up quickly. There's also a per-vault size limit on the server (1 GiB by default).
 - **Bookmarks** point to a line number, so if two devices edit above a bookmarked line at the same time, the bookmark may end up a line or two off.
 - **One vault per project**, and a project remembers the server it was paired with; the server in Settings is used when you create or join.
 - Sync needs a project **folder on disk** — it isn't available in the browser edition.

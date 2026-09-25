@@ -135,6 +135,14 @@ impl SyncTransport for MemoryTransport {
         self.check_online()?;
         let mut docs = self.server.docs.lock().unwrap();
         let log = docs.entry(doc).or_default();
+        // Like the real server: an older or equal snapshot is ignored.
+        if log
+            .snapshot
+            .as_ref()
+            .is_some_and(|s| s.upto_seq >= snapshot.upto_seq)
+        {
+            return Ok(());
+        }
         log.updates.retain(|u| u.seq > snapshot.upto_seq);
         log.snapshot = Some(snapshot.clone());
         Ok(())
