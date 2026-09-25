@@ -32,6 +32,7 @@
 - [Word Count](word-count.md)
 - [Writing Streak](writing-streak.md)
 - [Collaboration](collaboration.md)
+- [Sync](sync.md)
 - [Plugins](plugins.md)
     - [Where Plugins Live](plugins-where-they-live.md)
     - [No Sandbox](plugins-no-sandbox.md)

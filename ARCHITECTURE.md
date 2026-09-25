@@ -45,6 +45,9 @@ src/
     transport.rs            the SyncTransport trait: the engine's blocking, data-plane-only view of the server
     state.rs                StateStore (+ DirStateStore over ProjectStore, MemoryStateStore for tests): local CRDT state between runs
     client.rs               native-only ureq HttpClient/HttpTransport: control plane (create vault, pairing, devices) + data plane
+    pairing.rs              native-only one-off server operations behind the panel (create vault with admin-token fallback, join with a ticket, make ticket, list/revoke devices, leave); plain functions so they are testable against a real server
+    link.rs                 ProjectLink (.smaragd/sync.json: non-secret server/vault/salt) + DeviceCredentials (token, kept in the OS data dir, never in the project)
+    runner.rs               native-only SyncRunner: the engine on a background thread (key derivation happens there too), interval + on-demand passes, SyncEvents to the UI; unreachable = Offline (retries), wrong passphrase / revoked = Halted
     fake.rs                 (tests only) in-memory server for simulating several devices
   export/
     mod.rs                 gather() (binder walk, Trash/Templates-skipping) + shared ExportDoc/BookMeta/ExportError
@@ -87,10 +90,11 @@ src/
     pomodoro_panel.rs       Pomodoro dock tab: countdown + Start/Pause/Skip/Reset
     word_count_panel.rs     Word Count dock tab: scope toggle, Draft/Session Target progress bars, characters-typed counter
     collab_panel.rs         Collaborate dock tab: connection code / peer fingerprint + Host/Join/End
+    sync_panel.rs           Sync dock tab: status, last sync, pairing ticket, device list + revoke, stop syncing (pure rendering; app/sync.rs derives its data and handles its events)
     streak_panel.rs         Streak dock tab: Streak/Configure inner tabs, traffic-light badge, weekly schedule editing
 ```
 
-Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, Story Grid, Belief Timeline, Pomodoro, Word Count, Collaborate, and Streak all dock together in one shared area via [`egui_dock`](https://github.com/Adanos020/egui_dock), wired up in `app.rs`'s `DockTab`/`AppTabViewer`.
+Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, Story Grid, Belief Timeline, Pomodoro, Word Count, Collaborate, Sync, and Streak all dock together in one shared area via [`egui_dock`](https://github.com/Adanos020/egui_dock), wired up in `app.rs`'s `DockTab`/`AppTabViewer`.
 
 ## Sync (self-hosted server)
 
@@ -113,3 +117,7 @@ Where state lives: nothing secret goes inside the project folder (`git.rs` runs 
 ## The wasm32 (browser) build
 
 The same crate also targets `wasm32-unknown-unknown`, built with [`trunk`](https://trunkrs.dev/) from the repo-root `index.html` (`trunk build`/`trunk serve`; the [Pages workflow](.github/workflows/pages.yml) publishes a release build to https://ljantzen.github.io/smaragd/app/ each time a version is tagged). `Cargo.toml`'s `[target.'cfg(...)'.dependencies]` tables split native-only deps (iroh, tokio, directories, notify-rust, ureq, rfd's native dialogs) from wasm32-only ones (rexie, serde-wasm-bindgen, wasm-bindgen(-futures), console_error_panic_hook). Features with no browser equivalent — git, p2p collaboration, the HTTP sync client (the rest of `src/sync/` is pure and compiles for wasm32; a `fetch`-based `SyncTransport` is future work), native notifications, plugin subprocess execution, Scrivener import — are `#[cfg(not(target_arch = "wasm32"))]`-gated out of the UI rather than attempted; see `project/store.rs`/`browser_store.rs` above for the storage side of that split. Synchronous fs-shaped call sites keep working unchanged on both targets through the `ProjectStore` trait; the few genuinely async boundaries (project bundle load, browser file pick/save, IndexedDB persistence) use a `wasm_bindgen_futures::spawn_local` + `std::sync::mpsc::channel` + poll-once-per-frame pattern instead of threading async through the whole app (see `app/project_lifecycle.rs`'s `spawn_browser_project_load`/`poll_browser_project_load` for the shape).
+
+### Sync in the app
+
+`app/sync.rs` (with `app/sync_stub.rs` as the browser build's no-op twin, selected by `#[cfg_attr(..., path = ...)]`) owns everything app-side, modeled on `app/collab.rs`: a `SyncState` polled once per frame by `poll_sync`. It notices project open/close, loads the project's `ProjectLink` and this device's credentials, and starts/stops/restarts the runner whenever the settings, project or pairing change (a `Signature` of root + vault + passphrase + server; a runner that halted for a signature is not restarted until that changes). One-off server calls (create/join/ticket/devices/revoke/leave/test connection) run on short-lived threads and report back through a channel. Two integration rules worth knowing: when the engine reports `meta_written`, the app calls `Project::reload_metadata` (otherwise its next `save_metadata` would overwrite the merged file); and the app tells the engine which file has unsaved edits (`SyncRunner::set_held_paths`) so it is never overwritten on disk — the engine diffs the saved file against the version it was last in sync with, so the edit is merged with whatever arrived meanwhile rather than reverting it. A *clean* open file is just rewritten on disk and reloaded by the existing 2-second external-change scan (`app/external_watch.rs`).

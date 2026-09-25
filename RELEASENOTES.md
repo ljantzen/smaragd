@@ -10,6 +10,7 @@ this file.
 - Fixed a cursor position being lost the first time a document was shown in a session, and jumps to a remembered position (Back/Forward, reopening a document) not scrolling the editor to it.
 - Added a **Toggle Spell Check** shortcut (`F7` by default, also `Tools > Toggle Spell Check` and `:spell`). Toggling on restores the last language used in the open project, which each project now remembers separately.
 - Added an **In Focus Mode** setting under Settings > Spell Check to force spell check on or off while Focus Mode lasts (default: keep current). Leaving Focus Mode restores the previous state.
+- Added **Sync**: keep a project identical across your own devices through a small server you host yourself (a Docker image and a self-hosting guide are included under `crates/smaragd-sync-server`). Everything is end-to-end encrypted — the server only ever stores ciphertext — and edits made on different devices, including while offline, are merged automatically (documents, folders and project settings; per-device settings like git and plugin toggles never sync). Set it up in **Settings > Sync** and the new **Sync** dock tab (**Tools > Sync Panel**); see the new Sync chapter in the user manual. Desktop only for now.
 - Added a `World` folder role (🌐), alongside Research/Trash/Templates/Manuscript, for a project's worldbuilding content. The World-Building project template now tags its `World` folder with it.
 - Fixed the browser (WebAssembly) edition failing to build (and so failing
   to deploy to GitHub Pages) since v1.2.0: `getrandom` needs a

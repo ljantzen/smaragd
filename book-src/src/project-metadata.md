@@ -9,3 +9,7 @@ Rather than opening yet another dock tab, these reuse the same Metadata dock [Do
 - **Point**, **Logline**, **What if**, and **Synopsis** are new fields with no other home yet; they don't currently appear anywhere in an exported DOCX/EPUB/PDF.
 
 Like Document Metadata, there's no Save/Cancel step — edits apply as you type. **Point** is a single-line field, same as Title/Subtitle/Author; Logline/What if/Synopsis evenly split whatever vertical space is left in the tab below it. Synopsis (the field most likely to run long) keeps its scrollbar always visible, while Logline/What if only show theirs once there's actually more text than fits.
+
+## Project metadata and Sync
+
+When a project is [synced](sync.md), its project-wide fields — everything on this page, plus folder roles, binder order, [story cards](story-cards.md), [bookmarks](bookmarks.md) and colors — follow you between your devices. A few settings deliberately stay on each device: whether [git](git-integration.md) support is on, whether the project's [plugins](plugins.md) are enabled, the session and daily word counts, and the [Writing Streak](writing-streak.md) switch and schedule.

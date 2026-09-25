@@ -1,5 +1,7 @@
 # Git Integration
 
+Git works alongside [Sync](sync.md): git commits whatever is on disk at that moment, while sync moves the same files between your devices. Sync's own bookkeeping (your device's access token and state) is kept outside the project folder, so it never lands in a commit.
+
 **`Versions` menu**, or **`:git`** commands:
 
 - Opt-in per project — you're offered "Enable Git Support" once when a project is opened, or you can trigger it manually (`Versions > Enable Git Support` or `:git enable`)

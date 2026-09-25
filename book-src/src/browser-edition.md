@@ -15,6 +15,7 @@ That cuts both ways:
 ## What's missing compared to the native app
 
 - **No git integration.** Git needs a real folder on disk to operate on; a browser-storage project doesn't have one. This isn't planned for a future version — it's structurally out of scope for this edition.
+- **No [sync](sync.md).** Syncing a project through a sync server needs a project folder on disk, sockets and background threads, none of which the browser edition has.
 - **No peer-to-peer collaboration.** Real-time collaborative editing depends on raw networking (QUIC) that browsers don't expose to WebAssembly the same way.
 - **No Scrivener import.** Importing a `.scriv` project requires picking a folder, which has no browser equivalent (DOCX/EPUB/PDF import all work, since those are single-file picks).
 - **No native desktop notifications** and **no plugin scripts that shell out to external programs** — both OS-level capabilities a browser sandbox doesn't grant.

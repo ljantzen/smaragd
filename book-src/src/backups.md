@@ -1,5 +1,7 @@
 # Backups
 
+Backups are your safety net for mistakes: [Sync](sync.md) copies every change — including a deletion — to all your devices, so it is not a substitute for them.
+
 Modeled on Scrivener's own automatic backup scheme. **`File > Settings > History`**:
 
 - Off by default — a master **"Enable automatic backups"** switch, plus independent triggers for backing up **when opening a project**, **when closing a project**, and **on every manual save** (`Ctrl+S`/`:w`/`:wq` — not the silent autosave that runs on losing focus or switching documents)
