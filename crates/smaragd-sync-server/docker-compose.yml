@@ -21,6 +21,16 @@ services:
       SMARAGD_SYNC_ADMIN_TOKEN: ${SMARAGD_SYNC_ADMIN_TOKEN:?set SMARAGD_SYNC_ADMIN_TOKEN}
       SMARAGD_SYNC_ALLOW_OPEN_REGISTRATION: "false"
       SMARAGD_SYNC_VAULT_QUOTA_MB: "1024"
+      # Housekeeping (0 turns each off): how often the maintenance task runs, and how long
+      # a vault with no devices left is kept before it is deleted.
+      SMARAGD_SYNC_MAINTENANCE_INTERVAL_HOURS: "6"
+      SMARAGD_SYNC_EMPTY_VAULT_RETENTION_DAYS: "30"
+    # Docker keeps container logs forever by default; cap them.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - sync-data:/data
 

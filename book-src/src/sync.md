@@ -118,6 +118,13 @@ Files on your side: a small, non-secret file `.smaragd/sync.json` in the project
 
 Sync copies *every* change, including a mistake or a deletion, to all your devices. It keeps no history you can go back to. Keep [backups](backups.md) (and optionally [git](git-integration.md)) switched on as well. Sync and git coexist without trouble: git commits whatever is currently on disk, and sync moves whatever is on disk between devices.
 
+## If you run the server
+
+The server's own [self-hosting guide](https://github.com/ljantzen/smaragd/tree/main/crates/smaragd-sync-server) has the details; the short version of what to expect:
+
+- **It looks after itself.** It clears out expired pairing codes, deletes vaults whose last device left 30 days ago (adjustable), and keeps its database file small, all in the background. `smaragd-sync-server admin list` shows every vault, and `admin delete-vault`, `purge-empty` and `vacuum` clean up by hand; run them with `docker exec` while the server is running.
+- **You still need to** back up its data volume, install updates, and watch disk space. Deleted files' encrypted history stays on the server until its vault is deleted.
+
 ## Good to know
 
 - **The vault stays compact.** As a file accumulates changes, Smaragd periodically replaces the old ones on the server with a single snapshot, so the vault doesn't grow without bound and a new device catches up quickly. There's also a per-vault size limit on the server (1 GiB by default).

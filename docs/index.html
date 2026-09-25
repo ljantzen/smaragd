@@ -225,6 +225,7 @@
       <nav>
         <a href="app/">Try it Online</a>
         <a href="#collaboration">Collaboration</a>
+        <a href="#sync">Sync</a>
         <a href="#screenshots">Screenshots</a>
         <a href="https://github.com/ljantzen/smaragd">GitHub</a>
         <a href="manual/">User Manual</a>
@@ -370,6 +371,29 @@
         <div class="card">
           <h3>One code to pair</h3>
           <p>The host editor generates a short, pasteable code; join with it from the Collaborate menu or its dockable panel. Whoever holds the code can join. The code can be used once, for that session only.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="sync">
+      <h2>Keep your devices in step</h2>
+      <p class="lede">Work on the laptop on the train and the desktop at home. Smaragd syncs your project through a small server <em>you</em> host, and merges what you changed on each device — even offline — without asking you to pick a winner. Desktop app only for now.</p>
+      <div class="grid">
+        <div class="card">
+          <h3>Your server, not ours</h3>
+          <p>A single small program or Docker image you run yourself, with one database file. Add another device with a one-time pairing ticket; remove a lost one with a click.</p>
+        </div>
+        <div class="card">
+          <h3>End-to-end encrypted</h3>
+          <p>Your text is encrypted on your device before it is uploaded, with a key built from a passphrase the server never sees. The server only ever holds ciphertext it cannot read.</p>
+        </div>
+        <div class="card">
+          <h3>Merges, not conflicts</h3>
+          <p>Edits from two devices to the same file are both kept. A rename and an edit both survive; frontmatter fields merge one by one; nothing is silently overwritten.</p>
+        </div>
+        <div class="card">
+          <h3>Looks after itself</h3>
+          <p>The server clears out expired codes and abandoned vaults and keeps its database small; clients compact old history. Sync is not a backup, though, so keep those on too.</p>
         </div>
       </div>
     </section>
