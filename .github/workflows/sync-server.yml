@@ -1,0 +1,94 @@
+name: Sync server
+
+# The sync server (crates/smaragd-sync-server) is its own Cargo workspace with its
+# own Cargo.lock, so it has its own workflow: it only runs when the server or the
+# shared protocol crate changes, and it publishes the Docker image on version tags.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*", "[0-9]*"]
+    paths:
+      - "crates/smaragd-sync-server/**"
+      - "crates/smaragd-sync-protocol/**"
+      - "src/sync/**"
+      - ".github/workflows/sync-server.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/smaragd-sync-server/**"
+      - "crates/smaragd-sync-protocol/**"
+      - "src/sync/**"
+      - ".github/workflows/sync-server.yml"
+
+jobs:
+  test:
+    name: Sync server (fmt, clippy, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/smaragd-sync-server
+
+      # The end-to-end test links the whole desktop app crate (it exercises the
+      # real client against the real server), which needs the same system
+      # libraries the main CI job installs implicitly on ubuntu-latest.
+      - name: cargo fmt --check
+        working-directory: crates/smaragd-sync-server
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        working-directory: crates/smaragd-sync-server
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: cargo test
+        working-directory: crates/smaragd-sync-server
+        run: cargo test --locked
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/smaragd-sync-server
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+
+      # Always builds (catching a broken Dockerfile on PRs); only pushes for tags.
+      - name: Build (and push on tags)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: crates/smaragd-sync-server/Dockerfile
+          push: ${{ startsWith(github.ref, 'refs/tags/') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

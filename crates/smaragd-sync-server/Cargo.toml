@@ -1,0 +1,35 @@
+[package]
+name = "smaragd-sync-server"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Self-hostable, end-to-end-encrypted sync server for Smaragd"
+repository = "https://github.com/ljantzen/smaragd"
+publish = false
+
+# A workspace of its own, on purpose: the desktop app's Cargo.lock is vendored
+# wholesale into the flatpak build (scripts/update-flatpak-sources.sh), and this
+# crate's dependencies (axum, rusqlite, ...) have no business there. The root
+# Cargo.toml lists this directory under `exclude`.
+[workspace]
+
+[dependencies]
+axum = "0.8.9"
+rand = "0.10.3"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+smaragd-sync-protocol = { path = "../smaragd-sync-protocol" }
+thiserror = "2.0.21"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "sync"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+uuid = { version = "1.26.1", features = ["v4"] }
+
+[dev-dependencies]
+serde = "1.0.229"
+serde_json = "1.0.151"
+tempfile = "3.27.0"
+ureq = "3.4.2"
+uuid = "1.26.1"

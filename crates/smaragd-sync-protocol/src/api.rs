@@ -18,6 +18,33 @@ pub const MAX_BLOB_BYTES: usize = 8 * 1024 * 1024;
 pub const PAIRING_CODE_TTL_SECS: u64 = 600;
 /// Length of the per-vault Argon2id salt.
 pub const KDF_SALT_LEN: usize = 16;
+/// The key-derivation scheme new vaults are created with (see the envelope's
+/// `key_version`); the client's `sync::crypto::KEY_VERSION` must match it.
+pub const INITIAL_KEY_VERSION: u8 = 1;
+/// Header carrying the server's admin token when creating a vault on a server
+/// that has open registration turned off.
+pub const ADMIN_TOKEN_HEADER: &str = "x-admin-token";
+/// Alphabet for pairing codes: no `0/O/1/I/L`, so a code read aloud or retyped
+/// can't be misread.
+pub const PAIRING_CODE_ALPHABET: &[u8; 31] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+/// Characters in a pairing code, before display grouping (`XXXX-XXXX-XXXX`).
+pub const PAIRING_CODE_LEN: usize = 12;
+
+/// Canonical form of a pairing code for comparison and hashing: upper-cased with
+/// dashes and whitespace removed, so `abcd-efgh jk23` matches `ABCDEFGHJK23`.
+pub fn normalize_pairing_code(code: &str) -> String {
+    code.chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .flat_map(char::to_uppercase)
+        .collect()
+}
+
+/// `GET /health` body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub version: String,
+}
 
 /// Serde adapter: `Vec<u8>` <-> standard base64 string.
 pub mod b64 {
@@ -179,6 +206,12 @@ mod tests {
     fn invalid_base64_is_a_parse_error_not_a_panic() {
         let json = r#"{"upto_seq":1,"blob":"!!not base64!!"}"#;
         assert!(serde_json::from_str::<Snapshot>(json).is_err());
+    }
+
+    #[test]
+    fn pairing_codes_normalize_regardless_of_case_dashes_and_spaces() {
+        assert_eq!(normalize_pairing_code("abcd-efgh jk23"), "ABCDEFGHJK23");
+        assert_eq!(normalize_pairing_code(" ABCD-EFGH-JK23\n"), "ABCDEFGHJK23");
     }
 
     #[test]

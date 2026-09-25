@@ -1,0 +1,216 @@
+# Smaragd sync server
+
+A small, self-hostable server that keeps a Smaragd project in sync across your own
+devices. It is a **blind store**: your text is encrypted on your devices before it
+is uploaded, and the server only ever holds ciphertext it cannot read. It runs as a
+single container (or a single static-ish binary) with one SQLite file for storage.
+
+This is different from Smaragd's *Collaboration* feature, which is live,
+peer-to-peer and needs no server at all. Sync is for keeping *your own* devices
+identical in the background, even when only one is open at a time.
+
+- [What the server can and can't see](#what-the-server-can-and-cant-see)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Putting it behind TLS](#putting-it-behind-tls)
+- [Connecting Smaragd](#connecting-smaragd)
+- [Operating it](#operating-it): backups, upgrades, limits, revoking devices
+- [Building from source](#building-from-source)
+- [Troubleshooting](#troubleshooting)
+
+## What the server can and can't see
+
+**Can't see:** file names, folder structure, document text, project metadata —
+everything is sealed with XChaCha20-Poly1305 under a key derived from *your
+passphrase* (Argon2id) that never leaves your devices. The server also can't
+undetectably swap one document's data for another's: every blob is bound to its
+vault and document.
+
+**Can see (unavoidable for a server):** that a vault exists, how many documents it
+has (as opaque random ids), the size and timing of each update, which device made
+it, and your IP address. Device tokens and pairing codes are stored only as SHA-256
+hashes.
+
+**Can do:** withhold or delete data (so keep Smaragd's backups on — sync is not a
+backup), or refuse service. It can't read or forge your content.
+
+**Your passphrase is not recoverable.** The server never has it. If you lose it,
+the synced data can't be decrypted — by anyone.
+
+## Quick start
+
+With Docker (image published to GHCR on each release, or build it yourself below):
+
+```sh
+docker run -d --name smaragd-sync --restart unless-stopped \
+  -p 8080:8080 \
+  -v smaragd-sync-data:/data \
+  -e SMARAGD_SYNC_ADMIN_TOKEN="$(openssl rand -hex 24)" \
+  ghcr.io/ljantzen/smaragd-sync-server:latest
+```
+
+Save the admin token somewhere safe — you need it to create vaults (see below).
+Check it's up:
+
+```sh
+curl http://localhost:8080/v1/health
+# {"status":"ok","version":"0.1.0"}
+```
+
+With Docker Compose, use [`docker-compose.yml`](docker-compose.yml) in this directory:
+
+```sh
+export SMARAGD_SYNC_ADMIN_TOKEN="$(openssl rand -hex 24)"
+docker compose up -d
+```
+
+To build the image yourself, from the **repository root**:
+
+```sh
+docker build -f crates/smaragd-sync-server/Dockerfile -t smaragd-sync-server .
+```
+
+The container runs as a non-root user (uid 10001), listens on plain HTTP port 8080,
+keeps everything under `/data`, and has a built-in health check.
+
+## Configuration
+
+Everything is an environment variable; there is no config file.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SMARAGD_SYNC_LISTEN_ADDR` | `0.0.0.0:8080` | Address to listen on (plain HTTP). |
+| `SMARAGD_SYNC_DATA_DIR` | `./data` (`/data` in the image) | Directory holding all state. Mount a volume here. |
+| `SMARAGD_SYNC_ADMIN_TOKEN` | *(unset)* | Lets whoever holds it create vaults while open registration is off. |
+| `SMARAGD_SYNC_ALLOW_OPEN_REGISTRATION` | `false` | If `true`, *anyone who can reach the server* may create a vault. Leave off unless the server is private. |
+| `SMARAGD_SYNC_VAULT_QUOTA_MB` | `1024` | Maximum ciphertext stored per vault. |
+| `RUST_LOG` | `info` | Log level (`tracing` filter syntax). |
+
+If open registration is off **and** no admin token is set, nobody can create a
+vault; the server warns about this at startup.
+
+## Putting it behind TLS
+
+The server speaks plain HTTP. Bearer tokens travel in every request, so for anything
+beyond your own machine or a trusted LAN, terminate TLS in a reverse proxy.
+(Your *content* stays end-to-end encrypted even without TLS, but tokens and the
+metadata listed above would be exposed.)
+
+**Caddy** (automatic certificates):
+
+```caddyfile
+sync.example.com {
+    reverse_proxy localhost:8080
+}
+```
+
+**nginx:**
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name sync.example.com;
+    # ssl_certificate / ssl_certificate_key ...
+
+    client_max_body_size 16m;   # the server accepts blobs up to 8 MiB
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+    }
+}
+```
+
+**Serving under a path** (e.g. `https://example.com/smaragd/`): the server itself
+always serves at `/v1/...`, so have the proxy *strip* the prefix — in Caddy,
+`handle_path /smaragd/* { reverse_proxy localhost:8080 }` — and enter the path
+(`smaragd`) in Smaragd's Sync settings.
+
+**Rate limiting** is left to the proxy (e.g. nginx `limit_req`). Pairing codes are
+single-use, expire after 10 minutes and carry ~59 bits of entropy, so brute-forcing
+one through a rate-limited proxy is impractical.
+
+## Connecting Smaragd
+
+In Smaragd's Settings → Sync, enter the server's host, port and whether it uses TLS,
+and choose an encryption passphrase (use the *same* passphrase on every device).
+Then use **Sync This Project** to create a vault — this needs the admin token when
+open registration is off — and **pair** other devices with the short-lived code it
+shows. See the *Sync* chapter of the user manual for the full walkthrough.
+
+To create a vault by hand (mostly useful for testing):
+
+```sh
+SALT=$(head -c16 /dev/urandom | base64)
+curl -X POST http://localhost:8080/v1/vaults \
+  -H 'content-type: application/json' \
+  -H "x-admin-token: $SMARAGD_SYNC_ADMIN_TOKEN" \
+  -d "{\"device_name\":\"my laptop\",\"kdf_salt\":\"$SALT\"}"
+```
+
+The full HTTP API is documented in the `smaragd-sync-protocol` crate
+(`crates/smaragd-sync-protocol/src/lib.rs`, rendered by `cargo doc`).
+
+## Operating it
+
+### Backups
+
+Everything is in `sync.sqlite3` (plus its `-wal`/`-shm` companions) in the data
+directory. Either stop the container and copy the volume, or take a consistent
+online copy:
+
+```sh
+# The image is minimal (no sqlite3 inside); run this on the host against the volume:
+sqlite3 "$(docker volume inspect -f '{{ .Mountpoint }}' smaragd-sync-data)/sync.sqlite3" \
+  ".backup '/backups/sync-$(date +%F).sqlite3'"
+```
+
+Remember that the server only holds ciphertext: a backup of it is useless without
+your passphrase, and your devices' own project backups are the ones that matter.
+
+### Upgrading
+
+Pull the new image and restart the container; the database schema migrates
+forward automatically. Take a backup first — downgrading is not supported, and a
+server refuses to open a database written by a *newer* version.
+
+### Limits
+
+- Each pushed update or snapshot is at most **8 MiB**.
+- Each vault may store up to `SMARAGD_SYNC_VAULT_QUOTA_MB` of ciphertext; over that,
+  pushes fail with `507`. The protocol lets clients replace old updates with a
+  compact snapshot (`PUT .../snapshot`), which is how a vault's size is kept in
+  check.
+
+### Devices and vaults
+
+Each paired device has its own token, and any device can list or revoke the
+vault's devices from Smaragd's Sync panel; a revoked token stops working
+immediately. Deleting a vault removes all its data and every device's token.
+
+## Building from source
+
+The server is its own Cargo workspace (so its dependencies stay out of the desktop
+app's lockfile):
+
+```sh
+cd crates/smaragd-sync-server
+cargo build --release      # target/release/smaragd-sync-server
+cargo test                 # unit + HTTP tests, plus an end-to-end test with the real client
+SMARAGD_SYNC_ALLOW_OPEN_REGISTRATION=true cargo run
+```
+
+## Troubleshooting
+
+- **`403` when creating a vault** — open registration is off and the admin token was
+  missing or wrong.
+- **`401` from a device that used to work** — its token was revoked, or the vault was
+  deleted.
+- **"sync passphrase doesn't match this vault"** — reported by Smaragd, not the
+  server: a device is using a different passphrase than the one the vault was
+  created with.
+- **`507`** — the vault hit its quota; raise `SMARAGD_SYNC_VAULT_QUOTA_MB`, or have clients compact old updates into a
+  snapshot.
+- **Container marked unhealthy** — `docker logs smaragd-sync`; the health check calls
+  `GET /v1/health` on the loopback interface.
