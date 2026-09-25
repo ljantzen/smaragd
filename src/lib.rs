@@ -23,6 +23,7 @@ pub mod settings;
 pub mod shortcuts;
 pub mod spellcheck;
 pub mod streak;
+pub mod sync;
 pub mod templates;
 pub mod ui;
 
