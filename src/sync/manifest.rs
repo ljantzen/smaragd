@@ -23,30 +23,60 @@ use yrs::error::Error;
 use yrs::updates::decoder::Decode;
 use yrs::{Any, Doc, Map, MapPrelim, MapRef, Out, ReadTxn, StateVector, Transact, Update};
 
-/// One synced document as the manifest describes it.
+/// What a manifest entry stands for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EntryKind {
+    /// A markdown file, with a CRDT document of its own.
+    #[default]
+    Doc,
+    /// A directory. It has no content, but it needs a stable id so path-keyed
+    /// project metadata (folder roles, ordering, ...) survives renames.
+    Dir,
+}
+
+impl EntryKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            EntryKind::Doc => "doc",
+            EntryKind::Dir => "dir",
+        }
+    }
+}
+
+/// One synced document or directory as the manifest describes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManifestEntry {
     pub doc_id: DocId,
+    pub kind: EntryKind,
     /// `/`-separated path relative to the project root (the same convention
     /// `ProjectMeta`'s path keys use, so it's portable across host OSes).
     pub path: String,
     pub deleted: bool,
 }
 
+fn safe_components(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && !path.contains('\0')
+        // No empty, `.`/`..` or hidden components (`.git`, `.smaragd`, ...): hidden
+        // entries are never synced (the folder scan skips them), so a peer naming
+        // one is either confused or hostile.
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && !part.starts_with('.') && !part.contains(':'))
+}
+
 /// Whether `path` is a plain relative `.md` path that stays inside the project:
-/// no absolute paths, drive prefixes, backslashes, NULs, empty/`.`/`..` components.
+/// no absolute paths, drive prefixes, backslashes, NULs, or empty/`.`/`..`/hidden
+/// components.
 pub fn is_safe_relative_path(path: &str) -> bool {
-    if path.is_empty()
-        || path.starts_with('/')
-        || path.contains('\\')
-        || path.contains('\0')
-        || !path.ends_with(".md")
-    {
-        return false;
-    }
-    path.split('/').all(|part| {
-        !part.is_empty() && part != "." && part != ".." && !part.contains(':') && part != ".md"
-    })
+    path.ends_with(".md") && safe_components(path)
+}
+
+/// Like [`is_safe_relative_path`], for a directory (no `.md` requirement).
+pub fn is_safe_relative_dir_path(path: &str) -> bool {
+    safe_components(path)
 }
 
 pub struct ManifestDoc {
@@ -92,10 +122,15 @@ impl ManifestDoc {
                 continue;
             };
             let deleted = matches!(fields.get(&txn, "deleted"), Some(Out::Any(Any::Bool(true))));
+            let kind = match fields.get(&txn, "kind") {
+                Some(Out::Any(Any::String(kind))) if &*kind == "dir" => EntryKind::Dir,
+                _ => EntryKind::Doc,
+            };
             out.insert(
                 doc_id,
                 ManifestEntry {
                     doc_id,
+                    kind,
                     path: path.to_string(),
                     deleted,
                 },
@@ -108,13 +143,14 @@ impl ManifestDoc {
         self.entries().into_iter().find(|entry| entry.doc_id == id)
     }
 
-    /// Registers a new live document at `path`, returning the update to push.
-    pub fn add(&mut self, id: DocId, path: &str) -> Vec<u8> {
+    /// Registers a new live entry at `path`, returning the update to push.
+    pub fn add(&mut self, id: DocId, path: &str, kind: EntryKind) -> Vec<u8> {
         let mut txn = self.doc.transact_mut();
         let fields = self
             .entries
             .insert(&mut txn, id.to_string(), MapPrelim::default());
         fields.insert(&mut txn, "path", path);
+        fields.insert(&mut txn, "kind", kind.as_str());
         fields.insert(&mut txn, "deleted", false);
         txn.encode_update_v1()
     }
@@ -168,8 +204,8 @@ mod tests {
     #[test]
     fn added_entries_are_listed_in_id_order() {
         let mut m = ManifestDoc::new();
-        m.add(id(2), "b.md");
-        m.add(id(1), "a.md");
+        m.add(id(2), "b.md", EntryKind::Doc);
+        m.add(id(1), "a.md", EntryKind::Doc);
         let entries = m.entries();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].path, "a.md");
@@ -180,7 +216,7 @@ mod tests {
     #[test]
     fn rename_and_delete_update_the_entry_and_report_no_ops() {
         let mut m = ManifestDoc::new();
-        m.add(id(1), "a.md");
+        m.add(id(1), "a.md", EntryKind::Doc);
         assert!(m.rename(id(1), "b.md").is_some());
         assert!(m.rename(id(1), "b.md").is_none(), "unchanged");
         assert!(m.rename(id(9), "x.md").is_none(), "unknown");
@@ -196,7 +232,7 @@ mod tests {
     #[test]
     fn a_rename_and_a_concurrent_delete_of_one_entry_both_survive() {
         let mut base = ManifestDoc::new();
-        base.add(id(1), "a.md");
+        base.add(id(1), "a.md", EntryKind::Doc);
         let mut a = fork(&base);
         let mut b = fork(&base);
 
@@ -215,8 +251,8 @@ mod tests {
     fn concurrent_adds_of_different_documents_union() {
         let mut a = ManifestDoc::new();
         let mut b = ManifestDoc::new();
-        let ua = a.add(id(1), "a.md");
-        let ub = b.add(id(2), "b.md");
+        let ua = a.add(id(1), "a.md", EntryKind::Doc);
+        let ub = b.add(id(2), "b.md", EntryKind::Doc);
         a.apply_update(&ub).unwrap();
         b.apply_update(&ua).unwrap();
         assert_eq!(a.entries(), b.entries());
@@ -226,8 +262,8 @@ mod tests {
     #[test]
     fn concurrent_renames_of_different_entries_both_apply() {
         let mut base = ManifestDoc::new();
-        base.add(id(1), "a.md");
-        base.add(id(2), "b.md");
+        base.add(id(1), "a.md", EntryKind::Doc);
+        base.add(id(2), "b.md", EntryKind::Doc);
         let mut x = fork(&base);
         let mut y = fork(&base);
         let ux = x.rename(id(1), "a2.md").unwrap();
@@ -242,9 +278,52 @@ mod tests {
     #[test]
     fn state_round_trips() {
         let mut m = ManifestDoc::new();
-        m.add(id(1), "Chapters/One.md");
+        m.add(id(1), "Chapters/One.md", EntryKind::Doc);
         m.set_deleted(id(1), true);
         assert_eq!(fork(&m).entries(), m.entries());
+    }
+
+    #[test]
+    fn directories_are_kept_apart_from_documents() {
+        let mut m = ManifestDoc::new();
+        m.add(id(1), "Notes", EntryKind::Dir);
+        m.add(id(2), "Notes/a.md", EntryKind::Doc);
+        let by_id: Vec<_> = m.entries().into_iter().map(|e| (e.path, e.kind)).collect();
+        assert_eq!(
+            by_id,
+            vec![
+                ("Notes".to_string(), EntryKind::Dir),
+                ("Notes/a.md".to_string(), EntryKind::Doc)
+            ]
+        );
+        assert_eq!(fork(&m).entries(), m.entries());
+    }
+
+    #[test]
+    fn unsafe_directory_paths_are_rejected() {
+        for bad in [
+            "",
+            "/abs",
+            "../x",
+            "a//b",
+            "a/../b",
+            ".git",
+            "a/.hidden",
+            "C:/x",
+            "a\\b",
+            "dir/",
+        ] {
+            assert!(
+                !is_safe_relative_dir_path(bad),
+                "{bad:?} should be rejected"
+            );
+        }
+        for good in ["Notes", "World/Places", "Kapittel 1"] {
+            assert!(
+                is_safe_relative_dir_path(good),
+                "{good:?} should be accepted"
+            );
+        }
     }
 
     #[test]
@@ -260,6 +339,8 @@ mod tests {
             "C:/x.md",
             "notmarkdown.txt",
             ".md",
+            ".hidden.md",
+            ".git/hooks/x.md",
             "dir/.md",
             "nul\0.md",
             "dir/",

@@ -51,12 +51,15 @@ use uuid::Uuid;
 
 use super::crdt::FileDoc;
 use super::crypto::{CryptoError, VaultKey};
-use super::manifest::{ManifestDoc, ManifestEntry, is_safe_relative_path};
+use super::manifest::{
+    EntryKind, ManifestDoc, ManifestEntry, is_safe_relative_dir_path, is_safe_relative_path,
+};
 use super::state::StateStore;
 use super::transport::{SyncTransport, TransportError};
 use crate::project::store::{ProjectStore, TreeEntryKind};
 
 const MANIFEST_KEY: &str = "manifest";
+const DIRS_KEY: &str = "dirs";
 
 fn doc_key(id: DocId) -> String {
     format!("doc/{id}")
@@ -119,6 +122,12 @@ pub struct SyncReport {
     pub skipped_paths: Vec<String>,
     /// Deletions not announced because the project folder looked empty.
     pub deletions_held_back: usize,
+    /// Folders created locally because another device has them.
+    pub dirs_created: usize,
+    /// Empty folders removed locally (deleted or renamed away elsewhere).
+    pub dirs_removed: usize,
+    /// Local folder deletions announced to the vault.
+    pub dirs_tombstoned: usize,
 }
 
 impl SyncReport {
@@ -244,6 +253,57 @@ fn scan_docs(files: &dyn ProjectStore, root: &Path) -> BTreeSet<String> {
         .collect()
 }
 
+fn scan_dirs(files: &dyn ProjectStore, root: &Path) -> BTreeSet<String> {
+    files
+        .list_tree(root)
+        .into_iter()
+        .filter(|(_, kind)| *kind == TreeEntryKind::Dir)
+        .filter_map(|(path, _)| rel_key(root, &path))
+        .collect()
+}
+
+fn dir_is_empty(files: &dyn ProjectStore, root: &Path, rel: &str) -> bool {
+    files
+        .read_dir(&abs(root, rel))
+        .is_ok_and(|entries| entries.is_empty())
+}
+
+/// Folder renames implied by file moves: `A/S/f.md -> B/S/f.md` says `A` became `B`
+/// (the trailing components both paths share are the untouched part). A file that
+/// was itself renamed shares nothing and implies nothing.
+fn dir_rename_pairs(renamed: &[(String, String)]) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for (old, new) in renamed {
+        let (old_parts, new_parts): (Vec<&str>, Vec<&str>) =
+            (old.split('/').collect(), new.split('/').collect());
+        let mut shared = 0;
+        while shared < old_parts.len()
+            && shared < new_parts.len()
+            && old_parts[old_parts.len() - 1 - shared] == new_parts[new_parts.len() - 1 - shared]
+        {
+            shared += 1;
+        }
+        let old_dir = old_parts[..old_parts.len() - shared].join("/");
+        let new_dir = new_parts[..new_parts.len() - shared].join("/");
+        if shared > 0 && !old_dir.is_empty() && !new_dir.is_empty() && old_dir != new_dir {
+            pairs.push((old_dir, new_dir));
+        }
+    }
+    pairs
+}
+
+/// Where `path` went, if it lies at or under a renamed folder.
+fn map_through_pairs(path: &str, pairs: &[(String, String)]) -> Option<String> {
+    pairs.iter().find_map(|(from, to)| {
+        if path == from {
+            Some(to.clone())
+        } else {
+            path.strip_prefix(&format!("{from}/"))
+                .map(|rest| format!("{to}/{rest}"))
+        }
+    })
+}
+
 fn read_disk(files: &dyn ProjectStore, root: &Path, rel: &str) -> Disk {
     match files.read_to_string(&abs(root, rel)) {
         Ok(text) => Disk::Text(text),
@@ -343,6 +403,10 @@ pub struct SyncEngine {
     state: Box<dyn StateStore>,
     manifest: Tracked<ManifestDoc>,
     docs: BTreeMap<DocId, Tracked<FileDoc>>,
+    /// Where this device has each synced folder on disk (folders carry no content,
+    /// so unlike files they need no CRDT state of their own).
+    dir_paths: BTreeMap<DocId, String>,
+    dirs_dirty: bool,
 }
 
 impl SyncEngine {
@@ -381,12 +445,20 @@ impl SyncEngine {
                 );
             }
         }
+        let dir_paths = match state.get(DIRS_KEY)? {
+            Some(bytes) => {
+                postcard::from_bytes(&bytes).map_err(|err| SyncError::State(err.to_string()))?
+            }
+            None => BTreeMap::new(),
+        };
         Ok(Self {
             cfg,
             files,
             state,
             manifest,
             docs,
+            dir_paths,
+            dirs_dirty: false,
         })
     }
 
@@ -445,6 +517,11 @@ impl SyncEngine {
                 tracked.dirty = false;
             }
         }
+        if self.dirs_dirty {
+            let bytes = postcard::to_stdvec(&self.dir_paths).expect("dir paths always serialize");
+            self.state.put(DIRS_KEY, &bytes)?;
+            self.dirs_dirty = false;
+        }
         Ok(())
     }
 
@@ -455,20 +532,32 @@ impl SyncEngine {
         }
     }
 
-    /// Live entries with usable paths; unsafe paths are reported and ignored.
-    fn live_entries(&self, report: &mut SyncReport) -> Vec<ManifestEntry> {
+    /// Live entries of `kind` with usable paths; unsafe paths are reported and ignored.
+    fn live_of_kind(&self, kind: EntryKind, report: &mut SyncReport) -> Vec<ManifestEntry> {
         let mut out = Vec::new();
         for entry in self.manifest.doc.entries() {
-            if entry.deleted {
+            if entry.deleted || entry.kind != kind {
                 continue;
             }
-            if is_safe_relative_path(&entry.path) {
+            let safe = match kind {
+                EntryKind::Doc => is_safe_relative_path(&entry.path),
+                EntryKind::Dir => is_safe_relative_dir_path(&entry.path),
+            };
+            if safe {
                 out.push(entry);
             } else if !report.skipped_paths.contains(&entry.path) {
                 report.skipped_paths.push(entry.path);
             }
         }
         out
+    }
+
+    fn live_entries(&self, report: &mut SyncReport) -> Vec<ManifestEntry> {
+        self.live_of_kind(EntryKind::Doc, report)
+    }
+
+    fn live_dir_entries(&self, report: &mut SyncReport) -> Vec<ManifestEntry> {
+        self.live_of_kind(EntryKind::Dir, report)
     }
 
     fn pull_manifest(
@@ -563,6 +652,8 @@ impl SyncEngine {
         let mut scan = scan_docs(files, root);
         let entries = self.live_entries(report);
 
+        let mut renamed_files: Vec<(String, String)> = Vec::new();
+
         // Remote renames: move our copy to where the manifest now says it lives.
         for entry in &entries {
             let Some(tracked) = self.docs.get_mut(&entry.doc_id) else {
@@ -575,6 +666,7 @@ impl SyncEngine {
                 move_file(files, root, &local, &entry.path)?;
                 scan.remove(&local);
                 scan.insert(entry.path.clone());
+                renamed_files.push((local, entry.path.clone()));
                 tracked.local_path = Some(entry.path.clone());
                 tracked.dirty = true;
                 report.files_renamed += 1;
@@ -646,20 +738,21 @@ impl SyncEngine {
             }
         }
         let mut renames = Vec::new();
-        missing.retain(|(id, _)| {
+        missing.retain(|(id, old_path)| {
             let Some(tracked) = self.docs.get(id) else {
                 return true;
             };
             let rendered = tracked.doc.render();
             match new_files.iter().position(|p| new_texts[p] == rendered) {
                 Some(position) => {
-                    renames.push((*id, new_files.remove(position)));
+                    renames.push((*id, old_path.clone(), new_files.remove(position)));
                     false
                 }
                 None => true,
             }
         });
-        for (id, new_path) in renames {
+        for (id, old_path, new_path) in renames {
+            renamed_files.push((old_path, new_path.clone()));
             let update = self.manifest.doc.rename(id, &new_path);
             self.queue_manifest_update(update);
             if let Some(tracked) = self.docs.get_mut(&id) {
@@ -691,7 +784,157 @@ impl SyncEngine {
             report.files_created += 1;
         }
 
-        self.apply_tombstones(&scan, report)
+        self.apply_tombstones(&scan, report)?;
+        self.reconcile_dirs(&renamed_files, scan.is_empty(), report)
+    }
+
+    /// Two live folders at the same path (each device registered its own): the
+    /// larger id is tombstoned, deterministically, so every device agrees.
+    fn fix_dir_collisions(&mut self, report: &mut SyncReport) {
+        let mut by_path: BTreeMap<String, Vec<DocId>> = BTreeMap::new();
+        for entry in self.live_dir_entries(report) {
+            by_path
+                .entry(entry.path.to_lowercase())
+                .or_default()
+                .push(entry.doc_id);
+        }
+        for mut ids in by_path.into_values().filter(|ids| ids.len() > 1) {
+            ids.sort();
+            for loser in ids.split_off(1) {
+                let update = self.manifest.doc.set_deleted(loser, true);
+                self.queue_manifest_update(update);
+                if self.dir_paths.remove(&loser).is_some() {
+                    self.dirs_dirty = true;
+                }
+            }
+        }
+    }
+
+    /// Keeps folders in step with the manifest. Folders have no content, so this is
+    /// pure bookkeeping: register new local folders, create ones other devices have,
+    /// follow renames, and announce or apply deletions. File moves are handled first
+    /// (children carry themselves), so a renamed folder is recognised from its
+    /// files' moves and an emptied old folder is simply removed.
+    fn reconcile_dirs(
+        &mut self,
+        renamed_files: &[(String, String)],
+        no_files: bool,
+        report: &mut SyncReport,
+    ) -> Result<(), SyncError> {
+        let files = Arc::clone(&self.files);
+        let root = self.cfg.root.clone();
+        self.fix_dir_collisions(report);
+        let mut local = scan_dirs(&*files, &root);
+        let pairs = dir_rename_pairs(renamed_files);
+
+        // Remote renames: make the new folder, drop the old one if it's empty now.
+        // Deepest old folder first, so a child is gone before its parent is checked.
+        let mut moved: Vec<(ManifestEntry, String)> = self
+            .live_dir_entries(report)
+            .into_iter()
+            .filter_map(|entry| {
+                let old = self.dir_paths.get(&entry.doc_id)?.clone();
+                (old != entry.path).then_some((entry, old))
+            })
+            .collect();
+        moved.sort_by(|a, b| b.1.cmp(&a.1));
+        for (entry, old) in moved {
+            files.create_dir_all(&abs(&root, &entry.path))?;
+            local.insert(entry.path.clone());
+            if local.contains(&old) && dir_is_empty(&*files, &root, &old) {
+                files.remove_dir_all(&abs(&root, &old))?;
+                local.remove(&old);
+                report.dirs_removed += 1;
+            }
+            self.dir_paths.insert(entry.doc_id, entry.path);
+            self.dirs_dirty = true;
+        }
+
+        // Folders we had that are gone: renamed (as their files show) or deleted —
+        // unless nothing is left at all, which reads as an unmounted drive.
+        let tracked: BTreeSet<String> = self.dir_paths.values().cloned().collect();
+        for entry in self.live_dir_entries(report) {
+            let Some(old) = self.dir_paths.get(&entry.doc_id).cloned() else {
+                continue;
+            };
+            if local.contains(&old) {
+                continue;
+            }
+            let moved_to = map_through_pairs(&old, &pairs)
+                .filter(|new| local.contains(new) && !tracked.contains(new));
+            if let Some(new) = moved_to {
+                let update = self.manifest.doc.rename(entry.doc_id, &new);
+                self.queue_manifest_update(update);
+                self.dir_paths.insert(entry.doc_id, new);
+            } else if local.is_empty() && no_files {
+                report.deletions_held_back += 1;
+                continue;
+            } else {
+                let update = self.manifest.doc.set_deleted(entry.doc_id, true);
+                self.queue_manifest_update(update);
+                self.dir_paths.remove(&entry.doc_id);
+                report.dirs_tombstoned += 1;
+            }
+            self.dirs_dirty = true;
+        }
+
+        // Folders other devices have that we've never made.
+        for entry in self.live_dir_entries(report) {
+            if self.dir_paths.contains_key(&entry.doc_id) {
+                continue;
+            }
+            if !local.contains(&entry.path) {
+                files.create_dir_all(&abs(&root, &entry.path))?;
+                local.insert(entry.path.clone());
+                report.dirs_created += 1;
+            }
+            self.dir_paths.insert(entry.doc_id, entry.path);
+            self.dirs_dirty = true;
+        }
+
+        // Local folders nobody has registered yet, parents before children.
+        let tracked: BTreeSet<String> = self.dir_paths.values().cloned().collect();
+        for path in &local {
+            if tracked.contains(path) || !is_safe_relative_dir_path(path) {
+                continue;
+            }
+            let id = DocId(Uuid::new_v4());
+            let update = self.manifest.doc.add(id, path, EntryKind::Dir);
+            self.queue_manifest_update(Some(update));
+            self.dir_paths.insert(id, path.clone());
+            self.dirs_dirty = true;
+        }
+
+        // Folders deleted elsewhere: remove ours if it's empty, deepest first.
+        let live_paths: BTreeSet<String> = self
+            .live_dir_entries(report)
+            .into_iter()
+            .map(|entry| entry.path.to_lowercase())
+            .collect();
+        let mut dead: Vec<(DocId, String)> = self
+            .manifest
+            .doc
+            .entries()
+            .into_iter()
+            .filter(|entry| entry.deleted && entry.kind == EntryKind::Dir)
+            .filter_map(|entry| Some((entry.doc_id, self.dir_paths.get(&entry.doc_id)?.clone())))
+            .collect();
+        dead.sort_by(|a, b| b.1.cmp(&a.1));
+        for (id, path) in dead {
+            let gone = !local.contains(&path);
+            let removable =
+                !live_paths.contains(&path.to_lowercase()) && dir_is_empty(&*files, &root, &path);
+            if !gone && removable {
+                files.remove_dir_all(&abs(&root, &path))?;
+                local.remove(&path);
+                report.dirs_removed += 1;
+            }
+            if gone || removable {
+                self.dir_paths.remove(&id);
+                self.dirs_dirty = true;
+            }
+        }
+        Ok(())
     }
 
     /// Removes files whose documents another device deleted, unless this device has
@@ -737,7 +980,7 @@ impl SyncEngine {
     /// Registers a brand-new document for a file that already exists at `path`.
     fn create_local_doc(&mut self, path: &str, text: &str) -> DocId {
         let id = DocId(Uuid::new_v4());
-        let update = self.manifest.doc.add(id, path);
+        let update = self.manifest.doc.add(id, path, EntryKind::Doc);
         self.queue_manifest_update(Some(update));
         let mut tracked = Tracked::new(FileDoc::new());
         if let Some(update) = tracked.doc.set_text(text) {
@@ -987,6 +1230,19 @@ mod tests {
             self.engine.sync_once(&self.transport)
         }
 
+        fn mkdir(&self, rel: &str) {
+            std::fs::create_dir_all(self.path(rel)).unwrap();
+        }
+
+        fn dir_exists(&self, rel: &str) -> bool {
+            self.path(rel).is_dir()
+        }
+
+        /// Every (non-hidden) folder in the project.
+        fn dirs(&self) -> BTreeSet<String> {
+            scan_dirs(&*native_store(), self.dir.path())
+        }
+
         /// Every `.md` file in the project, path -> text.
         fn files(&self) -> BTreeMap<String, String> {
             let root = self.dir.path();
@@ -1002,16 +1258,17 @@ mod tests {
 
     /// Syncs every device repeatedly until a full round changes nothing.
     fn converge(devices: &mut [&mut Device]) {
+        let mut last_round = Vec::new();
         for _ in 0..8 {
-            let mut quiet = true;
-            for device in devices.iter_mut() {
-                quiet &= device.sync().is_quiet();
+            last_round.clear();
+            for (n, device) in devices.iter_mut().enumerate() {
+                last_round.push((n, device.sync()));
             }
-            if quiet {
+            if last_round.iter().all(|(_, report)| report.is_quiet()) {
                 return;
             }
         }
-        panic!("devices never settled");
+        panic!("devices never settled; last round: {last_round:#?}");
     }
 
     #[test]
@@ -1335,7 +1592,11 @@ mod tests {
             .into_iter()
             .enumerate()
         {
-            let update = manifest.add(DocId(Uuid::from_u128(500 + n as u128)), path);
+            let update = manifest.add(
+                DocId(Uuid::from_u128(500 + n as u128)),
+                path,
+                EntryKind::Doc,
+            );
             let sealed = key.seal(vault(), DocId::MANIFEST, &update).unwrap();
             evil.push(DocId::MANIFEST, &sealed).unwrap();
         }
@@ -1461,6 +1722,189 @@ mod tests {
         b.write("long.md", "revision 5\n");
         converge(&mut [&mut a, &mut b]);
         assert_eq!(a.read("long.md"), "revision 5\n");
+    }
+
+    #[test]
+    fn empty_and_nested_folders_reach_another_device() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        let mut b = Device::new(&server);
+        a.mkdir("Empty");
+        a.mkdir("World/Places");
+        a.write("World/Places/Oslo.md", "fjord\n");
+        converge(&mut [&mut a, &mut b]);
+
+        assert!(b.dir_exists("Empty"));
+        assert!(b.dir_exists("World/Places"));
+        assert_eq!(b.read("World/Places/Oslo.md"), "fjord\n");
+        assert_eq!(a.dirs(), b.dirs());
+    }
+
+    #[test]
+    fn a_renamed_folder_moves_everywhere_and_the_old_one_disappears() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        let mut b = Device::new(&server);
+        a.write("Notes/one.md", "1\n");
+        a.write("Notes/Deep/two.md", "2\n");
+        converge(&mut [&mut a, &mut b]);
+
+        a.rename("Notes/one.md", "Ideas/one.md");
+        a.rename("Notes/Deep/two.md", "Ideas/Deep/two.md");
+        std::fs::remove_dir_all(a.path("Notes")).unwrap();
+        converge(&mut [&mut a, &mut b]);
+
+        assert_eq!(a.files(), b.files());
+        assert_eq!(a.dirs(), b.dirs());
+        assert!(!b.dir_exists("Notes"), "{:?}", b.dirs());
+        assert!(b.dir_exists("Ideas/Deep"));
+        // The renamed folder is the same folder, not a delete plus a create.
+        let live_dirs = |d: &Device| {
+            d.engine
+                .manifest_entries()
+                .into_iter()
+                .filter(|e| e.kind == EntryKind::Dir && !e.deleted)
+                .count()
+        };
+        assert_eq!(live_dirs(&a), 2);
+        assert_eq!(live_dirs(&b), 2);
+    }
+
+    #[test]
+    fn a_deleted_folder_and_its_files_are_removed_everywhere() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        let mut b = Device::new(&server);
+        a.write("Draft/scene.md", "text\n");
+        a.write("keep.md", "k\n");
+        converge(&mut [&mut a, &mut b]);
+
+        std::fs::remove_dir_all(a.path("Draft")).unwrap();
+        converge(&mut [&mut a, &mut b]);
+
+        assert!(!b.dir_exists("Draft"));
+        assert!(!b.exists("Draft/scene.md"));
+        assert!(b.exists("keep.md"));
+    }
+
+    #[test]
+    fn joining_with_the_same_folders_adopts_them_without_duplicating() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        a.write("World/Places/Oslo.md", "fjord\n");
+        a.mkdir("Research");
+        a.sync();
+
+        let mut b = Device::new(&server);
+        b.write("World/Places/Oslo.md", "fjord\n");
+        b.mkdir("Research");
+        converge(&mut [&mut a, &mut b]);
+
+        let live = |d: &Device| {
+            d.engine
+                .manifest_entries()
+                .into_iter()
+                .filter(|e| e.kind == EntryKind::Dir && !e.deleted)
+                .count()
+        };
+        assert_eq!(live(&a), 3, "World, World/Places, Research");
+        assert_eq!(live(&b), 3);
+    }
+
+    #[test]
+    fn the_same_folder_created_on_two_devices_becomes_one() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        let mut b = Device::new(&server);
+        b.transport.set_online(false);
+        a.mkdir("Shared");
+        b.mkdir("Shared");
+        a.sync();
+        let _ = b.try_sync();
+        b.transport.set_online(true);
+        converge(&mut [&mut a, &mut b]);
+
+        let live: Vec<_> = a
+            .engine
+            .manifest_entries()
+            .into_iter()
+            .filter(|e| e.kind == EntryKind::Dir && !e.deleted)
+            .collect();
+        assert_eq!(live.len(), 1, "{live:?}");
+        assert!(a.dir_exists("Shared") && b.dir_exists("Shared"));
+    }
+
+    #[test]
+    fn hostile_folder_names_from_a_peer_are_ignored() {
+        let server = MemoryServer::default();
+        let mut victim = Device::new(&server);
+        victim.write("real.md", "fine\n");
+        victim.sync();
+
+        let evil = MemoryTransport::new(&server, DeviceId(Uuid::new_v4()));
+        let key = cheap_test_key("correct horse", &SALT);
+        let mut manifest = ManifestDoc::new();
+        for (n, path) in [".git", "../outside", "/abs", ".smaragd/plugins"]
+            .into_iter()
+            .enumerate()
+        {
+            let update = manifest.add(
+                DocId(Uuid::from_u128(900 + n as u128)),
+                path,
+                EntryKind::Dir,
+            );
+            let sealed = key.seal(vault(), DocId::MANIFEST, &update).unwrap();
+            evil.push(DocId::MANIFEST, &sealed).unwrap();
+        }
+        let report = victim.sync();
+        assert_eq!(report.skipped_paths.len(), 4, "{report:?}");
+        assert!(!victim.dir_exists(".git") && !victim.dir_exists(".smaragd"));
+    }
+
+    #[test]
+    fn folder_state_survives_a_restart() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        a.mkdir("Kept");
+        a.write("Kept/x.md", "x\n");
+        a.sync();
+        a.restart();
+        let report = a.sync();
+        assert!(report.is_quiet(), "{report:?}");
+        assert!(a.dir_exists("Kept"));
+    }
+
+    #[test]
+    fn dir_rename_pairs_come_from_the_parts_of_a_path_that_changed() {
+        let pairs = |renames: &[(&str, &str)]| {
+            dir_rename_pairs(
+                &renames
+                    .iter()
+                    .map(|(a, b)| (a.to_string(), b.to_string()))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            pairs(&[("A/f.md", "B/f.md")]),
+            vec![("A".into(), "B".into())]
+        );
+        assert_eq!(
+            pairs(&[("A/S/f.md", "B/S/f.md")]),
+            vec![("A".into(), "B".into())]
+        );
+        assert!(pairs(&[("A/f.md", "A/g.md")]).is_empty(), "a file rename");
+        assert!(
+            pairs(&[("f.md", "B/f.md")]).is_empty(),
+            "moved out of the root"
+        );
+        assert_eq!(
+            map_through_pairs("A/S", &[("A".into(), "B".into())]),
+            Some("B/S".into())
+        );
+        assert_eq!(
+            map_through_pairs("Other", &[("A".into(), "B".into())]),
+            None
+        );
     }
 
     #[test]
