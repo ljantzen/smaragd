@@ -66,10 +66,35 @@ fn healthcheck() -> ExitCode {
     }
 }
 
+/// `smaragd-sync-server admin <command>`: operator tools on the database, see `admin.rs`.
+fn admin() -> ExitCode {
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(message) => {
+            eprintln!("configuration error: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let args: Vec<String> = std::env::args().skip(2).collect();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    match smaragd_sync_server::admin::run(&args, &config, now, &mut std::io::stdout()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("{message}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     if std::env::args().nth(1).as_deref() == Some("healthcheck") {
         return healthcheck();
+    }
+    if std::env::args().nth(1).as_deref() == Some("admin") {
+        return admin();
     }
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))

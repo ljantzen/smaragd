@@ -6,10 +6,12 @@
 //! knowledge of markdown, projects or users, only vaults, devices and sequence
 //! numbers. See `smaragd_sync_protocol` for the wire format and endpoint table.
 
+pub mod admin;
 pub mod auth;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod maintenance;
 pub mod routes;
 
 use std::future::Future;
@@ -47,6 +49,9 @@ pub async fn serve(
     listener: TcpListener,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> io::Result<()> {
+    if let Some(interval) = state.config.maintenance_interval {
+        tokio::spawn(maintenance::run_forever(Arc::clone(&state), interval));
+    }
     axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown)
         .await

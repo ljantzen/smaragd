@@ -243,9 +243,10 @@ async fn revoke_device(
     Path((vault, device)): Path<(VaultId, DeviceId)>,
 ) -> Result<StatusCode, HttpError> {
     auth.require_vault(vault)?;
+    let now = unix_now();
     let removed = state
         .db
-        .run(move |conn| db::revoke_device(conn, vault, device))
+        .run(move |conn| db::revoke_device(conn, vault, device, now))
         .await?;
     if removed {
         Ok(StatusCode::NO_CONTENT)

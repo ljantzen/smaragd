@@ -81,17 +81,36 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
     init(Connection::open_in_memory()?)
 }
 
+/// v2 adds `vaults.last_active`, which lets maintenance tell an abandoned vault from a
+/// quiet one: it's bumped by every push and when a device is revoked, so "no devices
+/// and inactive for N days" means the last device left and nobody came back.
+const MIGRATE_V1_TO_V2: &str = "
+ALTER TABLE vaults ADD COLUMN last_active INTEGER NOT NULL DEFAULT 0;
+UPDATE vaults SET last_active = COALESCE(
+    (SELECT MAX(created_at) FROM updates WHERE updates.vault_id = vaults.id),
+    created_at
+);
+";
+
+const SCHEMA_VERSION: i64 = 2;
+
 fn init(conn: Connection) -> rusqlite::Result<Connection> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version == 0 {
-        conn.execute_batch(&format!(
-            "BEGIN; {SCHEMA_V1} PRAGMA user_version = 1; COMMIT;"
-        ))?;
-    } else if version != 1 {
+    if version > SCHEMA_VERSION {
         return Err(rusqlite::Error::InvalidParameterName(format!(
             "database schema version {version} is newer than this server understands"
         )));
+    }
+    if version < 1 {
+        conn.execute_batch(&format!(
+            "BEGIN; {SCHEMA_V1} PRAGMA user_version = 1; COMMIT;"
+        ))?;
+    }
+    if version < 2 {
+        conn.execute_batch(&format!(
+            "BEGIN; {MIGRATE_V1_TO_V2} PRAGMA user_version = 2; COMMIT;"
+        ))?;
     }
     Ok(conn)
 }
@@ -208,7 +227,8 @@ pub fn create_vault(
     };
     let tx = conn.transaction()?;
     tx.execute(
-        "INSERT INTO vaults (id, kdf_salt, key_version, created_at) VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO vaults (id, kdf_salt, key_version, created_at, last_active)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
         params![
             vault.vault_id.to_string(),
             vault.kdf_salt,
@@ -340,11 +360,20 @@ pub fn revoke_device(
     conn: &Connection,
     vault: VaultId,
     device: DeviceId,
+    now: i64,
 ) -> Result<bool, HttpError> {
-    Ok(conn.execute(
+    let removed = conn.execute(
         "DELETE FROM devices WHERE id = ?1 AND vault_id = ?2",
         params![device.to_string(), vault.to_string()],
-    )? > 0)
+    )? > 0;
+    if removed {
+        // Starts the clock for a vault whose last device just left.
+        conn.execute(
+            "UPDATE vaults SET last_active = ?2 WHERE id = ?1",
+            params![vault.to_string(), now],
+        )?;
+    }
+    Ok(removed)
 }
 
 pub fn list_docs(conn: &Connection, vault: VaultId) -> Result<Vec<DocSummary>, HttpError> {
@@ -407,8 +436,8 @@ pub fn push_update(
         params![v, d, seq, device.to_string(), blob, now],
     )?;
     tx.execute(
-        "UPDATE vaults SET bytes_used = bytes_used + ?2 WHERE id = ?1",
-        params![v, blob.len() as i64],
+        "UPDATE vaults SET bytes_used = bytes_used + ?2, last_active = ?3 WHERE id = ?1",
+        params![v, blob.len() as i64, now],
     )?;
     tx.commit()?;
     Ok(seq as u64)
@@ -515,6 +544,108 @@ pub fn put_snapshot(
         params![v, after as i64],
     )?;
     tx.commit()?;
+    Ok(())
+}
+
+/// One vault's footprint, for the admin listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultSummary {
+    pub vault_id: VaultId,
+    pub devices: u64,
+    pub docs: u64,
+    pub bytes_used: u64,
+    pub created_at: i64,
+    pub last_active: i64,
+}
+
+pub fn list_vaults(conn: &Connection) -> Result<Vec<VaultSummary>, HttpError> {
+    let mut stmt = conn.prepare(
+        "SELECT v.id, v.bytes_used, v.created_at, v.last_active,
+                (SELECT COUNT(*) FROM devices d WHERE d.vault_id = v.id),
+                (SELECT COUNT(*) FROM docs x WHERE x.vault_id = v.id)
+         FROM vaults v ORDER BY v.created_at, v.id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, i64>(5)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, bytes, created, active, devices, docs) = row?;
+        out.push(VaultSummary {
+            vault_id: parse_id(&id, "vault")?,
+            devices: devices.max(0) as u64,
+            docs: docs.max(0) as u64,
+            bytes_used: bytes.max(0) as u64,
+            created_at: created,
+            last_active: active,
+        });
+    }
+    Ok(out)
+}
+
+/// Pairing codes only matter for ten minutes; this drops the ones that are past it.
+pub fn purge_expired_pairing_codes(conn: &Connection, now: i64) -> Result<usize, HttpError> {
+    Ok(conn.execute("DELETE FROM pairing_codes WHERE expires_at < ?1", [now])?)
+}
+
+/// Vaults with no devices left whose last activity is older than `older_than_secs`:
+/// the last device left (or was revoked) and nobody has pushed since. Not deleted — see
+/// [`purge_empty_vaults`].
+pub fn find_empty_vaults(
+    conn: &Connection,
+    now: i64,
+    older_than_secs: i64,
+) -> Result<Vec<VaultSummary>, HttpError> {
+    let cutoff = now.saturating_sub(older_than_secs);
+    Ok(list_vaults(conn)?
+        .into_iter()
+        .filter(|vault| vault.devices == 0 && vault.last_active < cutoff)
+        .collect())
+}
+
+/// Deletes the vaults [`find_empty_vaults`] finds, returning them.
+pub fn purge_empty_vaults(
+    conn: &Connection,
+    now: i64,
+    older_than_secs: i64,
+) -> Result<Vec<VaultSummary>, HttpError> {
+    let found = find_empty_vaults(conn, now, older_than_secs)?;
+    for vault in &found {
+        delete_vault(conn, vault.vault_id)?;
+    }
+    Ok(found)
+}
+
+/// How much of the database file is unused space that a `VACUUM` would give back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fragmentation {
+    pub free_bytes: u64,
+    pub total_bytes: u64,
+}
+
+pub fn fragmentation(conn: &Connection) -> Result<Fragmentation, HttpError> {
+    let page_size: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0))?;
+    let pages: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0))?;
+    let free: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+    Ok(Fragmentation {
+        free_bytes: (free.max(0) * page_size) as u64,
+        total_bytes: (pages.max(0) * page_size) as u64,
+    })
+}
+
+/// Rewrites the database file without its unused space. SQLite never shrinks the file by
+/// itself, so after a lot of deletion (compaction, purged vaults) this is what returns
+/// the disk space. Blocks other work for as long as it takes and needs free disk space of
+/// about the database's size.
+pub fn vacuum(conn: &Connection) -> Result<(), HttpError> {
+    conn.execute_batch("VACUUM")?;
     Ok(())
 }
 
@@ -737,7 +868,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert!(revoke_device(&conn, vault, other.device_id).unwrap());
+        assert!(revoke_device(&conn, vault, other.device_id, NOW).unwrap());
         assert!(
             authenticate(&conn, &hash_secret(&other.token), NOW)
                 .unwrap()
@@ -748,7 +879,7 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
-        assert!(!revoke_device(&conn, vault, other.device_id).unwrap());
+        assert!(!revoke_device(&conn, vault, other.device_id, NOW).unwrap());
     }
 
     #[test]
@@ -809,6 +940,170 @@ mod tests {
             .query_row("SELECT last_seen FROM devices", [], |r| r.get(0))
             .unwrap();
         assert_eq!(seen, NOW + LAST_SEEN_GRANULARITY_SECS);
+    }
+
+    fn add_device(conn: &mut Connection, vault: VaultId) -> NewDevice {
+        let code = create_pairing_code(conn, vault, NOW, 600).unwrap();
+        redeem_pairing_code(conn, &code, "extra", NOW)
+            .unwrap()
+            .unwrap()
+    }
+
+    const DAY: i64 = 86_400;
+
+    #[test]
+    fn an_old_v1_database_is_migrated_in_place() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(&format!(
+            "BEGIN; {SCHEMA_V1} PRAGMA user_version = 1; COMMIT;"
+        ))
+        .unwrap();
+        conn.execute(
+            "INSERT INTO vaults (id, kdf_salt, key_version, created_at) VALUES ('v', x'00', 1, 500)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO docs (vault_id, doc_id, latest_seq) VALUES ('v', 'd', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO updates (vault_id, doc_id, seq, device_id, blob, created_at) VALUES ('v', 'd', 1, 'x', x'00', 900)",
+            [],
+        )
+        .unwrap();
+
+        let conn = init(conn).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        let last_active: i64 = conn
+            .query_row("SELECT last_active FROM vaults WHERE id = 'v'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(last_active, 900, "seeded from the latest update");
+    }
+
+    #[test]
+    fn last_active_moves_on_push_and_when_a_device_leaves() {
+        let (mut conn, device) = setup();
+        let (v, dev) = (device.vault.vault_id, device.device_id);
+        let active = |conn: &Connection| list_vaults(conn).unwrap()[0].last_active;
+        assert_eq!(active(&conn), NOW);
+        push_update(&mut conn, v, doc(1), dev, b"a", BIG, NOW + 100).unwrap();
+        assert_eq!(active(&conn), NOW + 100);
+        revoke_device(&conn, v, dev, NOW + 200).unwrap();
+        assert_eq!(active(&conn), NOW + 200);
+    }
+
+    #[test]
+    fn only_vaults_with_no_devices_and_past_the_retention_are_purged() {
+        let mut conn = open_in_memory().unwrap();
+        let keep_with_device = create_vault(&mut conn, &SALT, "a", NOW).unwrap();
+        let keep_recent = create_vault(&mut conn, &SALT, "b", NOW).unwrap();
+        let stale = create_vault(&mut conn, &SALT, "c", NOW).unwrap();
+        push_update(
+            &mut conn,
+            stale.vault.vault_id,
+            doc(1),
+            stale.device_id,
+            b"x",
+            BIG,
+            NOW,
+        )
+        .unwrap();
+        revoke_device(
+            &conn,
+            keep_recent.vault.vault_id,
+            keep_recent.device_id,
+            NOW + 29 * DAY,
+        )
+        .unwrap();
+        revoke_device(&conn, stale.vault.vault_id, stale.device_id, NOW + DAY).unwrap();
+
+        let now = NOW + 40 * DAY;
+        let found = find_empty_vaults(&conn, now, 30 * DAY).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].vault_id, stale.vault.vault_id);
+        assert_eq!(
+            list_vaults(&conn).unwrap().len(),
+            3,
+            "finding deletes nothing"
+        );
+
+        let purged = purge_empty_vaults(&conn, now, 30 * DAY).unwrap();
+        assert_eq!(purged.len(), 1);
+        let remaining: Vec<_> = list_vaults(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|v| v.vault_id)
+            .collect();
+        assert!(remaining.contains(&keep_with_device.vault.vault_id));
+        assert!(remaining.contains(&keep_recent.vault.vault_id));
+        assert!(!remaining.contains(&stale.vault.vault_id));
+        // Its data went with it.
+        let updates: i64 = conn
+            .query_row("SELECT COUNT(*) FROM updates", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(updates, 0);
+    }
+
+    #[test]
+    fn a_vault_that_still_has_a_device_is_never_purged_however_old() {
+        let (mut conn, first) = setup();
+        let vault = first.vault.vault_id;
+        let second = add_device(&mut conn, vault);
+        // One device leaves; the other remains.
+        revoke_device(&conn, vault, first.device_id, NOW).unwrap();
+        assert!(
+            find_empty_vaults(&conn, NOW + 999 * DAY, DAY)
+                .unwrap()
+                .is_empty()
+        );
+        // Once the last one leaves, the clock starts from then.
+        revoke_device(&conn, vault, second.device_id, NOW + 10 * DAY).unwrap();
+        assert!(
+            find_empty_vaults(&conn, NOW + 10 * DAY + 100, DAY)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            find_empty_vaults(&conn, NOW + 12 * DAY, DAY).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn expired_pairing_codes_are_purged_and_live_ones_kept() {
+        let (mut conn, device) = setup();
+        create_pairing_code(&mut conn, device.vault.vault_id, NOW, 600).unwrap();
+        create_pairing_code(&mut conn, device.vault.vault_id, NOW + 1000, 600).unwrap();
+        // The second creation already purged the first (it had expired by then).
+        assert_eq!(purge_expired_pairing_codes(&conn, NOW + 1000).unwrap(), 0);
+        assert_eq!(purge_expired_pairing_codes(&conn, NOW + 5000).unwrap(), 1);
+        assert_eq!(purge_expired_pairing_codes(&conn, NOW + 5000).unwrap(), 0);
+    }
+
+    #[test]
+    fn vacuum_returns_space_after_data_is_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut conn = open(&dir.path().join("t.sqlite3")).unwrap();
+        let device = create_vault(&mut conn, &SALT, "a", NOW).unwrap();
+        let (v, dev) = (device.vault.vault_id, device.device_id);
+        for n in 0..40u128 {
+            push_update(&mut conn, v, doc(n), dev, &vec![7u8; 100_000], BIG, NOW).unwrap();
+        }
+        assert!(delete_vault(&conn, v).unwrap());
+        let before = fragmentation(&conn).unwrap();
+        assert!(before.free_bytes > 1_000_000, "{before:?}");
+
+        vacuum(&conn).unwrap();
+        let after = fragmentation(&conn).unwrap();
+        assert!(after.free_bytes < before.free_bytes / 10, "{after:?}");
+        assert!(after.total_bytes < before.total_bytes);
     }
 
     #[test]

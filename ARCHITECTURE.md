@@ -106,7 +106,7 @@ The repository is a Cargo workspace with **three deliberately separate lockfiles
 Cargo.toml / Cargo.lock       the desktop app (+ crates/smaragd-sync-protocol as a workspace member)
 crates/
   smaragd-sync-protocol/      wire types shared by client and server: ids, encrypted-envelope layout + AAD, the SyncTicket pairing code, HTTP API request/response types (wasm32-compatible; its rustdoc is the protocol reference)
-  smaragd-sync-server/        the axum + SQLite server, its Dockerfile/compose file and self-hosting README. Its OWN workspace and Cargo.lock
+  smaragd-sync-server/        the axum + SQLite server, its Dockerfile/compose file and self-hosting README. Its OWN workspace and Cargo.lock. Also runs unattended housekeeping (`maintenance.rs`: expired pairing codes, vaults with no devices left after a retention period, vacuum when worthwhile) and has an operator CLI (`admin.rs`: list/delete-vault/purge-empty/vacuum/maintenance, destructive ones need --yes)
   smaragd-sync-e2e/           end-to-end tests: the real client + engine (from the app crate) against the real server. Its OWN workspace and Cargo.lock
 ```
 

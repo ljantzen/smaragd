@@ -27,6 +27,8 @@ fn harness(open: bool, admin: Option<&str>, quota: u64) -> Harness {
         allow_open_registration: open,
         admin_token: admin.map(str::to_string),
         vault_quota_bytes: quota,
+        maintenance_interval: None,
+        empty_vault_retention: None,
     })
     .unwrap();
     let agent: ureq::Agent = ureq::Agent::config_builder()
@@ -448,6 +450,8 @@ fn state_survives_a_restart() {
         allow_open_registration: true,
         admin_token: None,
         vault_quota_bytes: GB,
+        maintenance_interval: None,
+        empty_vault_retention: None,
     };
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -487,4 +491,80 @@ fn state_survives_a_restart() {
     let info: VaultInfo =
         serde_json::from_slice(&response.body_mut().read_to_vec().unwrap()).unwrap();
     assert_eq!(info, created.vault);
+}
+
+#[test]
+fn the_background_task_deletes_a_vault_whose_last_device_left() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = start_in_background(Config {
+        listen_addr: "127.0.0.1:0".into(),
+        data_dir: dir.path().to_path_buf(),
+        allow_open_registration: true,
+        admin_token: None,
+        vault_quota_bytes: GB,
+        maintenance_interval: Some(std::time::Duration::from_secs(1)),
+        empty_vault_retention: Some(std::time::Duration::from_secs(1)),
+    })
+    .unwrap();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let create = |name: &str| -> CreateVaultResponse {
+        let body = serde_json::to_vec(&CreateVaultRequest {
+            device_name: name.into(),
+            kdf_salt: vec![1; KDF_SALT_LEN],
+        })
+        .unwrap();
+        serde_json::from_slice(
+            &agent
+                .post(&format!("{}/v1/vaults", server.base_url()))
+                .header("Content-Type", "application/json")
+                .send(&body[..])
+                .unwrap()
+                .body_mut()
+                .read_to_vec()
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let abandoned = create("leaving");
+    let kept = create("staying");
+
+    // The first vault's only device removes itself.
+    let response = agent
+        .delete(&format!(
+            "{}/v1/vaults/{}/devices/{}",
+            server.base_url(),
+            abandoned.vault.vault_id,
+            abandoned.device_id
+        ))
+        .header(
+            "Authorization",
+            format!("Bearer {}", abandoned.device_token),
+        )
+        .call()
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 204);
+
+    // Within a few seconds maintenance removes it (and only it).
+    let db_path = dir.path().join("sync.sqlite3");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let conn = smaragd_sync_server::db::open(&db_path).unwrap();
+        let ids: Vec<_> = smaragd_sync_server::db::list_vaults(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|v| v.vault_id)
+            .collect();
+        if !ids.contains(&abandoned.vault.vault_id) {
+            assert_eq!(ids, vec![kept.vault.vault_id]);
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the abandoned vault was never purged"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
 }

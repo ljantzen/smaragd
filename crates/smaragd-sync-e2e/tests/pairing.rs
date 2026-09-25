@@ -25,6 +25,8 @@ fn server() -> (RunningServer, ServerAddr, tempfile::TempDir) {
         allow_open_registration: false,
         admin_token: Some(ADMIN.into()),
         vault_quota_bytes: 1 << 30,
+        maintenance_interval: None,
+        empty_vault_retention: None,
     })
     .unwrap();
     let addr = ServerAddr {

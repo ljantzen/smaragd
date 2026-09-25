@@ -24,6 +24,8 @@ fn server_config(data_dir: PathBuf, listen: &str) -> Config {
         allow_open_registration: false,
         admin_token: Some(ADMIN.into()),
         vault_quota_bytes: 1 << 30,
+        maintenance_interval: None,
+        empty_vault_retention: None,
     }
 }
 

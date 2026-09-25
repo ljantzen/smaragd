@@ -15,6 +15,7 @@ identical in the background, even when only one is open at a time.
 - [Putting it behind TLS](#putting-it-behind-tls)
 - [Connecting Smaragd](#connecting-smaragd)
 - [Operating it](#operating-it): backups, upgrades, limits, revoking devices
+- [Maintenance](#maintenance): what the server tidies up by itself, and the admin commands
 - [Building from source](#building-from-source)
 - [Troubleshooting](#troubleshooting)
 
@@ -84,6 +85,8 @@ Everything is an environment variable; there is no config file.
 | `SMARAGD_SYNC_ADMIN_TOKEN` | *(unset)* | Lets whoever holds it create vaults while open registration is off. |
 | `SMARAGD_SYNC_ALLOW_OPEN_REGISTRATION` | `false` | If `true`, *anyone who can reach the server* may create a vault. Leave off unless the server is private. |
 | `SMARAGD_SYNC_VAULT_QUOTA_MB` | `1024` | Maximum ciphertext stored per vault. |
+| `SMARAGD_SYNC_MAINTENANCE_INTERVAL_HOURS` | `6` | How often the built-in maintenance task runs (see [Maintenance](#maintenance)). `0` turns it off. |
+| `SMARAGD_SYNC_EMPTY_VAULT_RETENTION_DAYS` | `30` | A vault with no devices left is deleted this many days after its last activity. `0` keeps such vaults forever. |
 | `RUST_LOG` | `info` | Log level (`tracing` filter syntax). |
 
 If open registration is off **and** no admin token is set, nobody can create a
@@ -183,11 +186,38 @@ server refuses to open a database written by a *newer* version.
   compact snapshot (`PUT .../snapshot`) once it has about 64 of them, which is how a
   vault's size is kept in check.
 
+### Maintenance
+
+The server tidies up after itself, so an instance can run for a long time without attention. About a minute after start-up and then every `SMARAGD_SYNC_MAINTENANCE_INTERVAL_HOURS` hours it:
+
+- removes **expired pairing codes**;
+- deletes **abandoned vaults** — vaults whose last device was removed ("Stop syncing this project" on the last device, or a revoke) and that have seen no activity for `SMARAGD_SYNC_EMPTY_VAULT_RETENTION_DAYS` days. A vault that still has a device is never touched, however quiet. The clients' own project files are unaffected; only the server's encrypted copy goes;
+- **vacuums the database** when at least 32 MiB, and a quarter of the file, is unused. SQLite never shrinks its file on its own, so without this the file would stay at its high-water mark after vaults are deleted. A vacuum briefly blocks requests.
+
+Smaragd clients also compact each document's history into a snapshot on their own (see Limits).
+
+What it *doesn't* do for you: **backups**, **upgrades**, disk monitoring and log rotation (Docker's `--log-opt max-size` is worth setting), and **removing the encrypted history of deleted files** — the server can't tell which documents are deleted, so that data stays until its vault is deleted.
+
+#### Admin commands
+
+For looking around and cleaning up by hand, the server binary has an `admin` mode. It works directly on the database, so it is safe to run while the server is up:
+
+```sh
+docker exec smaragd-sync smaragd-sync-server admin list
+docker exec smaragd-sync smaragd-sync-server admin purge-empty --days 14        # only lists
+docker exec smaragd-sync smaragd-sync-server admin purge-empty --days 14 --yes  # deletes
+docker exec smaragd-sync smaragd-sync-server admin delete-vault <vault-id> --yes
+docker exec smaragd-sync smaragd-sync-server admin vacuum
+docker exec smaragd-sync smaragd-sync-server admin maintenance                  # one pass now
+```
+
+`list` shows every vault with its devices, documents, size and last activity, plus the database file's size and how much of it is reclaimable. Anything destructive only *shows* what it would do unless you add `--yes`. Outside Docker, run `smaragd-sync-server admin ...` with `SMARAGD_SYNC_DATA_DIR` set as for the server.
+
 ### Devices and vaults
 
 Each paired device has its own token, and any device can list or revoke the
 vault's devices from Smaragd's Sync panel; a revoked token stops working
-immediately. Deleting a vault removes all its data and every device's token.
+immediately. Deleting a vault removes all its data and every device's token. A vault whose last device leaves is removed automatically after the retention period (see [Maintenance](#maintenance)); `admin delete-vault` removes one right away.
 
 ## Building from source
 
