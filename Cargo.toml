@@ -6,6 +6,14 @@ license = "GPL-3.0-or-later"
 description = "A native desktop authoring tool for writers"
 repository = "https://github.com/ljantzen/smaragd"
 
+# The root package is also a workspace member. The sync *server* is deliberately
+# excluded: it lives in its own workspace with its own Cargo.lock so its
+# dependencies (axum, rusqlite, ...) never enter this lockfile, which the flatpak
+# build vendors wholesale (see scripts/update-flatpak-sources.sh).
+[workspace]
+members = ["crates/smaragd-sync-protocol"]
+exclude = ["crates/smaragd-sync-server"]
+
 [dependencies]
 blake3 = "1.8.5"
 bs58 = "0.5.1"

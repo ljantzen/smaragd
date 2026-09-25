@@ -25,21 +25,21 @@ clean:
     cargo clean
     rm -rf book-src/book dist
 
-# Run the test suite (matches CI: cargo test --all-targets --all-features)
+# Run the test suite, including workspace members (matches CI: cargo test --workspace --all-targets --all-features)
 test:
-    cargo test --all-targets --all-features
+    cargo test --workspace --all-targets --all-features
 
 # Lint with clippy, warnings as errors (matches CI)
 clippy:
-    cargo clippy --all-targets --all-features -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Format the code in place
 fmt:
-    cargo fmt
+    cargo fmt --all
 
 # Check formatting without modifying files (matches CI)
 fmt-check:
-    cargo fmt --check
+    cargo fmt --all --check
 
 # Run everything CI runs: fmt-check, clippy, test — use before committing
 check: fmt-check clippy test
