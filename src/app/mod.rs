@@ -22,6 +22,7 @@ mod pomodoro;
 mod project_lifecycle;
 mod prompt;
 mod refresh;
+mod session;
 mod settings_persist;
 mod spell_check;
 mod streak_events;
@@ -416,6 +417,11 @@ impl SmaragdApp {
             && let Some(path) = app.settings.last_project_path.clone()
         {
             app.open_project(&cc.egui_ctx, &path);
+            if let Some(session) = crate::session::session_file_path()
+                .and_then(|path| crate::session::SessionState::load_from_path(&path))
+            {
+                app.restore_session(&cc.egui_ctx, session);
+            }
         }
 
         // The wasm32 equivalent of "reopen last project": `settings.
@@ -1499,6 +1505,7 @@ impl eframe::App for SmaragdApp {
         if ui.ctx().input(|i| i.viewport().close_requested()) {
             let ctx = ui.ctx().clone();
             self.persist_dock_layout(&ctx);
+            self.persist_session(&ctx);
 
             // Veto the close and pop the Save/Discard/Cancel modal (rendered
             // further down, alongside the other prompts) the first time we see

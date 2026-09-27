@@ -317,6 +317,34 @@ fn paint_row_background(
     visuals
 }
 
+/// The egui id a folder row's `CollapsingState` lives under — derived from
+/// the folder's path alone (not the surrounding `Ui`'s id stack, which
+/// depends on where the Binder dock tab happens to sit), so
+/// `SmaragdApp`'s session save/restore can read and set a folder's
+/// expanded state without rendering the Binder.
+pub fn folder_collapsing_id(path: &Path) -> egui::Id {
+    egui::Id::new(("binder_folder", path))
+}
+
+/// Whether the folder at `path` is currently expanded in the Binder — `true`
+/// (the Binder's own default) for a folder that hasn't been rendered yet.
+pub fn is_folder_open(ctx: &egui::Context, path: &Path) -> bool {
+    egui::containers::collapsing_header::CollapsingState::load(ctx, folder_collapsing_id(path))
+        .is_none_or(|state| state.is_open())
+}
+
+/// Expand or collapse the folder at `path` in the Binder, effective the next
+/// time it renders.
+pub fn set_folder_open(ctx: &egui::Context, path: &Path, open: bool) {
+    let mut state = egui::containers::collapsing_header::CollapsingState::load_with_default_open(
+        ctx,
+        folder_collapsing_id(path),
+        true,
+    );
+    state.set_open(open);
+    state.store(ctx);
+}
+
 /// A hand-built stand-in for `egui::CollapsingHeader::new(label).id_salt(id).show(...)`'s
 /// header half — closely mirroring that widget's own internals (see egui's
 /// `containers/collapsing_header.rs`) — because `CollapsingHeader` hardcodes its header
@@ -486,7 +514,7 @@ fn show_node(
                 ""
             };
             let label = format!("{}{}{}", role_prefix(role), node.name, dirty_marker);
-            let id = ui.make_persistent_id(&node.path);
+            let id = folder_collapsing_id(&node.path);
             let is_selected =
                 folder_row_is_selected(is_root, project_selected, selected_folder, &node.path);
             let status_color = folder_row_color(project, &node.path, folder_word_counts);

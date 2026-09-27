@@ -206,6 +206,11 @@ fn show_general_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
             &mut settings.reopen_last_project,
             "Reopen project on launch",
         )
+        .on_hover_text(
+            "Also restores the open document and cursor position, binder selection \
+             and collapsed folders, Back/Forward history, Focus Mode, and the \
+             window's size and position.",
+        )
         .changed();
     changed |= ui
         .checkbox(

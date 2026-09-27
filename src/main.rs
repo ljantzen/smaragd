@@ -7,11 +7,13 @@ const ICON_RGBA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon_rgba.bin
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_icon(egui::IconData {
-            rgba: ICON_RGBA.to_vec(),
-            width: ICON_SIZE,
-            height: ICON_SIZE,
-        }),
+        viewport: smaragd::session::restored_viewport(egui::ViewportBuilder::default().with_icon(
+            egui::IconData {
+                rgba: ICON_RGBA.to_vec(),
+                width: ICON_SIZE,
+                height: ICON_SIZE,
+            },
+        )),
         ..Default::default()
     };
     eframe::run_native(

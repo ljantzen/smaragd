@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+- "Reopen project on launch" now restores the whole working session, not just the project: the open document and cursor position, binder selection and collapsed folders, Back/Forward history, Focus Mode, and the window's size and position. This is saved to `session.json` next to `smaragd.toml` whenever the app closes.
+- Fixed a cursor position being lost the first time a document was shown in a session, and jumps to a remembered position (Back/Forward, reopening a document) not scrolling the editor to it.
 - Added a **Toggle Spell Check** shortcut (`F7` by default, also `Tools > Toggle Spell Check` and `:spell`). Toggling on restores the last language used in the open project, which each project now remembers separately.
 - Added an **In Focus Mode** setting under Settings > Spell Check to force spell check on or off while Focus Mode lasts (default: keep current). Leaving Focus Mode restores the previous state.
 - Added a `World` folder role (🌐), alongside Research/Trash/Templates/Manuscript, for a project's worldbuilding content. The World-Building project template now tags its `World` folder with it.

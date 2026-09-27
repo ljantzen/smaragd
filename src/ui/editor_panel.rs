@@ -235,7 +235,8 @@ pub fn show(
     // whichever document was open before. Consumed (and cleared) unconditionally
     // so it never re-fires on a later frame once the `TextEdit` below has
     // already picked it up.
-    if let Some(byte_offset) = editor.pending_cursor.take() {
+    let jumped_to_byte = editor.pending_cursor.take();
+    if let Some(byte_offset) = jumped_to_byte {
         move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, byte_offset);
     }
 
@@ -376,6 +377,18 @@ pub fn show(
                     .id(text_edit_id)
                     .layouter(&mut editor_layouter);
                 let text_output = text_edit.show(ui);
+                // A programmatic cursor move (above) doesn't count as a
+                // selection change to the `TextEdit` itself, so it never
+                // scrolls to follow it the way typing or clicking does —
+                // bring a jumped-to position into view explicitly, centered.
+                if let Some(byte_offset) = jumped_to_byte {
+                    let char_offset = byte_offset_to_char(&editor.buffer, byte_offset);
+                    let cursor_rect = text_output
+                        .galley
+                        .pos_from_cursor(CCursor::new(char_offset))
+                        .translate(text_output.galley_pos.to_vec2());
+                    ui.scroll_to_rect(cursor_rect, Some(egui::Align::Center));
+                }
                 if show_gutter {
                     gutter_click = paint_gutter(
                         ui,
@@ -917,17 +930,18 @@ fn render_popup(
 
 /// Move the `TextEdit`'s cursor to `byte_offset` and give it focus back. Used both to
 /// leave the caret right after an accepted wikilink suggestion, and by `app.rs` to
-/// jump to a find-and-replace result. A no-op if the `TextEdit` has never been shown
-/// yet this session (e.g. jumping to a result before any document has been opened).
+/// jump to a find-and-replace result. Works even before the `TextEdit` has ever been
+/// shown this session — starting from a fresh default state, which the `TextEdit`
+/// then picks up on its first render — so a cursor position restored at startup
+/// (`SmaragdApp::restore_session`) isn't lost on the document's very first frame.
 pub fn move_cursor_to(ctx: &egui::Context, id: Id, text: &str, byte_offset: usize) {
-    if let Some(mut state) = egui::TextEdit::load_state(ctx, id) {
-        let char_offset = byte_offset_to_char(text, byte_offset);
-        state
-            .cursor
-            .set_char_range(Some(CCursorRange::one(CCursor::new(char_offset))));
-        egui::TextEdit::store_state(ctx, id, state);
-        ctx.memory_mut(|m| m.request_focus(id));
-    }
+    let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+    let char_offset = byte_offset_to_char(text, byte_offset);
+    state
+        .cursor
+        .set_char_range(Some(CCursorRange::one(CCursor::new(char_offset))));
+    egui::TextEdit::store_state(ctx, id, state);
+    ctx.memory_mut(|m| m.request_focus(id));
 }
 
 #[cfg(test)]

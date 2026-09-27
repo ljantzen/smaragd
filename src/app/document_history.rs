@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 /// Back/Forward navigation like a browser's history stack, plus the last known
 /// cursor position within every document ever visited — restored automatically
 /// whenever that document is loaded again (see `SmaragdApp::load_document`).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(super) struct DocumentHistory {
     /// Visited documents in order. A document can appear more than once if
     /// revisited independently of Back/Forward (e.g. clicking it again in the
@@ -112,6 +112,51 @@ impl DocumentHistory {
 
     pub(super) fn cursor_for(&self, path: &Path) -> Option<usize> {
         self.cursor_positions.get(path).copied()
+    }
+
+    /// Entries, position and remembered cursors, for saving in
+    /// `session::SessionState` — see `from_snapshot`.
+    pub(super) fn snapshot(&self) -> (Vec<PathBuf>, Option<usize>, Vec<(PathBuf, usize)>) {
+        let mut cursors: Vec<(PathBuf, usize)> = self
+            .cursor_positions
+            .iter()
+            .map(|(path, offset)| (path.clone(), *offset))
+            .collect();
+        cursors.sort();
+        (self.entries.clone(), self.position, cursors)
+    }
+
+    /// Rebuild a history saved by `snapshot`. A `position` that doesn't fit
+    /// `entries` (a hand-edited or truncated file) falls back to the last
+    /// entry rather than being trusted.
+    pub(super) fn from_snapshot(
+        entries: Vec<PathBuf>,
+        position: Option<usize>,
+        cursor_positions: Vec<(PathBuf, usize)>,
+    ) -> Self {
+        let position = match position {
+            Some(index) if index < entries.len() => Some(index),
+            _ => entries.len().checked_sub(1),
+        };
+        Self {
+            entries,
+            position,
+            cursor_positions: cursor_positions.into_iter().collect(),
+        }
+    }
+
+    /// Every distinct path this history refers to — so a restored session can
+    /// drop the ones deleted since it was saved (see `remove_subtree`).
+    pub(super) fn known_paths(&self) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .chain(self.cursor_positions.keys())
+            .cloned()
+            .collect();
+        paths.sort();
+        paths.dedup();
+        paths
     }
 
     /// Drop every entry (and remembered cursor) for `path` or anything inside

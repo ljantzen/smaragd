@@ -507,7 +507,7 @@ impl SmaragdApp {
     /// (`open_document_internal`, via `document_history.visit`) or a
     /// Back/Forward step (`go_back_document`/`go_forward_document`, which
     /// only move the existing position). Returns whether the open succeeded.
-    fn load_document(&mut self, path: &Path) -> bool {
+    pub(super) fn load_document(&mut self, path: &Path) -> bool {
         // Captured before `editor.open` runs (which may autosave a dirty
         // outgoing document first) — invalidated after, so its cached status
         // reflects whatever it was just saved as, not what it was before.

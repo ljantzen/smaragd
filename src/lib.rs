@@ -17,6 +17,7 @@ pub mod pomodoro;
 pub mod project;
 pub mod project_template;
 pub mod search;
+pub mod session;
 pub mod settings;
 pub mod shortcuts;
 pub mod spellcheck;
