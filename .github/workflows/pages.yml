@@ -1,17 +1,14 @@
 name: Deploy Pages
 
+# Deployed only as part of a release (a `v`-prefixed version tag, the same
+# pattern the `github-pages` environment's deployment rules allow), so the
+# published manual and browser edition always match the latest released
+# version rather than whatever is on `main`. Can still be run manually from
+# the Actions tab.
 on:
   push:
-    branches: [main]
-    paths:
-      - "docs/**"
-      - "book-src/**"
-      - "src/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "index.html"
-      - "assets/**"
-      - ".github/workflows/pages.yml"
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
   workflow_dispatch:
 
 permissions:
@@ -25,6 +22,8 @@ concurrency:
 
 jobs:
   deploy:
+    # Prerelease tags (e.g. `v1.3.0-rc1`) don't replace the live site.
+    if: github.event_name == 'workflow_dispatch' || !contains(github.ref_name, '-')
     runs-on: ubuntu-latest
     environment:
       name: github-pages
