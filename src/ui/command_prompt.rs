@@ -54,6 +54,8 @@ pub enum Command {
     /// Open the Tags dock filtered to documents carrying the given tag (empty
     /// string just opens the dock without changing its current filter).
     Tag(String),
+    /// Toggle spell check off/on — same as `ShortcutAction::ToggleSpellCheck`.
+    ToggleSpellCheck,
     /// A `:` command a loaded plugin registered (name, argument) — `app.rs` looks
     /// up which plugin owns `name` and runs it.
     Plugin(String, String),
@@ -85,7 +87,7 @@ pub enum CommandPromptEvent {
 /// point of completion is discoverability; short aliases like `w`/`q`/`x` still work
 /// when typed in full, they just aren't themselves completion targets.
 const COMMAND_NAMES: &[&str] = &[
-    "write", "quit", "wq", "open", "new", "dmode", "theme", "git", "find", "tag",
+    "write", "quit", "wq", "open", "new", "dmode", "theme", "git", "find", "tag", "spell",
 ];
 const DARK_MODE_CHOICES: &[&str] = &["dark", "light", "system"];
 const GIT_SUBCOMMANDS: &[&str] = &["enable", "commit", "push", "pull", "backup"];
@@ -125,6 +127,7 @@ fn parse_command(input: &str, plugin_commands: &[String]) -> Result<Command, Str
         "git" => Err("Usage: :git enable|commit|push|pull|backup [message]".to_string()),
         "find" => Ok(Command::Find(rest.to_string())),
         "tag" => Ok(Command::Tag(rest.to_string())),
+        "spell" => Ok(Command::ToggleSpellCheck),
         other if plugin_commands.iter().any(|c| c == other) => {
             Ok(Command::Plugin(other.to_string(), rest.to_string()))
         }
@@ -578,6 +581,10 @@ mod tests {
             other => panic!("expected Command::Tag, got {}", describe(&other)),
         }
         assert!(matches!(parse_command("tag", &[]), Ok(Command::Tag(tag)) if tag.is_empty()));
+        assert!(matches!(
+            parse_command("spell", &[]),
+            Ok(Command::ToggleSpellCheck)
+        ));
     }
 
     #[test]

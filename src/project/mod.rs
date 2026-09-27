@@ -251,6 +251,23 @@ impl Project {
         save_metadata(self.store.as_ref(), &self.root, &self.meta)
     }
 
+    /// Remember `language` as this project's `last_spell_check_language`.
+    /// `Off` is ignored (there's nothing to turn back on), and so is a
+    /// language that's already the remembered one — no rewrite of
+    /// `project.json` for a no-op.
+    pub fn remember_spell_check_language(
+        &mut self,
+        language: crate::spellcheck::SpellCheckLanguage,
+    ) -> io::Result<()> {
+        if language == crate::spellcheck::SpellCheckLanguage::Off
+            || self.meta.last_spell_check_language == Some(language)
+        {
+            return Ok(());
+        }
+        self.meta.last_spell_check_language = Some(language);
+        self.save_metadata()
+    }
+
     /// Turn git support on for this project and record that the user's been asked
     /// (so the one-time "enable git support?" dialog never asks again).
     pub fn enable_git_support(&mut self) -> io::Result<()> {
@@ -1705,6 +1722,27 @@ mod tests {
                 "Scene 5.md".to_string(),
                 "Scene 4.md".to_string(),
             ])
+        );
+    }
+
+    #[test]
+    fn remember_spell_check_language_persists_and_ignores_off() {
+        use crate::spellcheck::SpellCheckLanguage;
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        assert_eq!(project.meta.last_spell_check_language, None);
+
+        project
+            .remember_spell_check_language(SpellCheckLanguage::NorwegianNynorsk)
+            .unwrap();
+        project
+            .remember_spell_check_language(SpellCheckLanguage::Off)
+            .unwrap();
+
+        let reloaded = Project::load_from_folder(dir.path()).unwrap();
+        assert_eq!(
+            reloaded.meta.last_spell_check_language,
+            Some(SpellCheckLanguage::NorwegianNynorsk)
         );
     }
 }

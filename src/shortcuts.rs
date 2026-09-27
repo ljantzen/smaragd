@@ -102,6 +102,10 @@ pub enum ShortcutAction {
     /// today, so this is currently the only way back to 100% short of
     /// scrolling by hand.
     PreviewZoomReset,
+    /// Turn spell check off, or back on in the open project's remembered
+    /// language (`ProjectMeta::last_spell_check_language`) — see
+    /// `SmaragdApp::toggle_spell_check`.
+    ToggleSpellCheck,
 }
 
 impl ShortcutAction {
@@ -152,6 +156,7 @@ impl ShortcutAction {
         Self::PreviewZoomIn,
         Self::PreviewZoomOut,
         Self::PreviewZoomReset,
+        Self::ToggleSpellCheck,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -203,6 +208,7 @@ impl ShortcutAction {
             Self::PreviewZoomIn => "Zoom In Preview",
             Self::PreviewZoomOut => "Zoom Out Preview",
             Self::PreviewZoomReset => "Reset Preview Zoom",
+            Self::ToggleSpellCheck => "Toggle Spell Check",
         }
     }
 
@@ -259,6 +265,7 @@ impl ShortcutAction {
             Self::PreviewZoomIn => "preview_zoom_in",
             Self::PreviewZoomOut => "preview_zoom_out",
             Self::PreviewZoomReset => "preview_zoom_reset",
+            Self::ToggleSpellCheck => "toggle_spell_check",
         }
     }
 
@@ -289,7 +296,8 @@ impl ShortcutAction {
             | Self::FindReplace
             | Self::EditMetadata
             | Self::ActivateWikilink
-            | Self::ToggleBookmark => ShortcutCategory::Editing,
+            | Self::ToggleBookmark
+            | Self::ToggleSpellCheck => ShortcutCategory::Editing,
             Self::TogglePreview
             | Self::ToggleCorkboard
             | Self::ToggleStoryGrid
@@ -429,6 +437,10 @@ impl ShortcutAction {
             Self::PreviewZoomIn => KeyboardShortcut::new(Modifiers::COMMAND, Key::Plus),
             Self::PreviewZoomOut => KeyboardShortcut::new(Modifiers::COMMAND, Key::Minus),
             Self::PreviewZoomReset => KeyboardShortcut::new(Modifiers::COMMAND, Key::Num0),
+            // Bare F7, the conventional spell-check key (Word, LibreOffice) —
+            // safe modifier-free per `is_modifier_free_safe_key`, and otherwise
+            // unused.
+            Self::ToggleSpellCheck => KeyboardShortcut::new(Modifiers::NONE, Key::F7),
         }
     }
 }

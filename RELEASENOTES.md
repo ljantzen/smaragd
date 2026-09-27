@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+- Added a **Toggle Spell Check** shortcut (`F7` by default, also `Tools > Toggle Spell Check` and `:spell`). Toggling on restores the last language used in the open project, which each project now remembers separately.
+- Added an **In Focus Mode** setting under Settings > Spell Check to force spell check on or off while Focus Mode lasts (default: keep current). Leaving Focus Mode restores the previous state.
 - Added a `World` folder role (🌐), alongside Research/Trash/Templates/Manuscript, for a project's worldbuilding content. The World-Building project template now tags its `World` folder with it.
 - Fixed the browser (WebAssembly) edition failing to build (and so failing
   to deploy to GitHub Pages) since v1.2.0: `getrandom` needs a

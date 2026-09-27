@@ -85,6 +85,33 @@ impl UnplacedCardsPosition {
     }
 }
 
+/// What happens to spell check on entering Focus Mode — see
+/// `Settings::focus_mode_spell_check`. `KeepCurrent` (the default) is the
+/// behavior from before this setting existed: Focus Mode doesn't touch spell
+/// check at all. `On`/`Off` apply only while Focus Mode lasts — the
+/// `ToggleSpellCheck` shortcut still flips it inside Focus Mode, and leaving
+/// restores whatever was active before, without either ever being written
+/// back to `spell_check_language`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum FocusModeSpellCheck {
+    #[default]
+    KeepCurrent,
+    On,
+    Off,
+}
+
+impl FocusModeSpellCheck {
+    pub const ALL: [FocusModeSpellCheck; 3] = [Self::KeepCurrent, Self::On, Self::Off];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::KeepCurrent => "Keep current",
+            Self::On => "On",
+            Self::Off => "Off",
+        }
+    }
+}
+
 /// A Story Grid column (`ui::story_grid_panel`). Lives here rather than in the ui
 /// panel file for the same reason `UnplacedCardsPosition` does: it's a persisted
 /// view preference, and `Settings` is where those live. Column sizing (an
@@ -320,6 +347,11 @@ pub struct Settings {
     /// a typo in the next one. Matched case-sensitively, the same as
     /// `spellcheck::is_misspelled` itself (see its doc comment on `KEEPCASE`).
     pub spell_check_custom_words: BTreeSet<String>,
+    /// Whether spell check is forced on or off while Focus Mode is active —
+    /// see [`FocusModeSpellCheck`]. "On" uses `spell_check_language` if one is
+    /// active, otherwise the open project's
+    /// `ProjectMeta::last_spell_check_language`; with neither, it stays off.
+    pub focus_mode_spell_check: FocusModeSpellCheck,
     /// How long an error-severity toast notification (`app::Toast`) stays on
     /// screen before auto-dismissing, in seconds. `0` means "not yet
     /// configured," resolved to a real default at the point of use
@@ -999,6 +1031,7 @@ mod tests {
             show_editor_gutter: true,
             spell_check_language: SpellCheckLanguage::Off,
             spell_check_custom_words: BTreeSet::from(["Aslak".to_string(), "smaragd".to_string()]),
+            focus_mode_spell_check: FocusModeSpellCheck::Off,
             toast_duration_secs: 10,
             status_message_duration_secs: 12,
             shortcuts_seen,

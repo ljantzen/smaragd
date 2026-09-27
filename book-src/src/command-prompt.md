@@ -13,6 +13,7 @@
 | `:theme <id>` | Apply a color theme (see [Themes](themes.md)) — no argument clears back to plain dark/light |
 | `:find <text>` | Open Find and Replace pre-filled with `<text>` |
 | `:tag <name>` | Open [Tags](tags.md) pre-filtered to documents carrying `<name>` |
+| `:spell` | Turn [spell check](spell-check.md) off, or back on in the project's last language |
 | `:git enable` | Turn on git support for this project |
 | `:git commit [message]` | Commit; prompts for a message if omitted |
 | `:git push` | Push |

@@ -361,6 +361,16 @@ impl SmaragdApp {
                             let ctx = ui.ctx().clone();
                             self.set_focus_mode(&ctx, !self.focus_mode);
                         }
+                        let spell_check_shortcut = self
+                            .settings
+                            .shortcuts
+                            .get(ShortcutAction::ToggleSpellCheck);
+                        if nav
+                            .shortcut_button(ui, "Toggle Spell Check", spell_check_shortcut)
+                            .clicked()
+                        {
+                            self.toggle_spell_check();
+                        }
                         ui.separator();
                         let command_prompt_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::CommandPrompt);

@@ -54,6 +54,7 @@ impl SmaragdApp {
             return;
         }
         self.focus_mode = enabled;
+        self.apply_focus_mode_spell_check(enabled);
         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(enabled));
     }
 

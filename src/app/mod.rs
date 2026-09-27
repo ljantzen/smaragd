@@ -23,6 +23,7 @@ mod project_lifecycle;
 mod prompt;
 mod refresh;
 mod settings_persist;
+mod spell_check;
 mod streak_events;
 mod toast;
 mod word_count_events;
@@ -276,6 +277,12 @@ pub struct SmaragdApp {
     /// paragraph highlighted and everything else dimmed — see
     /// `set_focus_mode` and the `focus_mode` branch in `ui()`.
     focus_mode: bool,
+    /// While Focus Mode is active, the spell-check language it forces per
+    /// `Settings::focus_mode_spell_check` (and `ToggleSpellCheck` flips),
+    /// shadowing `Settings::spell_check_language` without overwriting it.
+    /// `None` outside Focus Mode, or when that setting is "Keep current" — see
+    /// `effective_spell_check_language`.
+    focus_mode_spell_check_override: Option<crate::spellcheck::SpellCheckLanguage>,
     /// The active peer-to-peer collaboration session, if any — hosting or
     /// joined, scoped to whichever document is open when it starts (see
     /// `start_collab_host`/`start_collab_join`/`end_collab_session`).
@@ -380,6 +387,7 @@ impl SmaragdApp {
             pomodoro: crate::pomodoro::PomodoroState::new(&initial_pomodoro_durations),
             focus_binder_requested: false,
             focus_mode: false,
+            focus_mode_spell_check_override: None,
             collab: None,
             exit_confirm: ui::exit_confirm_prompt::ExitConfirmState::default(),
             external_scan_at: None,
@@ -491,6 +499,7 @@ impl SmaragdApp {
             pomodoro: crate::pomodoro::PomodoroState::new(&pomodoro_durations),
             focus_binder_requested: false,
             focus_mode: false,
+            focus_mode_spell_check_override: None,
             collab: None,
             exit_confirm: ui::exit_confirm_prompt::ExitConfirmState::default(),
             external_scan_at: None,
@@ -705,6 +714,7 @@ impl SmaragdApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
             }
             ShortcutAction::ToggleFocusMode => self.set_focus_mode(ctx, !self.focus_mode),
+            ShortcutAction::ToggleSpellCheck => self.toggle_spell_check(),
             ShortcutAction::OpenDocument => {
                 if self.project.is_some() {
                     self.open_document_prompt.request_open();
@@ -934,6 +944,7 @@ impl SmaragdApp {
                     self.dock_state.push_to_focused_leaf(DockTab::Tags);
                 }
             }
+            Command::ToggleSpellCheck => self.toggle_spell_check(),
             Command::Plugin(name, arg) => self.run_plugin_command(&name, &arg),
         }
     }
@@ -1043,6 +1054,7 @@ impl SmaragdApp {
             .collect();
 
         let previous_ui_font = self.settings.ui_font;
+        let previous_spell_check_language = self.settings.spell_check_language;
         let dictionary_downloading = self
             .pending_dictionary_download
             .as_ref()
@@ -1060,6 +1072,11 @@ impl SmaragdApp {
         ) {
             if self.settings.ui_font != previous_ui_font {
                 crate::editor_font::apply_ui_font(ui.ctx(), self.settings.ui_font);
+            }
+            if self.settings.spell_check_language != previous_spell_check_language {
+                // An explicit pick wins over whatever Focus Mode was forcing.
+                self.focus_mode_spell_check_override = None;
+                self.remember_spell_check_language(self.settings.spell_check_language);
             }
             self.persist_settings();
             self.plugin_shortcuts = self.compute_effective_plugin_shortcuts();
@@ -1635,6 +1652,7 @@ impl eframe::App for SmaragdApp {
                     .map(|(path, project)| project.bookmarked_lines_for(path))
                     .unwrap_or_default();
                 let editor_store = self.editor_store();
+                let spell_check_language = self.effective_spell_check_language();
                 match ui::editor_panel::show(
                     &mut column_ui,
                     &mut self.editor,
@@ -1646,7 +1664,7 @@ impl eframe::App for SmaragdApp {
                     self.settings.editor_font,
                     crate::editor_font::resolve_size(self.settings.editor_font_size),
                     self.collab.is_some(),
-                    self.settings.spell_check_language,
+                    spell_check_language,
                     &self.settings.spell_check_custom_words,
                     self.settings.show_editor_gutter,
                     &bookmarked_lines,

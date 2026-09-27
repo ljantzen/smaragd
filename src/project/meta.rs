@@ -228,4 +228,13 @@ pub struct ProjectMeta {
     /// [`crate::project::bookmarks::Bookmark`].
     #[serde(default)]
     pub bookmarks: Vec<Bookmark>,
+    /// The last spell-check language actually used in this project — what
+    /// `ShortcutAction::ToggleSpellCheck` turns back on after turning it off.
+    /// Recorded whenever spell check is toggled off or a language is picked in
+    /// Settings while this project is open; never `Some(Off)`. Per-project
+    /// (unlike the app-wide `Settings::spell_check_language` it restores) so a
+    /// Norwegian manuscript and an English one each come back in their own
+    /// language. `None` until spell check has been used here at all.
+    #[serde(default)]
+    pub last_spell_check_language: Option<crate::spellcheck::SpellCheckLanguage>,
 }

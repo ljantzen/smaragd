@@ -1,5 +1,5 @@
 use crate::editor_font::EditorFont;
-use crate::settings::Settings;
+use crate::settings::{FocusModeSpellCheck, Settings};
 use crate::shortcuts::{ShortcutAction, ShortcutCategory, ShortcutTarget, is_safe_binding};
 use crate::spellcheck::SpellCheckLanguage;
 
@@ -432,6 +432,29 @@ fn show_spell_check_category(
         "Underlines words not found in the selected dictionary while you type. \
          No right-click suggestions or \"add to dictionary\" yet — expect false \
          positives on names and invented words until a later update.",
+    );
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label("In Focus Mode:");
+        let previous = settings.focus_mode_spell_check;
+        egui::ComboBox::new("focus_mode_spell_check_combo", "")
+            .selected_text(settings.focus_mode_spell_check.label())
+            .show_ui(ui, |ui| {
+                for choice in FocusModeSpellCheck::ALL {
+                    ui.selectable_value(
+                        &mut settings.focus_mode_spell_check,
+                        choice,
+                        choice.label(),
+                    );
+                }
+            });
+        changed |= settings.focus_mode_spell_check != previous;
+    })
+    .response
+    .on_hover_text(
+        "Whether spell check is on or off while Focus Mode lasts. \"On\" uses the \
+         project's last spell-check language. Toggle Spell Check \
+         still works inside Focus Mode, and leaving restores what you had before.",
     );
     ui.add_space(12.0);
     ui.heading("Dictionaries");
