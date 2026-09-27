@@ -22,6 +22,7 @@ mod pomodoro;
 mod project_lifecycle;
 mod prompt;
 mod refresh;
+mod search_everywhere;
 mod session;
 mod settings_persist;
 mod spell_check;
@@ -143,6 +144,10 @@ pub struct SmaragdApp {
     card_draft: Option<CardDraft>,
     command_prompt: CommandPromptState,
     open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState,
+    search_everywhere: ui::search_everywhere::SearchEverywhereState,
+    /// Watches for a double tap of Shift to open `search_everywhere` — see
+    /// `crate::double_tap` and `detect_double_shift`.
+    double_shift: crate::double_tap::DoubleTapDetector,
     recent_files_prompt: ui::recent_files_prompt::RecentFilesPromptState,
     new_project_template_prompt: ui::new_project_template_prompt::NewProjectTemplatePromptState,
     /// Live editing buffers for the open document's frontmatter, always kept in
@@ -359,6 +364,8 @@ impl SmaragdApp {
             card_draft: None,
             command_prompt: CommandPromptState::default(),
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
+            search_everywhere: ui::search_everywhere::SearchEverywhereState::default(),
+            double_shift: crate::double_tap::DoubleTapDetector::default(),
             recent_files_prompt: ui::recent_files_prompt::RecentFilesPromptState::default(),
             new_project_template_prompt:
                 ui::new_project_template_prompt::NewProjectTemplatePromptState::default(),
@@ -476,6 +483,8 @@ impl SmaragdApp {
             card_draft: None,
             command_prompt: CommandPromptState::default(),
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
+            search_everywhere: ui::search_everywhere::SearchEverywhereState::default(),
+            double_shift: crate::double_tap::DoubleTapDetector::default(),
             recent_files_prompt: ui::recent_files_prompt::RecentFilesPromptState::default(),
             new_project_template_prompt:
                 ui::new_project_template_prompt::NewProjectTemplatePromptState::default(),
@@ -721,6 +730,7 @@ impl SmaragdApp {
             }
             ShortcutAction::ToggleFocusMode => self.set_focus_mode(ctx, !self.focus_mode),
             ShortcutAction::ToggleSpellCheck => self.toggle_spell_check(),
+            ShortcutAction::SearchEverywhere => self.search_everywhere.request_open(),
             ShortcutAction::OpenDocument => {
                 if self.project.is_some() {
                     self.open_document_prompt.request_open();
@@ -1187,24 +1197,7 @@ impl SmaragdApp {
         if self.open_document_prompt.open {
             // Only walk the document tree while the dialog is actually visible,
             // same reasoning as the command prompt's own note-title gathering above.
-            let candidates: Vec<(String, PathBuf)> = self
-                .project
-                .as_ref()
-                .map(|project| {
-                    project
-                        .tree
-                        .document_paths()
-                        .into_iter()
-                        .map(|path| {
-                            let relative = path.strip_prefix(&project.root).unwrap_or(&path);
-                            let display =
-                                crate::project::model::document_label(&relative.to_string_lossy())
-                                    .to_string();
-                            (display, path)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            let candidates = self.document_candidates();
             if let Some(path) = ui::open_document_prompt::show(
                 ui.ctx(),
                 &mut self.open_document_prompt,
@@ -1213,6 +1206,8 @@ impl SmaragdApp {
                 self.open_document(&path);
             }
         }
+
+        self.show_search_everywhere(ui);
 
         if self.recent_files_prompt.open {
             // Only touch the history/edit lists while the dialog is actually
@@ -1520,6 +1515,10 @@ impl eframe::App for SmaragdApp {
             }
         }
 
+        // Before the shortcut pass below consumes any key events, so the
+        // detector sees every keypress that should disqualify a Shift tap.
+        self.detect_double_shift(&ui.ctx().clone());
+
         if self.recording_shortcut.is_none() {
             let ctx = ui.ctx().clone();
             let mut pairs: Vec<(ShortcutTarget, egui::KeyboardShortcut)> = self
@@ -1585,6 +1584,7 @@ impl eframe::App for SmaragdApp {
             && !self.show_settings
             && !self.find_replace.open
             && !self.command_prompt.open
+            && !self.search_everywhere.open
             && self.card_draft.is_none()
             && self.export.is_none()
             && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))

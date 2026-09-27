@@ -26,6 +26,7 @@
     - [What Export Doesn't Do (Yet)](export-limitations.md)
 - [Story Cards (Corkboard)](story-cards.md)
 - [Find and Replace](find-and-replace.md)
+- [Search Everywhere](search-everywhere.md)
 - [The Command Prompt](command-prompt.md)
 - [Pomodoro Timer](pomodoro.md)
 - [Word Count](word-count.md)

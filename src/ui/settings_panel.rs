@@ -46,7 +46,7 @@ impl SettingsCategory {
         SettingsCategory::Shortcuts,
     ];
 
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             SettingsCategory::General => "General",
             SettingsCategory::Appearance => "Appearance",
@@ -59,6 +59,102 @@ impl SettingsCategory {
         }
     }
 }
+
+/// One searchable setting for Search Everywhere (`ui::search_everywhere`):
+/// what it's called in this dialog, extra words someone might search for it
+/// by, and which category page shows it. Choosing one just opens that page —
+/// settings aren't a data model of their own (each category renders its
+/// controls ad hoc below), so there's nothing to edit in place.
+pub struct SettingsEntry {
+    pub label: &'static str,
+    pub keywords: &'static str,
+    pub category: SettingsCategory,
+}
+
+const fn entry(
+    label: &'static str,
+    keywords: &'static str,
+    category: SettingsCategory,
+) -> SettingsEntry {
+    SettingsEntry {
+        label,
+        keywords,
+        category,
+    }
+}
+
+/// Every setting shown in this dialog, for Search Everywhere. Keep in step
+/// with the `show_*_category` functions below when adding or renaming a
+/// control. The category pages themselves are searchable too, via
+/// `SettingsCategory::ALL`.
+pub const SETTINGS_INDEX: &[SettingsEntry] = {
+    use SettingsCategory::*;
+    &[
+        entry(
+            "Reopen project on launch",
+            "restore session startup",
+            General,
+        ),
+        entry(
+            "Ensure Research and Trash folders exist",
+            "starter folders",
+            General,
+        ),
+        entry("Error toast duration", "notifications seconds", General),
+        entry(
+            "Status bar message duration",
+            "notifications seconds",
+            General,
+        ),
+        entry("Theme", "dark light color mode", Appearance),
+        entry("UI font", "font typeface", Appearance),
+        entry("UI scale", "zoom size", Appearance),
+        entry(
+            "Show document stats in binder",
+            "word count lines characters",
+            Appearance,
+        ),
+        entry("Editor and Preview font", "typeface", Editor),
+        entry("Editor font size", "text size", Editor),
+        entry(
+            "Typewriter quotes in Preview and export",
+            "curly quotes smart em dash ellipsis typography",
+            Editor,
+        ),
+        entry("Show line numbers", "gutter bookmarks", Editor),
+        entry("Spell check language", "dictionary", SpellCheck),
+        entry("Spell check in Focus Mode", "", SpellCheck),
+        entry("Dictionaries", "download hunspell", SpellCheck),
+        entry("Template date format", "${{date}} templates", Templates),
+        entry(
+            "Enable Git integration",
+            "version control commit push",
+            History,
+        ),
+        entry("Enable automatic backups", "snapshot zip", History),
+        entry("Back up when opening a project", "backup", History),
+        entry("Back up when closing a project", "backup", History),
+        entry("Back up on every manual save", "backup", History),
+        entry("Backups to keep", "backup count", History),
+        entry("Backup folder", "backup directory location", History),
+        entry("Pomodoro work session length", "timer minutes", Pomodoro),
+        entry("Pomodoro short break", "timer minutes", Pomodoro),
+        entry("Pomodoro long break", "timer minutes", Pomodoro),
+        entry(
+            "Work sessions before a long break",
+            "pomodoro cycles",
+            Pomodoro,
+        ),
+        entry("Pomodoro desktop notification", "notify", Pomodoro),
+        entry("Keyboard shortcuts", "keybindings remap keys", Shortcuts),
+        entry(
+            "Double Shift opens Search Everywhere",
+            "shift shift gesture",
+            Shortcuts,
+        ),
+        entry("Plugin shortcuts", "keybindings", Shortcuts),
+    ]
+};
 
 /// Renders the settings dialog when `open` is true (does nothing and returns
 /// `false` otherwise — unlike `egui::Window`, `egui::Modal` has no built-in
@@ -729,6 +825,19 @@ fn show_shortcuts_category(
 ) -> bool {
     let mut changed = false;
     ui.heading("Keyboard Shortcuts");
+    ui.add_space(12.0);
+    let mut double_shift = settings.double_shift_search_enabled();
+    if ui
+        .checkbox(&mut double_shift, "Double Shift opens Search Everywhere")
+        .on_hover_text(
+            "Tap Shift twice quickly, without pressing anything else, to open \
+             Search Everywhere. Its shortcut in the list below works either way.",
+        )
+        .changed()
+    {
+        settings.double_shift_search_disabled = !double_shift;
+        changed = true;
+    }
     ui.add_space(12.0);
     // Sorted by functional category (`ShortcutCategory::ALL`'s order),
     // then alphabetically by label within each — shown as a "Category"

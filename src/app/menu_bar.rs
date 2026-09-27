@@ -82,6 +82,17 @@ impl SmaragdApp {
                                 self.push_error_toast("No project open");
                             }
                         }
+                        let search_everywhere_shortcut = self
+                            .settings
+                            .shortcuts
+                            .get(ShortcutAction::SearchEverywhere);
+                        if nav
+                            .shortcut_button(ui, "Search Everywhere…", search_everywhere_shortcut)
+                            .on_hover_text("Or tap Shift twice")
+                            .clicked()
+                        {
+                            self.search_everywhere.request_open();
+                        }
                         if nav
                             .shortcut_button(ui, "Close Document", close_document_shortcut)
                             .clicked()

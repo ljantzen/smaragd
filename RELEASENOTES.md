@@ -5,6 +5,7 @@ this file.
 
 ## Unreleased
 
+- Added **Search Everywhere**: tap `Shift` twice (or press `Ctrl+Shift+A`, or use `File > Search Everywhere…`) to search documents by name, text inside documents, actions by name, and settings from one box. `Tab` switches between the All, Documents, Text, Actions, and Settings tabs. You can turn the double-Shift gesture off under Settings > Shortcuts.
 - "Reopen project on launch" now restores the whole working session, not just the project: the open document and cursor position, binder selection and collapsed folders, Back/Forward history, Focus Mode, and the window's size and position. This is saved to `session.json` next to `smaragd.toml` whenever the app closes.
 - Fixed a cursor position being lost the first time a document was shown in a session, and jumps to a remembered position (Back/Forward, reopening a document) not scrolling the editor to it.
 - Added a **Toggle Spell Check** shortcut (`F7` by default, also `Tools > Toggle Spell Check` and `:spell`). Toggling on restores the last language used in the open project, which each project now remembers separately.

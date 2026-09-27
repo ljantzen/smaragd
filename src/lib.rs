@@ -3,6 +3,7 @@ pub mod autocomplete;
 pub mod backup;
 pub mod collab;
 pub mod color_theme;
+pub mod double_tap;
 pub mod editor;
 pub mod editor_font;
 pub mod export;

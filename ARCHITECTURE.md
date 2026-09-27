@@ -12,7 +12,8 @@ src/
   markdown.rs             markdown -> Block/Span parser (pulldown-cmark + wikilinks + inline #tag scanning)
   frontmatter.rs          YAML frontmatter parsing (DocumentMeta) + write-back + stripping for preview
   autocomplete.rs         wikilink-autocomplete query/filter/completion logic (plain prefix/substring match)
-  fuzzy.rs                fzf-style subsequence fuzzy matching (nucleo-matcher) for the Open Document quick-switcher
+  fuzzy.rs                fzf-style subsequence fuzzy matching (nucleo-matcher) for the Open Document quick-switcher and Search Everywhere
+  double_tap.rs           double-tap-Shift gesture detector (pure state machine over egui ModifiersChanged events) that opens Search Everywhere
   search.rs               plain-text find/replace across a chosen SearchScope
   git.rs                  thin wrapper over the system `git` binary (init/commit/push/pull)
   plugins.rs              loads/runs .rhai plugins: custom : commands + the on_save hook
@@ -65,6 +66,7 @@ src/
     belief_timeline_panel.rs  a chosen character's story cards chained in manuscript order as Prior Belief -> New Belief (dockable tab)
     metadata_panel.rs       document-metadata form editor, live-binding; also renders the project-wide Title/Subtitle/Author/Logline/What-if/Synopsis form shown when the binder's root row is selected (dockable tab)
     open_document_prompt.rs fzf-style quick-switcher modal for Open Document
+    search_everywhere.rs    IntelliJ-style Search Everywhere modal: documents, text, actions, and settings (settings_panel::SETTINGS_INDEX) in tabs
     find_replace_panel.rs   find/replace panel rendering
     command_prompt.rs       `:` command parsing, completion, and prompt rendering
     settings_panel.rs       settings dialog rendering: category nav + per-category content (incl. shortcut remapping)

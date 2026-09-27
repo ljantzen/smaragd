@@ -16,10 +16,34 @@ pub fn fuzzy_match_documents<'a>(
     query: &str,
     limit: usize,
 ) -> Vec<&'a (String, PathBuf)> {
+    fuzzy_rank(candidates, |(name, _)| name.as_str(), query, limit, true)
+        .into_iter()
+        .map(|(candidate, _)| candidate)
+        .collect()
+}
+
+/// Fuzzy-rank arbitrary `items` by the string `key` extracts from each, returning
+/// each match with its score (higher is better) so callers can merge results from
+/// several sources — Search Everywhere's All tab does. An empty query returns the
+/// first `limit` items in their original order, each scored 0. `paths` tunes the
+/// matcher's bonuses for `/`-separated paths (`Config::match_paths`); pass `false`
+/// for plain labels like action or setting names.
+pub fn fuzzy_rank<'a, T>(
+    items: &'a [T],
+    key: impl Fn(&'a T) -> &'a str,
+    query: &str,
+    limit: usize,
+    paths: bool,
+) -> Vec<(&'a T, u32)> {
     if query.is_empty() {
-        return candidates.iter().take(limit).collect();
+        return items.iter().take(limit).map(|item| (item, 0)).collect();
     }
-    let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
+    let config = if paths {
+        Config::DEFAULT.match_paths()
+    } else {
+        Config::DEFAULT
+    };
+    let mut matcher = Matcher::new(config);
     // A single literal `Atom` wrapped directly in a `Pattern`, rather than
     // `Pattern::new`/`Pattern::parse` (both of which — despite `new`'s doc comment
     // suggesting otherwise — internally split the query on whitespace into
@@ -45,16 +69,20 @@ pub fn fuzzy_match_documents<'a>(
         AtomKind::Fuzzy,
         false,
     )];
-    let mut scored: Vec<(&str, u32)> = pattern.match_list(
-        candidates.iter().map(|(name, _)| name.as_str()),
-        &mut matcher,
-    );
+    let mut buf = Vec::new();
+    let mut scored: Vec<(&T, u32)> = items
+        .iter()
+        .filter_map(|item| {
+            let haystack = nucleo_matcher::Utf32Str::new(key(item), &mut buf);
+            pattern
+                .score(haystack, &mut matcher)
+                .map(|score| (item, score))
+        })
+        .collect();
+    // Stable, so equal scores keep the items' original order.
     scored.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
+    scored.truncate(limit);
     scored
-        .into_iter()
-        .take(limit)
-        .filter_map(|(name, _)| candidates.iter().find(|(n, _)| n == name))
-        .collect()
 }
 
 #[cfg(test)]
@@ -150,6 +178,19 @@ mod tests {
         let candidates = candidates();
         let results = fuzzy_match_documents(&candidates, "zzzznotpresent", 10);
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn fuzzy_rank_works_over_any_item_type_and_reports_scores() {
+        let items = [
+            ("Toggle Preview", 1),
+            ("Save", 2),
+            ("Toggle Spell Check", 3),
+        ];
+        let results = fuzzy_rank(&items, |(label, _)| label, "spell", 10, false);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.1, 3);
+        assert!(results[0].1 > 0);
     }
 
     #[test]

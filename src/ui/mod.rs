@@ -18,6 +18,7 @@ pub mod new_project_template_prompt;
 pub mod open_document_prompt;
 pub mod pomodoro_panel;
 pub mod recent_files_prompt;
+pub mod search_everywhere;
 pub mod settings_panel;
 pub mod story_grid_panel;
 pub mod streak_panel;

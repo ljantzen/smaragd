@@ -119,7 +119,7 @@ pub fn replace_all(
 }
 
 /// The 1-based line number and full line text containing `byte_offset`.
-fn line_at(text: &str, byte_offset: usize) -> (usize, String) {
+pub fn line_at(text: &str, byte_offset: usize) -> (usize, String) {
     let line_start = text[..byte_offset].rfind('\n').map_or(0, |i| i + 1);
     let line_end = text[byte_offset..]
         .find('\n')

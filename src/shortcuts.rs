@@ -106,6 +106,11 @@ pub enum ShortcutAction {
     /// language (`ProjectMeta::last_spell_check_language`) — see
     /// `SmaragdApp::toggle_spell_check`.
     ToggleSpellCheck,
+    /// Open the Search Everywhere modal (`ui::search_everywhere`) — documents,
+    /// text, actions, and settings in one list. Also triggered by a double tap
+    /// of Shift (`crate::double_tap`), which isn't expressible as a
+    /// `KeyboardShortcut` and so lives outside this map.
+    SearchEverywhere,
 }
 
 impl ShortcutAction {
@@ -157,6 +162,7 @@ impl ShortcutAction {
         Self::PreviewZoomOut,
         Self::PreviewZoomReset,
         Self::ToggleSpellCheck,
+        Self::SearchEverywhere,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -209,6 +215,7 @@ impl ShortcutAction {
             Self::PreviewZoomOut => "Zoom Out Preview",
             Self::PreviewZoomReset => "Reset Preview Zoom",
             Self::ToggleSpellCheck => "Toggle Spell Check",
+            Self::SearchEverywhere => "Search Everywhere",
         }
     }
 
@@ -266,6 +273,7 @@ impl ShortcutAction {
             Self::PreviewZoomOut => "preview_zoom_out",
             Self::PreviewZoomReset => "preview_zoom_reset",
             Self::ToggleSpellCheck => "toggle_spell_check",
+            Self::SearchEverywhere => "search_everywhere",
         }
     }
 
@@ -291,7 +299,8 @@ impl ShortcutAction {
             | Self::GoBack
             | Self::GoForward
             | Self::NextBookmark
-            | Self::PreviousBookmark => ShortcutCategory::FilesAndFolders,
+            | Self::PreviousBookmark
+            | Self::SearchEverywhere => ShortcutCategory::FilesAndFolders,
             Self::Save
             | Self::FindReplace
             | Self::EditMetadata
@@ -441,6 +450,11 @@ impl ShortcutAction {
             // safe modifier-free per `is_modifier_free_safe_key`, and otherwise
             // unused.
             Self::ToggleSpellCheck => KeyboardShortcut::new(Modifiers::NONE, Key::F7),
+            // Ctrl+Shift+A, IntelliJ's own "Find Action" chord — the keyboard
+            // alternative to its Shift Shift gesture, and otherwise unused.
+            Self::SearchEverywhere => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::A)
+            }
         }
     }
 }

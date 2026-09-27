@@ -417,6 +417,12 @@ pub struct Settings {
     /// a plain document outline, and a stats readout on every row adds visual
     /// noise most authors won't want by default.
     pub show_document_stats_in_binder: bool,
+    /// Turns *off* opening Search Everywhere with a double tap of Shift
+    /// (`crate::double_tap`) — stored inverted, like `git_integration_disabled`,
+    /// so the derived `Default` (`false`) leaves the gesture on for new and
+    /// upgrading installs alike. The `SearchEverywhere` keyboard shortcut is
+    /// unaffected. See `double_shift_search_enabled`.
+    pub double_shift_search_disabled: bool,
 }
 
 /// The full path to the settings file, e.g. `~/.config/smaragd/smaragd.toml` on
@@ -569,6 +575,11 @@ impl Settings {
     /// own doc comment) to the plain "is git on" question every call site asks.
     pub fn git_integration_enabled(&self) -> bool {
         !self.git_integration_disabled
+    }
+
+    /// Resolves `double_shift_search_disabled`'s inverted storage.
+    pub fn double_shift_search_enabled(&self) -> bool {
+        !self.double_shift_search_disabled
     }
 
     /// Resolve `backup_keep_count`'s blank-means-unset (`0`) convention to an
@@ -1044,6 +1055,7 @@ mod tests {
                 StoryGridColumn::Effect,
             ]),
             show_document_stats_in_binder: true,
+            double_shift_search_disabled: true,
         };
 
         settings.save_to_path(&path).unwrap();

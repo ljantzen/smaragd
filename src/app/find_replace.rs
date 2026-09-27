@@ -99,15 +99,27 @@ impl SmaragdApp {
         let Some(result) = self.find_replace.results.get(index).cloned() else {
             return;
         };
-        if self.editor.open_path.as_deref() != Some(result.path.as_path()) {
-            self.open_document(&result.path);
+        self.open_document_at(ctx, &result.path, result.byte_start);
+    }
+
+    /// Open `path` (if it isn't already open) and move the editor cursor to
+    /// `byte_offset` — shared by Find and Replace results and Search
+    /// Everywhere's text hits.
+    pub(super) fn open_document_at(
+        &mut self,
+        ctx: &egui::Context,
+        path: &Path,
+        byte_offset: usize,
+    ) {
+        if self.editor.open_path.as_deref() != Some(path) {
+            self.open_document(path);
         }
-        if self.editor.open_path.as_deref() == Some(result.path.as_path()) {
+        if self.editor.open_path.as_deref() == Some(path) {
             ui::editor_panel::move_cursor_to(
                 ctx,
                 ui::editor_panel::editor_text_edit_id(),
                 &self.editor.buffer,
-                result.byte_start,
+                byte_offset,
             );
         }
     }
