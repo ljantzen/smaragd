@@ -98,6 +98,8 @@ Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, Story Grid, Belie
 
 ## Sync (self-hosted server)
 
+**Experimental:** the vault format, envelope layout and HTTP API are not yet stable and may change without a migration path.
+
 Sync keeps a project identical across a user's own devices through a **blind** server: it stores and relays sealed CRDT updates and can read none of them (contrast `collab/`, which is live, peer-to-peer and serverless). All merging happens on the clients. Files are CRDT documents (`sync/crdt.rs`); a manifest CRDT (`sync/manifest.rs`) maps stable document ids to paths, so renames and deletes merge too. See the module docs in `src/sync/engine.rs` for the reconcile pass, the join/adoption rules, and the safety rails.
 
 The repository is a Cargo workspace with **three deliberately separate lockfiles**:

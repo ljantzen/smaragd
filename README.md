@@ -47,7 +47,7 @@ There's also an experimental [browser edition](https://ljantzen.github.io/smarag
 - Writing Streak tracker 
 - Fully remappable keyboard shortcuts 
 - Real-time peer-to-peer private collaborative editing with no shared server infrastructure
-- Background **sync** of a project across your own devices through a small server you host yourself (Docker image included, with built-in housekeeping and an admin CLI): end-to-end encrypted, so the server only ever stores ciphertext, with edits from different devices merged automatically — see the [self-hosting guide](crates/smaragd-sync-server/README.md) 
+- *(Experimental)* Background **sync** of a project across your own devices through a small server you host yourself (Docker image included, with built-in housekeeping and an admin CLI): end-to-end encrypted, so the server only ever stores ciphertext, with edits from different devices merged automatically — see the [self-hosting guide](crates/smaragd-sync-server/README.md) 
 - Spell check with on-demand Hunspell dictionary downloads for 20 languages, right-click suggestions, and "Add to Dictionary" for names and invented words
 - An experimental browser (WebAssembly) edition — try it at https://ljantzen.github.io/smaragd/app/ with no install, project stored locally in the browser
 

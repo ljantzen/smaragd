@@ -26,7 +26,7 @@ pull request, and the bot will mark it signed:
 
 ## Working on sync
 
-The self-hosted sync feature spans four places, each with its own tests:
+The self-hosted sync feature is experimental (its formats and protocol may still change without migrations). It spans four places, each with its own tests:
 
 - `src/sync/` — the client core (CRDT documents, manifest, engine, crypto). Unit tests include multi-device simulations against an in-memory server, so most logic can be tested without a network: `cargo test --lib sync::`.
 - `crates/smaragd-sync-protocol/` — wire types shared by client and server. `cargo test -p smaragd-sync-protocol`.

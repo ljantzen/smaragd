@@ -1,4 +1,6 @@
-# Sync
+# Sync (experimental)
+
+> **Sync is experimental.** It's new, and its data format and server protocol may still change in ways that require re-creating vaults. Keep [backups](backups.md) on and don't rely on it as the only copy of anything you care about.
 
 **Sync** keeps a project identical across your own devices — your laptop and your desktop, say — in the background, even when only one of them is open at a time. It works through a small **sync server that you host yourself**, and everything is **end-to-end encrypted**: your text is encrypted on your device before it is uploaded, and the server only ever stores data it cannot read. This protects the copy on the server and the trip there; the files on your own devices are ordinary, unencrypted Markdown, exactly as before.
 

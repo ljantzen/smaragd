@@ -1,6 +1,6 @@
 # Collaboration
 
-The **`Collaborate`** menu (and its dockable **Collaboration Panel**, `Ctrl+Shift+L`) lets two people edit the same document together in real time, peer-to-peer — no server, no account, no third-party service ever holds the manuscript text. (To keep *your own* devices in step in the background, see [Sync](sync.md) — a separate feature that does use a server, one you host, with everything encrypted before it leaves your device.)
+The **`Collaborate`** menu (and its dockable **Collaboration Panel**, `Ctrl+Shift+L`) lets two people edit the same document together in real time, peer-to-peer — no server, no account, no third-party service ever holds the manuscript text. (To keep *your own* devices in step in the background, see [Sync](sync.md) — a separate, experimental feature that does use a server, one you host, with everything encrypted before it leaves your device.)
 
 ## Hosting a session
 

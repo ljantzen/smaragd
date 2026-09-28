@@ -1,4 +1,8 @@
-# Smaragd sync server
+# Smaragd sync server (experimental)
+
+> **Experimental.** Sync is new. The storage format, HTTP API and wire protocol may
+> still change between releases in ways that require re-creating vaults, so back up
+> your projects independently and don't treat the server as the only copy of anything.
 
 A small, self-hostable server that keeps a Smaragd project in sync across your own
 devices. It is a **blind store**: your text is encrypted on your devices before it

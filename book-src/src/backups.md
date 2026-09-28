@@ -1,6 +1,6 @@
 # Backups
 
-Backups are your safety net for mistakes: [Sync](sync.md) copies every change — including a deletion — to all your devices, so it is not a substitute for them.
+Backups are your safety net for mistakes: [Sync](sync.md) (experimental) copies every change — including a deletion — to all your devices, so it is not a substitute for them.
 
 Modeled on Scrivener's own automatic backup scheme. **`File > Settings > History`**:
 

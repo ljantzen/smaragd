@@ -181,6 +181,7 @@
     color: var(--fg-dim);
   }
   .notice strong { color: var(--fg); }
+  .badge { display: inline-block; vertical-align: middle; margin-left: 8px; padding: 2px 10px; border: 1px solid #d9a441; border-radius: 999px; color: #d9a441; font-size: 0.45em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
   .notice ul { margin: 8px 0 0; padding-left: 20px; }
   .notice li { margin: 4px 0; }
   .license-box p { color: var(--fg-dim); margin: 0 0 12px; }
@@ -225,7 +226,7 @@
       <nav>
         <a href="app/">Try it Online</a>
         <a href="#collaboration">Collaboration</a>
-        <a href="#sync">Sync</a>
+        <a href="#sync">Sync (experimental)</a>
         <a href="#screenshots">Screenshots</a>
         <a href="https://github.com/ljantzen/smaragd">GitHub</a>
         <a href="manual/">User Manual</a>
@@ -376,8 +377,13 @@
     </section>
 
     <section id="sync">
-      <h2>Keep your devices in step</h2>
+      <h2>Keep your devices in step <span class="badge">Experimental</span></h2>
       <p class="lede">Work on the laptop on the train and the desktop at home. Smaragd syncs your project through a small server <em>you</em> host, and merges what you changed on each device — even offline — without asking you to pick a winner. Desktop app only for now.</p>
+      <div class="notice">
+        <strong>Sync is experimental.</strong> It's new, and its data format and server
+        protocol may still change in ways that require re-creating vaults. Keep backups
+        on, and don't treat it as the only copy of anything you care about.
+      </div>
       <div class="grid">
         <div class="card">
           <h3>Your server, not ours</h3>
