@@ -14,7 +14,8 @@ peer-to-peer and needs no server at all. Sync is for keeping *your own* devices
 identical in the background, even when only one is open at a time.
 
 - [What the server can and can't see](#what-the-server-can-and-cant-see)
-- [Quick start](#quick-start)
+- [Quick start](#quick-start) (Docker)
+- [Running without Docker](#running-without-docker): a plain binary, optionally as a systemd service
 - [Configuration](#configuration)
 - [Putting it behind TLS](#putting-it-behind-tls)
 - [Connecting Smaragd](#connecting-smaragd)
@@ -94,6 +95,89 @@ docker build -f crates/smaragd-sync-server/Dockerfile -t smaragd-sync-server .
 
 The container runs as a non-root user (uid 10001), listens on plain HTTP port 8080,
 keeps everything under `/data`, and has a built-in health check.
+
+## Running without Docker
+
+Docker is only a convenience: the server is a single self-contained binary (SQLite
+is compiled in) with no runtime dependencies, and runs on Linux, macOS and Windows.
+There are no prebuilt binaries yet, so build it with a current stable Rust
+([rustup](https://rustup.rs)) and a C compiler (for the bundled SQLite; e.g.
+`build-essential` on Debian/Ubuntu), from a checkout of this repository:
+
+```sh
+cd crates/smaragd-sync-server
+cargo build --release --locked
+# the binary: target/release/smaragd-sync-server
+```
+
+To try it out, run it in the foreground. Without Docker the defaults are to listen
+on `0.0.0.0:8080` and keep the database in `./data` (created if missing), so set
+`SMARAGD_SYNC_DATA_DIR` to somewhere permanent (`$TOKEN` as generated in the
+[Quick start](#quick-start)):
+
+```sh
+SMARAGD_SYNC_ADMIN_TOKEN="$TOKEN" \
+SMARAGD_SYNC_DATA_DIR="$HOME/smaragd-sync-data" \
+  ./target/release/smaragd-sync-server
+```
+
+`Ctrl-C` stops it cleanly. If you're putting a reverse proxy on the same machine in
+front of it (see [TLS](#putting-it-behind-tls)), listen on the loopback interface only
+with `SMARAGD_SYNC_LISTEN_ADDR=127.0.0.1:8080`.
+
+### As a systemd service
+
+For a permanent install on Linux, run it under its own unprivileged user:
+
+```sh
+sudo install -m 755 target/release/smaragd-sync-server /usr/local/bin/
+sudo useradd --system --home-dir /var/lib/smaragd-sync --shell /usr/sbin/nologin smaragd-sync
+
+# Configuration, including the admin token, in a root-only file:
+sudo install -m 600 /dev/null /etc/smaragd-sync.env
+echo "SMARAGD_SYNC_ADMIN_TOKEN=$(openssl rand -hex 24)" | sudo tee /etc/smaragd-sync.env
+echo "SMARAGD_SYNC_LISTEN_ADDR=127.0.0.1:8080" | sudo tee -a /etc/smaragd-sync.env
+```
+
+Add any other [configuration](#configuration) variables to that file as well. Then
+create `/etc/systemd/system/smaragd-sync.service`:
+
+```ini
+[Unit]
+Description=Smaragd sync server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=smaragd-sync
+Group=smaragd-sync
+EnvironmentFile=/etc/smaragd-sync.env
+Environment=SMARAGD_SYNC_DATA_DIR=/var/lib/smaragd-sync
+StateDirectory=smaragd-sync
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/smaragd-sync-server
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+and start it:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now smaragd-sync
+curl http://127.0.0.1:8080/v1/health
+journalctl -u smaragd-sync -f     # logs
+```
+
+systemd creates `/var/lib/smaragd-sync` for the database, and the journal takes care
+of log rotation. The admin token stays the same across restarts because it lives in
+`/etc/smaragd-sync.env`; `sudo cat` that file if you need it again.
 
 ## Configuration
 
@@ -187,13 +271,17 @@ The full HTTP API is documented in the `smaragd-sync-protocol` crate
 ### Backups
 
 Everything is in `sync.sqlite3` (plus its `-wal`/`-shm` companions) in the data
-directory. Either stop the container and copy the volume, or take a consistent
+directory. Either stop the server and copy the directory, or take a consistent
 online copy:
 
 ```sh
-# The image is minimal (no sqlite3 inside); run this on the host against the volume:
+# Docker (the image is minimal, with no sqlite3 inside; run this on the host against the volume):
 sqlite3 "$(docker volume inspect -f '{{ .Mountpoint }}' smaragd-sync-data)/sync.sqlite3" \
   ".backup '/backups/sync-$(date +%F).sqlite3'"
+
+# Without Docker (the systemd setup above):
+sudo -u smaragd-sync sqlite3 /var/lib/smaragd-sync/sync.sqlite3 \
+  ".backup '/tmp/sync-$(date +%F).sqlite3'"
 ```
 
 Remember that the server only holds ciphertext: a backup of it is useless without
@@ -201,8 +289,10 @@ your passphrase, and your devices' own project backups are the ones that matter.
 
 ### Upgrading
 
-Pull the new image and restart the container; the database schema migrates
-forward automatically. Take a backup first — downgrading is not supported, and a
+Pull the new image and recreate the container — or, without Docker, rebuild the
+binary from the new release, replace `/usr/local/bin/smaragd-sync-server` and
+`sudo systemctl restart smaragd-sync`. The database schema migrates forward
+automatically. Take a backup first — downgrading is not supported, and a
 server refuses to open a database written by a *newer* version.
 
 ### Limits
@@ -223,7 +313,7 @@ The server tidies up after itself, so an instance can run for a long time withou
 
 Smaragd clients also compact each document's history into a snapshot on their own (see Limits).
 
-What it *doesn't* do for you: **backups**, **upgrades**, disk monitoring and log rotation (Docker's `--log-opt max-size` is worth setting), and **removing the encrypted history of deleted files** — the server can't tell which documents are deleted, so that data stays until its vault is deleted.
+What it *doesn't* do for you: **backups**, **upgrades**, disk monitoring and log rotation (with Docker, `--log-opt max-size` is worth setting; under systemd the journal rotates on its own), and **removing the encrypted history of deleted files** — the server can't tell which documents are deleted, so that data stays until its vault is deleted.
 
 #### Admin commands
 
@@ -238,7 +328,13 @@ docker exec smaragd-sync smaragd-sync-server admin vacuum
 docker exec smaragd-sync smaragd-sync-server admin maintenance                  # one pass now
 ```
 
-`list` shows every vault with its devices, documents, size and last activity, plus the database file's size and how much of it is reclaimable. Anything destructive only *shows* what it would do unless you add `--yes`. Outside Docker, run `smaragd-sync-server admin ...` with `SMARAGD_SYNC_DATA_DIR` set as for the server.
+`list` shows every vault with its devices, documents, size and last activity, plus the database file's size and how much of it is reclaimable. Anything destructive only *shows* what it would do unless you add `--yes`.
+
+Without Docker, run the same commands as the server's user and with the same data directory, so any files SQLite creates stay owned by that user:
+
+```sh
+sudo -u smaragd-sync SMARAGD_SYNC_DATA_DIR=/var/lib/smaragd-sync smaragd-sync-server admin list
+```
 
 ### Devices and vaults
 
@@ -255,12 +351,14 @@ app's lockfile):
 cd crates/smaragd-sync-server
 cargo build --release      # target/release/smaragd-sync-server
 cargo test                 # unit + HTTP tests
+SMARAGD_SYNC_ALLOW_OPEN_REGISTRATION=true cargo run   # a throwaway dev server in ./data
 
 # End-to-end tests (real Smaragd client + engine against this server) live in a
 # crate of their own, because they link the whole desktop app:
 cd ../smaragd-sync-e2e && cargo test
-SMARAGD_SYNC_ALLOW_OPEN_REGISTRATION=true cargo run
 ```
+
+To install and run it for real, see [Running without Docker](#running-without-docker).
 
 ## Troubleshooting
 

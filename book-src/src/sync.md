@@ -17,7 +17,7 @@ Sync is available in the desktop app only; the [browser edition](browser-edition
 
 ## What you need
 
-- **A sync server.** It's a single small program (or Docker container) you run on a machine you control — a home server, a VPS, a Raspberry Pi. Setting one up is covered in the server's own [self-hosting guide](https://github.com/ljantzen/smaragd/tree/main/crates/smaragd-sync-server); it takes a few minutes with Docker. If someone else runs one for you, you just need its address.
+- **A sync server.** It's a single small program you run on a machine you control — a home server, a VPS, a Raspberry Pi — either as a Docker container or directly, for example as a systemd service. Setting one up is covered in the server's own [self-hosting guide](https://github.com/ljantzen/smaragd/tree/main/crates/smaragd-sync-server); it takes a few minutes with Docker. If someone else runs one for you, you just need its address.
 - **A passphrase** you choose. It encrypts your data, and you enter the *same* one on every device.
 
 ## Setting it up
@@ -124,7 +124,7 @@ Sync copies *every* change, including a mistake or a deletion, to all your devic
 
 The server's own [self-hosting guide](https://github.com/ljantzen/smaragd/tree/main/crates/smaragd-sync-server) has the details; the short version of what to expect:
 
-- **It looks after itself.** It clears out expired pairing codes, deletes vaults whose last device left 30 days ago (adjustable), and keeps its database file small, all in the background. `smaragd-sync-server admin list` shows every vault, and `admin delete-vault`, `purge-empty` and `vacuum` clean up by hand; run them with `docker exec` while the server is running.
+- **It looks after itself.** It clears out expired pairing codes, deletes vaults whose last device left 30 days ago (adjustable), and keeps its database file small, all in the background. `smaragd-sync-server admin list` shows every vault, and `admin delete-vault`, `purge-empty` and `vacuum` clean up by hand; run them with `docker exec` (or directly, without Docker) while the server is running.
 - **You still need to** back up its data volume, install updates, and watch disk space. Deleted files' encrypted history stays on the server until its vault is deleted.
 
 ## Good to know
