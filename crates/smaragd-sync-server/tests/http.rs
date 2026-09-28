@@ -29,6 +29,7 @@ fn harness(open: bool, admin: Option<&str>, quota: u64) -> Harness {
         vault_quota_bytes: quota,
         maintenance_interval: None,
         empty_vault_retention: None,
+        max_file_bytes: Some(100 * 1024 * 1024),
     })
     .unwrap();
     let agent: ureq::Agent = ureq::Agent::config_builder()
@@ -248,6 +249,7 @@ fn pushed_updates_come_back_in_order_with_gap_free_sequence_numbers() {
     let docs: ListDocsResponse = h.get(&format!("/vaults/{vault}/docs"), Some(token)).json();
     assert_eq!(docs.docs.len(), 1);
     assert_eq!(docs.docs[0].latest_seq, 3);
+    assert_eq!(docs.max_file_bytes, Some(100 * 1024 * 1024));
 
     let pulled: PullUpdatesResponse = h
         .get(
@@ -452,6 +454,7 @@ fn state_survives_a_restart() {
         vault_quota_bytes: GB,
         maintenance_interval: None,
         empty_vault_retention: None,
+        max_file_bytes: Some(100 * 1024 * 1024),
     };
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -504,6 +507,7 @@ fn the_background_task_deletes_a_vault_whose_last_device_left() {
         vault_quota_bytes: GB,
         maintenance_interval: Some(std::time::Duration::from_secs(1)),
         empty_vault_retention: Some(std::time::Duration::from_secs(1)),
+        max_file_bytes: Some(100 * 1024 * 1024),
     })
     .unwrap();
     let agent: ureq::Agent = ureq::Agent::config_builder()

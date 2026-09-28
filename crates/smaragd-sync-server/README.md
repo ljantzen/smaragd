@@ -195,6 +195,7 @@ Everything is an environment variable; there is no config file.
 | `SMARAGD_SYNC_VAULT_QUOTA_MB` | `1024` | Maximum ciphertext stored per vault. |
 | `SMARAGD_SYNC_MAINTENANCE_INTERVAL_HOURS` | `6` | How often the built-in maintenance task runs (see [Maintenance](#maintenance)). `0` turns it off. |
 | `SMARAGD_SYNC_EMPTY_VAULT_RETENTION_DAYS` | `30` | A vault with no devices left is deleted this many days after its last activity. `0` keeps such vaults forever. |
+| `SMARAGD_SYNC_MAX_FILE_MB` | `100` | The largest image, PDF or other non-Markdown file clients sync (projects opt into syncing those). Advertised to clients, which leave bigger files unsynced; the server can't see file contents to enforce it, so the vault quota is the hard limit. `0` advertises no limit. |
 | `RUST_LOG` | `info` | Log level (`tracing` filter syntax). |
 
 If open registration is off **and** no admin token is set, nobody can create a
@@ -301,6 +302,10 @@ binary from the new release, replace `/usr/local/bin/smaragd-sync-server` and
 automatically. Take a backup first — downgrading is not supported, and a
 server refuses to open a database written by a *newer* version.
 
+Sync is experimental, so upgrade the server and the Smaragd apps that use it
+together: new features (like syncing images and PDFs, which needs paged downloads)
+assume both sides are current.
+
 ### Limits
 
 - Each pushed update or snapshot is at most **8 MiB** (after encryption).
@@ -311,6 +316,13 @@ server refuses to open a database written by a *newer* version.
 - A vault can have at most **10** unused pairing codes at a time; more are refused
   until one is redeemed or expires (after 10 minutes).
 - Device names are at most **100** characters.
+- A pull returns at most about **8 MiB** of updates at a time and says when there's
+  more; clients keep asking. This is how files larger than one update (images, PDFs —
+  sent in chunks) come through.
+- **Binary files and the quota:** a project that syncs its images and PDFs stores each
+  file once, but while a new version of a file uploads the old one is still there, so
+  leave headroom — a vault syncing large files needs a quota of well over their total
+  size.
 
 ### Maintenance
 

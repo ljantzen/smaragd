@@ -26,6 +26,7 @@ fn server_config(data_dir: PathBuf, listen: &str) -> Config {
         vault_quota_bytes: 1 << 30,
         maintenance_interval: None,
         empty_vault_retention: None,
+        max_file_bytes: Some(100 * 1024 * 1024),
     }
 }
 
@@ -232,7 +233,7 @@ fn two_devices_sync_a_project_through_the_real_server() {
     assert!(!a.files().contains_key("Notes/Idea.md"));
 
     // Everything the server holds is unreadable ciphertext.
-    for summary in a.transport.list_docs().unwrap() {
+    for summary in a.transport.list_docs().unwrap().docs {
         let pulled = a.transport.pull(summary.doc_id, 0).unwrap();
         for blob in pulled
             .updates
@@ -340,7 +341,7 @@ fn a_busy_document_is_compacted_on_the_real_server_and_new_devices_catch_up() {
     // The busy document's history on the server is now a snapshot plus a short tail.
     let mut most_updates = 0;
     let mut saw_snapshot = false;
-    for summary in a.transport.list_docs().unwrap() {
+    for summary in a.transport.list_docs().unwrap().docs {
         let pulled = a.transport.pull(summary.doc_id, 0).unwrap();
         saw_snapshot |= pulled.snapshot.is_some();
         most_updates = most_updates.max(pulled.updates.len());
@@ -355,4 +356,36 @@ fn a_busy_document_is_compacted_on_the_real_server_and_new_devices_catch_up() {
     b.write("busy.md", &format!("{text}from B\n"));
     converge(&mut [&mut a, &mut b]);
     assert_eq!(a.read("busy.md"), format!("{text}from B\n"));
+}
+
+#[test]
+fn images_and_a_large_pdf_sync_through_the_real_server_in_pages() {
+    let data = tempfile::tempdir().unwrap();
+    let server = start_in_background(server_config(data.path().into(), "127.0.0.1:0")).unwrap();
+    let mut a = first_device(&server, PASSPHRASE);
+    a.write(
+        ".smaragd/project.json",
+        r#"{ "version": 1, "node_order": {}, "sync_files": true }"#,
+    );
+    // Bigger than one pull page and than the client's response cap, so it only arrives
+    // if chunking and paging both work over real HTTP.
+    let pdf: Vec<u8> = (0..20 * 1024 * 1024u32)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+        .collect();
+    let png = b"\x89PNG\r\n\x1a\n not really an image".to_vec();
+    std::fs::create_dir_all(a.project.path().join("Research")).unwrap();
+    std::fs::write(a.project.path().join("Research/paper.pdf"), &pdf).unwrap();
+    std::fs::write(a.project.path().join("cover.png"), &png).unwrap();
+    a.sync().unwrap();
+
+    let mut b = pair(&server, &a, "desktop", PASSPHRASE);
+    converge(&mut [&mut a, &mut b]);
+    assert_eq!(
+        std::fs::read(b.project.path().join("cover.png")).unwrap(),
+        png
+    );
+    assert!(
+        std::fs::read(b.project.path().join("Research/paper.pdf")).unwrap() == pdf,
+        "the 20 MB file arrived intact"
+    );
 }

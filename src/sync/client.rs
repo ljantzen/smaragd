@@ -19,9 +19,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use smaragd_sync_protocol::api::{
     ADMIN_TOKEN_HEADER, API_PREFIX, ApiError, CreatePairingCodeResponse, CreateVaultRequest,
-    CreateVaultResponse, DeviceInfo, DocSummary, HealthResponse, ListDevicesResponse,
-    ListDocsResponse, MAX_BLOB_BYTES, PullUpdatesResponse, PushUpdateResponse,
-    RedeemPairingRequest, RedeemPairingResponse, Snapshot, VaultInfo,
+    CreateVaultResponse, DeviceInfo, HealthResponse, ListDevicesResponse, ListDocsResponse,
+    MAX_BLOB_BYTES, PullUpdatesResponse, PushUpdateResponse, RedeemPairingRequest,
+    RedeemPairingResponse, Snapshot, VaultInfo,
 };
 use smaragd_sync_protocol::ticket::ServerAddr;
 use smaragd_sync_protocol::{DeviceId, DocId, VaultId};
@@ -247,14 +247,13 @@ pub struct HttpTransport {
 }
 
 impl SyncTransport for HttpTransport {
-    fn list_docs(&self) -> Result<Vec<DocSummary>, TransportError> {
-        let listing: ListDocsResponse = self.client.json(
+    fn list_docs(&self) -> Result<ListDocsResponse, TransportError> {
+        self.client.json(
             "GET",
             &format!("/vaults/{}/docs", self.vault),
             None,
             Body::None,
-        )?;
-        Ok(listing.docs)
+        )
     }
 
     fn pull(&self, doc: DocId, since: u64) -> Result<PullUpdatesResponse, TransportError> {

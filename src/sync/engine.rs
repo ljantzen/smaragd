@@ -15,6 +15,9 @@
 //! 4. **Per document**: capture local edits as a CRDT update, pull and apply remote
 //!    updates, and write the merged text back.
 //! 5. **Push** queued updates, manifest first so peers learn paths before content.
+//! 6. **Binary files** (only with the project's `sync_files` on): upload and download
+//!    whole versions — see [`binaries`]. Their local half (renames, deletions, new
+//!    files) runs with step 3.
 //!
 //! Local work (steps 3–4's capture, and queuing) happens even when the server is
 //! unreachable; only the network steps are skipped, and the pass then reports the
@@ -54,14 +57,14 @@ use yrs::{StateVector, Update};
 
 use super::crdt::FileDoc;
 use super::crypto::{CryptoError, VaultKey};
-use super::manifest::{
-    EntryKind, ManifestDoc, ManifestEntry, is_safe_relative_dir_path, is_safe_relative_path,
-};
+use super::manifest::{EntryKind, ManifestDoc, ManifestEntry, is_safe_relative_dir_path};
 use super::meta_crdt::{MetaDoc, PathIds, SyncedFields};
 use super::state::StateStore;
 use super::transport::{SyncTransport, TransportError};
 use crate::project::ProjectMeta;
 use crate::project::store::{ProjectStore, TreeEntryKind};
+
+mod binaries;
 
 /// How many updates a document may accumulate on the server before a client replaces
 /// them with a snapshot. Bounds both the vault's size and how long a new device takes to
@@ -157,6 +160,9 @@ pub struct SyncReport {
     /// still syncs — and go up once the oversized content is removed. Project-relative
     /// paths, or a description for the file list and project settings.
     pub too_large: Vec<String>,
+    /// Binary files over the server's advertised size limit (`SMARAGD_SYNC_MAX_FILE_MB`),
+    /// left unsynced on this device. Project-relative paths.
+    pub files_over_limit: Vec<String>,
 }
 
 impl SyncReport {
@@ -423,26 +429,32 @@ fn pull_into<D: Crdt>(
     id: DocId,
     tracked: &mut Tracked<D>,
 ) -> Result<usize, SyncError> {
-    let response = transport.pull(id, tracked.last_seq)?;
     let mut applied = 0;
-    if let Some(snapshot) = response.snapshot {
-        let plain = key.open(vault, id, &snapshot.blob)?;
-        tracked.doc.apply(&plain)?;
-        tracked.last_seq = tracked.last_seq.max(snapshot.upto_seq);
-        tracked.since_snapshot = 0;
-        applied += 1;
-    }
-    for update in response.updates {
-        tracked.since_snapshot = tracked.since_snapshot.saturating_add(1);
-        if update.device_id != device {
-            let plain = key.open(vault, id, &update.blob)?;
+    loop {
+        let response = transport.pull(id, tracked.last_seq)?;
+        if let Some(snapshot) = response.snapshot {
+            let plain = key.open(vault, id, &snapshot.blob)?;
             tracked.doc.apply(&plain)?;
+            tracked.last_seq = tracked.last_seq.max(snapshot.upto_seq);
+            tracked.since_snapshot = 0;
             applied += 1;
         }
-        tracked.last_seq = tracked.last_seq.max(update.seq);
+        let progressed = !response.updates.is_empty();
+        for update in response.updates {
+            tracked.since_snapshot = tracked.since_snapshot.saturating_add(1);
+            if update.device_id != device {
+                let plain = key.open(vault, id, &update.blob)?;
+                tracked.doc.apply(&plain)?;
+                applied += 1;
+            }
+            tracked.last_seq = tracked.last_seq.max(update.seq);
+        }
+        tracked.dirty = true;
+        // `more` with nothing in the page would never advance; stop rather than spin.
+        if !response.more || !progressed {
+            return Ok(applied);
+        }
     }
-    tracked.dirty = true;
-    Ok(applied)
 }
 
 /// Everything in `tracked.pending` as a single update, encoded from the document itself
@@ -575,6 +587,8 @@ pub struct SyncEngine {
     meta_paths_dirty: bool,
     /// Paths the app has open with unsaved edits; never overwritten on disk.
     held: BTreeSet<String>,
+    /// Bookkeeping for binary files (see [`binaries`]).
+    bins: BTreeMap<DocId, binaries::FileState>,
 }
 
 impl SyncEngine {
@@ -600,7 +614,14 @@ impl SyncEngine {
             None => Tracked::new(ManifestDoc::new()),
         };
         let mut docs = BTreeMap::new();
+        let mut bins = BTreeMap::new();
         for entry in manifest.doc.entries() {
+            if entry.kind == EntryKind::File {
+                if let Some(bytes) = state.get(&binaries::file_key(entry.doc_id))? {
+                    bins.insert(entry.doc_id, binaries::FileState::load(&bytes)?);
+                }
+                continue;
+            }
             if let Some(bytes) = state.get(&doc_key(entry.doc_id))? {
                 let saved = load_persisted(&bytes)?;
                 docs.insert(
@@ -653,6 +674,7 @@ impl SyncEngine {
             meta_paths,
             meta_paths_dirty: false,
             held: BTreeSet::new(),
+            bins,
             docs,
             dir_paths,
             dirs_dirty: false,
@@ -692,22 +714,32 @@ impl SyncEngine {
         }
 
         let listing = transport.list_docs();
-        let remote: Option<HashMap<DocId, u64>> = listing
-            .as_ref()
-            .ok()
-            .map(|docs| docs.iter().map(|d| (d.doc_id, d.latest_seq)).collect());
+        let remote: Option<HashMap<DocId, u64>> = listing.as_ref().ok().map(|listing| {
+            listing
+                .docs
+                .iter()
+                .map(|d| (d.doc_id, d.latest_seq))
+                .collect()
+        });
+        let max_file_bytes = listing.as_ref().ok().and_then(|l| l.max_file_bytes);
+        let sync_files = self.sync_files_enabled();
 
         if let Some(remote) = &remote {
             self.pull_manifest(transport, remote, report)?;
             self.resurrect_edited_tombstones(transport, remote, report)?;
         }
-        self.reconcile(report)?;
+        self.reconcile(sync_files, report)?;
         for entry in self.live_entries(report) {
             self.sync_doc(&entry, transport, remote.as_ref(), report)?;
         }
         self.sync_meta(transport, remote.as_ref(), report)?;
-        if remote.is_some() {
+        if let Some(remote) = &remote {
             self.push_all(transport, report)?;
+            if sync_files {
+                self.transfer_files(transport, remote, max_file_bytes, report)?;
+                // Conflict copies and revivals from the transfer, this same pass.
+                self.push_all(transport, report)?;
+            }
             self.compact_all(transport, report)?;
         }
         listing.map(|_| ()).map_err(SyncError::from)
@@ -727,6 +759,12 @@ impl SyncEngine {
             if tracked.dirty {
                 self.state.put(&doc_key(*id), &persist_bytes(tracked))?;
                 tracked.dirty = false;
+            }
+        }
+        for (id, file) in &mut self.bins {
+            if file.dirty {
+                self.state.put(&binaries::file_key(*id), &file.to_bytes())?;
+                file.dirty = false;
             }
         }
         if self.meta_paths_dirty {
@@ -756,11 +794,7 @@ impl SyncEngine {
             if entry.deleted || entry.kind != kind || entry.doc_id.is_reserved() {
                 continue;
             }
-            let safe = match kind {
-                EntryKind::Doc => is_safe_relative_path(&entry.path),
-                EntryKind::Dir => is_safe_relative_dir_path(&entry.path),
-            };
-            if safe {
+            if kind.is_safe_path(&entry.path) {
                 out.push(entry);
             } else if !report.skipped_paths.contains(&entry.path) {
                 report.skipped_paths.push(entry.path);
@@ -862,7 +896,7 @@ impl SyncEngine {
         }
     }
 
-    fn reconcile(&mut self, report: &mut SyncReport) -> Result<(), SyncError> {
+    fn reconcile(&mut self, sync_files: bool, report: &mut SyncReport) -> Result<(), SyncError> {
         self.fix_path_collisions(report);
         let files = &*self.files;
         let root = &self.cfg.root;
@@ -1002,7 +1036,12 @@ impl SyncEngine {
         }
 
         self.apply_tombstones(&scan, report)?;
-        self.reconcile_dirs(&renamed_files, scan.is_empty(), report)
+        let no_other_files = if sync_files {
+            self.reconcile_files(&mut renamed_files, scan.is_empty(), report)?
+        } else {
+            true
+        };
+        self.reconcile_dirs(&renamed_files, scan.is_empty() && no_other_files, report)
     }
 
     /// Two live folders at the same path (each device registered its own): the
@@ -1337,10 +1376,7 @@ impl SyncEngine {
             .doc
             .entries()
             .into_iter()
-            .filter(|entry| match entry.kind {
-                EntryKind::Doc => is_safe_relative_path(&entry.path),
-                EntryKind::Dir => is_safe_relative_dir_path(&entry.path),
-            })
+            .filter(|entry| entry.kind.is_safe_path(&entry.path))
             .collect();
         PathIds::from_entries(&usable)
     }
@@ -2133,6 +2169,7 @@ mod tests {
             .transport
             .list_docs()
             .unwrap()
+            .docs
             .into_iter()
             .find(|d| d.doc_id == id)
             .unwrap()
@@ -2754,5 +2791,301 @@ mod tests {
 
         b.sync();
         assert_eq!(b.read("Chapter.md"), "Keep this.\nAnd this.\n");
+    }
+
+    // --- binary files (see `binaries`) --------------------------------------------
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Bytes that don't compress or repeat, so chunk boundaries and hashes are real.
+    fn binary(len: usize, seed: u8) -> Vec<u8> {
+        let mut state = u32::from(seed).wrapping_mul(2_654_435_761) | 1;
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect()
+    }
+
+    impl Device {
+        /// A device whose project has binary-file syncing switched on.
+        fn with_files(server: &MemoryServer) -> Self {
+            let device = Self::new(server);
+            device.write_meta(
+                serde_json::json!({ "version": 1, "node_order": {}, "sync_files": true }),
+            );
+            device
+        }
+
+        fn write_bin(&self, rel: &str, bytes: &[u8]) {
+            let path = self.path(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+
+        fn read_bin(&self, rel: &str) -> Vec<u8> {
+            std::fs::read(self.path(rel)).unwrap()
+        }
+
+        fn file_id(&self, path: &str) -> DocId {
+            self.engine
+                .manifest_entries()
+                .into_iter()
+                .find(|e| e.kind == EntryKind::File && e.path == path && !e.deleted)
+                .unwrap_or_else(|| panic!("no live file entry at {path}"))
+                .doc_id
+        }
+    }
+
+    /// Passes everything through to a device's transport, but fails every push after
+    /// the first `allowed` — an upload interrupted part-way.
+    struct CutsOut<'a> {
+        inner: &'a MemoryTransport,
+        allowed: AtomicUsize,
+    }
+
+    impl SyncTransport for CutsOut<'_> {
+        fn list_docs(
+            &self,
+        ) -> Result<smaragd_sync_protocol::api::ListDocsResponse, TransportError> {
+            self.inner.list_docs()
+        }
+        fn pull(
+            &self,
+            doc: DocId,
+            since: u64,
+        ) -> Result<smaragd_sync_protocol::api::PullUpdatesResponse, TransportError> {
+            self.inner.pull(doc, since)
+        }
+        fn push(&self, doc: DocId, sealed: &[u8]) -> Result<u64, TransportError> {
+            if self.allowed.load(Ordering::SeqCst) == 0 {
+                return Err(TransportError::Offline("cut".into()));
+            }
+            self.allowed.fetch_sub(1, Ordering::SeqCst);
+            self.inner.push(doc, sealed)
+        }
+        fn put_snapshot(&self, doc: DocId, snapshot: &Snapshot) -> Result<(), TransportError> {
+            self.inner.put_snapshot(doc, snapshot)
+        }
+    }
+
+    #[test]
+    fn binary_files_sync_only_once_the_project_turns_it_on() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        let mut b = Device::new(&server);
+        a.write_meta(serde_json::json!({ "version": 1, "node_order": {} }));
+        a.write("Notes.md", "text\n");
+        let cover = binary(50_000, 1);
+        a.write_bin("Art/cover.png", &cover);
+        converge(&mut [&mut a, &mut b]);
+        assert_eq!(b.read("Notes.md"), "text\n");
+        assert!(!b.exists("Art/cover.png"), "off by default");
+
+        a.edit_meta(|m| m.sync_files = true);
+        converge(&mut [&mut a, &mut b]);
+        assert!(b.meta().sync_files, "the switch itself syncs");
+        assert_eq!(b.read_bin("Art/cover.png"), cover);
+        assert!(
+            server
+                .all_blobs()
+                .iter()
+                .all(|blob| !blob.windows(64).any(|w| w == &cover[1000..1064])),
+            "the server only ever holds ciphertext"
+        );
+    }
+
+    #[test]
+    fn a_large_file_travels_in_chunks_and_arrives_intact() {
+        let server = MemoryServer::default();
+        let mut a = Device::with_files(&server);
+        let mut b = Device::new(&server);
+        let scan = binary(9 * 1024 * 1024 + 123, 2);
+        a.write_bin("Research/scan.pdf", &scan);
+        converge(&mut [&mut a, &mut b]);
+
+        assert_eq!(b.read_bin("Research/scan.pdf"), scan);
+        let id = a.file_id("Research/scan.pdf");
+        assert_eq!(server.update_count(id), 1 + 3, "a header and three chunks");
+        assert!(
+            server
+                .all_blobs()
+                .iter()
+                .all(|blob| blob.len() <= smaragd_sync_protocol::api::MAX_BLOB_BYTES)
+        );
+    }
+
+    #[test]
+    fn a_new_version_replaces_the_old_one_everywhere_and_frees_its_space() {
+        let server = MemoryServer::default();
+        let mut a = Device::with_files(&server);
+        let mut b = Device::new(&server);
+        a.write_bin("map.jpg", &binary(3_000_000, 3));
+        converge(&mut [&mut a, &mut b]);
+
+        let second = binary(3_000_000, 4);
+        a.write_bin("map.jpg", &second);
+        converge(&mut [&mut a, &mut b]);
+        assert_eq!(b.read_bin("map.jpg"), second);
+        assert!(b.files().is_empty(), "no conflict copy for a plain update");
+        let id = a.file_id("map.jpg");
+        assert_eq!(server.update_count(id), 2, "only the new version remains");
+        let stored: usize = server.all_blobs().iter().map(Vec::len).sum();
+        assert!(
+            stored < 4_000_000,
+            "the old version was trimmed ({stored} bytes)"
+        );
+    }
+
+    #[test]
+    fn a_renamed_file_moves_everywhere_without_being_uploaded_again() {
+        let server = MemoryServer::default();
+        let mut a = Device::with_files(&server);
+        let mut b = Device::new(&server);
+        let photo = binary(200_000, 5);
+        a.write_bin("Images/photo.webp", &photo);
+        converge(&mut [&mut a, &mut b]);
+        let id = a.file_id("Images/photo.webp");
+        let before = server.update_count(id);
+
+        a.rename("Images/photo.webp", "Characters/Ada.webp");
+        converge(&mut [&mut a, &mut b]);
+        assert_eq!(b.read_bin("Characters/Ada.webp"), photo);
+        assert!(!b.exists("Images/photo.webp"));
+        assert_eq!(
+            a.file_id("Characters/Ada.webp"),
+            id,
+            "same document, new path"
+        );
+        assert_eq!(server.update_count(id), before, "no content was re-sent");
+    }
+
+    #[test]
+    fn a_deleted_file_goes_everywhere_unless_changed_there_meanwhile() {
+        let server = MemoryServer::default();
+        let mut a = Device::with_files(&server);
+        let mut b = Device::new(&server);
+        a.write_bin("old.gif", &binary(1000, 6));
+        a.write_bin("kept.gif", &binary(1000, 7));
+        converge(&mut [&mut a, &mut b]);
+
+        a.remove("old.gif");
+        a.remove("kept.gif");
+        let edited = binary(1200, 8);
+        b.write_bin("kept.gif", &edited);
+        converge(&mut [&mut a, &mut b]);
+        assert!(!a.exists("old.gif") && !b.exists("old.gif"));
+        assert_eq!(a.read_bin("kept.gif"), edited, "the edit beat the delete");
+        assert_eq!(b.read_bin("kept.gif"), edited);
+    }
+
+    #[test]
+    fn concurrent_changes_keep_the_losing_version_as_one_conflict_copy() {
+        let server = MemoryServer::default();
+        let mut a = Device::with_files(&server);
+        let mut b = Device::new(&server);
+        a.write_bin("cover.png", &binary(10_000, 9));
+        converge(&mut [&mut a, &mut b]);
+
+        let (ours, theirs) = (binary(10_000, 10), binary(10_000, 11));
+        a.write_bin("cover.png", &ours);
+        b.write_bin("cover.png", &theirs);
+        converge(&mut [&mut a, &mut b]);
+
+        let copy = "cover (conflict copy).png";
+        assert_eq!(
+            a.read_bin("cover.png"),
+            b.read_bin("cover.png"),
+            "one winner"
+        );
+        assert_eq!(a.read_bin(copy), b.read_bin(copy), "the loser, kept once");
+        let mut both = vec![a.read_bin("cover.png"), a.read_bin(copy)];
+        both.sort();
+        let mut expected = vec![ours, theirs];
+        expected.sort();
+        assert_eq!(both, expected, "nothing lost");
+        assert!(!a.exists("cover (conflict copy) 2.png"));
+    }
+
+    #[test]
+    fn joining_with_the_same_file_already_there_adopts_it_quietly() {
+        let server = MemoryServer::default();
+        let mut a = Device::with_files(&server);
+        let logo = binary(5000, 12);
+        a.write_bin("logo.svg", &logo);
+        a.sync();
+
+        let mut b = Device::with_files(&server);
+        b.write_bin("logo.svg", &logo);
+        b.write_bin("other.bmp", &binary(10, 13));
+        converge(&mut [&mut a, &mut b]);
+        assert!(!b.exists("logo (conflict copy).svg"));
+        assert_eq!(a.read_bin("other.bmp"), b.read_bin("other.bmp"));
+        let files = b.engine.manifest_entries();
+        assert_eq!(
+            files
+                .iter()
+                .filter(|e| e.kind == EntryKind::File && !e.deleted)
+                .count(),
+            2,
+            "one entry per file, no duplicate for the adopted one"
+        );
+    }
+
+    #[test]
+    fn a_file_over_the_servers_limit_is_flagged_and_not_uploaded() {
+        let server = MemoryServer::default();
+        server.set_max_file_bytes(Some(10_000));
+        let mut a = Device::with_files(&server);
+        let mut b = Device::new(&server);
+        a.write_bin("video.mp4", &binary(20_000, 14));
+        a.write_bin("small.png", &binary(500, 15));
+
+        let report = a.sync();
+        assert_eq!(report.files_over_limit, vec!["video.mp4".to_string()]);
+        // It stays flagged on every pass (the app shows it once), so no quiet round.
+        for _ in 0..3 {
+            b.sync();
+            assert_eq!(a.sync().files_over_limit, vec!["video.mp4".to_string()]);
+        }
+        assert!(!b.exists("video.mp4"));
+        assert_eq!(b.read_bin("small.png"), binary(500, 15));
+        assert_eq!(server.update_count(a.file_id("video.mp4")), 0);
+    }
+
+    #[test]
+    fn an_interrupted_upload_resumes_and_is_invisible_until_complete() {
+        let server = MemoryServer::default();
+        let mut a = Device::with_files(&server);
+        let mut b = Device::new(&server);
+        converge(&mut [&mut a, &mut b]);
+
+        let book = binary(10 * 1024 * 1024, 16);
+        a.write_bin("book.epub", &book);
+        // The manifest entry, the header and one chunk get through; then the line drops.
+        let cut = CutsOut {
+            inner: &a.transport,
+            allowed: AtomicUsize::new(3),
+        };
+        assert!(a.engine.sync_once(&cut).is_err());
+        let id = a.file_id("book.epub");
+        assert_eq!(server.update_count(id), 2);
+
+        b.sync();
+        b.sync();
+        assert!(!b.exists("book.epub"), "half a file is never written");
+
+        a.restart();
+        assert_eq!(
+            a.sync().pushed_updates,
+            2,
+            "resumed with the two missing chunks, not started over"
+        );
+        converge(&mut [&mut a, &mut b]);
+        assert_eq!(b.read_bin("book.epub"), book);
+        assert_eq!(server.update_count(id), 1 + 3);
     }
 }

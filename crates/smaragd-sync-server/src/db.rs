@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::{Connection, OptionalExtension, params};
 use smaragd_sync_protocol::api::{
-    DeviceInfo, DocSummary, INITIAL_KEY_VERSION, PAIRING_CODE_LEN, PullUpdatesResponse, Snapshot,
-    StoredUpdate, VaultInfo, normalize_pairing_code,
+    DeviceInfo, DocSummary, INITIAL_KEY_VERSION, PAIRING_CODE_LEN, PULL_PAGE_BYTES,
+    PullUpdatesResponse, Snapshot, StoredUpdate, VaultInfo, normalize_pairing_code,
 };
 use smaragd_sync_protocol::{DeviceId, DocId, VaultId};
 use uuid::Uuid;
@@ -465,6 +465,10 @@ pub fn pull_updates(
         _ => None,
     };
     let floor = snapshot.as_ref().map_or(since, |s| s.upto_seq.max(since));
+    // One page: blobs (the snapshot included) up to `PULL_PAGE_BYTES`, but always at
+    // least one, so any single blob can be fetched however large.
+    let mut budget = PULL_PAGE_BYTES.saturating_sub(snapshot.as_ref().map_or(0, |s| s.blob.len()));
+    let mut must_take_one = snapshot.is_none();
 
     let mut stmt = conn.prepare(
         "SELECT seq, device_id, blob FROM updates
@@ -478,15 +482,26 @@ pub fn pull_updates(
         ))
     })?;
     let mut updates = Vec::new();
+    let mut more = false;
     for row in rows {
         let (seq, device, blob) = row?;
+        if blob.len() > budget && !must_take_one {
+            more = true;
+            break;
+        }
+        budget = budget.saturating_sub(blob.len());
+        must_take_one = false;
         updates.push(StoredUpdate {
             seq: seq as u64,
             device_id: parse_id(&device, "device")?,
             blob,
         });
     }
-    Ok(PullUpdatesResponse { snapshot, updates })
+    Ok(PullUpdatesResponse {
+        snapshot,
+        updates,
+        more,
+    })
 }
 
 /// Stores a client-made snapshot and drops the updates it covers. Idempotent, and a
@@ -737,6 +752,38 @@ mod tests {
             docs.iter().find(|d| d.doc_id == doc(1)).unwrap().latest_seq,
             2
         );
+    }
+
+    #[test]
+    fn large_histories_are_pulled_in_pages() {
+        let (mut conn, device) = setup();
+        let (v, dev) = (device.vault.vault_id, device.device_id);
+        let third = vec![7u8; PULL_PAGE_BYTES / 3 + 1];
+        for _ in 0..5 {
+            push_update(&mut conn, v, doc(1), dev, &third, BIG, NOW).unwrap();
+        }
+
+        // Two blobs fit a page, a third wouldn't: the client is told to ask again.
+        let mut since = 0;
+        let mut pages = Vec::new();
+        loop {
+            let page = pull_updates(&conn, v, doc(1), since).unwrap();
+            let seqs: Vec<u64> = page.updates.iter().map(|u| u.seq).collect();
+            since = *seqs.last().unwrap();
+            pages.push(seqs);
+            if !page.more {
+                break;
+            }
+        }
+        assert_eq!(pages, [vec![1, 2], vec![3, 4], vec![5]]);
+
+        // A single blob bigger than the page budget still comes through on its own.
+        let huge = vec![1u8; PULL_PAGE_BYTES + 10];
+        push_update(&mut conn, v, doc(2), dev, &huge, BIG, NOW).unwrap();
+        push_update(&mut conn, v, doc(2), dev, b"small", BIG, NOW).unwrap();
+        let page = pull_updates(&conn, v, doc(2), 0).unwrap();
+        assert_eq!(page.updates.len(), 1);
+        assert!(page.more);
     }
 
     #[test]

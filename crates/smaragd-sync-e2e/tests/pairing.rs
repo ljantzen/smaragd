@@ -27,6 +27,7 @@ fn server() -> (RunningServer, ServerAddr, tempfile::TempDir) {
         vault_quota_bytes: 1 << 30,
         maintenance_interval: None,
         empty_vault_retention: None,
+        max_file_bytes: Some(100 * 1024 * 1024),
     })
     .unwrap();
     let addr = ServerAddr {

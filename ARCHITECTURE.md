@@ -42,7 +42,8 @@ src/
     manifest.rs             ManifestDoc: doc id -> {path, kind (file/folder), deleted} CRDT (renames/deletes merge; deletes are tombstones) + path-safety checks for untrusted paths
     meta_crdt.rs            project.json (ProjectMeta) as a CRDT: SyncedFields (id-keyed snapshot; per-device fields like plugins_enabled never sync; paths <-> stable ids via PathIds) + MetaDoc (settings as registers, prose as text, order/cards/bookmarks as arrays)
     engine.rs               SyncEngine::sync_once: one reconcile pass between a project folder and a vault (files, folders and project.json: capture local edits, pull/merge, apply renames/deletes, push, then replace a document's accumulated updates with a snapshot once it has ~64); transport-agnostic
-    transport.rs            the SyncTransport trait: the engine's blocking, data-plane-only view of the server
+    engine/binaries.rs      non-Markdown files (images, PDFs, ...) when the project's sync_files is on: synced whole, not merged — each version a header (id, lineage, size, BLAKE3 hash) plus <=4 MiB chunks in the document's update log; the latest *complete* version wins, the losing author keeps a conflict copy, and older versions are trimmed with a snapshot
+    transport.rs            the SyncTransport trait: the engine's blocking, data-plane-only view of the server (pulls are paged: follow `more`)
     state.rs                StateStore (+ DirStateStore over ProjectStore, MemoryStateStore for tests): local CRDT state between runs
     client.rs               native-only ureq HttpClient/HttpTransport: control plane (create vault, pairing, devices) + data plane
     pairing.rs              native-only one-off server operations behind the panel (create vault with admin-token fallback, join with a ticket, make ticket, list/revoke devices, leave); plain functions so they are testable against a real server
@@ -100,7 +101,7 @@ Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, Story Grid, Belie
 
 **Experimental:** the vault format, envelope layout and HTTP API are not yet stable and may change without a migration path.
 
-Sync keeps a project identical across a user's own devices through a **blind** server: it stores and relays sealed CRDT updates and can read none of them (contrast `collab/`, which is live, peer-to-peer and serverless). All merging happens on the clients. Files are CRDT documents (`sync/crdt.rs`); a manifest CRDT (`sync/manifest.rs`) maps stable document ids to paths, so renames and deletes merge too. See the module docs in `src/sync/engine.rs` for the reconcile pass, the join/adoption rules, and the safety rails.
+Sync keeps a project identical across a user's own devices through a **blind** server: it stores and relays sealed CRDT updates and can read none of them (contrast `collab/`, which is live, peer-to-peer and serverless). All merging happens on the clients. Files are CRDT documents (`sync/crdt.rs`); a manifest CRDT (`sync/manifest.rs`) maps stable document ids to paths, so renames and deletes merge too. Binary files, when a project opts in, are manifest entries of kind `file` whose update logs hold whole encrypted versions instead of CRDT updates (`sync/engine/binaries.rs`); the server can't tell the two apart. See the module docs in `src/sync/engine.rs` for the reconcile pass, the join/adoption rules, and the safety rails.
 
 The repository is a Cargo workspace with **three deliberately separate lockfiles**:
 

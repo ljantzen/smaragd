@@ -1716,7 +1716,10 @@ impl eframe::App for SmaragdApp {
         } else {
             egui::CentralPanel::default().show(ui, |ui| {
                 let has_project = self.project.is_some();
-                let sync_view = self.sync.panel_data(&self.settings, has_project);
+                let sync_files = self.project.as_ref().is_some_and(|p| p.meta.sync_files);
+                let sync_view = self
+                    .sync
+                    .panel_data(&self.settings, has_project, sync_files);
                 let collab_status = match &self.collab {
                     None => CollabStatus::Idle,
                     Some(session) if session.session_ended => CollabStatus::Disconnected {

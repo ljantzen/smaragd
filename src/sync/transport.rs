@@ -11,7 +11,7 @@
 //! `sync::crypto`, and the server never sees inside them.
 
 use smaragd_sync_protocol::DocId;
-use smaragd_sync_protocol::api::{DocSummary, PullUpdatesResponse, Snapshot};
+use smaragd_sync_protocol::api::{ListDocsResponse, PullUpdatesResponse, Snapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TransportError {
@@ -32,11 +32,12 @@ pub enum TransportError {
 
 /// `Send` because the real client runs on a background thread.
 pub trait SyncTransport: Send {
-    /// Every document the server holds updates for, with its latest sequence number.
-    fn list_docs(&self) -> Result<Vec<DocSummary>, TransportError>;
+    /// Every document the server holds updates for, with its latest sequence number,
+    /// and the server's advertised file-size limit.
+    fn list_docs(&self) -> Result<ListDocsResponse, TransportError>;
 
-    /// The latest snapshot (if the document was compacted past `since`) plus every
-    /// update with `seq > since`.
+    /// The latest snapshot (if the document was compacted past `since`) plus the
+    /// updates with `seq > since` — one page of them; `more` says to ask again.
     fn pull(&self, doc: DocId, since: u64) -> Result<PullUpdatesResponse, TransportError>;
 
     /// Stores one sealed update; returns the sequence number the server assigned.

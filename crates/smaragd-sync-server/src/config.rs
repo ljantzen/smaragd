@@ -9,6 +9,7 @@ const DEFAULT_DATA_DIR: &str = "./data";
 const DEFAULT_QUOTA_MB: u64 = 1024;
 const DEFAULT_MAINTENANCE_HOURS: u64 = 6;
 const DEFAULT_EMPTY_VAULT_RETENTION_DAYS: u64 = 30;
+const DEFAULT_MAX_FILE_MB: u64 = 100;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -32,6 +33,11 @@ pub struct Config {
     /// `SMARAGD_SYNC_EMPTY_VAULT_RETENTION_DAYS` — a vault with no devices left is
     /// deleted this long after its last activity. `0` keeps such vaults forever.
     pub empty_vault_retention: Option<Duration>,
+    /// `SMARAGD_SYNC_MAX_FILE_MB` — the largest binary file (image, PDF, ...) clients
+    /// should sync, advertised to them in the document listing. The server can't see
+    /// what a document holds, so it can't enforce this; the vault quota still bounds
+    /// everything. `0` advertises no limit.
+    pub max_file_bytes: Option<u64>,
 }
 
 impl Config {
@@ -53,12 +59,17 @@ impl Config {
                 }
             },
         };
-        let quota_mb = match non_empty("SMARAGD_SYNC_VAULT_QUOTA_MB") {
-            None => DEFAULT_QUOTA_MB,
-            Some(value) => value.trim().parse::<u64>().map_err(|_| {
-                format!("SMARAGD_SYNC_VAULT_QUOTA_MB must be a whole number, got {value:?}")
-            })?,
+        let whole = |key: &str, default: u64| -> Result<u64, String> {
+            match non_empty(key) {
+                None => Ok(default),
+                Some(value) => value
+                    .trim()
+                    .parse::<u64>()
+                    .map_err(|_| format!("{key} must be a whole number, got {value:?}")),
+            }
         };
+        let quota_mb = whole("SMARAGD_SYNC_VAULT_QUOTA_MB", DEFAULT_QUOTA_MB)?;
+        let max_file_mb = whole("SMARAGD_SYNC_MAX_FILE_MB", DEFAULT_MAX_FILE_MB)?;
         let duration =
             |key: &str, default: u64, unit_secs: u64| -> Result<Option<Duration>, String> {
                 let value = match non_empty(key) {
@@ -91,6 +102,7 @@ impl Config {
             vault_quota_bytes: quota_mb.saturating_mul(1024 * 1024),
             maintenance_interval,
             empty_vault_retention,
+            max_file_bytes: (max_file_mb > 0).then(|| max_file_mb.saturating_mul(1024 * 1024)),
         })
     }
 }
@@ -123,6 +135,17 @@ mod tests {
             cfg.empty_vault_retention,
             Some(Duration::from_secs(30 * 86_400))
         );
+    }
+
+    #[test]
+    fn the_file_size_limit_defaults_to_100_mb_and_zero_lifts_it() {
+        let default = Config::from_lookup(lookup(&[])).unwrap();
+        assert_eq!(default.max_file_bytes, Some(100 * 1024 * 1024));
+        let set = Config::from_lookup(lookup(&[("SMARAGD_SYNC_MAX_FILE_MB", "25")])).unwrap();
+        assert_eq!(set.max_file_bytes, Some(25 * 1024 * 1024));
+        let off = Config::from_lookup(lookup(&[("SMARAGD_SYNC_MAX_FILE_MB", "0")])).unwrap();
+        assert_eq!(off.max_file_bytes, None);
+        assert!(Config::from_lookup(lookup(&[("SMARAGD_SYNC_MAX_FILE_MB", "big")])).is_err());
     }
 
     #[test]

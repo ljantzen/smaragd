@@ -311,6 +311,13 @@ impl Project {
         self.save_metadata()
     }
 
+    /// Turn syncing of this project's non-Markdown files on or off — see
+    /// `ProjectMeta::sync_files`.
+    pub fn set_sync_files(&mut self, enabled: bool) -> io::Result<()> {
+        self.meta.sync_files = enabled;
+        self.save_metadata()
+    }
+
     /// Set the book-level title/subtitle/author/typesetting-style shown in the
     /// Export dialog — see `ProjectMeta::book_title`/`book_subtitle`/
     /// `book_author`/`book_style`. An empty title/subtitle/author is stored as

@@ -9,7 +9,9 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use smaragd_sync_protocol::api::{DocSummary, PullUpdatesResponse, Snapshot, StoredUpdate};
+use smaragd_sync_protocol::api::{
+    DocSummary, ListDocsResponse, PULL_PAGE_BYTES, PullUpdatesResponse, Snapshot, StoredUpdate,
+};
 use smaragd_sync_protocol::{DeviceId, DocId};
 
 use super::transport::{SyncTransport, TransportError};
@@ -24,9 +26,15 @@ struct DocLog {
 #[derive(Debug, Clone, Default)]
 pub struct MemoryServer {
     docs: Arc<Mutex<BTreeMap<DocId, DocLog>>>,
+    max_file_bytes: Arc<Mutex<Option<u64>>>,
 }
 
 impl MemoryServer {
+    /// What the listing advertises as the largest file to sync (`None`: no limit).
+    pub fn set_max_file_bytes(&self, limit: Option<u64>) {
+        *self.max_file_bytes.lock().unwrap() = limit;
+    }
+
     /// Every blob the server currently stores, for asserting it's all ciphertext.
     pub fn all_blobs(&self) -> Vec<Vec<u8>> {
         let docs = self.docs.lock().unwrap();
@@ -84,16 +92,19 @@ impl MemoryTransport {
 }
 
 impl SyncTransport for MemoryTransport {
-    fn list_docs(&self) -> Result<Vec<DocSummary>, TransportError> {
+    fn list_docs(&self) -> Result<ListDocsResponse, TransportError> {
         self.check_online()?;
         let docs = self.server.docs.lock().unwrap();
-        Ok(docs
-            .iter()
-            .map(|(doc_id, log)| DocSummary {
-                doc_id: *doc_id,
-                latest_seq: log.latest_seq,
-            })
-            .collect())
+        Ok(ListDocsResponse {
+            docs: docs
+                .iter()
+                .map(|(doc_id, log)| DocSummary {
+                    doc_id: *doc_id,
+                    latest_seq: log.latest_seq,
+                })
+                .collect(),
+            max_file_bytes: *self.server.max_file_bytes.lock().unwrap(),
+        })
     }
 
     fn pull(&self, doc: DocId, since: u64) -> Result<PullUpdatesResponse, TransportError> {
@@ -103,18 +114,29 @@ impl SyncTransport for MemoryTransport {
             return Ok(PullUpdatesResponse {
                 snapshot: None,
                 updates: vec![],
+                more: false,
             });
         };
         let snapshot = log.snapshot.clone().filter(|s| s.upto_seq > since);
         let floor = snapshot.as_ref().map_or(since, |s| s.upto_seq.max(since));
+        // Paged exactly like the real server (`db::pull_updates`).
+        let mut budget =
+            PULL_PAGE_BYTES.saturating_sub(snapshot.as_ref().map_or(0, |s| s.blob.len()));
+        let mut must_take_one = snapshot.is_none();
+        let (mut updates, mut more) = (Vec::new(), false);
+        for update in log.updates.iter().filter(|u| u.seq > floor) {
+            if update.blob.len() > budget && !must_take_one {
+                more = true;
+                break;
+            }
+            budget = budget.saturating_sub(update.blob.len());
+            must_take_one = false;
+            updates.push(update.clone());
+        }
         Ok(PullUpdatesResponse {
             snapshot,
-            updates: log
-                .updates
-                .iter()
-                .filter(|u| u.seq > floor)
-                .cloned()
-                .collect(),
+            updates,
+            more,
         })
     }
 

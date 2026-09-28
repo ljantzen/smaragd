@@ -32,13 +32,27 @@ pub enum EntryKind {
     /// A directory. It has no content, but it needs a stable id so path-keyed
     /// project metadata (folder roles, ordering, ...) survives renames.
     Dir,
+    /// Any other file (an image, a PDF, ...), synced whole rather than merged, only
+    /// when the project has `sync_files` on. See `sync::binaries`.
+    File,
 }
 
 impl EntryKind {
+    /// Whether `path` is acceptable for an entry of this kind (see the
+    /// `is_safe_relative_*` checks): manifest paths are untrusted.
+    pub fn is_safe_path(self, path: &str) -> bool {
+        match self {
+            EntryKind::Doc => is_safe_relative_path(path),
+            EntryKind::Dir => is_safe_relative_dir_path(path),
+            EntryKind::File => is_safe_relative_file_path(path),
+        }
+    }
+
     fn as_str(self) -> &'static str {
         match self {
             EntryKind::Doc => "doc",
             EntryKind::Dir => "dir",
+            EntryKind::File => "file",
         }
     }
 }
@@ -77,6 +91,12 @@ pub fn is_safe_relative_path(path: &str) -> bool {
 /// Like [`is_safe_relative_path`], for a directory (no `.md` requirement).
 pub fn is_safe_relative_dir_path(path: &str) -> bool {
     safe_components(path)
+}
+
+/// Like [`is_safe_relative_path`], for a non-document file: anything *but* a `.md`
+/// file (that would be a document) or one of sync's own temporary files.
+pub fn is_safe_relative_file_path(path: &str) -> bool {
+    safe_components(path) && !path.to_lowercase().ends_with(".md") && !path.ends_with(".sync-tmp")
 }
 
 pub struct ManifestDoc {
@@ -132,6 +152,7 @@ impl ManifestDoc {
             let deleted = matches!(fields.get(&txn, "deleted"), Some(Out::Any(Any::Bool(true))));
             let kind = match fields.get(&txn, "kind") {
                 Some(Out::Any(Any::String(kind))) if &*kind == "dir" => EntryKind::Dir,
+                Some(Out::Any(Any::String(kind))) if &*kind == "file" => EntryKind::File,
                 _ => EntryKind::Doc,
             };
             out.insert(

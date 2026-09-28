@@ -8,7 +8,7 @@ Sync is one of three ways Smaragd can move a project around, and they do differe
 
 | | What it's for | Needs a server? | Keeps history? |
 |---|---|---|---|
-| **Sync** (this chapter) | The same project on *your own* devices, always up to date | Yes — one you host | No (see [Sync is not a backup](#sync-is-not-a-backup)) |
+| **Sync** (this chapter) | The same project on *your own* devices, always up to date (optionally with its images and PDFs) | Yes — one you host | No (see [Sync is not a backup](#sync-is-not-a-backup)) |
 | [Collaboration](collaboration.md) | Two people editing one document together, live | No — peer-to-peer | No |
 | [Git](git-integration.md) | Deliberate, named versions and sharing through a git host | A git remote, if you push | Yes |
 | [Backups](backups.md) | Restorable zipped snapshots on this machine | No | Yes |
@@ -69,10 +69,21 @@ Below the status:
 
 - **Your documents** — every `.md` file — and **your folders**, including empty ones. Edits, new files, renames, moves and deletions all follow you between devices.
 - **Project settings** — the binder order, folder roles, story cards, bookmarks, colors, word-count targets, the book title and the project's title/logline/synopsis — everything in [Project Metadata](project-metadata.md) and its neighbours **except** the per-device parts described next.
+- **Images, PDFs and other files** — *only if you switch it on* (see [below](#images-pdfs-and-other-files)).
 
 **What stays on each device:** whether git support is switched on, whether this project's plugins are enabled, the running session word count and daily history, and the Writing Streak switch and schedule. Those are yours alone on each device. In particular, **turning on plugins is never synced** — a plugin runs code, so you decide device by device.
 
-**What doesn't sync at all:** anything that isn't a Markdown document — images or other attachments in the project folder, your plugin scripts, your backups, and hidden or git-ignored files.
+**What doesn't sync at all:** your plugin scripts, your backups, and hidden or git-ignored files — and, unless you switch it on, anything that isn't a Markdown document.
+
+### Images, PDFs and other files
+
+By default only your Markdown documents sync. To also sync everything else in the project folder — cover images, reference PDFs, maps, research scans — tick **Also sync images, PDFs and other files** in the Sync panel. It's a project setting, so it switches on (or off) on every device syncing that project.
+
+- Files are synced **whole**, encrypted like everything else, in pieces so that large ones work. A file is only uploaded again when its content changes; renaming or moving it doesn't re-upload it.
+- There's a **size limit** per file, set by whoever runs the server — 100 MB unless they changed it. A bigger file stays on this device and the Sync panel says so.
+- Unlike text, a file can't be merged. If two devices change the same file before they sync, one version wins on every device and **the other is kept next to it** as `name (conflict copy).ext`, so nothing is lost. A file deleted on one device and changed on another comes back with the change, just like a document.
+- A new version replaces the old one on the server, so the vault only holds each file once — but while a new version is uploading it briefly needs room for both. Large files can use up a vault's storage quickly; ask whoever runs the server if you hit its limit.
+- Switching it off later stops syncing those files; nothing is deleted anywhere.
 
 ## How edits from two devices are merged
 
@@ -143,5 +154,6 @@ The server's own [self-hosting guide](https://github.com/ljantzen/smaragd/tree/m
 - **"That doesn't look like a pairing ticket"** — copy the whole ticket, with nothing added or missing. Tickets are single-use and expire after 10 minutes; make a new one if in doubt.
 - **"The last pass failed: … vault is full"** — the vault has reached the storage limit set by whoever runs the server (1 GB by default). Smaragd already compacts old history on its own, so a vault that is still full holds that much current material; the server's operator needs to raise its quota (`SMARAGD_SYNC_VAULT_QUOTA_MB`). Nothing is lost meanwhile: your edits wait on this device and go up once there is room.
 - **"… has a change too large to upload"** — a single save added more than about 8 MB to one document (for example a very large paste, or an image pasted in as text), which is more than the server accepts in one piece. Ordinary writing never comes close — 8 MB is over a million words. Only that document stops syncing; everything else carries on, and your other devices show it as an empty file for now. Remove the oversized content and save — it then syncs normally again, with nothing lost. Until you do, the Sync panel keeps the warning up.
+- **A file doesn't sync, and the Sync panel says it's too large** — it's over the server's per-file limit. Ask whoever runs the server to raise `SMARAGD_SYNC_MAX_FILE_MB`, or keep the file out of the project folder.
 - **Offline** — check the host, port and HTTPS setting with **Test Connection**, and that the server is running.
 - **A `(conflict copy)` or `(conflict …)` file appeared** — two devices made different changes that couldn't be told apart; open both files, keep what you want, and delete the other.

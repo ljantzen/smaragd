@@ -22,7 +22,7 @@
 //! | `DELETE /vaults/:id/devices/:device_id` | device | revoke a device |
 //! | `GET /vaults/:id/docs` | device | doc ids + latest sequence numbers |
 //! | `POST /vaults/:id/docs/:doc_id/updates` | device | push one sealed envelope (raw bytes) |
-//! | `GET /vaults/:id/docs/:doc_id/updates?since=N` | device | latest snapshot (if any) + updates after `N` |
+//! | `GET /vaults/:id/docs/:doc_id/updates?since=N` | device | latest snapshot (if any) + updates after `N`, paged (`more`) |
 //! | `PUT /vaults/:id/docs/:doc_id/snapshot` | device | client-driven compaction |
 //!
 //! Auth is `Authorization: Bearer <device token>` (tokens are hashed at rest and

@@ -262,7 +262,10 @@ async fn list_docs(
 ) -> Result<Json<ListDocsResponse>, HttpError> {
     auth.require_vault(vault)?;
     let docs = state.db.run(move |conn| db::list_docs(conn, vault)).await?;
-    Ok(Json(ListDocsResponse { docs }))
+    Ok(Json(ListDocsResponse {
+        docs,
+        max_file_bytes: state.config.max_file_bytes,
+    }))
 }
 
 async fn push_update(

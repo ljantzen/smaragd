@@ -15,6 +15,7 @@ impl SyncState {
         &'a self,
         _settings: &'a Settings,
         _has_project: bool,
+        _sync_files: bool,
     ) -> SyncPanelData<'a> {
         SyncPanelData {
             phase: SyncPanelPhase::Off,
@@ -26,6 +27,7 @@ impl SyncState {
             own_device: None,
             now_unix: 0,
             notice: None,
+            sync_files: false,
         }
     }
 }

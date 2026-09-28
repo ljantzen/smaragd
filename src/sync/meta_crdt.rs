@@ -57,6 +57,7 @@ const SCALAR_FIELDS: &[&str] = &[
     "session_target_words",
     "word_count_scope",
     "last_spell_check_language",
+    "sync_files",
 ];
 /// `Option<String>` fields holding a folder's path key; synced as that folder's id.
 const FOLDER_REF_FIELDS: &[&str] = &[
@@ -143,6 +144,7 @@ fn classify_exhaustively(meta: &ProjectMeta) {
         what_if: _,
         bookmarks: _,
         last_spell_check_language: _,
+        sync_files: _,
     } = meta;
 }
 

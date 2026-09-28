@@ -85,8 +85,8 @@ pub(super) struct SyncState {
     notice: Option<String>,
     ticket: Option<String>,
     devices: Option<Vec<DeviceInfo>>,
-    /// Documents the last pass couldn't upload because a change is too large, as last
-    /// announced — a toast only when this changes, not on every pass.
+    /// Documents with a change too large to upload and files over the server's size
+    /// limit, as last announced — a toast only when this changes, not every pass.
     too_large: Vec<String>,
 }
 
@@ -207,6 +207,19 @@ fn too_large_message(docs: &[String]) -> String {
     )
 }
 
+/// The Sync panel's explanation for files over the server's size limit.
+fn over_limit_message(files: &[String]) -> String {
+    let which = match files {
+        [one] => format!("\u{201c}{one}\u{201d} is"),
+        many => format!("{} files are", many.len()),
+    };
+    format!(
+        "{which} larger than this sync server accepts for one file, so it stays on this \
+         device only. Everything else still syncs. Whoever runs the server can raise the \
+         limit (SMARAGD_SYNC_MAX_FILE_MB)."
+    )
+}
+
 /// `path` relative to `root`, `/`-separated — the form the engine's held set uses.
 fn relative_key(root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(root).ok()?;
@@ -222,6 +235,7 @@ impl SyncState {
         &'a self,
         settings: &'a Settings,
         has_project: bool,
+        sync_files: bool,
     ) -> SyncPanelData<'a> {
         let phase = if !settings.sync_enabled {
             SyncPanelPhase::Off
@@ -252,6 +266,7 @@ impl SyncState {
             own_device: self.credentials.as_ref().map(|c| c.device_id),
             now_unix: unix_now(),
             notice: self.notice.as_deref(),
+            sync_files,
         }
     }
 
@@ -447,15 +462,26 @@ impl SmaragdApp {
             self.set_status_message(format!("Sync: {summary}"));
             self.sync.activity = Some(summary);
         }
-        if report.too_large.is_empty() {
-            self.sync.too_large.clear();
-        } else {
-            let message = too_large_message(&report.too_large);
-            if report.too_large != self.sync.too_large {
+        let mut messages = Vec::new();
+        if !report.too_large.is_empty() {
+            messages.push(too_large_message(&report.too_large));
+        }
+        if !report.files_over_limit.is_empty() {
+            messages.push(over_limit_message(&report.files_over_limit));
+        }
+        let stuck: Vec<String> = report
+            .too_large
+            .into_iter()
+            .chain(report.files_over_limit)
+            .collect();
+        if stuck != self.sync.too_large {
+            for message in &messages {
                 self.push_error_toast(message.clone());
-                self.sync.too_large = report.too_large;
             }
-            self.sync.notice = Some(message);
+            self.sync.too_large = stuck;
+        }
+        if !messages.is_empty() {
+            self.sync.notice = Some(messages.join("\n\n"));
         }
         for copy in &report.conflict_copies {
             self.push_error_toast(format!(
@@ -657,6 +683,18 @@ impl SmaragdApp {
                 self.show_settings = true;
             }
             SyncPanelEvent::CreateVault => self.sync_create_vault(ctx, None),
+            SyncPanelEvent::SetSyncFiles(on) => {
+                let Some(project) = self.project.as_mut() else {
+                    return;
+                };
+                match project.set_sync_files(on) {
+                    // The next pass reads the new setting from project.json.
+                    Ok(()) => self.sync_now(),
+                    Err(err) => {
+                        self.push_error_toast(format!("Couldn't save the project settings: {err}"));
+                    }
+                }
+            }
             SyncPanelEvent::JoinVault => {
                 self.prompt = Some(PendingPrompt {
                     action: PromptAction::SyncJoinTicket,
@@ -800,22 +838,25 @@ mod tests {
     fn the_panel_phase_follows_settings_before_pairing() {
         let state = SyncState::default();
         let mut settings = Settings::default();
-        assert_eq!(state.panel_data(&settings, true).phase, SyncPanelPhase::Off);
+        assert_eq!(
+            state.panel_data(&settings, true, false).phase,
+            SyncPanelPhase::Off
+        );
 
         settings.sync_enabled = true;
         assert_eq!(
-            state.panel_data(&settings, false).phase,
+            state.panel_data(&settings, false, false).phase,
             SyncPanelPhase::NoProject
         );
         assert!(matches!(
-            state.panel_data(&settings, true).phase,
+            state.panel_data(&settings, true, false).phase,
             SyncPanelPhase::NeedsSettings(_)
         ));
 
         settings.sync_server_host = "sync.example.com".into();
         settings.sync_passphrase = crate::settings::SecretString("pw".into());
         assert_eq!(
-            state.panel_data(&settings, true).phase,
+            state.panel_data(&settings, true, false).phase,
             SyncPanelPhase::NotPaired
         );
     }
@@ -947,6 +988,20 @@ mod tests {
     }
 
     #[test]
+    fn the_files_checkbox_saves_the_project_setting() {
+        let (dir, mut app) = app_with_project();
+        let ctx = egui::Context::default();
+        app.handle_sync_panel_event(&ctx, SyncPanelEvent::SetSyncFiles(true));
+        assert!(app.project.as_ref().unwrap().meta.sync_files);
+        assert!(
+            Project::load_from_folder(dir.path())
+                .unwrap()
+                .meta
+                .sync_files
+        );
+    }
+
+    #[test]
     fn a_document_too_large_to_upload_is_explained_once_not_every_pass() {
         let (_dir, mut app) = app_with_project();
         let stuck = || SyncReport {
@@ -966,6 +1021,21 @@ mod tests {
         app.sync_handle_report(report());
         assert_eq!(app.sync.notice, None);
         assert!(app.sync.too_large.is_empty());
+    }
+
+    #[test]
+    fn a_file_over_the_servers_limit_gets_its_own_explanation() {
+        let (_dir, mut app) = app_with_project();
+        app.sync_handle_report(SyncReport {
+            files_over_limit: vec!["Research/scan.pdf".into()],
+            ..report()
+        });
+        let notice = app.sync.notice.clone().expect("the panel explains it");
+        assert!(
+            notice.contains("Research/scan.pdf") && notice.contains("SMARAGD_SYNC_MAX_FILE_MB")
+        );
+        assert!(!notice.contains("Remove the oversized content"));
+        assert_eq!(app.toasts.len(), 1);
     }
 
     #[test]

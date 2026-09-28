@@ -14,6 +14,11 @@ use crate::ids::{DeviceId, DocId, VaultId};
 pub const API_PREFIX: &str = "/v1";
 /// Largest sealed update or snapshot the server accepts.
 pub const MAX_BLOB_BYTES: usize = 8 * 1024 * 1024;
+/// A pull response holds sealed blobs totalling at most this many bytes (but always
+/// at least one blob, so any single blob can be fetched); `more` says whether to
+/// ask again from the last `seq` received. Keeps a response a bounded size however
+/// large a document's history is.
+pub const PULL_PAGE_BYTES: usize = MAX_BLOB_BYTES;
 /// How long a pairing code stays redeemable.
 pub const PAIRING_CODE_TTL_SECS: u64 = 600;
 /// Length of the per-vault Argon2id salt.
@@ -137,6 +142,11 @@ pub struct DocSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListDocsResponse {
     pub docs: Vec<DocSummary>,
+    /// The largest file (binary attachment) this server wants clients to sync, in
+    /// bytes, as its operator configured it. The server can't see what a document
+    /// holds, so this is advice clients follow; `None` from an older server.
+    #[serde(default)]
+    pub max_file_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,8 +177,13 @@ pub struct PullUpdatesResponse {
     /// Present when the document has been compacted past the requested `since`;
     /// apply it first, then `updates`.
     pub snapshot: Option<Snapshot>,
-    /// Updates with `seq` greater than both `since` and the snapshot's `upto_seq`.
+    /// Updates with `seq` greater than both `since` and the snapshot's `upto_seq`,
+    /// oldest first — one page of them (see [`PULL_PAGE_BYTES`]).
     pub updates: Vec<StoredUpdate>,
+    /// More updates follow the last one here: pull again with `since` set to its
+    /// `seq`. Absent (false) from an older server, which returns everything at once.
+    #[serde(default)]
+    pub more: bool,
 }
 
 /// `PUT .../snapshot` body. The server stores it and deletes updates with
@@ -193,6 +208,7 @@ mod tests {
                 device_id: DeviceId(Uuid::from_u128(7)),
                 blob: vec![9; 40],
             }],
+            more: false,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"AAEC+v8=\""), "expected base64 in {json}");
