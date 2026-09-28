@@ -6,3 +6,4 @@
 !crates/smaragd-sync-protocol
 !crates/smaragd-sync-server
 **/target
+**/.env

@@ -44,30 +44,47 @@ the synced data can't be decrypted — by anyone.
 
 ## Quick start
 
-With Docker (image published to GHCR on each release, or build it yourself below):
+First generate an **admin token** — you need it to create vaults (see
+[Connecting Smaragd](#connecting-smaragd)). Generate it once, print it, and save it
+somewhere safe such as a password manager:
+
+```sh
+TOKEN="$(openssl rand -hex 24)"
+echo "$TOKEN"
+```
+
+Then, with Docker (image published to GHCR on each release, or build it yourself below):
 
 ```sh
 docker run -d --name smaragd-sync --restart unless-stopped \
   -p 8080:8080 \
   -v smaragd-sync-data:/data \
-  -e SMARAGD_SYNC_ADMIN_TOKEN="$(openssl rand -hex 24)" \
+  -e SMARAGD_SYNC_ADMIN_TOKEN="$TOKEN" \
   ghcr.io/ljantzen/smaragd-sync-server:latest
 ```
 
-Save the admin token somewhere safe — you need it to create vaults (see below).
-Check it's up:
+The token is fixed when the container is created, so it survives restarts and
+reboots. When you recreate the container (for example to upgrade), pass the same
+token again. Check it's up:
 
 ```sh
 curl http://localhost:8080/v1/health
 # {"status":"ok","version":"0.1.0"}
 ```
 
-With Docker Compose, use [`docker-compose.yml`](docker-compose.yml) in this directory:
+With Docker Compose, use [`docker-compose.yml`](docker-compose.yml) in this directory.
+Write the token **once** into a `.env` file next to it — Compose reads that file on
+every `docker compose up`, so the token stays the same across restarts, upgrades and
+new shells:
 
 ```sh
-export SMARAGD_SYNC_ADMIN_TOKEN="$(openssl rand -hex 24)"
+echo "SMARAGD_SYNC_ADMIN_TOKEN=$(openssl rand -hex 24)" > .env
+chmod 600 .env
+cat .env        # note the token down
 docker compose up -d
 ```
+
+Keep `.env` out of version control; it is a secret.
 
 To build the image yourself, from the **repository root**:
 
@@ -95,6 +112,12 @@ Everything is an environment variable; there is no config file.
 
 If open registration is off **and** no admin token is set, nobody can create a
 vault; the server warns about this at startup.
+
+The admin token is only checked when a vault is **created**; the server doesn't
+store it. Changing it (or losing it and setting a new one) has no effect on
+existing vaults and paired devices — only the new token works for creating vaults
+from then on. To change it, recreate the container with the new value (with
+Compose: edit `.env`, then `docker compose up -d`).
 
 ## Putting it behind TLS
 
@@ -242,7 +265,10 @@ SMARAGD_SYNC_ALLOW_OPEN_REGISTRATION=true cargo run
 ## Troubleshooting
 
 - **`403` when creating a vault** — open registration is off and the admin token was
-  missing or wrong.
+  missing or wrong. To see the token a running container was started with:
+  `docker inspect smaragd-sync --format '{{range .Config.Env}}{{println .}}{{end}}' | grep ADMIN_TOKEN`.
+  Lost it entirely? Set a new one (see [Configuration](#configuration)); existing
+  vaults are unaffected.
 - **`401` from a device that used to work** — its token was revoked, or the vault was
   deleted.
 - **"sync passphrase doesn't match this vault"** — reported by Smaragd, not the

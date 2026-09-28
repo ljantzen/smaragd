@@ -1,7 +1,12 @@
 # Smaragd sync server — example compose file.
 #
-#   export SMARAGD_SYNC_ADMIN_TOKEN="$(openssl rand -hex 24)"
+#   echo "SMARAGD_SYNC_ADMIN_TOKEN=$(openssl rand -hex 24)" > .env   # once; keep it secret
+#   chmod 600 .env
 #   docker compose up -d
+#
+# Compose reads `.env` next to this file on every `up`, so the admin token stays the
+# same across restarts, upgrades and shells. Changing it later only affects creating
+# new vaults; existing vaults and paired devices keep working.
 #
 # Plain HTTP on :8080; put a TLS-terminating reverse proxy in front for anything
 # beyond your own machine (see README.md). All state lives in the `sync-data` volume.
@@ -17,7 +22,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # Needed to create vaults while open registration is off (recommended).
+      # Needed to create vaults while open registration is off (recommended). Read from .env.
       SMARAGD_SYNC_ADMIN_TOKEN: ${SMARAGD_SYNC_ADMIN_TOKEN:?set SMARAGD_SYNC_ADMIN_TOKEN}
       SMARAGD_SYNC_ALLOW_OPEN_REGISTRATION: "false"
       SMARAGD_SYNC_VAULT_QUOTA_MB: "1024"

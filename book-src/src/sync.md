@@ -40,7 +40,7 @@ Open **`File > Settings > Sync`** and fill in:
 
 Open the project, then open the Sync tab with **`Tools > Sync Panel`**. A project that isn't syncing yet offers two choices:
 
-- **Create Vault…** — for the *first* device. This makes a new, empty vault on the server for this project and starts syncing straight away. If the server only lets its administrator create vaults (the usual setup), Smaragd asks for the server's **admin token** — the one whoever set the server up chose.
+- **Create Vault…** — for the *first* device. This makes a new, empty vault on the server for this project and starts syncing straight away. If the server only lets its administrator create vaults (the usual setup), Smaragd asks for the server's **admin token** — the one whoever set the server up chose. It's needed only for this step: Smaragd doesn't store it, other devices join with a pairing ticket instead, and if the server's admin token is changed later your existing vaults keep syncing.
 - **Join Vault…** — for every *other* device, see below.
 
 ### 3. Add your other devices
@@ -138,7 +138,7 @@ The server's own [self-hosting guide](https://github.com/ljantzen/smaragd/tree/m
 
 - **"The sync passphrase doesn't match this vault"** — the passphrase here differs from the one used when the vault was created. Correct it in Settings > Sync; sync restarts by itself.
 - **"This device was removed from the vault"** — another device revoked it, or the vault was deleted. Choose *Stop syncing this project*, then join again with a new ticket if you want.
-- **Create Vault says the server only lets its administrator create vaults** — enter the server's admin token when asked (it's set by whoever runs the server).
+- **Create Vault says the server only lets its administrator create vaults** — enter the server's admin token when asked (it's set by whoever runs the server). If you run the server yourself and have lost the token, the server's [self-hosting guide](https://github.com/ljantzen/smaragd/tree/main/crates/smaragd-sync-server#troubleshooting) shows how to look it up or set a new one; existing vaults are unaffected.
 - **"That doesn't look like a pairing ticket"** — copy the whole ticket, with nothing added or missing. Tickets are single-use and expire after 10 minutes; make a new one if in doubt.
 - **Offline** — check the host, port and HTTPS setting with **Test Connection**, and that the server is running.
 - **A `(conflict copy)` or `(conflict …)` file appeared** — two devices made different changes that couldn't be told apart; open both files, keep what you want, and delete the other.
