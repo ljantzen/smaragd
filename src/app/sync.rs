@@ -261,10 +261,15 @@ impl SyncState {
     }
 
     /// Loads the link and credentials for `project_root` from disk.
-    fn load_pairing(&mut self, store: &dyn crate::project::store::ProjectStore, root: &Path) {
+    fn load_pairing(
+        &mut self,
+        store: &dyn crate::project::store::ProjectStore,
+        root: &Path,
+        data: Option<PathBuf>,
+    ) {
         self.link = ProjectLink::load(store, root);
         self.credentials = None;
-        if let (Some(link), Some(data)) = (&self.link, data_root()) {
+        if let (Some(link), Some(data)) = (&self.link, data) {
             let files: std::sync::Arc<dyn crate::project::store::ProjectStore> =
                 crate::project::store::native_store();
             let state = DirStateStore::new(files, state_dir(&data, link.vault_id));
@@ -275,6 +280,17 @@ impl SyncState {
 }
 
 impl SmaragdApp {
+    /// Where sync keeps credentials and engine state — `None` for a test fixture, so no
+    /// test can ever start a real runner or write into the developer's own data
+    /// directory (same idea as the fixture's `settings_path_override`).
+    fn sync_data_root(&self) -> Option<PathBuf> {
+        if self.is_test_fixture {
+            None
+        } else {
+            data_root()
+        }
+    }
+
     /// Called once per frame, near the top of `ui()`.
     pub(super) fn poll_sync(&mut self, ctx: &egui::Context) {
         self.sync_refresh_pairing();
@@ -302,8 +318,9 @@ impl SmaragdApp {
         self.sync.link = None;
         self.sync.credentials = None;
         self.sync.server_label = None;
+        let data = self.sync_data_root();
         if let (Some(project), Some(root)) = (&self.project, &root) {
-            self.sync.load_pairing(project.store.as_ref(), root);
+            self.sync.load_pairing(project.store.as_ref(), root, data);
         }
     }
 
@@ -339,7 +356,7 @@ impl SmaragdApp {
             self.project.as_ref(),
             self.sync.link.clone(),
             self.sync.credentials.clone(),
-            data_root(),
+            self.sync_data_root(),
         ) else {
             return;
         };
@@ -559,7 +576,7 @@ impl SmaragdApp {
         let (Some(project), Some(server), Some(data)) = (
             self.project.as_ref(),
             self.settings.sync_server_addr(),
-            data_root(),
+            self.sync_data_root(),
         ) else {
             self.sync.notice = Some("Set the sync server in Settings > Sync first.".into());
             return;
@@ -584,7 +601,7 @@ impl SmaragdApp {
             self.sync.notice = Some("That doesn't look like a pairing ticket.".into());
             return;
         };
-        let (Some(project), Some(data)) = (self.project.as_ref(), data_root()) else {
+        let (Some(project), Some(data)) = (self.project.as_ref(), self.sync_data_root()) else {
             return;
         };
         let (files, root) = (project.store.clone(), project.root.clone());
@@ -652,7 +669,7 @@ impl SmaragdApp {
                     self.project.as_ref(),
                     self.sync.link.clone(),
                     self.sync.credentials.clone(),
-                    data_root(),
+                    self.sync_data_root(),
                 ) {
                     let (files, root) = (project.store.clone(), project.root.clone());
                     self.sync.stop_runner();
@@ -773,5 +790,236 @@ mod tests {
             state.panel_data(&settings, true).phase,
             SyncPanelPhase::NotPaired
         );
+    }
+
+    // --- the app's side of a pass -------------------------------------------------
+    //
+    // These drive the real `SmaragdApp` wiring. Runners are injected (built on the
+    // in-memory server with a cheap key) rather than started by `sync_ensure_running`,
+    // which would derive a real key and keep its state in the OS data directory.
+
+    use crate::project::Project;
+    use crate::project::store::native_store;
+    use crate::sync::crypto::cheap_test_key;
+    use crate::sync::engine::{EngineConfig, SyncEngine};
+    use crate::sync::fake::{MemoryServer, MemoryTransport};
+    use crate::sync::state::MemoryStateStore;
+    use smaragd_sync_protocol::DeviceId;
+    use smaragd_sync_protocol::api::KDF_SALT_LEN;
+    use uuid::Uuid;
+
+    const VAULT: VaultId = VaultId(Uuid::from_u128(0x5eed));
+    const SALT: [u8; KDF_SALT_LEN] = [3; KDF_SALT_LEN];
+
+    fn engine(
+        server: &MemoryServer,
+        root: &Path,
+        passphrase: &str,
+    ) -> (SyncEngine, MemoryTransport) {
+        let device = DeviceId(Uuid::new_v4());
+        let engine = SyncEngine::open(
+            EngineConfig {
+                vault: VAULT,
+                device,
+                key: cheap_test_key(passphrase, &SALT),
+                root: root.to_path_buf(),
+            },
+            native_store(),
+            Box::new(MemoryStateStore::default()),
+        )
+        .unwrap();
+        (engine, MemoryTransport::new(server, device))
+    }
+
+    /// An app with a fresh project open, and `SyncState` told it's already loaded that
+    /// project's pairing, so `poll_sync` keeps whatever runner a test injects.
+    fn app_with_project() -> (tempfile::TempDir, SmaragdApp) {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.sync.link_for = Some(project.root.clone());
+        app.project = Some(project);
+        (dir, app)
+    }
+
+    fn inject_runner(app: &mut SmaragdApp, server: &MemoryServer, passphrase: &str) {
+        let root = app.project.as_ref().unwrap().root.clone();
+        let (engine, transport) = engine(server, &root, passphrase);
+        app.sync.runner = Some(SyncRunner::spawn(
+            engine,
+            Box::new(transport),
+            Duration::from_secs(3600),
+            Box::new(|| {}),
+        ));
+    }
+
+    /// Runs frames of `poll_sync` until `done` holds, failing after a few seconds.
+    fn poll_until(app: &mut SmaragdApp, what: &str, done: impl Fn(&SmaragdApp) -> bool) {
+        let ctx = egui::Context::default();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done(app) {
+            assert!(Instant::now() < deadline, "timed out waiting for: {what}");
+            app.poll_sync(&ctx);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn read(path: &Path) -> String {
+        std::fs::read_to_string(path).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_settings_change_from_sync_is_reloaded_so_the_next_save_keeps_it() {
+        let (dir, mut app) = app_with_project();
+        // Sync merges another device's settings into project.json behind the app's back.
+        let mut elsewhere = Project::load_from_folder(dir.path()).unwrap();
+        elsewhere.set_book_title("Merged Title".into()).unwrap();
+
+        app.sync_handle_report(SyncReport {
+            meta_written: true,
+            ..report()
+        });
+
+        let project = app.project.as_ref().unwrap();
+        assert_eq!(project.meta.book_title.as_deref(), Some("Merged Title"));
+        // The app's next ordinary metadata save must not put the stale settings back.
+        project.save_metadata().unwrap();
+        let on_disk = Project::load_from_folder(dir.path()).unwrap();
+        assert_eq!(on_disk.meta.book_title.as_deref(), Some("Merged Title"));
+    }
+
+    #[test]
+    fn files_written_by_sync_appear_in_the_binder() {
+        let (dir, mut app) = app_with_project();
+        let arrived = dir.path().join("From Laptop.md");
+        std::fs::write(&arrived, "Hello\n").unwrap();
+
+        app.sync_handle_report(SyncReport {
+            files_written: 1,
+            ..report()
+        });
+
+        let project = app.project.as_ref().unwrap();
+        assert!(project.tree.find_by_path(&arrived).is_some());
+        assert_eq!(app.sync.activity.as_deref(), Some("Updated 1 file"));
+    }
+
+    #[test]
+    fn a_conflict_copy_is_announced() {
+        let (_dir, mut app) = app_with_project();
+        app.sync_handle_report(SyncReport {
+            conflict_copies: vec!["Scene (conflict copy).md".into()],
+            ..report()
+        });
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message.contains("Scene (conflict copy).md"))
+        );
+    }
+
+    #[test]
+    fn an_open_file_with_unsaved_edits_is_held_until_saved_then_merged() {
+        let server = MemoryServer::default();
+        // The other device, driven by hand.
+        let laptop = tempfile::tempdir().unwrap();
+        let (mut laptop_engine, laptop_transport) = engine(&server, laptop.path(), "pw");
+        std::fs::write(laptop.path().join("Scene.md"), "Line one.\n").unwrap();
+        laptop_engine.sync_once(&laptop_transport).unwrap();
+
+        // This device: the app, with its own runner.
+        let (dir, mut app) = app_with_project();
+        inject_runner(&mut app, &server, "pw");
+        let scene = dir.path().join("Scene.md");
+        poll_until(&mut app, "the scene to arrive", |_| {
+            read(&scene) == "Line one.\n"
+        });
+
+        // The user starts editing it here, without saving...
+        app.editor.open_path = Some(scene.clone());
+        app.editor.dirty = true;
+        poll_until(&mut app, "the held set to reach the runner", |app| {
+            app.sync.held_sent.contains("Scene.md")
+        });
+        // ...while the laptop changes it too.
+        std::fs::write(
+            laptop.path().join("Scene.md"),
+            "Line one.\nFrom the laptop.\n",
+        )
+        .unwrap();
+        laptop_engine.sync_once(&laptop_transport).unwrap();
+        app.sync.activity = None;
+        app.sync_now();
+        poll_until(&mut app, "a pass that holds the open file", |app| {
+            app.sync
+                .activity
+                .as_deref()
+                .is_some_and(|a| a.contains("waiting for you to save"))
+        });
+        assert_eq!(
+            read(&scene),
+            "Line one.\n",
+            "an unsaved file was overwritten"
+        );
+
+        // Saving writes the user's version; sync then merges both edits.
+        std::fs::write(&scene, "From the desktop.\nLine one.\n").unwrap();
+        app.editor.dirty = false;
+        app.sync_after_save();
+        poll_until(&mut app, "the merged scene", |_| {
+            let text = read(&scene);
+            text.contains("From the desktop.") && text.contains("From the laptop.")
+        });
+        assert!(app.sync.held_sent.is_empty());
+        laptop_engine.sync_once(&laptop_transport).unwrap();
+        assert!(read(&laptop.path().join("Scene.md")).contains("From the desktop."));
+    }
+
+    #[test]
+    fn a_halted_runner_stays_stopped_until_the_configuration_changes() {
+        let server = MemoryServer::default();
+        let laptop = tempfile::tempdir().unwrap();
+        let (mut laptop_engine, laptop_transport) = engine(&server, laptop.path(), "right");
+        std::fs::write(laptop.path().join("Scene.md"), "Secret.\n").unwrap();
+        laptop_engine.sync_once(&laptop_transport).unwrap();
+
+        let (dir, mut app) = app_with_project();
+        app.settings.sync_enabled = true;
+        app.settings.sync_server_host = "sync.example.com".into();
+        app.settings.sync_passphrase = crate::settings::SecretString("wrong".into());
+        app.sync.link = Some(ProjectLink {
+            version: 1,
+            server: app.settings.sync_server_addr().unwrap(),
+            vault_id: VAULT,
+            kdf_salt: SALT.to_vec(),
+            key_version: 1,
+        });
+        app.sync.credentials = Some(DeviceCredentials {
+            device_id: DeviceId(Uuid::new_v4()),
+            token: "token".into(),
+        });
+        let signature = app.sync_signature();
+        assert!(signature.is_some());
+        app.sync.running_for = signature.clone();
+        inject_runner(&mut app, &server, "wrong");
+
+        poll_until(&mut app, "the runner to halt", |app| {
+            matches!(app.sync.phase, Phase::Halted(_))
+        });
+        assert!(app.sync.runner.is_none());
+        assert!(app.sync.halted_for == signature);
+        assert!(app.toasts.iter().any(|t| t.message.contains("passphrase")));
+        assert!(
+            !dir.path().join("Scene.md").exists(),
+            "wrote data it couldn't decrypt"
+        );
+
+        // Later frames with the same settings must not restart it in a loop.
+        let ctx = egui::Context::default();
+        for _ in 0..5 {
+            app.poll_sync(&ctx);
+        }
+        assert!(app.sync.runner.is_none());
+        assert!(matches!(app.sync.phase, Phase::Halted(_)));
     }
 }

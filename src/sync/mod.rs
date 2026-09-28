@@ -49,4 +49,4 @@ pub mod state;
 pub mod transport;
 
 #[cfg(test)]
-mod fake;
+pub(crate) mod fake;
