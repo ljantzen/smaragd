@@ -2477,6 +2477,39 @@ mod tests {
     }
 
     #[test]
+    fn a_card_linked_under_a_scenes_old_name_follows_a_concurrent_rename() {
+        let server = MemoryServer::default();
+        let (mut a, mut b) = synced_pair(&server);
+
+        // A renames a scene (the app rewrites references to it as it does so)...
+        a.rename("Draft/Ch1.md", "Draft/Opening.md");
+        a.edit_meta(|m| {
+            let text = serde_json::to_string(&*m)
+                .unwrap()
+                .replace("\"Ch1.md\"", "\"Opening.md\"");
+            *m = serde_json::from_str(&text).unwrap();
+        });
+        // ...while B, still seeing the old name, links a new card to it.
+        b.edit_meta(|m| {
+            let mut value = card(40, "the inciting incident");
+            value["linked_document_stems"] = serde_json::json!(["Ch1"]);
+            m.story_cards.push(serde_json::from_value(value).unwrap());
+        });
+        converge(&mut [&mut a, &mut b]);
+
+        for device in [&a, &b] {
+            let meta = device.meta();
+            let linked = meta
+                .story_cards
+                .iter()
+                .find(|c| c.id == Uuid::from_u128(40))
+                .expect("B's card synced");
+            assert_eq!(linked.linked_document_stems, vec!["Opening"]);
+        }
+        assert_eq!(a.files(), b.files());
+    }
+
+    #[test]
     fn joining_a_vault_with_metadata_keeps_a_backup_of_the_local_project_json() {
         let server = MemoryServer::default();
         let mut a = Device::new(&server);

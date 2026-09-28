@@ -83,6 +83,7 @@ Sync doesn't ask you to pick "mine" or "theirs". Each document is merged automat
 - **A delete and an edit:** the edit wins — the file comes back with the change rather than losing your work.
 - **Frontmatter** (`status`, `pov`, …) merges field by field, so changing `status` on one device and `pov` on the other keeps both and never produces a half-merged, broken block. If both change the *same* field, one value wins on both devices.
 - **A rename of a whole folder** moves the folder everywhere, and its settings (role, order, metadata) and bookmarks come with it.
+- **[Story cards](story-cards.md)** merge card by card and field by field: cards added on both devices are all kept, and editing a card's *cause* on one device and its *effect* on the other keeps both. A card's link to a scene follows that scene when it's renamed, even if the card was linked under the old name on a device that hadn't heard about the rename yet. (A link to a name that more than one document shares stays as it is.)
 - **Two devices creating a file at the same path** keeps both: one gets a name like `Scene (conflict 3f9a1c2e).md`.
 
 ### The file you're editing

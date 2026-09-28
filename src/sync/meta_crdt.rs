@@ -17,6 +17,9 @@
 //!      folders by path. Inside the CRDT they use the manifest's stable ids
 //!      ([`PathIds`]), translated back to the *current* paths on the way out, so a
 //!      rename on one device can't orphan an edit made under the old name on another.
+//!      Story cards link documents by file name rather than path; each link travels as
+//!      the name *and* the id of the one document with that name (see [`CardLink`]),
+//!      so a card edited under an old name still points at the renamed document.
 //! 2. **[`MetaDoc`]** — the CRDT. Settings are per-key registers, prose fields are
 //!    text (character-level merge), path-keyed maps are nested maps keyed by id, and
 //!    ordered lists (a folder's children, story cards, bookmarks) are arrays whose
@@ -29,6 +32,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use smaragd_sync_protocol::DocId;
 use yrs::error::Error;
@@ -201,6 +205,52 @@ impl PathIds {
     fn path(&self, id: DocId) -> Option<&str> {
         self.by_id.get(&id).map(String::as_str)
     }
+
+    /// The document a story-card link names — a file name without `.md`, matched
+    /// case-insensitively like `BinderTree::find_document_by_stem` — but only if exactly
+    /// one document has that name: an ambiguous link stays a plain name, resolved by
+    /// the app as before. A name no longer in use falls back to the previous layout
+    /// (see `previous`), so a link written before a rename arrived still resolves.
+    fn doc_by_stem(&self, stem: &str) -> Option<DocId> {
+        let stem = stem.to_lowercase();
+        let matching = |paths: &BTreeMap<String, DocId>| -> BTreeSet<DocId> {
+            paths
+                .iter()
+                .filter(|(path, _)| file_stem(path).is_some_and(|s| s.to_lowercase() == stem))
+                .map(|(_, id)| *id)
+                .filter(|id| self.by_id.contains_key(id))
+                .collect()
+        };
+        let mut found = matching(&self.by_path);
+        if found.is_empty() {
+            found = matching(&self.previous);
+        }
+        match found.len() {
+            1 => found.pop_first(),
+            _ => None,
+        }
+    }
+
+    /// The current file name (without `.md`) of document `id`.
+    fn stem(&self, id: DocId) -> Option<&str> {
+        self.path(id).and_then(file_stem)
+    }
+}
+
+/// `"Draft/Chapter One.md"` -> `"Chapter One"`; `None` for anything but a document.
+fn file_stem(path: &str) -> Option<&str> {
+    path.rsplit('/').next()?.strip_suffix(".md")
+}
+
+/// One of a story card's linked documents as it travels in the CRDT: the file name
+/// `project.json` stores, plus the id of the document it named when last written
+/// (empty if the name was ambiguous or unknown). Kept as one value per link, in one
+/// field, so a concurrent edit can never pair one device's names with another's ids.
+#[derive(Debug, Serialize, Deserialize)]
+struct CardLink {
+    stem: String,
+    #[serde(default)]
+    target: String,
 }
 
 /// One element of an ordered list: string fields, always including `"id"`.
@@ -390,7 +440,28 @@ impl SyncedFields {
             }
         }
 
-        fields.story_cards = items_of(object.get("story_cards"));
+        fields.story_cards = items_of(object.get("story_cards"))
+            .into_iter()
+            .map(|mut item| {
+                let stems: Vec<String> = item
+                    .remove("linked_document_stems")
+                    .and_then(|text| serde_json::from_str(&text).ok())
+                    .unwrap_or_default();
+                let links: Vec<CardLink> = stems
+                    .into_iter()
+                    .map(|stem| CardLink {
+                        target: ids
+                            .doc_by_stem(&stem)
+                            .map(|id| id.to_string())
+                            .unwrap_or_default(),
+                        stem,
+                    })
+                    .collect();
+                let links = serde_json::to_string(&links).expect("card links always serialize");
+                item.insert("links".into(), links);
+                item
+            })
+            .collect();
         fields.bookmarks = items_of(object.get("bookmarks"))
             .into_iter()
             .map(|mut item| {
@@ -520,7 +591,35 @@ impl SyncedFields {
             Value::Array(
                 self.story_cards
                     .iter()
-                    .filter_map(item_to_object)
+                    .filter_map(|item| {
+                        let mut item = item.clone();
+                        if let Some(links) = item.remove("links") {
+                            // Follow each linked document to its current name; keep
+                            // the stored name if it isn't known here (yet).
+                            let links: Vec<CardLink> =
+                                serde_json::from_str(&links).unwrap_or_default();
+                            let stems: Vec<String> = links
+                                .into_iter()
+                                .map(|link| {
+                                    // Only a real rename changes the stored name, not
+                                    // a difference in case the app ignores anyway.
+                                    link.target
+                                        .parse::<DocId>()
+                                        .ok()
+                                        .and_then(|id| ids.stem(id))
+                                        .filter(|current| {
+                                            current.to_lowercase() != link.stem.to_lowercase()
+                                        })
+                                        .map_or(link.stem, str::to_string)
+                                })
+                                .collect();
+                            item.insert(
+                                "linked_document_stems".into(),
+                                json_text(&serde_json::json!(stems)),
+                            );
+                        }
+                        item_to_object(&item)
+                    })
                     .map(Value::Object)
                     .collect(),
             ),
@@ -1279,6 +1378,83 @@ mod tests {
         assert!(fields.roles.contains_key(&id(1)));
         assert!(fields.folder_meta.contains_key(&id(1)));
         assert_eq!(fields.bookmarks[0]["target"], id(2).to_string());
+    }
+
+    fn meta_with_card_links(stems: &[&str]) -> ProjectMeta {
+        let mut card = card(20, "c", "e");
+        card["linked_document_stems"] = json!(stems);
+        serde_json::from_value(json!({ "version": 1, "node_order": {}, "story_cards": [card] }))
+            .unwrap()
+    }
+
+    /// `world()` with Draft/Ch1.md renamed to Draft/Chapter One.md (same id).
+    fn world_with_ch1_renamed() -> Vec<ManifestEntry> {
+        let mut entries = world();
+        entries[1] = entry(2, "Draft/Chapter One.md", EntryKind::Doc);
+        entries
+    }
+
+    #[test]
+    fn card_links_follow_a_renamed_document() {
+        let ids = PathIds::from_entries(&world());
+        let fields = SyncedFields::from_meta(&meta_with_card_links(&["Ch1", "Notes"]), &ids);
+
+        let mut meta = ProjectMeta::default();
+        fields
+            .into_meta(&mut meta, &PathIds::from_entries(&world_with_ch1_renamed()))
+            .unwrap();
+        assert_eq!(
+            meta.story_cards[0].linked_document_stems,
+            vec!["Chapter One", "Notes"]
+        );
+    }
+
+    #[test]
+    fn a_card_linked_under_an_old_name_still_reaches_the_renamed_document() {
+        // This device renamed Ch1; the other one, not knowing yet, linked a card to it
+        // by its old name, and that edit wins the merge.
+        let (base, old_ids) = seeded();
+        let (mut here, mut there) = (fork(&base), fork(&base));
+        let original = SyncedFields::from_meta(&rich_meta(), &old_ids);
+        let mut linked = original.clone();
+        let theirs = SyncedFields::from_meta(&meta_with_card_links(&["Ch1"]), &old_ids);
+        linked.story_cards[0].insert("links".into(), theirs.story_cards[0]["links"].clone());
+        here.apply_update(&there.write(&linked).unwrap()).unwrap();
+
+        let new_ids = PathIds::from_entries(&world_with_ch1_renamed());
+        let mut meta = rich_meta();
+        here.read().into_meta(&mut meta, &new_ids).unwrap();
+        assert_eq!(
+            meta.story_cards[0].linked_document_stems,
+            vec!["Chapter One"]
+        );
+
+        // A project.json still written with the old name resolves through the
+        // previous layout, like every other path reference.
+        let fallback = new_ids.with_previous(old_ids.snapshot());
+        let fields = SyncedFields::from_meta(&meta_with_card_links(&["Ch1"]), &fallback);
+        assert!(fields.story_cards[0]["links"].contains(&id(2).to_string()));
+    }
+
+    #[test]
+    fn ambiguous_unknown_and_differently_cased_card_links_are_left_alone() {
+        let mut entries = world();
+        entries.push(entry(7, "Trash/Ch2.md", EntryKind::Doc)); // a second "Ch2"
+        let ids = PathIds::from_entries(&entries);
+        assert_eq!(
+            ids.doc_by_stem("ch1"),
+            Some(id(2)),
+            "matched like the app does"
+        );
+        assert_eq!(ids.doc_by_stem("Ch2"), None, "ambiguous");
+        assert_eq!(ids.doc_by_stem("Nowhere"), None);
+        assert_eq!(ids.doc_by_stem("Draft"), None, "folders aren't documents");
+
+        let stems = ["ch1", "Ch2", "Nowhere"];
+        let fields = SyncedFields::from_meta(&meta_with_card_links(&stems), &ids);
+        let mut meta = ProjectMeta::default();
+        fields.into_meta(&mut meta, &ids).unwrap();
+        assert_eq!(meta.story_cards[0].linked_document_stems, stems);
     }
 
     #[test]
