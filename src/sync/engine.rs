@@ -49,6 +49,8 @@ use serde::{Deserialize, Serialize};
 use smaragd_sync_protocol::api::Snapshot;
 use smaragd_sync_protocol::{DeviceId, DocId, VaultId};
 use uuid::Uuid;
+use yrs::updates::decoder::Decode;
+use yrs::{StateVector, Update};
 
 use super::crdt::FileDoc;
 use super::crypto::{CryptoError, VaultKey};
@@ -150,6 +152,11 @@ pub struct SyncReport {
     pub files_held: usize,
     /// Documents whose accumulated updates were replaced by a snapshot on the server.
     pub snapshots_uploaded: usize,
+    /// Documents with a local change too large for the server to accept (over
+    /// `MAX_BLOB_BYTES` sealed, even re-encoded). They're skipped — everything else
+    /// still syncs — and go up once the oversized content is removed. Project-relative
+    /// paths, or a description for the file list and project settings.
+    pub too_large: Vec<String>,
 }
 
 impl SyncReport {
@@ -168,38 +175,33 @@ pub struct EngineConfig {
 
 trait Crdt {
     fn apply(&mut self, update: &[u8]) -> Result<(), yrs::error::Error>;
-    fn state(&self) -> Vec<u8>;
-}
-
-impl Crdt for FileDoc {
-    fn apply(&mut self, update: &[u8]) -> Result<(), yrs::error::Error> {
-        self.apply_update(update)
-    }
+    fn state_since(&self, since: &StateVector) -> Vec<u8>;
+    fn state_vector(&self) -> StateVector;
 
     fn state(&self) -> Vec<u8> {
-        self.encode_state()
+        self.state_since(&StateVector::default())
     }
 }
 
-impl Crdt for MetaDoc {
-    fn apply(&mut self, update: &[u8]) -> Result<(), yrs::error::Error> {
-        self.apply_update(update)
-    }
+macro_rules! impl_crdt {
+    ($($doc:ty),*) => {$(
+        impl Crdt for $doc {
+            fn apply(&mut self, update: &[u8]) -> Result<(), yrs::error::Error> {
+                self.apply_update(update)
+            }
 
-    fn state(&self) -> Vec<u8> {
-        self.encode_state()
-    }
+            fn state_since(&self, since: &StateVector) -> Vec<u8> {
+                self.encode_state_since(since)
+            }
+
+            fn state_vector(&self) -> StateVector {
+                <$doc>::state_vector(self)
+            }
+        }
+    )*};
 }
 
-impl Crdt for ManifestDoc {
-    fn apply(&mut self, update: &[u8]) -> Result<(), yrs::error::Error> {
-        self.apply_update(update)
-    }
-
-    fn state(&self) -> Vec<u8> {
-        self.encode_state()
-    }
-}
+impl_crdt!(FileDoc, MetaDoc, ManifestDoc);
 
 /// A CRDT document plus this device's sync bookkeeping for it.
 struct Tracked<D> {
@@ -443,16 +445,65 @@ fn pull_into<D: Crdt>(
     Ok(applied)
 }
 
+/// Everything in `tracked.pending` as a single update, encoded from the document itself
+/// rather than by concatenating the queued updates: for every client that has blocks
+/// in the queue, from the lowest queued clock on, plus the whole delete set. Content
+/// that was inserted and then deleted again is garbage-collected in the document, so it
+/// shrinks to a tombstone here — this is what lets a document whose oversized paste was
+/// removed sync again. Re-sending anything the server already has is harmless: applying
+/// an update is idempotent.
+fn repack_pending<D: Crdt>(tracked: &Tracked<D>) -> Result<Vec<u8>, SyncError> {
+    let mut since = tracked.doc.state_vector();
+    for update in &tracked.pending {
+        let update = Update::decode_v1(update).map_err(|err| SyncError::Crdt(err.to_string()))?;
+        for (client, clock) in update.state_vector_lower().iter() {
+            since.set_min(*client, *clock);
+        }
+    }
+    Ok(tracked.doc.state_since(&since))
+}
+
+/// How [`push_from`] got on with one document's queue.
+struct Pushed {
+    count: usize,
+    /// The queue is stuck behind a change too large to upload (see
+    /// `SyncReport::too_large`); it stays queued and is retried every pass.
+    too_large: bool,
+}
+
 fn push_from<D: Crdt>(
     key: &VaultKey,
     vault: VaultId,
     transport: &dyn SyncTransport,
     id: DocId,
     tracked: &mut Tracked<D>,
-) -> Result<usize, SyncError> {
+) -> Result<Pushed, SyncError> {
     let mut pushed = 0;
     while let Some(update) = tracked.pending.first().cloned() {
-        let sealed = key.seal(vault, id, &update)?;
+        let sealed = match key.seal(vault, id, &update) {
+            Ok(sealed) => sealed,
+            Err(CryptoError::TooLarge(_)) => {
+                // Folding the whole queue into one update from the document's current
+                // state drops content that has since been deleted. If that fits, it
+                // replaces the queue; if not, skip this document so others still sync.
+                let packed = repack_pending(tracked)?;
+                match key.seal(vault, id, &packed) {
+                    Ok(sealed) => {
+                        tracked.pending = vec![packed];
+                        tracked.dirty = true;
+                        sealed
+                    }
+                    Err(CryptoError::TooLarge(_)) => {
+                        return Ok(Pushed {
+                            count: pushed,
+                            too_large: true,
+                        });
+                    }
+                    Err(other) => return Err(other.into()),
+                }
+            }
+            Err(other) => return Err(other.into()),
+        };
         let seq = transport.push(id, &sealed)?;
         tracked.pending.remove(0);
         tracked.dirty = true;
@@ -462,7 +513,10 @@ fn push_from<D: Crdt>(
             tracked.last_seq = seq;
         }
     }
-    Ok(pushed)
+    Ok(Pushed {
+        count: pushed,
+        too_large: false,
+    })
 }
 
 /// Replaces a document's accumulated updates on the server with one snapshot of its
@@ -1470,23 +1524,25 @@ impl SyncEngine {
         transport: &dyn SyncTransport,
         report: &mut SyncReport,
     ) -> Result<(), SyncError> {
-        report.pushed_updates += push_from(
-            &self.cfg.key,
-            self.cfg.vault,
-            transport,
-            DocId::MANIFEST,
-            &mut self.manifest,
-        )?;
-        report.pushed_updates += push_from(
-            &self.cfg.key,
-            self.cfg.vault,
-            transport,
-            DocId::PROJECT_META,
-            &mut self.meta,
-        )?;
+        let (key, vault) = (&self.cfg.key, self.cfg.vault);
+        let mut record = |pushed: Pushed, label: &dyn Fn() -> String| {
+            report.pushed_updates += pushed.count;
+            if pushed.too_large {
+                report.too_large.push(label());
+            }
+        };
+        record(
+            push_from(key, vault, transport, DocId::MANIFEST, &mut self.manifest)?,
+            &|| "the project's file list".to_string(),
+        );
+        record(
+            push_from(key, vault, transport, DocId::PROJECT_META, &mut self.meta)?,
+            &|| "the project settings (project.json)".to_string(),
+        );
         for (id, tracked) in &mut self.docs {
-            report.pushed_updates +=
-                push_from(&self.cfg.key, self.cfg.vault, transport, *id, tracked)?;
+            let pushed = push_from(key, vault, transport, *id, tracked)?;
+            let path = tracked.local_path.clone();
+            record(pushed, &|| path.clone().unwrap_or_else(|| id.to_string()));
         }
         Ok(())
     }
@@ -2606,5 +2662,64 @@ mod tests {
         assert_eq!(b.files(), c.files());
         assert_eq!(c.read("three.md"), "3 from C\n");
         assert_eq!(a.read("two.md"), "2 from B\n");
+    }
+
+    /// Text whose update from a single save is over the server's per-blob limit.
+    fn oversized_text() -> String {
+        "An enormous paste. ".repeat(smaragd_sync_protocol::api::MAX_BLOB_BYTES / 16)
+    }
+
+    #[test]
+    fn an_oversized_change_is_skipped_and_flagged_while_other_documents_sync() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        let mut b = Device::new(&server);
+        a.write("Huge.md", &oversized_text());
+        a.write("Small.md", "Still syncs.\n");
+
+        let report = a.sync();
+        assert_eq!(report.too_large, vec!["Huge.md".to_string()]);
+        b.sync();
+        assert_eq!(b.read("Small.md"), "Still syncs.\n");
+        // The file list did sync, so the other device has the document, still empty.
+        assert_eq!(b.read("Huge.md"), "");
+
+        // It stays flagged (across a restart too) without holding anything else up.
+        a.restart();
+        a.write("Small.md", "Still syncs.\nAnd again.\n");
+        assert_eq!(a.sync().too_large, vec!["Huge.md".to_string()]);
+        b.sync();
+        assert_eq!(b.read("Small.md"), "Still syncs.\nAnd again.\n");
+        assert!(
+            server
+                .all_blobs()
+                .iter()
+                .all(|blob| blob.len() <= smaragd_sync_protocol::api::MAX_BLOB_BYTES)
+        );
+
+        // Trimmed down, it goes through and replaces the empty placeholder.
+        a.write("Huge.md", "Trimmed.\n");
+        assert!(a.sync().too_large.is_empty());
+        b.sync();
+        assert_eq!(b.read("Huge.md"), "Trimmed.\n");
+    }
+
+    #[test]
+    fn removing_the_oversized_content_lets_the_document_sync_again() {
+        let server = MemoryServer::default();
+        let mut a = Device::new(&server);
+        let mut b = Device::new(&server);
+        a.write("Chapter.md", "Keep this.\n");
+        a.sync();
+        b.sync();
+
+        a.write("Chapter.md", &format!("Keep this.\n{}", oversized_text()));
+        assert_eq!(a.sync().too_large, vec!["Chapter.md".to_string()]);
+        a.write("Chapter.md", "Keep this.\nAnd this.\n");
+        let report = a.sync();
+        assert!(report.too_large.is_empty(), "{report:?}");
+
+        b.sync();
+        assert_eq!(b.read("Chapter.md"), "Keep this.\nAnd this.\n");
     }
 }

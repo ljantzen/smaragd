@@ -136,9 +136,17 @@ impl FileDoc {
 
     /// The complete state, for persisting locally and for snapshots.
     pub fn encode_state(&self) -> Vec<u8> {
-        self.doc
-            .transact()
-            .encode_state_as_update_v1(&StateVector::default())
+        self.encode_state_since(&StateVector::default())
+    }
+
+    /// Everything a peer that has seen `since` is missing (deleted content included
+    /// only as compact tombstones). See `engine::repack_pending`.
+    pub fn encode_state_since(&self, since: &StateVector) -> Vec<u8> {
+        self.doc.transact().encode_state_as_update_v1(since)
+    }
+
+    pub fn state_vector(&self) -> StateVector {
+        self.doc.transact().state_vector()
     }
 
     /// Applies an update (from a peer, already decrypted). Idempotent.

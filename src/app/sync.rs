@@ -85,6 +85,9 @@ pub(super) struct SyncState {
     notice: Option<String>,
     ticket: Option<String>,
     devices: Option<Vec<DeviceInfo>>,
+    /// Documents the last pass couldn't upload because a change is too large, as last
+    /// announced — a toast only when this changes, not on every pass.
+    too_large: Vec<String>,
 }
 
 impl Default for SyncState {
@@ -105,6 +108,7 @@ impl Default for SyncState {
             notice: None,
             ticket: None,
             devices: None,
+            too_large: Vec::new(),
         }
     }
 }
@@ -190,6 +194,19 @@ fn halt_message(reason: &HaltReason) -> String {
     }
 }
 
+/// The Sync panel's explanation for documents that can't be uploaded.
+fn too_large_message(docs: &[String]) -> String {
+    let which = match docs {
+        [one] => format!("\u{201c}{one}\u{201d} has"),
+        many => format!("{} documents have", many.len()),
+    };
+    format!(
+        "{which} a change too large to upload (over 8 MB at once), so it isn't syncing. \
+         Everything else still syncs. Remove the oversized content and save, and it \
+         syncs again."
+    )
+}
+
 /// `path` relative to `root`, `/`-separated — the form the engine's held set uses.
 fn relative_key(root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(root).ok()?;
@@ -252,6 +269,7 @@ impl SyncState {
         self.devices = None;
         self.held_sent.clear();
         self.halted_for = None;
+        self.too_large.clear();
     }
 
     fn refresh_label(&mut self) {
@@ -428,6 +446,16 @@ impl SmaragdApp {
         if let Some(summary) = summarize(&report) {
             self.set_status_message(format!("Sync: {summary}"));
             self.sync.activity = Some(summary);
+        }
+        if report.too_large.is_empty() {
+            self.sync.too_large.clear();
+        } else {
+            let message = too_large_message(&report.too_large);
+            if report.too_large != self.sync.too_large {
+                self.push_error_toast(message.clone());
+                self.sync.too_large = report.too_large;
+            }
+            self.sync.notice = Some(message);
         }
         for copy in &report.conflict_copies {
             self.push_error_toast(format!(
@@ -916,6 +944,28 @@ mod tests {
                 .iter()
                 .any(|toast| toast.message.contains("Scene (conflict copy).md"))
         );
+    }
+
+    #[test]
+    fn a_document_too_large_to_upload_is_explained_once_not_every_pass() {
+        let (_dir, mut app) = app_with_project();
+        let stuck = || SyncReport {
+            too_large: vec!["Notes/Paste.md".into()],
+            ..report()
+        };
+
+        app.sync_handle_report(stuck());
+        let notice = app.sync.notice.clone().expect("the panel explains it");
+        assert!(notice.contains("Notes/Paste.md") && notice.contains("Remove"));
+        assert_eq!(app.toasts.len(), 1);
+
+        app.sync_handle_report(stuck());
+        assert_eq!(app.toasts.len(), 1, "no new toast for the same document");
+        assert!(app.sync.notice.is_some(), "still shown in the panel");
+
+        app.sync_handle_report(report());
+        assert_eq!(app.sync.notice, None);
+        assert!(app.sync.too_large.is_empty());
     }
 
     #[test]

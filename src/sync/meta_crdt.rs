@@ -713,9 +713,17 @@ impl MetaDoc {
     }
 
     pub fn encode_state(&self) -> Vec<u8> {
-        self.doc
-            .transact()
-            .encode_state_as_update_v1(&StateVector::default())
+        self.encode_state_since(&StateVector::default())
+    }
+
+    /// Everything a peer that has seen `since` is missing (deleted content included
+    /// only as compact tombstones). See `engine::repack_pending`.
+    pub fn encode_state_since(&self, since: &StateVector) -> Vec<u8> {
+        self.doc.transact().encode_state_as_update_v1(since)
+    }
+
+    pub fn state_vector(&self) -> StateVector {
+        self.doc.transact().state_vector()
     }
 
     pub fn apply_update(&mut self, update: &[u8]) -> Result<(), Error> {
