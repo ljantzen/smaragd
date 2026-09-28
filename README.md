@@ -69,6 +69,7 @@ just fmt           # cargo fmt --all
 just server-check  # fmt-check + clippy + test for the sync server (its own Cargo workspace)
 just e2e           # end-to-end tests: the real sync client against the real server
 just docker-build  # build the sync server's Docker image
+just docker-smoke  # build it and smoke-test it as a running container, as CI does
 ```
 
 The sync server and its end-to-end tests are separate Cargo workspaces under `crates/` (see [ARCHITECTURE.md](ARCHITECTURE.md#sync-self-hosted-server) for why); the server has its own [self-hosting guide](crates/smaragd-sync-server/README.md).

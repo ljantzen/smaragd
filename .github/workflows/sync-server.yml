@@ -13,6 +13,7 @@ on:
       - "crates/smaragd-sync-protocol/**"
       - "src/sync/**"
       - ".github/workflows/sync-server.yml"
+      - "scripts/sync-server-smoke-test.sh"
   pull_request:
     branches: [main]
     paths:
@@ -20,6 +21,7 @@ on:
       - "crates/smaragd-sync-protocol/**"
       - "src/sync/**"
       - ".github/workflows/sync-server.yml"
+      - "scripts/sync-server-smoke-test.sh"
 
 jobs:
   test:
@@ -106,14 +108,31 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
 
-      # Always builds (catching a broken Dockerfile on PRs); only pushes for tags.
-      - name: Build (and push on tags)
+      # Always builds (catching a broken Dockerfile on PRs) and loads the image locally
+      # so it can be started and checked before anything is published.
+      - name: Build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: crates/smaragd-sync-server/Dockerfile
-          push: ${{ startsWith(github.ref, 'refs/tags/') }}
+          load: true
+          tags: smaragd-sync-server:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Runs the image as the self-hosting guide does: health check, /data permissions
+      # for the non-root user, admin-token gate, `admin` via docker exec, restart.
+      - name: Smoke test the image
+        run: scripts/sync-server-smoke-test.sh smaragd-sync-server:ci
+
+      # Tags only, and only after the smoke test passed; the layers come from the cache.
+      - name: Push
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: crates/smaragd-sync-server/Dockerfile
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max

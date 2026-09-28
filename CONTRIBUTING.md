@@ -33,7 +33,7 @@ The self-hosted sync feature is experimental (its formats and protocol may still
 - `crates/smaragd-sync-server/` — the server. It is its **own Cargo workspace** with its own `Cargo.lock` (so its dependencies stay out of the app's flatpak-vendored lockfile): `cd crates/smaragd-sync-server && cargo test`, or `just server-check`.
 - `crates/smaragd-sync-e2e/` — end-to-end tests of the real client against the real server. Also its own workspace: `just e2e`.
 
-`just check` runs everything CI does across all of them. Building the server's Docker image needs the repository root as the build context: `just docker-build`.
+`just check` runs everything CI does across all of them. Building the server's Docker image needs the repository root as the build context: `just docker-build`. `just docker-smoke` also starts the image and checks it works as a container (health check, volume permissions, admin token, restart), as CI does before publishing.
 
 ## Reporting issues
 

@@ -66,6 +66,10 @@ e2e:
 docker-build:
     docker build -f crates/smaragd-sync-server/Dockerfile -t smaragd-sync-server .
 
+# Build the sync server's image and smoke-test it as a running container (as CI does)
+docker-smoke: docker-build
+    scripts/sync-server-smoke-test.sh smaragd-sync-server
+
 # Generate an lcov coverage report (matches CI's Coverage job)
 coverage:
     cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
