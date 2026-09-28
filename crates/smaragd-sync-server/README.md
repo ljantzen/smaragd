@@ -99,10 +99,13 @@ keeps everything under `/data`, and has a built-in health check.
 ## Running without Docker
 
 Docker is only a convenience: the server is a single self-contained binary (SQLite
-is compiled in) with no runtime dependencies, and runs on Linux, macOS and Windows.
+is compiled in) with no runtime dependencies. It is built and tested on **Linux**.
+macOS and Windows should work — the code has nothing Linux-specific — but are
+**untested**; on those, Docker Desktop running the image above is the tested route.
 There are no prebuilt binaries yet, so build it with a current stable Rust
-([rustup](https://rustup.rs)) and a C compiler (for the bundled SQLite; e.g.
-`build-essential` on Debian/Ubuntu), from a checkout of this repository:
+([rustup](https://rustup.rs)) and a C compiler (for the bundled SQLite: e.g.
+`build-essential` on Debian/Ubuntu, the Xcode Command Line Tools on macOS, the
+Visual Studio Build Tools on Windows), from a checkout of this repository:
 
 ```sh
 cd crates/smaragd-sync-server
