@@ -39,7 +39,13 @@ impl SmaragdApp {
                     | ShortcutAction::SearchEverywhere
             ) && (git_enabled || action.category() != crate::shortcuts::ShortcutCategory::Git)
                 && (cfg!(not(target_arch = "wasm32"))
-                    || *action != ShortcutAction::ToggleCollabPanel)
+                    || !matches!(
+                        action,
+                        ShortcutAction::ToggleCollabPanel
+                            | ShortcutAction::ToggleSyncPanel
+                            | ShortcutAction::SyncNow
+                    ))
+                && (*action != ShortcutAction::SyncNow || self.sync_is_running())
         });
         let mut actions: Vec<ActionCandidate> = built_in
             .map(|action| ActionCandidate {

@@ -430,11 +430,21 @@ impl SmaragdApp {
                         ui.separator();
                         #[cfg(not(target_arch = "wasm32"))]
                         {
-                            if nav.button(ui, "Sync Panel").clicked() {
+                            let sync_panel_shortcut =
+                                self.settings.shortcuts.get(ShortcutAction::ToggleSyncPanel);
+                            if nav
+                                .shortcut_button(ui, "Sync Panel", sync_panel_shortcut)
+                                .clicked()
+                            {
                                 self.show_sync_panel();
                             }
+                            let sync_now_shortcut =
+                                self.settings.shortcuts.get(ShortcutAction::SyncNow);
                             ui.add_enabled_ui(self.sync_is_running(), |ui| {
-                                if nav.button(ui, "Sync Now").clicked() {
+                                if nav
+                                    .shortcut_button(ui, "Sync Now", sync_now_shortcut)
+                                    .clicked()
+                                {
                                     self.sync_now();
                                 }
                             });

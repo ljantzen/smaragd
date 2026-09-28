@@ -808,6 +808,14 @@ impl SmaragdApp {
             #[cfg(target_arch = "wasm32")]
             ShortcutAction::ToggleCollabPanel => {}
             ShortcutAction::ToggleStreak => self.toggle_dock_tab(DockTab::Streak),
+            // Desktop-only, like the Collaboration Panel above: the browser build's
+            // `sync_stub.rs` has no panel to show and nothing to sync.
+            #[cfg(not(target_arch = "wasm32"))]
+            ShortcutAction::ToggleSyncPanel => self.show_sync_panel(),
+            #[cfg(not(target_arch = "wasm32"))]
+            ShortcutAction::SyncNow => self.sync_now(),
+            #[cfg(target_arch = "wasm32")]
+            ShortcutAction::ToggleSyncPanel | ShortcutAction::SyncNow => {}
             ShortcutAction::CycleBinderColorMode => self.cycle_binder_color_mode(),
             // Filtered out of the consumption pass above and handled inline in
             // `editor_panel::show` instead — never actually reached, but the match

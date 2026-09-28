@@ -111,6 +111,12 @@ pub enum ShortcutAction {
     /// of Shift (`crate::double_tap`), which isn't expressible as a
     /// `KeyboardShortcut` and so lives outside this map.
     SearchEverywhere,
+    /// Open/close the Sync dock tab. Desktop-only, like `ToggleCollabPanel`: a no-op
+    /// in the browser build, and hidden from Search Everywhere there.
+    ToggleSyncPanel,
+    /// Run a sync pass right away instead of waiting for the next periodic one — see
+    /// `SmaragdApp::sync_now`. Does nothing while sync isn't running for the project.
+    SyncNow,
 }
 
 impl ShortcutAction {
@@ -163,6 +169,8 @@ impl ShortcutAction {
         Self::PreviewZoomReset,
         Self::ToggleSpellCheck,
         Self::SearchEverywhere,
+        Self::ToggleSyncPanel,
+        Self::SyncNow,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -216,6 +224,8 @@ impl ShortcutAction {
             Self::PreviewZoomReset => "Reset Preview Zoom",
             Self::ToggleSpellCheck => "Toggle Spell Check",
             Self::SearchEverywhere => "Search Everywhere",
+            Self::ToggleSyncPanel => "Toggle Sync Panel",
+            Self::SyncNow => "Sync Now",
         }
     }
 
@@ -274,6 +284,8 @@ impl ShortcutAction {
             Self::PreviewZoomReset => "preview_zoom_reset",
             Self::ToggleSpellCheck => "toggle_spell_check",
             Self::SearchEverywhere => "search_everywhere",
+            Self::ToggleSyncPanel => "toggle_sync_panel",
+            Self::SyncNow => "sync_now",
         }
     }
 
@@ -329,7 +341,9 @@ impl ShortcutAction {
             | Self::ToggleWordCount
             | Self::RefreshWordCount
             | Self::ToggleCollabPanel
-            | Self::ToggleStreak => ShortcutCategory::Tools,
+            | Self::ToggleStreak
+            | Self::ToggleSyncPanel
+            | Self::SyncNow => ShortcutCategory::Tools,
         }
     }
 
@@ -455,6 +469,12 @@ impl ShortcutAction {
             Self::SearchEverywhere => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::A)
             }
+            // `Y` for sYnc: both chords are otherwise unused. Ctrl+Y (redo) has no
+            // extra modifier, so neither of these swallows it.
+            Self::ToggleSyncPanel => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Y)
+            }
+            Self::SyncNow => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::Y),
         }
     }
 }

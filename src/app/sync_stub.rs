@@ -37,4 +37,7 @@ impl SmaragdApp {
     }
     pub(super) fn sync_join_with_ticket(&mut self, _ctx: &egui::Context, _pasted: &str) {}
     pub(super) fn sync_create_vault_with_token(&mut self, _ctx: &egui::Context, _token: &str) {}
+    pub(super) fn sync_is_running(&self) -> bool {
+        false
+    }
 }
