@@ -38,7 +38,7 @@ Open **`File > Settings > Sync`** and fill in:
 
 ### 2. Start syncing a project
 
-Open the project, then open the Sync tab with **`Tools > Sync Panel`**. A project that isn't syncing yet offers two choices:
+Open the project, then open the Sync tab with **`Tools > Sync Panel`** (`Ctrl+Shift+Y`). A project that isn't syncing yet offers two choices:
 
 - **Create Vault…** — for the *first* device. This makes a new, empty vault on the server for this project and starts syncing straight away. If the server only lets its administrator create vaults (the usual setup), Smaragd asks for the server's **admin token** — the one whoever set the server up chose. It's needed only for this step: Smaragd doesn't store it, other devices join with a pairing ticket instead, and if the server's admin token is changed later your existing vaults keep syncing.
 - **Join Vault…** — for every *other* device, see below.
@@ -60,7 +60,7 @@ The panel shows where things stand:
 
 Below the status:
 
-- **Sync Now** runs a pass immediately. (Smaragd also syncs about every 10 seconds, and right after you save with `Ctrl+S`. **`Tools > Sync Now`** does the same from the menu.)
+- **Sync Now** runs a pass immediately. (Smaragd also syncs about every 10 seconds, and right after you save with `Ctrl+S`. **`Tools > Sync Now`**, or `Ctrl+Alt+Y`, does the same from anywhere.)
 - **Make Pairing Ticket** — see above.
 - **Devices** lists every device in the vault and when it was last seen. **Refresh** updates the list; **Revoke** removes another device — it stops syncing immediately. Use this if a device is lost or retired.
 - **Stop syncing this project** (expand it) removes this device from the vault and stops syncing this project. Your files stay exactly as they are here, and your other devices keep their copies. If it was the vault's *last* device, the server deletes the vault's encrypted copy after a while (30 days by default, set by whoever runs the server); your own files are never affected.
@@ -140,5 +140,7 @@ The server's own [self-hosting guide](https://github.com/ljantzen/smaragd/tree/m
 - **"This device was removed from the vault"** — another device revoked it, or the vault was deleted. Choose *Stop syncing this project*, then join again with a new ticket if you want.
 - **Create Vault says the server only lets its administrator create vaults** — enter the server's admin token when asked (it's set by whoever runs the server). If you run the server yourself and have lost the token, the server's [self-hosting guide](https://github.com/ljantzen/smaragd/tree/main/crates/smaragd-sync-server#troubleshooting) shows how to look it up or set a new one; existing vaults are unaffected.
 - **"That doesn't look like a pairing ticket"** — copy the whole ticket, with nothing added or missing. Tickets are single-use and expire after 10 minutes; make a new one if in doubt.
+- **"The last pass failed: … vault is full"** — the vault has reached the storage limit set by whoever runs the server (1 GB by default). Smaragd already compacts old history on its own, so a vault that is still full holds that much current material; the server's operator needs to raise its quota (`SMARAGD_SYNC_VAULT_QUOTA_MB`). Nothing is lost meanwhile: your edits wait on this device and go up once there is room.
+- **"The last pass failed: … over the server's size limit"** — a single save added more than about 8 MB to one document (for example a very large paste, or an image pasted in as text), which is more than the server accepts in one piece. Ordinary writing never comes close — 8 MB is over a million words. Sync keeps retrying and can't get past it, so choose *Stop syncing this project* on this device, remove the oversized content, and set sync up again (create a new vault, then join your other devices to it).
 - **Offline** — check the host, port and HTTPS setting with **Test Connection**, and that the server is running.
 - **A `(conflict copy)` or `(conflict …)` file appeared** — two devices made different changes that couldn't be told apart; open both files, keep what you want, and delete the other.

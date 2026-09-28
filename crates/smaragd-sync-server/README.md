@@ -252,9 +252,12 @@ one through a rate-limited proxy is impractical.
 
 In Smaragd's Settings → Sync, enter the server's host, port and whether it uses TLS,
 and choose an encryption passphrase (use the *same* passphrase on every device).
-Then use **Sync This Project** to create a vault — this needs the admin token when
-open registration is off — and **pair** other devices with the short-lived code it
-shows. See the *Sync* chapter of the user manual for the full walkthrough.
+Then open the project and the **Sync** panel (**Tools → Sync Panel**) and press
+**Create Vault…** on the first device — this asks for the admin token when open
+registration is off. To add another device, press **Make Pairing Ticket** on a
+device that already syncs, and paste the ticket into **Join Vault…** on the new
+one; tickets are single-use and expire after 10 minutes. See the *Sync* chapter of
+the user manual for the full walkthrough.
 
 To create a vault by hand (mostly useful for testing):
 
@@ -300,11 +303,14 @@ server refuses to open a database written by a *newer* version.
 
 ### Limits
 
-- Each pushed update or snapshot is at most **8 MiB**.
+- Each pushed update or snapshot is at most **8 MiB** (after encryption).
 - Each vault may store up to `SMARAGD_SYNC_VAULT_QUOTA_MB` of ciphertext; over that,
   pushes fail with `507`. Smaragd clients replace a document's old updates with a
   compact snapshot (`PUT .../snapshot`) once it has about 64 of them, which is how a
   vault's size is kept in check.
+- A vault can have at most **10** unused pairing codes at a time; more are refused
+  until one is redeemed or expires (after 10 minutes).
+- Device names are at most **100** characters.
 
 ### Maintenance
 
