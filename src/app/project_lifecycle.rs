@@ -255,6 +255,7 @@ impl SmaragdApp {
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn create_project(
         &mut self,
         ctx: &egui::Context,

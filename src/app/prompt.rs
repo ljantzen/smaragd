@@ -18,6 +18,8 @@ pub(super) enum PromptAction {
     RenameTag {
         old_tag: String,
     },
+    /// Desktop only: the browser edition creates projects without a folder picker.
+    #[cfg(not(target_arch = "wasm32"))]
     NewProject {
         location: PathBuf,
         template_id: String,
@@ -258,6 +260,7 @@ impl SmaragdApp {
             } => self.create_document_from_template(&parent, name, &template_path),
             PromptAction::Rename { path } => self.rename_node(&path, name),
             PromptAction::RenameTag { old_tag } => self.rename_tag(&old_tag, name),
+            #[cfg(not(target_arch = "wasm32"))]
             PromptAction::NewProject {
                 location,
                 template_id,
