@@ -325,9 +325,10 @@ assume both sides are current.
   document — roughly what the database spends on a row — so a flood of tiny updates or
   documents can't fill the disk several times over the quota. (A server upgraded from an
   earlier version recomputes every vault's usage this way on first start; a vault that
-  was nearly full may find itself over, and gets `507` until its clients compact.) Smaragd clients replace a document's old updates with a
-  compact snapshot (`PUT .../snapshot`) once it has about 64 of them, which is how a
-  vault's size is kept in check.
+  was nearly full may find itself over, and gets `507` until its clients compact.)
+  Smaragd clients replace a document's old updates with a compact snapshot
+  (`PUT .../snapshot`) once it has about 64 of them, which is how a vault's size is kept
+  in check.
 - A vault can have at most **10** unused pairing codes at a time; more are refused
   until one is redeemed or expires (after 10 minutes).
 - Device names are at most **100** characters.
@@ -386,9 +387,9 @@ cuts a device off from the *server*; it doesn't change the vault's key. A revoke
 still knows the passphrase, so if it ever got hold of the vault's ciphertext some other
 way (a copy of the server's data, say) it could read it. If a device holding the
 passphrase was lost or stolen, treat the passphrase as exposed: choose a new one, create
-a fresh vault with it, and pair your other devices again. The list
-shows which device added each one, so a device paired with a stolen token can be traced
-back to the device it came through — revoke both.
+a fresh vault with it, and pair your other devices again. The list shows which device
+added each one, so a device paired with a stolen token can be traced back to the device
+it came through — revoke both.
 
 Deleting a vault is **operator-only**: it takes the admin token
 (`DELETE /v1/vaults/<id>` with the `x-admin-token` header) or `admin delete-vault`, never
@@ -428,5 +429,16 @@ To install and run it for real, see [Running without Docker](#running-without-do
   server: a device is using a different passphrase than the one the vault was
   created with.
 - **`507`** — the vault hit its quota. Clients compact old updates on their own, but a vault that is full of current content needs more room: raise `SMARAGD_SYNC_VAULT_QUOTA_MB`.
+  When *creating* a vault, `507` means the server already holds
+  `SMARAGD_SYNC_MAX_VAULTS` vaults: raise it, or remove unused ones with `admin list` /
+  `admin delete-vault`.
+- **Server exits at startup saying the admin token is too short** — since v1.3.3 it
+  must be at least 16 characters. Set a new one (`openssl rand -hex 24`); existing
+  vaults and paired devices are unaffected.
+- **`408`** — a request took longer than 2 minutes (queueing included), usually a very
+  slow connection or an overloaded server; clients retry on their next pass.
+- **`413`** — a request body was over its limit (16 KiB for most requests; an 8 MiB
+  update or snapshot is sent encoded, in a body of up to 16 MiB). A proxy in front needs
+  to allow 16 MiB too (`client_max_body_size 16m` in nginx).
 - **Container marked unhealthy** — `docker logs smaragd-sync`; the health check calls
   `GET /v1/health` on the loopback interface.

@@ -48,6 +48,9 @@ this file.
   usage is recomputed on first start. A new `SMARAGD_SYNC_MAX_VAULTS` setting (default
   100, `0` for no limit) caps how many vaults a server holds. Creating a vault on a full
   server now says so rather than asking for the admin token again.
+- **Upgrading a sync server:** check its admin token is at least 16 characters first
+  (a server started with a shorter one exits). Older apps keep working with the new
+  server and vice versa; the Sync panel shows "added by" once both are upgraded.
 
 ## v1.3.2 — 2026-09-29
 
