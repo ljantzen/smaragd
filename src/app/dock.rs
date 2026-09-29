@@ -24,6 +24,7 @@ pub(super) enum DockTab {
     Sync,
     Streak,
     Bookmarks,
+    Notes,
 }
 
 /// The initial dock layout for a fresh install (no persisted `dock_layout.json`

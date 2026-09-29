@@ -18,6 +18,7 @@ mod git;
 mod import;
 mod menu_bar;
 mod menu_nav;
+mod notes;
 mod pomodoro;
 mod project_lifecycle;
 mod prompt;
@@ -73,6 +74,7 @@ use crate::ui::editor_panel::EditorEvent;
 use crate::ui::find_replace_panel::{FindReplaceEvent, FindReplaceState};
 use crate::ui::metadata_panel::MetadataDraft;
 use crate::ui::name_prompt::{NamePromptOutcome, NamePromptState};
+use crate::ui::note_prompt::NotePromptState;
 use crate::ui::story_grid_panel::StoryGridEvent;
 
 pub struct SmaragdApp {
@@ -149,6 +151,10 @@ pub struct SmaragdApp {
     is_test_fixture: bool,
     find_replace: FindReplaceState,
     card_draft: Option<CardDraft>,
+    /// The Note prompt (`ui::note_prompt`), open while the user is writing or
+    /// editing a note at a specific `(path, line, column)` — see
+    /// `open_note_prompt`.
+    note_prompt: Option<NotePromptState>,
     command_prompt: CommandPromptState,
     open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState,
     search_everywhere: ui::search_everywhere::SearchEverywhereState,
@@ -371,6 +377,7 @@ impl SmaragdApp {
             is_test_fixture: false,
             find_replace: FindReplaceState::default(),
             card_draft: None,
+            note_prompt: None,
             command_prompt: CommandPromptState::default(),
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
             search_everywhere: ui::search_everywhere::SearchEverywhereState::default(),
@@ -492,6 +499,7 @@ impl SmaragdApp {
             is_test_fixture: true,
             find_replace: FindReplaceState::default(),
             card_draft: None,
+            note_prompt: None,
             command_prompt: CommandPromptState::default(),
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
             search_everywhere: ui::search_everywhere::SearchEverywhereState::default(),
@@ -825,6 +833,14 @@ impl SmaragdApp {
             ShortcutAction::ToggleBookmarksPanel => self.toggle_dock_tab(DockTab::Bookmarks),
             ShortcutAction::NextBookmark => self.goto_next_bookmark(),
             ShortcutAction::PreviousBookmark => self.goto_previous_bookmark(),
+            // Filtered out of the consumption pass above and handled inline in
+            // `editor_panel::show` instead — never actually reached, but the match
+            // above has to stay exhaustive over `ShortcutAction`, same as
+            // `ActivateWikilink`/`ToggleBookmark` above.
+            ShortcutAction::AddNoteAtCursor => {}
+            ShortcutAction::ToggleNotesPanel => self.toggle_dock_tab(DockTab::Notes),
+            ShortcutAction::NextNote => self.goto_next_note(),
+            ShortcutAction::PreviousNote => self.goto_previous_note(),
             ShortcutAction::ToggleDocumentStats => {
                 self.settings.show_document_stats_in_binder =
                     !self.settings.show_document_stats_in_binder;
@@ -1129,6 +1145,16 @@ impl SmaragdApp {
             };
             if let Some(outcome) = outcome {
                 self.finish_prompt(ui.ctx(), outcome);
+            }
+        }
+
+        if self.note_prompt.is_some() {
+            let outcome = {
+                let prompt = self.note_prompt.as_mut().expect("checked above");
+                ui::note_prompt::show(ui.ctx(), prompt)
+            };
+            if let Some(outcome) = outcome {
+                self.handle_note_prompt_outcome(outcome);
             }
         }
 
@@ -1548,14 +1574,12 @@ impl eframe::App for SmaragdApp {
                 .shortcuts
                 .bindings()
                 .into_iter()
-                // `ActivateWikilink`/`ToggleBookmark` are consumed inline in
-                // `editor_panel::show` instead (see their doc comments) —
-                // including either here too would let this pass steal the key
-                // event first, so `editor_panel::show` would never see it.
-                .filter(|(action, _)| {
-                    *action != ShortcutAction::ActivateWikilink
-                        && *action != ShortcutAction::ToggleBookmark
-                })
+                // See `ShortcutAction::INLINE_CONSUMED`'s doc comment: these
+                // are consumed inline in `editor_panel::show` instead, and
+                // including any of them here too would let this pass steal
+                // the key event first, so `editor_panel::show` would never
+                // see it.
+                .filter(|(action, _)| !ShortcutAction::INLINE_CONSUMED.contains(action))
                 .map(|(action, shortcut)| (ShortcutTarget::BuiltIn(action), shortcut))
                 .collect();
             pairs.extend(
@@ -1680,6 +1704,15 @@ impl eframe::App for SmaragdApp {
                     .zip(self.project.as_ref())
                     .map(|(path, project)| project.bookmarked_lines_for(path))
                     .unwrap_or_default();
+                let add_note_shortcut =
+                    self.settings.shortcuts.get(ShortcutAction::AddNoteAtCursor);
+                let noted_lines = self
+                    .editor
+                    .open_path
+                    .as_deref()
+                    .zip(self.project.as_ref())
+                    .map(|(path, project)| project.noted_lines_for(path))
+                    .unwrap_or_default();
                 let editor_store = self.editor_store();
                 let spell_check_language = self.effective_spell_check_language();
                 match ui::editor_panel::show(
@@ -1698,6 +1731,8 @@ impl eframe::App for SmaragdApp {
                     self.settings.show_editor_gutter,
                     &bookmarked_lines,
                     toggle_bookmark_shortcut,
+                    &noted_lines,
+                    add_note_shortcut,
                 ) {
                     Some(EditorEvent::SaveError(err)) => self.push_error_toast(err),
                     Some(EditorEvent::Wikilink(activation)) => self.activate_wikilink(activation),
@@ -1705,6 +1740,9 @@ impl eframe::App for SmaragdApp {
                         if let Some(path) = self.editor.open_path.clone() {
                             self.toggle_bookmark(&path, line);
                         }
+                    }
+                    Some(EditorEvent::EditNoteAt(line, column)) => {
+                        self.open_note_prompt(line, column);
                     }
                     Some(EditorEvent::AddToDictionary(word)) => {
                         self.settings.spell_check_custom_words.insert(word);
@@ -1834,6 +1872,10 @@ impl eframe::App for SmaragdApp {
                             }
                         }
                         DockAction::Bookmarks(event) => self.handle_bookmarks_event(event),
+                        DockAction::EditNote(line, column) => {
+                            self.open_note_prompt(line, column);
+                        }
+                        DockAction::Notes(event) => self.handle_notes_event(event),
                     }
                 }
             });

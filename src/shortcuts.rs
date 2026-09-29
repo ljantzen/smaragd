@@ -86,6 +86,22 @@ pub enum ShortcutAction {
     /// `dispatch_shortcut_action` pass like `GoBack`/`GoForward` above.
     NextBookmark,
     PreviousBookmark,
+    /// Open a small prompt to write a note at the cursor's current position
+    /// (line *and* column, unlike `ToggleBookmark`'s line-only granularity)
+    /// in the editor — needs that frame's `TextEdit` cursor position, so
+    /// it's consumed inline the same way `ToggleBookmark` is, not through
+    /// `dispatch_shortcut_action`.
+    AddNoteAtCursor,
+    /// Open/close the Notes dock tab — an ordinary global action, unlike
+    /// `AddNoteAtCursor` above.
+    ToggleNotesPanel,
+    /// Jump to the next/previous note, project-wide, ordered the same way
+    /// `Project::resolved_notes` sorts (by document, then line, then
+    /// column) — wrapping around at either end. Dispatches through the
+    /// ordinary `dispatch_shortcut_action` pass, same reasoning as
+    /// `NextBookmark`/`PreviousBookmark` above.
+    NextNote,
+    PreviousNote,
     /// Flip `Settings::show_document_stats_in_binder` on/off — an ordinary
     /// `Settings` bool toggle, same shape as `ToggleDarkMode`.
     ToggleDocumentStats,
@@ -163,6 +179,10 @@ impl ShortcutAction {
         Self::ToggleBookmarksPanel,
         Self::NextBookmark,
         Self::PreviousBookmark,
+        Self::AddNoteAtCursor,
+        Self::ToggleNotesPanel,
+        Self::NextNote,
+        Self::PreviousNote,
         Self::ToggleDocumentStats,
         Self::PreviewZoomIn,
         Self::PreviewZoomOut,
@@ -171,6 +191,21 @@ impl ShortcutAction {
         Self::SearchEverywhere,
         Self::ToggleSyncPanel,
         Self::SyncNow,
+    ];
+
+    /// Actions consumed inline inside `editor_panel::show` (see each variant's
+    /// own doc comment) rather than through the generic per-frame dispatch
+    /// loop in `app/mod.rs` — that loop must filter these out of its own
+    /// pairs list, or it would steal the key event first and
+    /// `editor_panel::show` would never see it. The single source of truth
+    /// for that filter, and for `no_inline_consumed_default_is_shadowed_by_a_dispatched_one`
+    /// below, so the two can never drift apart the way they did when
+    /// `AddNoteAtCursor` was first added with a default that this same test
+    /// would have caught.
+    pub const INLINE_CONSUMED: &'static [ShortcutAction] = &[
+        Self::ActivateWikilink,
+        Self::ToggleBookmark,
+        Self::AddNoteAtCursor,
     ];
 
     /// Display label shown in the menu bar and the shortcuts settings list.
@@ -218,6 +253,10 @@ impl ShortcutAction {
             Self::ToggleBookmarksPanel => "Toggle Bookmarks",
             Self::NextBookmark => "Next Bookmark",
             Self::PreviousBookmark => "Previous Bookmark",
+            Self::AddNoteAtCursor => "Add Note at Cursor",
+            Self::ToggleNotesPanel => "Toggle Notes",
+            Self::NextNote => "Next Note",
+            Self::PreviousNote => "Previous Note",
             Self::ToggleDocumentStats => "Toggle Document Stats in Binder",
             Self::PreviewZoomIn => "Zoom In Preview",
             Self::PreviewZoomOut => "Zoom Out Preview",
@@ -278,6 +317,10 @@ impl ShortcutAction {
             Self::ToggleBookmarksPanel => "toggle_bookmarks_panel",
             Self::NextBookmark => "next_bookmark",
             Self::PreviousBookmark => "previous_bookmark",
+            Self::AddNoteAtCursor => "add_note_at_cursor",
+            Self::ToggleNotesPanel => "toggle_notes_panel",
+            Self::NextNote => "next_note",
+            Self::PreviousNote => "previous_note",
             Self::ToggleDocumentStats => "toggle_document_stats",
             Self::PreviewZoomIn => "preview_zoom_in",
             Self::PreviewZoomOut => "preview_zoom_out",
@@ -312,12 +355,15 @@ impl ShortcutAction {
             | Self::GoForward
             | Self::NextBookmark
             | Self::PreviousBookmark
+            | Self::NextNote
+            | Self::PreviousNote
             | Self::SearchEverywhere => ShortcutCategory::FilesAndFolders,
             Self::Save
             | Self::FindReplace
             | Self::EditMetadata
             | Self::ActivateWikilink
             | Self::ToggleBookmark
+            | Self::AddNoteAtCursor
             | Self::ToggleSpellCheck => ShortcutCategory::Editing,
             Self::TogglePreview
             | Self::ToggleCorkboard
@@ -331,6 +377,7 @@ impl ShortcutAction {
             | Self::ToggleFocusMode
             | Self::CycleBinderColorMode
             | Self::ToggleBookmarksPanel
+            | Self::ToggleNotesPanel
             | Self::ToggleDocumentStats
             | Self::PreviewZoomIn
             | Self::PreviewZoomOut
@@ -449,6 +496,40 @@ impl ShortcutAction {
             // of visit history.
             Self::NextBookmark => KeyboardShortcut::new(Modifiers::ALT, Key::ArrowDown),
             Self::PreviousBookmark => KeyboardShortcut::new(Modifiers::ALT, Key::ArrowUp),
+            // Not Ctrl+Shift+N: `AddNoteAtCursor` is consumed inline in
+            // `editor_panel::show` (like `ToggleBookmark`), not through the
+            // generic per-frame dispatch loop — so it never gets
+            // `sorted_by_specificity`'s protection against `NewFile`'s bare
+            // Ctrl+N below. `Modifiers::matches_logically` treats an extra
+            // held Shift/Alt as ignorable, so a Ctrl+N *pattern* matches a
+            // physical Ctrl+Shift+N press too; since the generic loop's
+            // `NewFile` check runs earlier in the frame than this one, it
+            // would silently consume the key event first, no matter how many
+            // extra modifiers `AddNoteAtCursor` piled on top of Ctrl+N (see
+            // `no_inline_consumed_default_is_shadowed_by_a_dispatched_one`,
+            // which guards exactly this). `J` has no bare-Ctrl binding of its
+            // own to be shadowed by.
+            Self::AddNoteAtCursor => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::J)
+            }
+            // Dispatched through the generic loop (unlike `AddNoteAtCursor`
+            // above), so `sorted_by_specificity` protects this two-modifier
+            // chord from `NewFile`'s lower-specificity bare Ctrl+N: checked
+            // first each frame, it consumes the event before `NewFile`'s
+            // pattern gets a chance, the same way `ToggleBookmarksPanel`'s
+            // Ctrl+Alt+B is never eclipsed by anything on bare Ctrl+B.
+            Self::ToggleNotesPanel => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::N)
+            }
+            // Ctrl+Alt+Down/Up, one modifier up from `NextBookmark`/
+            // `PreviousBookmark`'s bare Alt+arrows immediately above — bookmarks
+            // already own the unmodified pair.
+            Self::NextNote => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::ArrowDown)
+            }
+            Self::PreviousNote => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::ArrowUp)
+            }
             Self::ToggleDocumentStats => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::D)
             }
@@ -764,6 +845,41 @@ mod tests {
 
         assert_eq!(sorted[0].0, ShortcutAction::NewProject);
         assert_eq!(sorted[1].0, ShortcutAction::NewFile);
+    }
+
+    /// `ShortcutAction::INLINE_CONSUMED` actions are checked inside
+    /// `editor_panel::show`, on a later pass than the generic per-frame
+    /// dispatch loop in `app/mod.rs` — so an inline action's default is
+    /// never protected by `sorted_by_specificity` against a *dispatched*
+    /// action's default, no matter how many modifiers it piles on: if the
+    /// dispatched one's pattern (per `Modifiers::matches_logically`, which
+    /// ignores extra held Shift/Alt) matches the inline one's exact default,
+    /// the dispatched action's check — which runs first — silently consumes
+    /// the key event before `editor_panel::show` ever gets a turn. This is
+    /// exactly the bug `AddNoteAtCursor`'s original Ctrl+Shift+N default
+    /// had: `NewFile`'s bare Ctrl+N pattern matched it too, so pressing
+    /// Ctrl+Shift+N always ran "New File" instead.
+    #[test]
+    fn no_inline_consumed_default_is_shadowed_by_a_dispatched_one() {
+        for inline_action in ShortcutAction::INLINE_CONSUMED {
+            let inline_default = inline_action.default_shortcut();
+            for dispatched_action in ShortcutAction::ALL {
+                if ShortcutAction::INLINE_CONSUMED.contains(dispatched_action) {
+                    continue;
+                }
+                let dispatched_default = dispatched_action.default_shortcut();
+                let shadowed = dispatched_default.logical_key == inline_default.logical_key
+                    && inline_default
+                        .modifiers
+                        .matches_logically(dispatched_default.modifiers);
+                assert!(
+                    !shadowed,
+                    "{inline_action:?}'s default {inline_default:?} would be silently \
+                     consumed by {dispatched_action:?}'s generic-loop default \
+                     {dispatched_default:?} before editor_panel::show ever sees it"
+                );
+            }
+        }
     }
 
     #[test]

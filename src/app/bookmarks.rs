@@ -126,7 +126,9 @@ fn step_bookmark_index(
 /// `search::line_at`/`ui::editor_panel::paint_gutter` already use. `byte` is
 /// clamped to `text.len()` defensively (`EditorState::cursor_byte` should
 /// always be in range, but this avoids a slice panic if it somehow isn't).
-fn line_at_byte(text: &str, byte: usize) -> usize {
+/// `pub(super)` rather than private: `app::notes` reuses it too, to convert
+/// `cursor_byte` to/from a note's `(line, column)`.
+pub(super) fn line_at_byte(text: &str, byte: usize) -> usize {
     let byte = byte.min(text.len());
     text[..byte].matches('\n').count() + 1
 }
@@ -135,8 +137,9 @@ fn line_at_byte(text: &str, byte: usize) -> usize {
 /// inverse of `search::line_at`'s/`ui::editor_panel::paint_gutter`'s line
 /// numbering (a run of text ending in a real `\n`). Clamped to `text.len()`
 /// if `line` is beyond the text's current line count (e.g. the file shrank
-/// since the bookmark was set), rather than panicking.
-fn line_start_byte_offset(text: &str, line: usize) -> usize {
+/// since the bookmark was set), rather than panicking. `pub(super)` for the
+/// same reason as `line_at_byte` above.
+pub(super) fn line_start_byte_offset(text: &str, line: usize) -> usize {
     if line <= 1 {
         return 0;
     }

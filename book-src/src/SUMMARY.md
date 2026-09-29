@@ -18,6 +18,7 @@
 - [Project Metadata](project-metadata.md)
 - [Tags](tags.md)
 - [Bookmarks](bookmarks.md)
+- [Notes](notes.md)
 - [Folder Roles](folder-roles.md)
 - [Import](import.md)
 - [Export](export.md)

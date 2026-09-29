@@ -228,6 +228,12 @@ pub struct ProjectMeta {
     /// [`crate::project::bookmarks::Bookmark`].
     #[serde(default)]
     pub bookmarks: Vec<Bookmark>,
+    /// User-written notes pinned to a specific position (line *and* column,
+    /// unlike a bookmark's line-only granularity) — project-wide, edited
+    /// from the Editor's line-number gutter, `ShortcutAction::AddNoteAtCursor`,
+    /// and the Notes dock. See [`crate::project::notes::Note`].
+    #[serde(default)]
+    pub notes: Vec<Note>,
     /// The last spell-check language actually used in this project — what
     /// `ShortcutAction::ToggleSpellCheck` turns back on after turning it off.
     /// Recorded whenever spell check is toggled off or a language is picked in

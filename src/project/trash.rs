@@ -112,6 +112,7 @@ impl Project {
         // out in, so this is also what makes emptying Trash drop a trashed
         // document's bookmarks.
         self.remove_bookmarks_under_prefix(&key);
+        self.remove_notes_under_prefix(&key);
 
         self.save_metadata()?;
         self.rescan();

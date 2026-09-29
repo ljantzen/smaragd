@@ -52,6 +52,10 @@ impl Project {
             &relative_key(&self.root, path),
             &relative_key(&self.root, &new_path),
         );
+        self.rewrite_note_paths(
+            &relative_key(&self.root, path),
+            &relative_key(&self.root, &new_path),
+        );
 
         self.save_metadata()?;
         self.rescan();
@@ -298,6 +302,10 @@ impl Project {
         // Covers a single moved document too, same reasoning as `rename`'s own
         // call to this.
         self.rewrite_bookmark_paths(
+            &relative_key(&self.root, path),
+            &relative_key(&self.root, &dest),
+        );
+        self.rewrite_note_paths(
             &relative_key(&self.root, path),
             &relative_key(&self.root, &dest),
         );

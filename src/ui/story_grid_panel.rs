@@ -517,7 +517,11 @@ fn document_label(path: &Path) -> String {
 
 const TRUNCATE_CHARS: usize = 60;
 
-fn truncate(text: &str) -> String {
+/// The first line of `text`, cut to `TRUNCATE_CHARS` characters with a
+/// trailing ellipsis if it's longer — `pub(crate)` so `ui::notes_panel` can
+/// reuse it for a note's own short excerpt, the same "first line, short"
+/// truncation job.
+pub(crate) fn truncate(text: &str) -> String {
     let first_line = text.lines().next().unwrap_or("");
     if first_line.chars().count() <= TRUNCATE_CHARS {
         first_line.to_string()

@@ -99,6 +99,7 @@ const STRUCTURED_FIELDS: &[&str] = &[
     "pov_colors",
     "story_cards",
     "bookmarks",
+    "notes",
 ];
 
 /// Compile-time guarantee that every `ProjectMeta` field has been classified: adding
@@ -143,6 +144,7 @@ fn classify_exhaustively(meta: &ProjectMeta) {
         synopsis: _,
         what_if: _,
         bookmarks: _,
+        notes: _,
         last_spell_check_language: _,
         sync_files: _,
     } = meta;
@@ -277,6 +279,7 @@ pub struct SyncedFields {
     pub trashed: BTreeMap<DocId, String>,
     pub story_cards: Vec<Item>,
     pub bookmarks: Vec<Item>,
+    pub notes: Vec<Item>,
 }
 
 fn json_text(value: &Value) -> String {
@@ -476,6 +479,18 @@ impl SyncedFields {
                 item
             })
             .collect();
+        fields.notes = items_of(object.get("notes"))
+            .into_iter()
+            .map(|mut item| {
+                let path = item
+                    .get("path")
+                    .and_then(|text| serde_json::from_str::<String>(text).ok())
+                    .unwrap_or_default();
+                let target = ids.id(&path).map(|id| id.to_string()).unwrap_or_default();
+                item.insert("target".into(), target);
+                item
+            })
+            .collect();
         fields
     }
 
@@ -644,6 +659,24 @@ impl SyncedFields {
             })
             .collect();
         object.insert("bookmarks".into(), Value::Array(bookmarks));
+        let notes: Vec<Value> = self
+            .notes
+            .iter()
+            .filter_map(|item| {
+                let mut item = item.clone();
+                // Follow the document if it moved; keep the last known path if the
+                // target isn't known here (yet).
+                let target = item
+                    .remove("target")
+                    .and_then(|t| t.parse::<DocId>().ok())
+                    .and_then(|id| ids.path(id).map(str::to_string));
+                if let Some(path) = target {
+                    item.insert("path".into(), json_text(&Value::String(path)));
+                }
+                item_to_object(&item).map(Value::Object)
+            })
+            .collect();
+        object.insert("notes".into(), Value::Array(notes));
 
         *meta = serde_json::from_value(Value::Object(object)).map_err(|e| e.to_string())?;
         Ok(())
@@ -777,6 +810,7 @@ pub struct MetaDoc {
     folder_meta: MapRef,
     story_cards: ArrayRef,
     bookmarks: ArrayRef,
+    notes: ArrayRef,
     /// One root text per prose field. Created up front: `Doc::get_or_insert_*` must
     /// not be called while a transaction is open (it deadlocks).
     texts: Vec<(&'static str, TextRef)>,
@@ -799,6 +833,7 @@ impl MetaDoc {
             folder_meta: doc.get_or_insert_map("folder_meta"),
             story_cards: doc.get_or_insert_array("story_cards"),
             bookmarks: doc.get_or_insert_array("bookmarks"),
+            notes: doc.get_or_insert_array("notes"),
             texts: TEXT_FIELDS
                 .iter()
                 .map(|name| (*name, doc.get_or_insert_text(text_root(name).as_str())))
@@ -846,6 +881,7 @@ impl MetaDoc {
             pov_colors: read_map(&self.pov_colors, &txn),
             story_cards: read_items(&self.story_cards, &txn),
             bookmarks: read_items(&self.bookmarks, &txn),
+            notes: read_items(&self.notes, &txn),
             ..SyncedFields::default()
         };
         for (name, text) in &self.texts {
@@ -961,6 +997,7 @@ impl MetaDoc {
 
         write_items(&mut txn, &self.story_cards, &target.story_cards);
         write_items(&mut txn, &self.bookmarks, &target.bookmarks);
+        write_items(&mut txn, &self.notes, &target.notes);
         Some(txn.encode_update_v1())
     }
 }

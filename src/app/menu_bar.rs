@@ -312,6 +312,13 @@ impl SmaragdApp {
                         {
                             self.toggle_dock_tab(DockTab::Bookmarks);
                         }
+                        let notes_shortcut = self
+                            .settings
+                            .shortcuts
+                            .get(ShortcutAction::ToggleNotesPanel);
+                        if nav.shortcut_button(ui, "Notes", notes_shortcut).clicked() {
+                            self.toggle_dock_tab(DockTab::Notes);
+                        }
                         ui.separator();
                         nav_submenu(ui, nav, "Theme", |ui, nav| {
                             if nav.button(ui, "Reload Custom Themes").clicked() {

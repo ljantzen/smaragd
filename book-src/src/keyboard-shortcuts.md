@@ -47,6 +47,10 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Toggle Bookmarks | `Ctrl+Alt+B` |
 | Next Bookmark | `Alt+Down` |
 | Previous Bookmark | `Alt+Up` |
+| Add Note at Cursor | `Ctrl+Shift+J` |
+| Toggle Notes | `Ctrl+Shift+N` |
+| Next Note | `Ctrl+Alt+Down` |
+| Previous Note | `Ctrl+Alt+Up` |
 | Zoom In Preview | `Ctrl++` |
 | Zoom Out Preview | `Ctrl+-` |
 | Reset Preview Zoom | `Ctrl+0` |

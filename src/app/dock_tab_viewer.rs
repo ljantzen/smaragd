@@ -33,6 +33,15 @@ pub(super) enum DockAction {
     /// A row action in the Bookmarks dock — see
     /// `ui::bookmarks_panel::BookmarksEvent`.
     Bookmarks(crate::ui::bookmarks_panel::BookmarksEvent),
+    /// The Editor's note-column gutter click, or its
+    /// `ShortcutAction::AddNoteAtCursor` shortcut fired — see
+    /// `ui::editor_panel::EditorEvent::EditNoteAt`. Carries the 1-based
+    /// logical line, and a column only when known (the shortcut knows the
+    /// exact cursor position; a gutter click only knows the line — see that
+    /// event's own doc comment).
+    EditNote(usize, Option<usize>),
+    /// A row action in the Notes dock — see `ui::notes_panel::NotesEvent`.
+    Notes(crate::ui::notes_panel::NotesEvent),
     /// The Preview tab's inline Style picker (`ui::markdown_preview::show`)
     /// was switched to a different style this frame — persisted onto
     /// `ProjectMeta::book_style` via `Project::set_book_style`, the same
@@ -169,6 +178,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::Sync => "Sync".into(),
             DockTab::Streak => "Streak".into(),
             DockTab::Bookmarks => "Bookmarks".into(),
+            DockTab::Notes => "Notes".into(),
         }
     }
 
@@ -429,6 +439,15 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     .zip(self.project)
                     .map(|(path, project)| project.bookmarked_lines_for(path))
                     .unwrap_or_default();
+                let add_note_shortcut =
+                    self.settings.shortcuts.get(ShortcutAction::AddNoteAtCursor);
+                let noted_lines = self
+                    .editor
+                    .open_path
+                    .as_deref()
+                    .zip(self.project)
+                    .map(|(path, project)| project.noted_lines_for(path))
+                    .unwrap_or_default();
                 let editor_store: &dyn crate::project::store::ProjectStore = self
                     .project
                     .map(|p| p.store.as_ref())
@@ -449,6 +468,8 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     self.settings.show_editor_gutter,
                     &bookmarked_lines,
                     toggle_bookmark_shortcut,
+                    &noted_lines,
+                    add_note_shortcut,
                 ) {
                     Some(EditorEvent::SaveError(err)) => {
                         self.actions.push(DockAction::EditorSaveError(err));
@@ -458,6 +479,9 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     }
                     Some(EditorEvent::ToggleBookmark(line)) => {
                         self.actions.push(DockAction::ToggleBookmark(line));
+                    }
+                    Some(EditorEvent::EditNoteAt(line, column)) => {
+                        self.actions.push(DockAction::EditNote(line, column));
                     }
                     Some(EditorEvent::AddToDictionary(word)) => {
                         self.actions.push(DockAction::SpellCheckAddWord(word));
@@ -525,6 +549,16 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                 Some(project) => {
                     if let Some(event) = ui::bookmarks_panel::show(ui, project) {
                         self.actions.push(DockAction::Bookmarks(event));
+                    }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
+            DockTab::Notes => match self.project {
+                Some(project) => {
+                    if let Some(event) = ui::notes_panel::show(ui, project) {
+                        self.actions.push(DockAction::Notes(event));
                     }
                 }
                 None => {

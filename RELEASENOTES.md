@@ -5,6 +5,13 @@ this file.
 
 ## Unreleased
 
+- Added Notes: pin a short piece of text to the cursor's exact position — line *and*
+  column, unlike a Bookmark's line-only granularity — with `Ctrl+Shift+J`, or by
+  clicking a line's note icon slot in the gutter (left of the bookmark diamond; a noted
+  line gets a dot there). The new **Notes** dock (`View > Notes`, `Ctrl+Shift+N`)
+  lists every note in the project with a jump-to link and its text; `Ctrl+Alt+Down`/
+  `Ctrl+Alt+Up` step between them, mirroring Bookmarks' own `Alt+Down`/`Alt+Up`.
+
 ## v1.3.4 — 2026-09-29
 
 - Fixed the Linux AppImage panicking on start (`Library libxkbcommon-x11.so could not
