@@ -48,6 +48,32 @@ impl MemoryServer {
             .collect()
     }
 
+    /// The sealed blobs of `doc`'s current updates, oldest first.
+    pub fn update_blobs(&self, doc: DocId) -> Vec<Vec<u8>> {
+        self.docs
+            .lock()
+            .unwrap()
+            .get(&doc)
+            .map_or_else(Vec::new, |log| {
+                log.updates.iter().map(|u| u.blob.clone()).collect()
+            })
+    }
+
+    /// A hostile server replaying blobs it kept: appends them to `doc` as fresh updates
+    /// from `device`, as if newly pushed. It can't make new ones — they're sealed.
+    pub fn replay(&self, doc: DocId, device: DeviceId, blobs: &[Vec<u8>]) {
+        let mut docs = self.docs.lock().unwrap();
+        let log = docs.entry(doc).or_default();
+        for blob in blobs {
+            log.latest_seq += 1;
+            log.updates.push(StoredUpdate {
+                seq: log.latest_seq,
+                device_id: device,
+                blob: blob.clone(),
+            });
+        }
+    }
+
     pub fn update_count(&self, doc: DocId) -> usize {
         self.docs
             .lock()

@@ -335,8 +335,9 @@ pub struct Settings {
     /// The end-to-end encryption passphrase, identical on every device that syncs. The
     /// server never sees it; a key is derived from it in memory (Argon2id) and never
     /// written to disk. Like every other setting it is stored in the clear in
-    /// `smaragd.toml` (there is no OS-keyring integration yet) — the same trust level as
-    /// the project's own plaintext files. It cannot be recovered if lost.
+    /// `smaragd.toml` (there is no OS-keyring integration yet), which is therefore kept
+    /// owner-only (`0600` on Unix) — the same trust level as the project's own
+    /// plaintext files. It cannot be recovered if lost.
     pub sync_passphrase: SecretString,
     /// How this device shows up in the vault's device list. Blank resolves to
     /// "Smaragd on <OS>" (`resolve_sync_device_name`).
@@ -550,6 +551,8 @@ impl Settings {
         // configured," which is why this is decided here rather than by
         // changing the field's own default.
         let is_new_install = !path.exists();
+        // It holds the sync passphrase; narrow a file saved before saves did that.
+        let _ = store.make_private(path);
         let mut settings: Self = store
             .read_to_string(path)
             .ok()
@@ -735,7 +738,8 @@ impl Settings {
         }
         let contents =
             toml::to_string_pretty(self).expect("Settings always serializes to valid TOML");
-        store.write(path, contents.as_bytes())
+        // Owner-only: it holds the sync passphrase.
+        store.write_private(path, contents.as_bytes())
     }
 
     /// Bind a plugin `:` command's shortcut to `shortcut` (`None` to unbind it —
@@ -1357,6 +1361,23 @@ mod tests {
         let loaded = Settings::load_from_path(&path);
 
         assert_eq!(loaded.shortcuts.get(ShortcutAction::Save), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_settings_file_is_owner_only_since_it_holds_the_sync_passphrase() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("smaragd.toml");
+        let mode = || std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+
+        Settings::default().save_to_path(&path).unwrap();
+        assert_eq!(mode(), 0o600);
+
+        // A file saved by an older version is narrowed as soon as it's loaded.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        Settings::load_from_path(&path);
+        assert_eq!(mode(), 0o600);
     }
 
     #[test]

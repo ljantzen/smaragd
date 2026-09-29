@@ -18,6 +18,14 @@
 //! picks the same winner, and a version that is still uploading is invisible until its
 //! last chunk lands.
 //!
+//! Sequence numbers come from the server, which is untrusted and keeps every blob it
+//! was ever sent. Replaying an old version's sealed records at new sequence numbers
+//! would make it "newest", so a version the one on disk here descends from (its
+//! `lineage`) never wins: a device never re-uploads a version id, so seeing an
+//! ancestor again can only be a replay. That covers the last [`LINEAGE_LEN`]
+//! generations. What the server can still do is withhold records, or pick which of
+//! two *concurrent* versions arrives last — as it could when they were uploaded.
+//!
 //! # Conflicts
 //!
 //! Nothing is silently lost. A device that adopts a winner which doesn't descend from
@@ -212,12 +220,15 @@ struct Reading {
     records: usize,
 }
 
-/// Reads `id`'s log from `since` on (every page) and works out the winner.
+/// Reads `id`'s log from `since` on (every page) and works out the winner. `current` is
+/// the version on disk here; neither it nor any of its ancestors can win (see the
+/// module docs on replays).
 fn read_log(
     engine: &SyncEngine,
     transport: &dyn SyncTransport,
     id: DocId,
     since: u64,
+    current: Option<&Header>,
 ) -> Result<(Reading, u64), SyncError> {
     let (key, vault) = (&engine.cfg.key, engine.cfg.vault);
     let mut headers: Vec<(u64, Header)> = Vec::new();
@@ -266,9 +277,10 @@ fn read_log(
         })
         .map(|header| header.version)
         .collect();
+    let superseded = |header: &Header| current.is_some_and(|c| c.lineage.contains(&header.version));
     let mut winner = None;
     for (seq, header) in headers.iter().rev() {
-        if !complete.contains(&header.version) {
+        if !complete.contains(&header.version) || superseded(header) {
             continue;
         }
         let got = chunks.remove(&header.version).unwrap_or_default();
@@ -555,12 +567,17 @@ impl SyncEngine {
             if latest <= state.seen_upto {
                 continue;
             }
-            let (reading, _) = read_log(self, transport, entry.doc_id, state.scan_from)?;
-            let current = state.synced.as_ref().map(|s| s.header.version);
-            if reading
-                .winner
-                .is_some_and(|(header, _, _)| Some(header.version) != current)
-            {
+            let current = state.synced.as_ref().map(|s| s.header.clone());
+            let (reading, _) = read_log(
+                self,
+                transport,
+                entry.doc_id,
+                state.scan_from,
+                current.as_ref(),
+            )?;
+            if reading.winner.is_some_and(|(header, _, _)| {
+                Some(header.version) != current.as_ref().map(|c| c.version)
+            }) {
                 let update = self.manifest.doc.set_deleted(entry.doc_id, false);
                 self.queue_manifest_update(update);
                 report.resurrected += 1;
@@ -587,7 +604,8 @@ impl SyncEngine {
         let seen_upto = self.bins[&id].seen_upto;
         if remote_latest > seen_upto {
             let since = self.bins[&id].scan_from;
-            let (reading, last) = read_log(self, transport, id, since)?;
+            let current = self.bins[&id].synced.as_ref().map(|s| s.header.clone());
+            let (reading, last) = read_log(self, transport, id, since, current.as_ref())?;
             report.pulled_updates += reading.records;
             if let Some((winner, winner_seq, content)) = reading.winner {
                 self.adopt(&path, id, &winner, winner_seq, &content, report)?;

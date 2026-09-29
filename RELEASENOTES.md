@@ -16,6 +16,15 @@ this file.
   snapshots, so anonymous requests can't make the server buffer megabytes; vault
   creation checks the admin token before parsing the request. At most 32 requests
   run at once and each must finish within 2 minutes.
+- Sync: a server can no longer roll an image, PDF or other synced file back to an old
+  version by replaying records it kept; a version the current one replaced is never
+  adopted again.
+- Sync: the settings file (which holds the sync passphrase) and this device's sync
+  credentials and state are now readable only by your user account (`0600` on Linux
+  and macOS). Existing files are narrowed the next time Smaragd reads them.
+- Sync: creating a vault needs a passphrase of at least 12 characters that isn't one
+  repeated pattern or just a number; Settings warns about a weak one. Existing vaults
+  keep working with the passphrase they were created with.
 
 ## v1.3.2 — 2026-09-29
 

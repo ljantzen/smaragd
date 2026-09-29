@@ -62,7 +62,7 @@ Below the status:
 
 - **Sync Now** runs a pass immediately. (Smaragd also syncs about every 10 seconds, and right after you save with `Ctrl+S`. **`Tools > Sync Now`**, or `Ctrl+Alt+Y`, does the same from anywhere.)
 - **Make Pairing Ticket** — see above.
-- **Devices** lists every device in the vault and when it was last seen. **Refresh** updates the list; **Revoke** removes another device — it stops syncing immediately. Use this if a device is lost or retired.
+- **Devices** lists every device in the vault and when it was last seen. **Refresh** updates the list; **Revoke** removes another device — it stops syncing immediately, along with any unused pairing tickets it made. Use this if a device is lost or retired. Each device also shows which device added it ("added by laptop"): if you revoke a lost device, check for devices it added that you don't recognize, and revoke those too.
 - **Stop syncing this project** (expand it) removes this device from the vault and stops syncing this project. Your files stay exactly as they are here, and your other devices keep their copies. If it was the vault's *last* device, the server deletes the vault's encrypted copy after a while (30 days by default, set by whoever runs the server); your own files are never affected.
 
 ## What syncs
@@ -111,10 +111,10 @@ Setting up a second device with a copy of the project (from a backup, a zip, a c
 
 ## Your passphrase
 
-- It's chosen by you, entered in **Settings > Sync**, and **must be identical on every device**. Choose something long — it's the only thing protecting your data if someone gets the server's files.
+- It's chosen by you, entered in **Settings > Sync**, and **must be identical on every device**. Choose something long — it's the only thing protecting your data if someone gets the server's files. Smaragd won't create a vault with a passphrase shorter than 12 characters, one that repeats a few characters, or one that is just a number, and Settings warns while you type one. A few unrelated words make a good one.
 - **It never leaves your device** — the server never sees it — and **it cannot be recovered.** If you lose it, the copy of your project *on the server* can't be decrypted, by anyone, including whoever runs the server. Your own files are not affected: they are plain Markdown on your devices, so nothing is lost as long as one device still has them. Keep the passphrase somewhere safe, like a password manager.
 - **Changing it makes existing vaults unreadable** (the server's copy was encrypted with the old one); your local files are untouched. If sync stops with a message about the passphrase, the passphrase on this device doesn't match the one the vault was created with. To switch to a new passphrase, choose *Stop syncing this project* on each device, then create a fresh vault from one of them and join the others to it.
-- Like your other settings, it's kept as plain text in Smaragd's settings file (`smaragd.toml`), at the same trust level as the project files on this disk. A full-disk encryption setup is a good idea on a laptop.
+- Like your other settings, it's kept as plain text in Smaragd's settings file (`smaragd.toml`), at the same trust level as the project files on this disk. The file (and this device's sync credentials) can be read only by your own user account. A full-disk encryption setup is a good idea on a laptop.
 
 ## What the server can and can't see
 

@@ -83,6 +83,19 @@ pub trait ProjectStore: std::fmt::Debug + Send + Sync {
     fn file_stamp(&self, _path: &Path) -> Option<(u64, u128)> {
         None
     }
+
+    /// [`Self::write`], for a file holding a secret (the settings file with the sync
+    /// passphrase, sync's device token): readable by the owner only. The default is a
+    /// plain write, for a store with no notion of other users.
+    fn write_private(&self, path: &Path, contents: &[u8]) -> io::Result<()> {
+        self.write(path, contents)
+    }
+
+    /// Makes an existing file owner-only, for secrets written before
+    /// [`Self::write_private`] existed. A missing file is fine. No-op by default.
+    fn make_private(&self, _path: &Path) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// The only implementation today: a thin wrapper over `std::fs`, behaving
@@ -93,6 +106,32 @@ pub struct NativeStore;
 impl ProjectStore for NativeStore {
     fn read_to_string(&self, path: &Path) -> io::Result<String> {
         std::fs::read_to_string(path)
+    }
+
+    /// Created `0600` on Unix; an existing file is narrowed to `0600` before it's
+    /// written, so the secret never sits in a wider file. Elsewhere a plain write: on
+    /// Windows the user's profile directories are already private to them.
+    #[cfg(unix)]
+    fn write_private(&self, path: &Path, contents: &[u8]) -> io::Result<()> {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        self.make_private(path)?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(contents)
+    }
+
+    #[cfg(unix)]
+    fn make_private(&self, path: &Path) -> io::Result<()> {
+        use std::os::unix::fs::PermissionsExt as _;
+        match std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        }
     }
 
     fn write(&self, path: &Path, contents: &[u8]) -> io::Result<()> {

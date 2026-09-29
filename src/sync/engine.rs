@@ -2797,6 +2797,9 @@ mod tests {
 
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// A file size that takes more than one chunk.
+    const CHUNK_TEST_BYTES: usize = binaries::CHUNK_BYTES + 1000;
+
     /// Bytes that don't compress or repeat, so chunk boundaries and hashes are real.
     fn binary(len: usize, seed: u8) -> Vec<u8> {
         let mut state = u32::from(seed).wrapping_mul(2_654_435_761) | 1;
@@ -2870,6 +2873,44 @@ mod tests {
         fn put_snapshot(&self, doc: DocId, snapshot: &Snapshot) -> Result<(), TransportError> {
             self.inner.put_snapshot(doc, snapshot)
         }
+    }
+
+    #[test]
+    fn a_server_replaying_an_old_file_version_cannot_roll_the_file_back() {
+        let server = MemoryServer::default();
+        let mut a = Device::with_files(&server);
+        let mut b = Device::with_files(&server);
+        let old = binary(CHUNK_TEST_BYTES, 1);
+        a.write_bin("Art/cover.png", &old);
+        converge(&mut [&mut a, &mut b]);
+        let id = a.file_id("Art/cover.png");
+        let kept = server.update_blobs(id);
+        assert!(
+            !kept.is_empty(),
+            "the server holds the old version's records"
+        );
+
+        let new = binary(CHUNK_TEST_BYTES, 2);
+        a.write_bin("Art/cover.png", &new);
+        converge(&mut [&mut a, &mut b]);
+        assert!(b.read_bin("Art/cover.png") == new);
+
+        // The server re-serves the old version's header and chunks as the newest records.
+        server.replay(id, a.device, &kept);
+        converge(&mut [&mut a, &mut b]);
+        for device in [&a, &b] {
+            assert!(device.read_bin("Art/cover.png") == new, "rolled back");
+            assert!(
+                !device.exists("Art/cover (conflict copy).png"),
+                "a replay isn't a conflict"
+            );
+        }
+
+        // A genuine new version still wins afterwards.
+        let newer = binary(CHUNK_TEST_BYTES, 3);
+        b.write_bin("Art/cover.png", &newer);
+        converge(&mut [&mut a, &mut b]);
+        assert!(a.read_bin("Art/cover.png") == newer);
     }
 
     #[test]

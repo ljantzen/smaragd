@@ -307,6 +307,8 @@ impl SyncState {
                 crate::project::store::native_store();
             let state = DirStateStore::new(files, state_dir(&data, link.vault_id));
             self.credentials = DeviceCredentials::load(&state);
+            // Best effort: a failure here mustn't stop the project from syncing.
+            let _ = DeviceCredentials::make_private(&state);
         }
         self.server_label = self.link.as_ref().map(pairing::describe);
     }
@@ -627,6 +629,18 @@ impl SmaragdApp {
     }
 
     fn sync_create_vault(&mut self, ctx: &egui::Context, admin_token: Option<String>) {
+        // Only here: a vault's passphrase is fixed for life, so this is the one chance to
+        // insist on a strong one. Joining an existing vault has to use whatever it has.
+        if let Some(why) =
+            crate::sync::crypto::passphrase_weakness(&self.settings.sync_passphrase.0)
+        {
+            self.sync.notice = Some(format!(
+                "Choose a stronger encryption passphrase in Settings > Sync before creating a \
+                 vault: {why}. Anyone who gets hold of the server's data can try guesses \
+                 offline, and a vault's passphrase can't be changed later."
+            ));
+            return;
+        }
         let (Some(project), Some(server), Some(data)) = (
             self.project.as_ref(),
             self.settings.sync_server_addr(),
@@ -935,6 +949,17 @@ mod tests {
 
     fn read(path: &Path) -> String {
         std::fs::read_to_string(path).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_vault_is_not_created_with_a_weak_passphrase() {
+        let (_dir, mut app) = app_with_project();
+        app.settings.sync_server_host = "sync.example.com".into();
+        app.settings.sync_passphrase = crate::settings::SecretString("hunter2".into());
+        app.sync_create_vault(&egui::Context::default(), None);
+        let notice = app.sync.notice.clone().expect("the refusal is explained");
+        assert!(notice.contains("stronger"), "{notice}");
+        assert!(app.sync.task.is_none(), "nothing was sent to the server");
     }
 
     #[test]

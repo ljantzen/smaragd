@@ -46,6 +46,8 @@ impl StateStore for MemoryStateStore {
 /// Files in one directory, one per key. Values are base64 text because
 /// [`ProjectStore`] only exposes `read_to_string`; each write goes to a temp name
 /// and is renamed into place so a crash never leaves a half-written state file.
+/// Every file is owner-only ([`ProjectStore::write_private`]): one holds the device
+/// token, and the rest hold decrypted document state.
 #[derive(Debug)]
 pub struct DirStateStore {
     files: Arc<dyn ProjectStore>,
@@ -78,8 +80,17 @@ impl StateStore for DirStateStore {
         self.files.create_dir_all(&self.dir)?;
         let path = self.path_for(key);
         let tmp = path.with_extension("state.tmp");
-        self.files.write(&tmp, STANDARD.encode(value).as_bytes())?;
+        self.files
+            .write_private(&tmp, STANDARD.encode(value).as_bytes())?;
         self.files.rename(&tmp, &path)
+    }
+}
+
+impl DirStateStore {
+    /// Narrows `key`'s file to owner-only, for one written before [`StateStore::put`]
+    /// did that itself.
+    pub fn make_private(&self, key: &str) -> io::Result<()> {
+        self.files.make_private(&self.path_for(key))
     }
 }
 
@@ -112,6 +123,30 @@ mod tests {
             store.get("doc/abc").unwrap().as_deref(),
             Some(&b"second"[..])
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dir_store_files_are_owner_only_even_if_they_were_not_before() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = DirStateStore::new(native_store(), tmp.path().to_path_buf());
+        let mode = |key: &str| {
+            std::fs::metadata(tmp.path().join(format!("{key}.state")))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        store.put("device", b"token").unwrap();
+        assert_eq!(mode("device"), 0o600);
+
+        let old = tmp.path().join("old.state");
+        std::fs::write(&old, "b2xk").unwrap();
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o644)).unwrap();
+        store.make_private("old").unwrap();
+        assert_eq!(mode("old"), 0o600);
+        store.make_private("missing").unwrap();
     }
 
     #[test]

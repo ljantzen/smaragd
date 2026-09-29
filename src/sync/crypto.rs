@@ -151,6 +151,40 @@ fn derive_with_params(
     Ok(VaultKey { key, key_version })
 }
 
+/// Shortest passphrase a new vault accepts, in characters (after NFKC).
+pub const MIN_PASSPHRASE_CHARS: usize = 12;
+/// Fewest distinct characters a new vault's passphrase must use.
+const MIN_DISTINCT_CHARS: usize = 6;
+
+/// Why `passphrase` is too weak to protect a new vault, or `None` if it will do.
+///
+/// Every sealed blob lets whoever holds the server's data test guesses offline, so the
+/// passphrase is the whole of the protection; Argon2id only slows each guess down.
+/// These are coarse floors, not a strength meter: long enough, not one repeated
+/// pattern, not just a number. Only *creating* a vault enforces them — an existing
+/// vault's passphrase can't be changed (there is no re-keying), so joining or syncing
+/// one must keep working whatever it is.
+pub fn passphrase_weakness(passphrase: &str) -> Option<&'static str> {
+    let normalized: String = passphrase.nfkc().collect();
+    let chars = normalized.chars().count();
+    let distinct = normalized
+        .chars()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    if chars < MIN_PASSPHRASE_CHARS {
+        Some("it is shorter than 12 characters")
+    } else if distinct < MIN_DISTINCT_CHARS {
+        Some("it repeats too few different characters")
+    } else if normalized
+        .chars()
+        .all(|c| c.is_ascii_digit() || c.is_whitespace())
+    {
+        Some("it is only a number")
+    } else {
+        None
+    }
+}
+
 /// A key derived with the cheapest legal Argon2 parameters, for other modules'
 /// tests (the production cost would make every simulated device take a second).
 #[cfg(test)]
@@ -248,6 +282,30 @@ mod tests {
 
     fn doc(n: u128) -> DocId {
         DocId(Uuid::from_u128(n))
+    }
+
+    #[test]
+    fn weak_passphrases_are_named_and_reasonable_ones_pass() {
+        for weak in [
+            "pw",
+            "hunter2",
+            "elevenchars",
+            "aaaaaaaaaaaaaaaa",
+            "abababababababab",
+            "123123123123123",
+            "4815 1623 4200 1111",
+        ] {
+            assert!(passphrase_weakness(weak).is_some(), "{weak:?} passed");
+        }
+        for fine in [
+            "correct horse battery staple",
+            "Tr0ub4dor&3xyz",
+            "blåbærsyltetøy er godt",
+        ] {
+            assert_eq!(passphrase_weakness(fine), None, "{fine:?}");
+        }
+        // Counted in characters, not bytes: twelve non-ASCII letters are enough.
+        assert_eq!(passphrase_weakness("æøåäöüßéèêñç"), None);
     }
 
     #[test]

@@ -798,11 +798,25 @@ fn show_sync_category(
                     ui.data_mut(|d| d.insert_temp(show_id, visible));
                 }
             });
+            if !settings.sync_passphrase.0.is_empty()
+                && let Some(why) =
+                    crate::sync::crypto::passphrase_weakness(&settings.sync_passphrase.0)
+            {
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    format!(
+                        "Weak passphrase: {why}. Anyone who gets hold of the server's data \
+                         can try guesses offline. New vaults need a stronger one; an existing \
+                         vault keeps the passphrase it was created with."
+                    ),
+                );
+            }
             ui.weak(
                 "Use the same passphrase on every device. It never leaves this device and cannot \
                  be recovered: if you lose it, your synced data cannot be decrypted. Changing it \
                  later makes existing vaults unreadable. It is stored in plain text in \
-                 smaragd.toml, like your other settings.",
+                 smaragd.toml, like your other settings, in a file only your user account \
+                 can read.",
             );
 
             ui.add_space(10.0);

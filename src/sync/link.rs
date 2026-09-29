@@ -106,6 +106,12 @@ impl DeviceCredentials {
         let bytes = serde_json::to_vec(self)?;
         state.put(CREDENTIALS_KEY, &bytes)
     }
+
+    /// Narrows the stored credentials to owner-only — for a token saved before sync
+    /// wrote it that way.
+    pub fn make_private(state: &super::state::DirStateStore) -> io::Result<()> {
+        state.make_private(CREDENTIALS_KEY)
+    }
 }
 
 /// The directory under which every vault's local state and this device's credentials
