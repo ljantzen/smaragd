@@ -183,6 +183,9 @@ files_touched=1
 
 echo "Refreshing Cargo.lock..."
 cargo check --quiet
+# The end-to-end tests are their own workspace and depend on the app by path,
+# so their lockfile records its version too; CI builds them with --locked.
+cargo metadata --quiet --format-version 1 --manifest-path crates/smaragd-sync-e2e/Cargo.toml >/dev/null
 
 echo "Running checks (fmt, clippy, test — same as CI)..."
 cargo fmt --check
