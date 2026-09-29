@@ -115,13 +115,11 @@ jobs:
           appimage="dist/smaragd-${VERSION}-x86_64.AppImage"
           chmod +x "$appimage"
 
-          # The runner's own glibc is old enough not to enforce the strict
-          # ABI-version check above, so running the AppImage here wouldn't
-          # actually catch a regression in the patch step - assert the byte
-          # directly instead.
-          abi_version=$(dd if="$appimage" bs=1 skip=8 count=1 status=none | od -An -tu1 | tr -d ' ')
-          if [ "$abi_version" != "0" ]; then
-            echo "::error::AppImage ELF ABI-version byte is $abi_version, expected 0 (glibc 2.41+ refuses to execute it otherwise)"
+          # A type-2 AppImage carries the magic "AI\x02" at ELF header offset 8;
+          # appimaged and file-manager integrations identify AppImages by it.
+          magic=$(dd if="$appimage" bs=1 skip=8 count=3 status=none | od -An -tx1 | tr -d ' \n')
+          if [ "$magic" != "414902" ]; then
+            echo "::error::AppImage magic at offset 8 is $magic, expected 414902 (\"AI\\x02\")"
             exit 1
           fi
 
