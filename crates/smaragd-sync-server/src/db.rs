@@ -92,7 +92,19 @@ UPDATE vaults SET last_active = COALESCE(
 );
 ";
 
-const SCHEMA_VERSION: i64 = 2;
+/// v3 records who paired whom, so a device added with a stolen token can be traced back
+/// to the device that let it in: `devices.paired_by` (`NULL` for a vault's first device
+/// and for devices paired before v3) and `pairing_codes.created_by`. A code dies with the
+/// device that minted it, so revoking a device also voids its outstanding codes.
+/// Unredeemed codes from before the upgrade have no creator and are simply dropped;
+/// they only live ten minutes anyway.
+const MIGRATE_V2_TO_V3: &str = "
+ALTER TABLE devices ADD COLUMN paired_by TEXT;
+DELETE FROM pairing_codes;
+ALTER TABLE pairing_codes ADD COLUMN created_by TEXT REFERENCES devices(id) ON DELETE CASCADE;
+";
+
+const SCHEMA_VERSION: i64 = 3;
 
 fn init(conn: Connection) -> rusqlite::Result<Connection> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
@@ -110,6 +122,11 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
     if version < 2 {
         conn.execute_batch(&format!(
             "BEGIN; {MIGRATE_V1_TO_V2} PRAGMA user_version = 2; COMMIT;"
+        ))?;
+    }
+    if version < 3 {
+        conn.execute_batch(&format!(
+            "BEGIN; {MIGRATE_V2_TO_V3} PRAGMA user_version = 3; COMMIT;"
         ))?;
     }
     Ok(conn)
@@ -189,22 +206,27 @@ pub struct NewDevice {
     pub token: String,
 }
 
+/// `paired_by` is the device whose pairing code let this one in (`None` for the device
+/// that created the vault).
 fn insert_device(
     conn: &Connection,
     vault: &VaultInfo,
     name: &str,
+    paired_by: Option<&str>,
     now: i64,
 ) -> Result<NewDevice, HttpError> {
     let device_id = DeviceId(Uuid::new_v4());
     let token = new_device_token();
     conn.execute(
-        "INSERT INTO devices (id, vault_id, name, token_hash, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO devices (id, vault_id, name, token_hash, created_at, paired_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             device_id.to_string(),
             vault.vault_id.to_string(),
             name,
             hash_secret(&token),
-            now
+            now,
+            paired_by
         ],
     )?;
     Ok(NewDevice {
@@ -236,7 +258,7 @@ pub fn create_vault(
             now
         ],
     )?;
-    let device = insert_device(&tx, &vault, device_name, now)?;
+    let device = insert_device(&tx, &vault, device_name, None, now)?;
     tx.commit()?;
     Ok(device)
 }
@@ -259,13 +281,18 @@ pub fn get_vault(conn: &Connection, vault: VaultId) -> Result<Option<VaultInfo>,
 
 pub fn delete_vault(conn: &Connection, vault: VaultId) -> Result<bool, HttpError> {
     let id = vault.to_string();
-    conn.execute("DELETE FROM updates WHERE vault_id = ?1", [&id])?;
-    Ok(conn.execute("DELETE FROM vaults WHERE id = ?1", [&id])? > 0)
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM updates WHERE vault_id = ?1", [&id])?;
+    let removed = tx.execute("DELETE FROM vaults WHERE id = ?1", [&id])? > 0;
+    tx.commit()?;
+    Ok(removed)
 }
 
+/// Mints a pairing code for `vault` on behalf of `created_by`, one of its devices.
 pub fn create_pairing_code(
     conn: &mut Connection,
     vault: VaultId,
+    created_by: DeviceId,
     now: i64,
     ttl_secs: u64,
 ) -> Result<String, HttpError> {
@@ -283,11 +310,13 @@ pub fn create_pairing_code(
     }
     let code = new_pairing_code();
     tx.execute(
-        "INSERT INTO pairing_codes (code_hash, vault_id, expires_at) VALUES (?1, ?2, ?3)",
+        "INSERT INTO pairing_codes (code_hash, vault_id, expires_at, created_by)
+         VALUES (?1, ?2, ?3, ?4)",
         params![
             hash_secret(&normalize_pairing_code(&code)),
             vault.to_string(),
-            now + ttl_secs as i64
+            now + ttl_secs as i64,
+            created_by.to_string()
         ],
     )?;
     tx.commit()?;
@@ -308,14 +337,14 @@ pub fn redeem_pairing_code(
     }
     let hash = hash_secret(&normalized);
     let tx = conn.transaction()?;
-    let row: Option<(String, i64)> = tx
+    let row: Option<(String, i64, Option<String>)> = tx
         .query_row(
-            "SELECT vault_id, expires_at FROM pairing_codes WHERE code_hash = ?1",
+            "SELECT vault_id, expires_at, created_by FROM pairing_codes WHERE code_hash = ?1",
             [&hash],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()?;
-    let Some((vault_id, expires_at)) = row else {
+    let Some((vault_id, expires_at, created_by)) = row else {
         return Ok(None);
     };
     tx.execute("DELETE FROM pairing_codes WHERE code_hash = ?1", [&hash])?;
@@ -326,14 +355,15 @@ pub fn redeem_pairing_code(
     let Some(vault) = get_vault(&tx, parse_id(&vault_id, "vault")?)? else {
         return Ok(None);
     };
-    let device = insert_device(&tx, &vault, device_name, now)?;
+    let device = insert_device(&tx, &vault, device_name, created_by.as_deref(), now)?;
     tx.commit()?;
     Ok(Some(device))
 }
 
 pub fn list_devices(conn: &Connection, vault: VaultId) -> Result<Vec<DeviceInfo>, HttpError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, created_at, last_seen FROM devices WHERE vault_id = ?1 ORDER BY created_at, id",
+        "SELECT id, name, created_at, last_seen, paired_by FROM devices
+         WHERE vault_id = ?1 ORDER BY created_at, id",
     )?;
     let rows = stmt.query_map([vault.to_string()], |row| {
         Ok((
@@ -341,16 +371,18 @@ pub fn list_devices(conn: &Connection, vault: VaultId) -> Result<Vec<DeviceInfo>
             row.get::<_, String>(1)?,
             row.get::<_, i64>(2)?,
             row.get::<_, Option<i64>>(3)?,
+            row.get::<_, Option<String>>(4)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, name, created, seen) = row?;
+        let (id, name, created, seen, paired_by) = row?;
         out.push(DeviceInfo {
             device_id: parse_id(&id, "device")?,
             name,
             created_at_unix: created.max(0) as u64,
             last_seen_unix: seen.map(|s| s.max(0) as u64),
+            paired_by: paired_by.map(|by| parse_id(&by, "device")).transpose()?,
         });
     }
     Ok(out)
@@ -855,7 +887,7 @@ mod tests {
     fn pairing_codes_are_single_use_expire_and_are_stored_hashed() {
         let (mut conn, device) = setup();
         let vault = device.vault.vault_id;
-        let code = create_pairing_code(&mut conn, vault, NOW, 600).unwrap();
+        let code = create_pairing_code(&mut conn, vault, device.device_id, NOW, 600).unwrap();
         let stored: String = conn
             .query_row("SELECT code_hash FROM pairing_codes", [], |r| r.get(0))
             .unwrap();
@@ -876,7 +908,7 @@ mod tests {
                 .is_none()
         );
 
-        let expiring = create_pairing_code(&mut conn, vault, NOW, 600).unwrap();
+        let expiring = create_pairing_code(&mut conn, vault, device.device_id, NOW, 600).unwrap();
         assert!(
             redeem_pairing_code(&mut conn, &expiring, "late", NOW + 601)
                 .unwrap()
@@ -899,18 +931,108 @@ mod tests {
     fn too_many_outstanding_pairing_codes_are_refused() {
         let (mut conn, device) = setup();
         for _ in 0..MAX_OUTSTANDING_PAIRING_CODES {
-            create_pairing_code(&mut conn, device.vault.vault_id, NOW, 600).unwrap();
+            create_pairing_code(&mut conn, device.vault.vault_id, device.device_id, NOW, 600)
+                .unwrap();
         }
-        assert!(create_pairing_code(&mut conn, device.vault.vault_id, NOW, 600).is_err());
+        assert!(
+            create_pairing_code(&mut conn, device.vault.vault_id, device.device_id, NOW, 600)
+                .is_err()
+        );
         // Expired ones don't count.
-        create_pairing_code(&mut conn, device.vault.vault_id, NOW + 601, 600).unwrap();
+        create_pairing_code(
+            &mut conn,
+            device.vault.vault_id,
+            device.device_id,
+            NOW + 601,
+            600,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_paired_device_records_which_device_let_it_in() {
+        let (mut conn, first) = setup();
+        let vault = first.vault.vault_id;
+        let second = add_device(&mut conn, vault);
+        let code = create_pairing_code(&mut conn, vault, second.device_id, NOW, 600).unwrap();
+        let third = redeem_pairing_code(&mut conn, &code, "tablet", NOW)
+            .unwrap()
+            .unwrap();
+
+        let by_id: std::collections::HashMap<DeviceId, Option<DeviceId>> =
+            list_devices(&conn, vault)
+                .unwrap()
+                .into_iter()
+                .map(|d| (d.device_id, d.paired_by))
+                .collect();
+        assert_eq!(by_id[&first.device_id], None, "the vault's creator");
+        assert_eq!(by_id[&second.device_id], Some(first.device_id));
+        assert_eq!(by_id[&third.device_id], Some(second.device_id));
+
+        // Provenance outlives the pairer, which is when it matters most.
+        assert!(revoke_device(&conn, vault, second.device_id, NOW).unwrap());
+        let third_info = list_devices(&conn, vault)
+            .unwrap()
+            .into_iter()
+            .find(|d| d.device_id == third.device_id)
+            .unwrap();
+        assert_eq!(third_info.paired_by, Some(second.device_id));
+    }
+
+    #[test]
+    fn revoking_a_device_voids_the_pairing_codes_it_minted() {
+        let (mut conn, first) = setup();
+        let vault = first.vault.vault_id;
+        let second = add_device(&mut conn, vault);
+        let by_second = create_pairing_code(&mut conn, vault, second.device_id, NOW, 600).unwrap();
+        let by_first = create_pairing_code(&mut conn, vault, first.device_id, NOW, 600).unwrap();
+
+        assert!(revoke_device(&conn, vault, second.device_id, NOW).unwrap());
+        assert!(
+            redeem_pairing_code(&mut conn, &by_second, "intruder", NOW)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            redeem_pairing_code(&mut conn, &by_first, "phone", NOW)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_v2_database_gains_provenance_and_drops_creatorless_codes() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(&format!(
+            "BEGIN; {SCHEMA_V1} PRAGMA user_version = 1; COMMIT;
+             BEGIN; {MIGRATE_V1_TO_V2} PRAGMA user_version = 2; COMMIT;"
+        ))
+        .unwrap();
+        conn.execute_batch(
+            "INSERT INTO vaults (id, kdf_salt, key_version, created_at) VALUES ('v', x'00', 1, 500);
+             INSERT INTO devices (id, vault_id, name, token_hash, created_at) VALUES ('d', 'v', 'old', 'h', 500);
+             INSERT INTO pairing_codes (code_hash, vault_id, expires_at) VALUES ('c', 'v', 9999999999);",
+        )
+        .unwrap();
+
+        let conn = init(conn).unwrap();
+        let paired_by: Option<String> = conn
+            .query_row("SELECT paired_by FROM devices WHERE id = 'd'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(paired_by, None);
+        let codes: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pairing_codes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(codes, 0);
     }
 
     #[test]
     fn revoking_a_device_cuts_off_its_token() {
         let (mut conn, device) = setup();
         let vault = device.vault.vault_id;
-        let code = create_pairing_code(&mut conn, vault, NOW, 600).unwrap();
+        let code = create_pairing_code(&mut conn, vault, device.device_id, NOW, 600).unwrap();
         let other = redeem_pairing_code(&mut conn, &code, "phone", NOW)
             .unwrap()
             .unwrap();
@@ -990,7 +1112,8 @@ mod tests {
     }
 
     fn add_device(conn: &mut Connection, vault: VaultId) -> NewDevice {
-        let code = create_pairing_code(conn, vault, NOW, 600).unwrap();
+        let pairer = list_devices(conn, vault).unwrap()[0].device_id;
+        let code = create_pairing_code(conn, vault, pairer, NOW, 600).unwrap();
         redeem_pairing_code(conn, &code, "extra", NOW)
             .unwrap()
             .unwrap()
@@ -1025,7 +1148,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, SCHEMA_VERSION);
         let last_active: i64 = conn
             .query_row("SELECT last_active FROM vaults WHERE id = 'v'", [], |r| {
                 r.get(0)
@@ -1126,8 +1249,15 @@ mod tests {
     #[test]
     fn expired_pairing_codes_are_purged_and_live_ones_kept() {
         let (mut conn, device) = setup();
-        create_pairing_code(&mut conn, device.vault.vault_id, NOW, 600).unwrap();
-        create_pairing_code(&mut conn, device.vault.vault_id, NOW + 1000, 600).unwrap();
+        create_pairing_code(&mut conn, device.vault.vault_id, device.device_id, NOW, 600).unwrap();
+        create_pairing_code(
+            &mut conn,
+            device.vault.vault_id,
+            device.device_id,
+            NOW + 1000,
+            600,
+        )
+        .unwrap();
         // The second creation already purged the first (it had expired by then).
         assert_eq!(purge_expired_pairing_codes(&conn, NOW + 1000).unwrap(), 0);
         assert_eq!(purge_expired_pairing_codes(&conn, NOW + 5000).unwrap(), 1);

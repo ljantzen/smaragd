@@ -172,9 +172,16 @@ impl HttpClient {
         self.json("GET", &format!("/vaults/{vault}"), None, Body::None)
     }
 
-    pub fn delete_vault(&self, vault: VaultId) -> Result<(), TransportError> {
-        self.request("DELETE", &format!("/vaults/{vault}"), None, Body::None)
-            .map(|_| ())
+    /// Deletes a vault and everything in it. Operator-only: the server wants its admin
+    /// token for this, not a device token (a device leaves by revoking itself).
+    pub fn delete_vault(&self, admin_token: &str, vault: VaultId) -> Result<(), TransportError> {
+        self.request(
+            "DELETE",
+            &format!("/vaults/{vault}"),
+            Some((ADMIN_TOKEN_HEADER, admin_token)),
+            Body::None,
+        )
+        .map(|_| ())
     }
 
     /// Mints a single-use, short-lived code another device can redeem to join.

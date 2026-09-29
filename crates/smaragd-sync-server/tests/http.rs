@@ -104,6 +104,10 @@ impl Harness {
         self.send("DELETE", path, Some(token), &[], None)
     }
 
+    fn delete_as_admin(&self, path: &str, admin: &str) -> Reply {
+        self.send("DELETE", path, None, &[(ADMIN_TOKEN_HEADER, admin)], None)
+    }
+
     fn post_json(&self, path: &str, token: Option<&str>, value: &impl Serialize) -> Reply {
         let body = serde_json::to_vec(value).unwrap();
         self.send("POST", path, token, &[], Some(("application/json", body)))
@@ -421,15 +425,149 @@ fn compaction_over_http_replaces_covered_updates() {
 
 #[test]
 fn deleting_a_vault_removes_its_data_and_credentials() {
-    let h = harness(true, None, GB);
+    let h = harness(true, Some("letmein"), GB);
     let v = h.vault();
     let (vault, token) = (v.vault.vault_id, v.device_token.as_str());
     h.push(vault, doc(1), token, envelope(4));
 
-    assert_eq!(h.delete(&format!("/vaults/{vault}"), token).status, 204);
-    assert_eq!(h.get(&format!("/vaults/{vault}"), Some(token)).status, 401);
+    let path = format!("/vaults/{vault}");
+    assert_eq!(h.delete_as_admin(&path, "letmein").status, 204);
+    assert_eq!(h.get(&path, Some(token)).status, 401);
+    assert_eq!(h.delete_as_admin(&path, "letmein").status, 404);
     let info = h.vault();
     assert_ne!(info.vault.vault_id, vault);
+}
+
+#[test]
+fn only_the_admin_token_can_delete_a_vault_not_a_device_token() {
+    let h = harness(true, Some("letmein"), GB);
+    let v = h.vault();
+    let (vault, token) = (v.vault.vault_id, v.device_token.as_str());
+    h.push(vault, doc(1), token, envelope(4));
+    let path = format!("/vaults/{vault}");
+
+    assert_eq!(h.delete(&path, token).status, 403, "the vault's own device");
+    assert_eq!(h.delete_as_admin(&path, "wrong").status, 403);
+    assert_eq!(
+        h.send("DELETE", &path, None, &[], None).status,
+        403,
+        "no credentials at all"
+    );
+    assert_eq!(h.get(&path, Some(token)).status, 200, "still there");
+
+    // A server with no admin token configured can't delete vaults over HTTP at all.
+    let no_admin = harness(true, None, GB);
+    let w = no_admin.vault();
+    let path = format!("/vaults/{}", w.vault.vault_id);
+    assert_eq!(no_admin.delete(&path, &w.device_token).status, 403);
+    assert_eq!(no_admin.delete_as_admin(&path, "").status, 403);
+}
+
+#[test]
+fn the_device_list_says_which_device_paired_each_one() {
+    let h = harness(true, None, GB);
+    let first = h.vault();
+    let vault = first.vault.vault_id;
+    let code: CreatePairingCodeResponse = h
+        .send(
+            "POST",
+            &format!("/vaults/{vault}/pairing-codes"),
+            Some(&first.device_token),
+            &[],
+            None,
+        )
+        .json();
+    let second: RedeemPairingResponse = h
+        .post_json(
+            "/pairing/redeem",
+            None,
+            &RedeemPairingRequest {
+                code: code.code,
+                device_name: "phone".into(),
+            },
+        )
+        .json();
+
+    let listing: ListDevicesResponse = h
+        .get(
+            &format!("/vaults/{vault}/devices"),
+            Some(&first.device_token),
+        )
+        .json();
+    let paired_by = |id| {
+        listing
+            .devices
+            .iter()
+            .find(|d| d.device_id == id)
+            .unwrap()
+            .paired_by
+    };
+    assert_eq!(paired_by(first.device_id), None);
+    assert_eq!(paired_by(second.device_id), Some(first.device_id));
+}
+
+#[test]
+fn anonymous_endpoints_refuse_large_bodies_and_check_the_admin_token_before_parsing() {
+    let closed = harness(false, Some("letmein"), GB);
+    // Refused with a 413 — which the server may send, and hang up, before the client has
+    // finished uploading, so a dropped connection counts as refused too.
+    let refuses_big_body = |path: &str, extra: &[(&str, &str)]| {
+        let mut request = closed
+            .agent
+            .post(format!("{}/v1{path}", closed.server.base_url()))
+            .header("Content-Type", "application/json");
+        for (name, value) in extra {
+            request = request.header(*name, *value);
+        }
+        match request.send(&vec![b' '; 64 * 1024][..]) {
+            Ok(reply) => reply.status().as_u16() == 413,
+            Err(_) => true,
+        }
+    };
+    assert!(refuses_big_body("/pairing/redeem", &[]));
+    assert!(refuses_big_body(
+        "/vaults",
+        &[(ADMIN_TOKEN_HEADER, "letmein")]
+    ));
+    let send = |path: &str, extra: &[(&str, &str)], body: Vec<u8>| {
+        closed
+            .send("POST", path, None, extra, Some(("application/json", body)))
+            .status
+    };
+    // Garbage from someone without the token is refused as unauthorized, unparsed.
+    assert_eq!(send("/vaults", &[], b"{ not json".to_vec()), 403);
+    assert_eq!(
+        send(
+            "/vaults",
+            &[(ADMIN_TOKEN_HEADER, "letmein")],
+            b"{ not json".to_vec()
+        ),
+        400
+    );
+}
+
+#[test]
+fn blob_routes_still_take_a_full_size_blob() {
+    let h = harness(true, None, GB);
+    let v = h.vault();
+    let (vault, token) = (v.vault.vault_id, v.device_token.as_str());
+    let largest = envelope(MAX_BLOB_BYTES - 2 - 24 - 16);
+    assert_eq!(largest.len(), MAX_BLOB_BYTES);
+    assert_eq!(h.push(vault, doc(1), token, largest.clone()).status, 200);
+
+    let snapshot = serde_json::to_vec(&Snapshot {
+        upto_seq: 1,
+        blob: largest,
+    })
+    .unwrap();
+    let reply = h.send(
+        "PUT",
+        &format!("/vaults/{vault}/docs/{}/snapshot", doc(1)),
+        Some(token),
+        &[],
+        Some(("application/json", snapshot)),
+    );
+    assert_eq!(reply.status, 204);
 }
 
 #[test]

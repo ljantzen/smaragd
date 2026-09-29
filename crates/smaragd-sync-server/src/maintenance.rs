@@ -134,7 +134,8 @@ mod tests {
         let active = db::create_vault(&mut conn, &[1; 16], "a", now).unwrap();
         let abandoned = db::create_vault(&mut conn, &[2; 16], "b", now).unwrap();
         db::revoke_device(&conn, abandoned.vault.vault_id, abandoned.device_id, now).unwrap();
-        db::create_pairing_code(&mut conn, active.vault.vault_id, now, 600).unwrap();
+        db::create_pairing_code(&mut conn, active.vault.vault_id, active.device_id, now, 600)
+            .unwrap();
 
         let later = now + 40 * DAY as i64;
         let report = run(&conn, later, Some(Duration::from_secs(30 * DAY))).unwrap();

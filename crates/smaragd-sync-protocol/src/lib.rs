@@ -15,7 +15,7 @@
 //! | `GET /health` | none | liveness / "Test connection" |
 //! | `POST /vaults` | admin token or open registration | create a vault; returns first device token |
 //! | `GET /vaults/:id` | device | public vault record (KDF salt, key version) |
-//! | `DELETE /vaults/:id` | device | delete the vault and all its data |
+//! | `DELETE /vaults/:id` | admin token | delete the vault and all its data |
 //! | `POST /vaults/:id/pairing-codes` | device | mint a single-use, short-lived pairing code |
 //! | `POST /pairing/redeem` | pairing code | exchange a code for this device's own token |
 //! | `GET /vaults/:id/devices` | device | list devices |
@@ -26,7 +26,11 @@
 //! | `PUT /vaults/:id/docs/:doc_id/snapshot` | device | client-driven compaction |
 //!
 //! Auth is `Authorization: Bearer <device token>` (tokens are hashed at rest and
-//! scoped to one vault). Errors are [`api::ApiError`] JSON with an HTTP status.
+//! scoped to one vault), except the two operator actions — creating a vault on a
+//! closed server and deleting one — which take the server's admin token in the
+//! [`api::ADMIN_TOKEN_HEADER`] header. Deleting is operator-only so a single leaked
+//! device token can't wipe a vault; a device leaves by revoking itself.
+//! Errors are [`api::ApiError`] JSON with an HTTP status.
 
 pub mod api;
 pub mod envelope;

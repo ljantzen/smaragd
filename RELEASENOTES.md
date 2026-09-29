@@ -5,6 +5,18 @@ this file.
 
 ## Unreleased
 
+- Sync server: deleting a vault now takes the server's admin token; a device token
+  alone can no longer wipe a vault (devices leave by revoking themselves, as the app
+  already does).
+- Sync server: the device list records which device paired each device, and the Sync
+  panel shows it ("added by laptop"), so a device added with a stolen token can be
+  traced. Revoking a device also voids the pairing codes it made. The database
+  migrates on first start; unused pairing codes from before the upgrade are dropped.
+- Sync server: request bodies are capped at 16 KiB except for pushing updates and
+  snapshots, so anonymous requests can't make the server buffer megabytes; vault
+  creation checks the admin token before parsing the request. At most 32 requests
+  run at once and each must finish within 2 minutes.
+
 ## v1.3.2 — 2026-09-29
 
 - Fixed the Linux packages (AppImage, .deb, .rpm, flatpak) missing from v1.3.1: a

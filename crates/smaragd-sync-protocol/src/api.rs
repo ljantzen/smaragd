@@ -125,6 +125,12 @@ pub struct DeviceInfo {
     pub name: String,
     pub created_at_unix: u64,
     pub last_seen_unix: Option<u64>,
+    /// The device whose pairing code this one redeemed — kept even after that device is
+    /// revoked, so a device added with a stolen token can be traced. `None` for the
+    /// device that created the vault, for devices paired before the server recorded
+    /// this, and from an older server.
+    #[serde(default)]
+    pub paired_by: Option<DeviceId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

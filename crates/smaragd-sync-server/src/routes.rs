@@ -4,13 +4,16 @@
 //! envelope, as a sanity check against garbage.
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, Request, State};
+use axum::handler::Handler;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -22,6 +25,7 @@ use smaragd_sync_protocol::api::{
 };
 use smaragd_sync_protocol::envelope::Envelope;
 use smaragd_sync_protocol::{DeviceId, DocId, VaultId};
+use tokio::sync::Semaphore;
 
 use crate::AppState;
 use crate::auth::{constant_time_eq, hash_secret};
@@ -29,6 +33,20 @@ use crate::db::{self, Authed};
 use crate::error::HttpError;
 
 const MAX_DEVICE_NAME_CHARS: usize = 100;
+/// Body limit for every route except the two that carry a sealed blob. Everything else
+/// is a small JSON object (or no body at all), and two of those routes are open to
+/// anyone, so they mustn't be able to make the server buffer megabytes.
+const SMALL_BODY_BYTES: usize = 16 * 1024;
+/// Body limit for pushing an update or a snapshot. JSON snapshots carry base64 blobs,
+/// ~4/3 the raw size.
+const BLOB_BODY_BYTES: usize = MAX_BLOB_BYTES * 2;
+/// A whole request — waiting for a slot, reading the body, the database work — must
+/// finish within this, so a client trickling its body can't hold a slot forever. Well
+/// above what an 8 MiB upload over a slow link needs.
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+/// Requests handled at once; more wait (within [`REQUEST_TIMEOUT`]) for a slot. Bounds
+/// the memory buffered request bodies can take to about this many blob bodies.
+pub const MAX_IN_FLIGHT_REQUESTS: usize = 32;
 
 fn unix_now() -> i64 {
     SystemTime::now()
@@ -79,6 +97,7 @@ impl FromRequestParts<Arc<AppState>> for Auth {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
+    let blob_limit = DefaultBodyLimit::max(BLOB_BODY_BYTES);
     let api = Router::new()
         .route("/health", get(health))
         .route("/vaults", post(create_vault))
@@ -90,14 +109,47 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/vaults/{vault}/docs", get(list_docs))
         .route(
             "/vaults/{vault}/docs/{doc}/updates",
-            get(pull_updates).post(push_update),
+            get(pull_updates).post(push_update.layer(blob_limit)),
         )
-        .route("/vaults/{vault}/docs/{doc}/snapshot", put(put_snapshot))
-        // JSON snapshots carry base64 blobs, ~4/3 the raw size.
-        .layer(DefaultBodyLimit::max(MAX_BLOB_BYTES * 2));
+        .route(
+            "/vaults/{vault}/docs/{doc}/snapshot",
+            put(put_snapshot.layer(blob_limit)),
+        )
+        .layer(DefaultBodyLimit::max(SMALL_BODY_BYTES));
+    let slots = Arc::new(Semaphore::new(MAX_IN_FLIGHT_REQUESTS));
     Router::new()
         .nest(smaragd_sync_protocol::api::API_PREFIX, api)
+        .layer(middleware::from_fn(move |request: Request, next: Next| {
+            let slots = Arc::clone(&slots);
+            async move { limit_request(&slots, request, next).await }
+        }))
         .with_state(state)
+}
+
+/// Runs a request in one of the [`MAX_IN_FLIGHT_REQUESTS`] slots, and gives up on it
+/// after [`REQUEST_TIMEOUT`] (queueing included). Slow *headers* are the reverse
+/// proxy's job, as is limiting connections per client — see the README.
+async fn limit_request(slots: &Semaphore, request: Request, next: Next) -> Response {
+    let run = async {
+        let Ok(_slot) = slots.acquire().await else {
+            return HttpError::Internal("request semaphore closed".into()).into_response();
+        };
+        next.run(request).await
+    };
+    match tokio::time::timeout(REQUEST_TIMEOUT, run).await {
+        Ok(response) => response,
+        Err(_) => HttpError::Timeout.into_response(),
+    }
+}
+
+/// Whether the request carries this server's admin token (never, if it has none).
+fn has_admin_token(headers: &HeaderMap, config: &crate::Config) -> bool {
+    match (headers.get(ADMIN_TOKEN_HEADER), &config.admin_token) {
+        (Some(given), Some(expected)) => {
+            constant_time_eq(given.to_str().unwrap_or_default(), expected)
+        }
+        _ => false,
+    }
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -124,22 +176,20 @@ fn require_envelope(bytes: &[u8]) -> Result<(), HttpError> {
         .map_err(|err| HttpError::BadRequest(err.to_string()))
 }
 
+/// Takes the body as bytes and parses it only once the caller is allowed in, so an
+/// anonymous request to a closed server costs no JSON parsing.
 async fn create_vault(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(request): Json<CreateVaultRequest>,
+    body: Bytes,
 ) -> Result<(StatusCode, Json<CreateVaultResponse>), HttpError> {
-    let admin_ok = match (headers.get(ADMIN_TOKEN_HEADER), &state.config.admin_token) {
-        (Some(given), Some(expected)) => {
-            constant_time_eq(given.to_str().unwrap_or_default(), expected)
-        }
-        _ => false,
-    };
-    if !state.config.allow_open_registration && !admin_ok {
+    if !state.config.allow_open_registration && !has_admin_token(&headers, &state.config) {
         return Err(HttpError::Forbidden(
             "this server only lets its administrator create vaults (send the admin token)",
         ));
     }
+    let request: CreateVaultRequest = serde_json::from_slice(&body)
+        .map_err(|err| HttpError::BadRequest(format!("invalid request body: {err}")))?;
     if request.kdf_salt.len() != KDF_SALT_LEN {
         return Err(HttpError::BadRequest(format!(
             "kdf_salt must be exactly {KDF_SALT_LEN} bytes"
@@ -175,17 +225,28 @@ async fn get_vault(
         .ok_or(HttpError::NotFound("no such vault"))
 }
 
+/// Operator-only: a device token isn't enough, so one leaked token can't wipe a vault.
+/// A device that wants out revokes itself instead, and maintenance removes a vault
+/// once its last device is gone.
 async fn delete_vault(
     State(state): State<Arc<AppState>>,
-    auth: Auth,
+    headers: HeaderMap,
     Path(vault): Path<VaultId>,
 ) -> Result<StatusCode, HttpError> {
-    auth.require_vault(vault)?;
-    state
+    if !has_admin_token(&headers, &state.config) {
+        return Err(HttpError::Forbidden(
+            "only the server's administrator can delete a vault (send the admin token)",
+        ));
+    }
+    let removed = state
         .db
         .run(move |conn| db::delete_vault(conn, vault))
         .await?;
-    Ok(StatusCode::NO_CONTENT)
+    if removed {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(HttpError::NotFound("no such vault"))
+    }
 }
 
 async fn create_pairing_code(
@@ -194,10 +255,10 @@ async fn create_pairing_code(
     Path(vault): Path<VaultId>,
 ) -> Result<Json<CreatePairingCodeResponse>, HttpError> {
     auth.require_vault(vault)?;
-    let now = unix_now();
+    let (device, now) = (auth.0.device_id, unix_now());
     let code = state
         .db
-        .run(move |conn| db::create_pairing_code(conn, vault, now, PAIRING_CODE_TTL_SECS))
+        .run(move |conn| db::create_pairing_code(conn, vault, device, now, PAIRING_CODE_TTL_SECS))
         .await?;
     Ok(Json(CreatePairingCodeResponse {
         code,

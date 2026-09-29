@@ -277,6 +277,9 @@ fn show_paired(
                     };
                     ui.label(name);
                     ui.weak(seen);
+                    if let Some(added_by) = paired_by_label(device, devices) {
+                        ui.weak(added_by);
+                    }
                     if !is_self
                         && ui
                             .add_enabled(!data.busy, egui::Button::new("Revoke").small())
@@ -303,6 +306,16 @@ fn show_paired(
         });
     });
     event
+}
+
+/// Which device let `device` into the vault, for spotting one added with a stolen
+/// token. `None` for the vault's first device (and when the server doesn't say).
+fn paired_by_label(device: &DeviceInfo, devices: &[DeviceInfo]) -> Option<String> {
+    let by = device.paired_by?;
+    Some(match devices.iter().find(|other| other.device_id == by) {
+        Some(pairer) => format!("added by {}", pairer.name),
+        None => "added by a removed device".to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -342,7 +355,28 @@ mod tests {
             name: name.into(),
             created_at_unix: 0,
             last_seen_unix: seen,
+            paired_by: None,
         }
+    }
+
+    #[test]
+    fn each_device_says_which_device_added_it() {
+        let laptop = device(1, "laptop", None);
+        let mut phone = device(2, "phone", None);
+        phone.paired_by = Some(laptop.device_id);
+        let mut tablet = device(3, "tablet", None);
+        tablet.paired_by = Some(DeviceId(Uuid::from_u128(99)));
+        let all = [laptop.clone(), phone.clone(), tablet.clone()];
+
+        assert_eq!(paired_by_label(&laptop, &all), None);
+        assert_eq!(
+            paired_by_label(&phone, &all).as_deref(),
+            Some("added by laptop")
+        );
+        assert_eq!(
+            paired_by_label(&tablet, &all).as_deref(),
+            Some("added by a removed device")
+        );
     }
 
     #[test]

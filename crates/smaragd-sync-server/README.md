@@ -247,7 +247,10 @@ always serves at `/v1/...`, so have the proxy *strip* the prefix — in Caddy,
 
 **Rate limiting** is left to the proxy (e.g. nginx `limit_req`). Pairing codes are
 single-use, expire after 10 minutes and carry ~59 bits of entropy, so brute-forcing
-one through a rate-limited proxy is impractical.
+one through a rate-limited proxy is impractical. So are **slow clients**: the server
+caps request bodies, handles at most 32 requests at once and gives up on any request
+after 2 minutes, but it doesn't time out slowly-sent *headers* or limit connections per
+client — a proxy in front does both.
 
 ## Connecting Smaragd
 
@@ -316,6 +319,11 @@ assume both sides are current.
 - A vault can have at most **10** unused pairing codes at a time; more are refused
   until one is redeemed or expires (after 10 minutes).
 - Device names are at most **100** characters.
+- Request bodies are at most **16 KiB**, except pushing an update or a snapshot. The
+  two endpoints open to anyone (creating a vault, redeeming a pairing code) are among
+  them, so an anonymous client can't make the server buffer megabytes.
+- At most **32** requests are handled at once (others wait), and a request that hasn't
+  finished after **2 minutes** — queueing included — gets `408`.
 - A pull returns at most about **8 MiB** of updates at a time and says when there's
   more; clients keep asking. This is how files larger than one update (images, PDFs —
   sent in chunks) come through.
@@ -361,7 +369,16 @@ sudo -u smaragd-sync SMARAGD_SYNC_DATA_DIR=/var/lib/smaragd-sync smaragd-sync-se
 
 Each paired device has its own token, and any device can list or revoke the
 vault's devices from Smaragd's Sync panel; a revoked token stops working
-immediately. Deleting a vault removes all its data and every device's token. A vault whose last device leaves is removed automatically after the retention period (see [Maintenance](#maintenance)); `admin delete-vault` removes one right away.
+immediately, and so do the pairing codes it made that haven't been used yet. The list
+shows which device added each one, so a device paired with a stolen token can be traced
+back to the device it came through — revoke both.
+
+Deleting a vault is **operator-only**: it takes the admin token
+(`DELETE /v1/vaults/<id>` with the `x-admin-token` header) or `admin delete-vault`, never
+a device token, so one leaked device token can't wipe a vault. Deleting removes all its
+data and every device's token. A vault whose last device leaves is removed automatically
+after the retention period (see [Maintenance](#maintenance)); `admin delete-vault` removes
+one right away.
 
 ## Building from source
 
