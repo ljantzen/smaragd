@@ -27,6 +27,7 @@ fn server_config(data_dir: PathBuf, listen: &str) -> Config {
         maintenance_interval: None,
         empty_vault_retention: None,
         max_file_bytes: Some(100 * 1024 * 1024),
+        max_vaults: None,
     }
 }
 

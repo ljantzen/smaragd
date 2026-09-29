@@ -20,8 +20,8 @@ use serde::Deserialize;
 use smaragd_sync_protocol::api::{
     ADMIN_TOKEN_HEADER, CreatePairingCodeResponse, CreateVaultRequest, CreateVaultResponse,
     HealthResponse, KDF_SALT_LEN, ListDevicesResponse, ListDocsResponse, MAX_BLOB_BYTES,
-    PAIRING_CODE_TTL_SECS, PullUpdatesResponse, PushUpdateResponse, RedeemPairingRequest,
-    RedeemPairingResponse, Snapshot, VaultInfo,
+    NEEDS_ADMIN_TOKEN_ERROR, PAIRING_CODE_TTL_SECS, PullUpdatesResponse, PushUpdateResponse,
+    RedeemPairingRequest, RedeemPairingResponse, Snapshot, VaultInfo,
 };
 use smaragd_sync_protocol::envelope::Envelope;
 use smaragd_sync_protocol::{DeviceId, DocId, VaultId};
@@ -184,9 +184,7 @@ async fn create_vault(
     body: Bytes,
 ) -> Result<(StatusCode, Json<CreateVaultResponse>), HttpError> {
     if !state.config.allow_open_registration && !has_admin_token(&headers, &state.config) {
-        return Err(HttpError::Forbidden(
-            "this server only lets its administrator create vaults (send the admin token)",
-        ));
+        return Err(HttpError::Forbidden(NEEDS_ADMIN_TOKEN_ERROR));
     }
     let request: CreateVaultRequest = serde_json::from_slice(&body)
         .map_err(|err| HttpError::BadRequest(format!("invalid request body: {err}")))?;
@@ -196,10 +194,10 @@ async fn create_vault(
         )));
     }
     let name = checked_device_name(&request.device_name)?;
-    let now = unix_now();
+    let (max_vaults, now) = (state.config.max_vaults, unix_now());
     let created = state
         .db
-        .run(move |conn| db::create_vault(conn, &request.kdf_salt, &name, now))
+        .run(move |conn| db::create_vault_within(conn, &request.kdf_salt, &name, max_vaults, now))
         .await?;
     Ok((
         StatusCode::CREATED,

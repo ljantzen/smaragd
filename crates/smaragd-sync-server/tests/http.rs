@@ -20,8 +20,18 @@ struct Harness {
 }
 
 fn harness(open: bool, admin: Option<&str>, quota: u64) -> Harness {
+    harness_with(open, admin, quota, |_| {})
+}
+
+/// [`harness`], with a last say over the configuration.
+fn harness_with(
+    open: bool,
+    admin: Option<&str>,
+    quota: u64,
+    tweak: impl FnOnce(&mut Config),
+) -> Harness {
     let dir = tempfile::tempdir().unwrap();
-    let server = start_in_background(Config {
+    let mut config = Config {
         listen_addr: "127.0.0.1:0".into(),
         data_dir: dir.path().to_path_buf(),
         allow_open_registration: open,
@@ -30,8 +40,10 @@ fn harness(open: bool, admin: Option<&str>, quota: u64) -> Harness {
         maintenance_interval: None,
         empty_vault_retention: None,
         max_file_bytes: Some(100 * 1024 * 1024),
-    })
-    .unwrap();
+        max_vaults: None,
+    };
+    tweak(&mut config);
+    let server = start_in_background(config).unwrap();
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .build()
@@ -197,6 +209,21 @@ fn vault_creation_is_closed_unless_open_or_given_the_admin_token() {
 }
 
 #[test]
+fn the_server_holds_no_more_vaults_than_its_limit() {
+    let h = harness_with(true, None, GB, |config| config.max_vaults = Some(2));
+    h.vault();
+    h.vault();
+    let refused = h.create_vault_with(&[], KDF_SALT_LEN);
+    assert_eq!(refused.status, 507);
+    assert!(
+        refused
+            .json::<ApiError>()
+            .error
+            .contains("limit of 2 vaults")
+    );
+}
+
+#[test]
 fn a_salt_of_the_wrong_length_is_rejected() {
     let h = harness(true, None, GB);
     assert_eq!(h.create_vault_with(&[], 5).status, 400);
@@ -292,10 +319,12 @@ fn malformed_and_oversized_pushes_are_refused() {
 
 #[test]
 fn the_vault_quota_returns_507() {
-    let h = harness(true, None, 200);
+    use smaragd_sync_server::db::{DOC_OVERHEAD_BYTES, UPDATE_OVERHEAD_BYTES};
+    // Room for one 102-byte update (2 + 24 + 16 + 60) with its row and document overhead.
+    let h = harness(true, None, DOC_OVERHEAD_BYTES + UPDATE_OVERHEAD_BYTES + 200);
     let v = h.vault();
     let (vault, token) = (v.vault.vault_id, v.device_token.as_str());
-    let first = envelope(60); // 2 + 24 + 16 + 60 = 102 bytes
+    let first = envelope(60);
     assert_eq!(h.push(vault, doc(1), token, first.clone()).status, 200);
     assert_eq!(h.push(vault, doc(1), token, first).status, 507);
 }
@@ -593,6 +622,7 @@ fn state_survives_a_restart() {
         maintenance_interval: None,
         empty_vault_retention: None,
         max_file_bytes: Some(100 * 1024 * 1024),
+        max_vaults: None,
     };
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -646,6 +676,7 @@ fn the_background_task_deletes_a_vault_whose_last_device_left() {
         maintenance_interval: Some(std::time::Duration::from_secs(1)),
         empty_vault_retention: Some(std::time::Duration::from_secs(1)),
         max_file_bytes: Some(100 * 1024 * 1024),
+        max_vaults: None,
     })
     .unwrap();
     let agent: ureq::Agent = ureq::Agent::config_builder()

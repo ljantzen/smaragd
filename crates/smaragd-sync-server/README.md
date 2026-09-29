@@ -197,9 +197,10 @@ Everything is an environment variable; there is no config file.
 |---|---|---|
 | `SMARAGD_SYNC_LISTEN_ADDR` | `0.0.0.0:8080` | Address to listen on (plain HTTP). |
 | `SMARAGD_SYNC_DATA_DIR` | `./data` (`/data` in the image) | Directory holding all state. Mount a volume here. |
-| `SMARAGD_SYNC_ADMIN_TOKEN` | *(unset)* | Lets whoever holds it create vaults while open registration is off. |
+| `SMARAGD_SYNC_ADMIN_TOKEN` | *(unset)* | Lets whoever holds it create vaults while open registration is off, and delete vaults. At least **16** characters, or the server refuses to start — generate one with `openssl rand -hex 24`. |
 | `SMARAGD_SYNC_ALLOW_OPEN_REGISTRATION` | `false` | If `true`, *anyone who can reach the server* may create a vault. Leave off unless the server is private. |
-| `SMARAGD_SYNC_VAULT_QUOTA_MB` | `1024` | Maximum ciphertext stored per vault. |
+| `SMARAGD_SYNC_VAULT_QUOTA_MB` | `1024` | Maximum storage per vault: its ciphertext plus a fixed allowance per stored record (see [Limits](#limits)). |
+| `SMARAGD_SYNC_MAX_VAULTS` | `100` | How many vaults the server holds at most; creating another fails with `507`. Bounds the disk an open-registration server can be made to fill. `0` means no limit. |
 | `SMARAGD_SYNC_MAINTENANCE_INTERVAL_HOURS` | `6` | How often the built-in maintenance task runs (see [Maintenance](#maintenance)). `0` turns it off. |
 | `SMARAGD_SYNC_EMPTY_VAULT_RETENTION_DAYS` | `30` | A vault with no devices left is deleted this many days after its last activity. `0` keeps such vaults forever. |
 | `SMARAGD_SYNC_MAX_FILE_MB` | `100` | The largest image, PDF or other non-Markdown file clients sync (projects opt into syncing those). Advertised to clients, which leave bigger files unsynced; the server can't see file contents to enforce it, so the vault quota is the hard limit. `0` advertises no limit. |
@@ -208,8 +209,8 @@ Everything is an environment variable; there is no config file.
 If open registration is off **and** no admin token is set, nobody can create a
 vault; the server warns about this at startup.
 
-The admin token is only checked when a vault is **created**; the server doesn't
-store it. Changing it (or losing it and setting a new one) has no effect on
+The admin token is only checked when a vault is **created** or **deleted**; the server
+doesn't store it. Changing it (or losing it and setting a new one) has no effect on
 existing vaults and paired devices — only the new token works for creating vaults
 from then on. To change it, recreate the container with the new value (with
 Compose: edit `.env`, then `docker compose up -d`).
@@ -319,8 +320,12 @@ assume both sides are current.
 ### Limits
 
 - Each pushed update or snapshot is at most **8 MiB** (after encryption).
-- Each vault may store up to `SMARAGD_SYNC_VAULT_QUOTA_MB` of ciphertext; over that,
-  pushes fail with `507`. Smaragd clients replace a document's old updates with a
+- Each vault may store up to `SMARAGD_SYNC_VAULT_QUOTA_MB`; over that, pushes fail with
+  `507`. What counts is the ciphertext plus **256 bytes** for each stored update and each
+  document — roughly what the database spends on a row — so a flood of tiny updates or
+  documents can't fill the disk several times over the quota. (A server upgraded from an
+  earlier version recomputes every vault's usage this way on first start; a vault that
+  was nearly full may find itself over, and gets `507` until its clients compact.) Smaragd clients replace a document's old updates with a
   compact snapshot (`PUT .../snapshot`) once it has about 64 of them, which is how a
   vault's size is kept in check.
 - A vault can have at most **10** unused pairing codes at a time; more are refused
@@ -376,7 +381,12 @@ sudo -u smaragd-sync SMARAGD_SYNC_DATA_DIR=/var/lib/smaragd-sync smaragd-sync-se
 
 Each paired device has its own token, and any device can list or revoke the
 vault's devices from Smaragd's Sync panel; a revoked token stops working
-immediately, and so do the pairing codes it made that haven't been used yet. The list
+immediately, and so do the pairing codes it made that haven't been used yet. Revoking
+cuts a device off from the *server*; it doesn't change the vault's key. A revoked device
+still knows the passphrase, so if it ever got hold of the vault's ciphertext some other
+way (a copy of the server's data, say) it could read it. If a device holding the
+passphrase was lost or stolen, treat the passphrase as exposed: choose a new one, create
+a fresh vault with it, and pair your other devices again. The list
 shows which device added each one, so a device paired with a stolen token can be traced
 back to the device it came through — revoke both.
 

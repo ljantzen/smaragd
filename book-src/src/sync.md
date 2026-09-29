@@ -47,7 +47,7 @@ Open the project, then open the Sync tab with **`Tools > Sync Panel`** (`Ctrl+Sh
 
 On a device that's already syncing, open the Sync panel and press **Make Pairing Ticket**. Copy the ticket it shows and get it to your other device — by chat, email, whatever suits. **A ticket works once and expires after 10 minutes.**
 
-On the other device: install Smaragd, do step 1 (the same passphrase!), open a project folder (an empty one is fine, or a copy of the project), open the Sync panel, press **Join Vault…** and paste the ticket. Smaragd pairs the device and the project begins syncing.
+On the other device: install Smaragd, do step 1 (the same passphrase!), open a project folder (an empty one is fine, or a copy of the project), open the Sync panel, press **Join Vault…** and paste the ticket. The Sync panel then shows which server the ticket points to (and warns if it uses plain HTTP) — check it's yours and press **Join**. Smaragd pairs the device and the project begins syncing. A ticket only ever comes from one of your own devices; joining uploads the open project to the ticket's server, so don't use one someone else sent you.
 
 ## The Sync panel
 
@@ -62,7 +62,7 @@ Below the status:
 
 - **Sync Now** runs a pass immediately. (Smaragd also syncs about every 10 seconds, and right after you save with `Ctrl+S`. **`Tools > Sync Now`**, or `Ctrl+Alt+Y`, does the same from anywhere.)
 - **Make Pairing Ticket** — see above.
-- **Devices** lists every device in the vault and when it was last seen. **Refresh** updates the list; **Revoke** removes another device — it stops syncing immediately, along with any unused pairing tickets it made. Use this if a device is lost or retired. Each device also shows which device added it ("added by laptop"): if you revoke a lost device, check for devices it added that you don't recognize, and revoke those too.
+- **Devices** lists every device in the vault and when it was last seen. **Refresh** updates the list; **Revoke** removes another device — it stops syncing immediately, along with any unused pairing tickets it made. Use this if a device is lost or retired. Revoking cuts the device off from the server, but it still knows your passphrase: if a lost or stolen device could get at the server's data some other way, choose a new passphrase and move to a fresh vault (see [Your passphrase](#your-passphrase)). Each device also shows which device added it ("added by laptop"): if you revoke a lost device, check for devices it added that you don't recognize, and revoke those too.
 - **Stop syncing this project** (expand it) removes this device from the vault and stops syncing this project. Your files stay exactly as they are here, and your other devices keep their copies. If it was the vault's *last* device, the server deletes the vault's encrypted copy after a while (30 days by default, set by whoever runs the server); your own files are never affected.
 
 ## What syncs

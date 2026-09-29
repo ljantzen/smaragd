@@ -28,6 +28,7 @@ impl SyncState {
             now_unix: 0,
             notice: None,
             sync_files: false,
+            pending_join: None,
         }
     }
 }

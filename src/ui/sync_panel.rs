@@ -55,6 +55,17 @@ pub struct SyncPanelData<'a> {
     /// Whether the open project also syncs its non-Markdown files
     /// (`ProjectMeta::sync_files`).
     pub sync_files: bool,
+    /// A pasted pairing ticket waiting for the user to confirm its server.
+    pub pending_join: Option<PendingJoin<'a>>,
+}
+
+/// Where a pasted ticket would connect, shown before anything is sent: a ticket is
+/// whatever someone pasted, and joining uploads this project to its server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingJoin<'a> {
+    /// `host:port[/path]`, as the ticket names it.
+    pub server: &'a str,
+    pub plain_http: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +75,9 @@ pub enum SyncPanelEvent {
     CreateVault,
     /// Join an existing vault with a pairing ticket.
     JoinVault,
+    /// Go ahead with the pasted ticket's server (see [`PendingJoin`]).
+    ConfirmJoin,
+    CancelJoin,
     SyncNow,
     /// Start again after a halt.
     Retry,
@@ -108,6 +122,11 @@ pub fn show(ui: &mut egui::Ui, data: &SyncPanelData) -> Option<SyncPanelEvent> {
                     event = Some(SyncPanelEvent::OpenSettings);
                 }
             }
+            SyncPanelPhase::NotPaired if data.pending_join.is_some() => {
+                if let Some(e) = show_pending_join(ui, data) {
+                    event = Some(e);
+                }
+            }
             SyncPanelPhase::NotPaired => {
                 ui.label("This project isn't syncing yet.");
                 ui.weak(
@@ -140,6 +159,40 @@ pub fn show(ui: &mut egui::Ui, data: &SyncPanelData) -> Option<SyncPanelEvent> {
             ui.colored_label(ui.visuals().warn_fg_color, notice);
         }
     });
+    event
+}
+
+fn show_pending_join(ui: &mut egui::Ui, data: &SyncPanelData) -> Option<SyncPanelEvent> {
+    let pending = data.pending_join?;
+    let mut event = None;
+    ui.label("Join the vault on this server?");
+    ui.strong(pending.server);
+    if pending.plain_http {
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            "This ticket uses plain HTTP: this device's token would travel unencrypted. \
+             Your text stays encrypted, but only continue on a network you trust.",
+        );
+    }
+    ui.weak(
+        "Joining uploads this project to that server, encrypted with your passphrase. \
+         Only continue if the ticket came from one of your own devices and this is your \
+         server.",
+    );
+    ui.add_space(8.0);
+    ui.add_enabled_ui(!data.busy, |ui| {
+        ui.horizontal(|ui| {
+            if ui.button("Join").clicked() {
+                event = Some(SyncPanelEvent::ConfirmJoin);
+            }
+            if ui.button("Cancel").clicked() {
+                event = Some(SyncPanelEvent::CancelJoin);
+            }
+        });
+    });
+    if data.busy {
+        ui.weak("Contacting the server…");
+    }
     event
 }
 
@@ -346,6 +399,7 @@ mod tests {
             now_unix: 1_000_000,
             notice: Some("Couldn't reach the server"),
             sync_files: false,
+            pending_join: None,
         }
     }
 
@@ -377,6 +431,21 @@ mod tests {
             paired_by_label(&tablet, &all).as_deref(),
             Some("added by a removed device")
         );
+    }
+
+    #[test]
+    fn a_pending_ticket_renders_with_and_without_the_plain_http_warning() {
+        let ctx = egui::Context::default();
+        for plain_http in [false, true] {
+            let mut panel = data(SyncPanelPhase::NotPaired, None);
+            panel.pending_join = Some(PendingJoin {
+                server: "sync.example.com:443",
+                plain_http,
+            });
+            run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
+                show(ui, &panel);
+            });
+        }
     }
 
     #[test]

@@ -10,6 +10,11 @@ const DEFAULT_QUOTA_MB: u64 = 1024;
 const DEFAULT_MAINTENANCE_HOURS: u64 = 6;
 const DEFAULT_EMPTY_VAULT_RETENTION_DAYS: u64 = 30;
 const DEFAULT_MAX_FILE_MB: u64 = 100;
+const DEFAULT_MAX_VAULTS: u64 = 100;
+/// Shortest admin token the server will start with. It is checked over the network, and
+/// in-process there's no rate limit on guesses, so it must be unguessable on its own;
+/// `openssl rand -hex 24` gives 48 characters.
+pub const MIN_ADMIN_TOKEN_CHARS: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -38,9 +43,26 @@ pub struct Config {
     /// what a document holds, so it can't enforce this; the vault quota still bounds
     /// everything. `0` advertises no limit.
     pub max_file_bytes: Option<u64>,
+    /// `SMARAGD_SYNC_MAX_VAULTS` — how many vaults this server holds at most; creating
+    /// one more is refused. Bounds the disk a server with open registration can be made
+    /// to fill (each vault up to its quota). `0` means no limit.
+    pub max_vaults: Option<u64>,
 }
 
 impl Config {
+    /// Why the server shouldn't start with this admin token, or `None`. Checked when
+    /// the server starts rather than in [`Self::from_lookup`], so the admin command line
+    /// (which never uses the token) keeps working to fix things.
+    pub fn admin_token_problem(&self) -> Option<String> {
+        let token = self.admin_token.as_deref()?;
+        (token.trim().chars().count() < MIN_ADMIN_TOKEN_CHARS).then(|| {
+            format!(
+                "SMARAGD_SYNC_ADMIN_TOKEN is too short to be safe (it must be at least \
+                 {MIN_ADMIN_TOKEN_CHARS} characters); generate one with `openssl rand -hex 24`"
+            )
+        })
+    }
+
     pub fn from_env() -> Result<Self, String> {
         Self::from_lookup(|key| std::env::var(key).ok())
     }
@@ -70,6 +92,7 @@ impl Config {
         };
         let quota_mb = whole("SMARAGD_SYNC_VAULT_QUOTA_MB", DEFAULT_QUOTA_MB)?;
         let max_file_mb = whole("SMARAGD_SYNC_MAX_FILE_MB", DEFAULT_MAX_FILE_MB)?;
+        let max_vaults = whole("SMARAGD_SYNC_MAX_VAULTS", DEFAULT_MAX_VAULTS)?;
         let duration =
             |key: &str, default: u64, unit_secs: u64| -> Result<Option<Duration>, String> {
                 let value = match non_empty(key) {
@@ -103,6 +126,7 @@ impl Config {
             maintenance_interval,
             empty_vault_retention,
             max_file_bytes: (max_file_mb > 0).then(|| max_file_mb.saturating_mul(1024 * 1024)),
+            max_vaults: (max_vaults > 0).then_some(max_vaults),
         })
     }
 }
@@ -146,6 +170,18 @@ mod tests {
         let off = Config::from_lookup(lookup(&[("SMARAGD_SYNC_MAX_FILE_MB", "0")])).unwrap();
         assert_eq!(off.max_file_bytes, None);
         assert!(Config::from_lookup(lookup(&[("SMARAGD_SYNC_MAX_FILE_MB", "big")])).is_err());
+    }
+
+    #[test]
+    fn the_vault_limit_defaults_to_100_and_zero_lifts_it() {
+        assert_eq!(
+            Config::from_lookup(lookup(&[])).unwrap().max_vaults,
+            Some(100)
+        );
+        let set = Config::from_lookup(lookup(&[("SMARAGD_SYNC_MAX_VAULTS", "3")])).unwrap();
+        assert_eq!(set.max_vaults, Some(3));
+        let off = Config::from_lookup(lookup(&[("SMARAGD_SYNC_MAX_VAULTS", "0")])).unwrap();
+        assert_eq!(off.max_vaults, None);
     }
 
     #[test]
@@ -195,6 +231,26 @@ mod tests {
         assert!(cfg.allow_open_registration);
         assert_eq!(cfg.admin_token.as_deref(), Some("s3cret"));
         assert_eq!(cfg.vault_quota_bytes, 5 * 1024 * 1024);
+    }
+
+    #[test]
+    fn a_short_admin_token_is_a_problem_and_a_generated_one_is_not() {
+        let with = |token: &str| {
+            Config::from_lookup(lookup(&[("SMARAGD_SYNC_ADMIN_TOKEN", token)]))
+                .unwrap()
+                .admin_token_problem()
+        };
+        assert!(with("change-me").is_some());
+        assert!(with("s3cret").is_some());
+        assert!(with("  fifteen chars  ").is_some());
+        assert_eq!(with("0123456789abcdef"), None);
+        assert_eq!(with(&"ab".repeat(24)), None);
+        assert_eq!(
+            Config::from_lookup(lookup(&[]))
+                .unwrap()
+                .admin_token_problem(),
+            None
+        );
     }
 
     #[test]

@@ -11,7 +11,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use smaragd_sync_protocol::DeviceId;
-use smaragd_sync_protocol::api::{DeviceInfo, HealthResponse, KDF_SALT_LEN};
+use smaragd_sync_protocol::api::{
+    DeviceInfo, HealthResponse, KDF_SALT_LEN, NEEDS_ADMIN_TOKEN_ERROR,
+};
 use smaragd_sync_protocol::ticket::{ServerAddr, SyncTicket};
 
 use super::client::HttpClient;
@@ -92,8 +94,12 @@ pub fn create_vault(
     let created = HttpClient::new(server)
         .create_vault(admin_token, device_name, &salt)
         .map_err(|err| match (err, admin_token) {
-            (TransportError::Rejected(_), None) => PairError::NeedsAdminToken,
-            (TransportError::Rejected(_), Some(_)) => {
+            // Only the admin-token refusal means "ask for the token"; anything else (the
+            // server's vault limit, say) is passed on as the server phrased it.
+            (TransportError::Rejected(why), None) if why == NEEDS_ADMIN_TOKEN_ERROR => {
+                PairError::NeedsAdminToken
+            }
+            (TransportError::Rejected(why), Some(_)) if why == NEEDS_ADMIN_TOKEN_ERROR => {
                 PairError::Rejected("The server refused that admin token.".into())
             }
             (other, _) => other.into(),

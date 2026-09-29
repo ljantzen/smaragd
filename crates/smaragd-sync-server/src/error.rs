@@ -23,6 +23,8 @@ pub enum HttpError {
     QuotaExceeded,
     #[error("the request took too long")]
     Timeout,
+    #[error("this server has reached its limit of {0} vaults")]
+    VaultLimit(u64),
     #[error("internal error")]
     Internal(String),
 }
@@ -43,6 +45,7 @@ impl IntoResponse for HttpError {
             HttpError::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             HttpError::QuotaExceeded => StatusCode::INSUFFICIENT_STORAGE,
             HttpError::Timeout => StatusCode::REQUEST_TIMEOUT,
+            HttpError::VaultLimit(_) => StatusCode::INSUFFICIENT_STORAGE,
             HttpError::Internal(detail) => {
                 tracing::error!("internal error: {detail}");
                 StatusCode::INTERNAL_SERVER_ERROR

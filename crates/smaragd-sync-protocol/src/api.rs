@@ -29,6 +29,10 @@ pub const INITIAL_KEY_VERSION: u8 = 1;
 /// Header carrying the server's admin token when creating a vault on a server
 /// that has open registration turned off.
 pub const ADMIN_TOKEN_HEADER: &str = "x-admin-token";
+/// The error message of the `403` a server sends when creating a vault needs its admin
+/// token, so a client can tell "ask for the token" from any other refusal.
+pub const NEEDS_ADMIN_TOKEN_ERROR: &str =
+    "this server only lets its administrator create vaults (send the admin token)";
 /// Alphabet for pairing codes: no `0/O/1/I/L`, so a code read aloud or retyped
 /// can't be misread.
 pub const PAIRING_CODE_ALPHABET: &[u8; 31] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";

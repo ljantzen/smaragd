@@ -18,6 +18,11 @@ const ADMIN: &str = "admin-secret";
 const PASSPHRASE: &str = "correct horse battery";
 
 fn server() -> (RunningServer, ServerAddr, tempfile::TempDir) {
+    server_holding(None)
+}
+
+/// [`server`], holding at most `max_vaults`.
+fn server_holding(max_vaults: Option<u64>) -> (RunningServer, ServerAddr, tempfile::TempDir) {
     let data = tempfile::tempdir().unwrap();
     let server = start_in_background(Config {
         listen_addr: "127.0.0.1:0".into(),
@@ -28,6 +33,7 @@ fn server() -> (RunningServer, ServerAddr, tempfile::TempDir) {
         maintenance_interval: None,
         empty_vault_retention: None,
         max_file_bytes: Some(100 * 1024 * 1024),
+        max_vaults,
     })
     .unwrap();
     let addr = ServerAddr {
@@ -108,6 +114,31 @@ fn eventually(runner: &SyncRunner, what: &str, check: impl Fn() -> bool) {
         std::thread::sleep(Duration::from_millis(150));
     }
     panic!("timed out waiting for: {what}");
+}
+
+#[test]
+fn a_full_server_says_so_instead_of_asking_for_the_admin_token() {
+    let (_server, addr, _data) = server_holding(Some(1));
+    let (a, b) = (Project::new(), Project::new());
+    let create = |p: &Project, admin: Option<&str>| {
+        pairing::create_vault(
+            &p.files,
+            p.root(),
+            p.data_root.path(),
+            &addr,
+            admin,
+            "laptop",
+        )
+    };
+    create(&a, Some(ADMIN)).unwrap();
+    for admin in [None, Some(ADMIN)] {
+        match create(&b, admin) {
+            Err(PairError::Rejected(why)) => assert!(why.contains("limit"), "{why}"),
+            // Without the token a closed server still asks for it first.
+            Err(PairError::NeedsAdminToken) if admin.is_none() => {}
+            other => panic!("{other:?}"),
+        }
+    }
 }
 
 #[test]

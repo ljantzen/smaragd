@@ -37,6 +37,17 @@ this file.
   versions that can still win are buffered.
 - Sync server: the example Docker commands and `docker-compose.yml` publish the port on
   localhost only, so the plain-HTTP port isn't exposed to the network by default.
+- Sync: a pasted pairing ticket is no longer used straight away. The Sync panel shows
+  which server it points to, warns if it uses plain HTTP, and joins only once you
+  confirm. Tickets whose server address could be misread (like
+  `trusted.example@other.example`) are rejected, and the Settings host and path fields
+  follow the same rules.
+- Sync server: refuses to start with an admin token shorter than 16 characters.
+- Sync server: the vault quota now also counts 256 bytes for each stored update and
+  document, so floods of tiny updates can't fill the disk far beyond it; every vault's
+  usage is recomputed on first start. A new `SMARAGD_SYNC_MAX_VAULTS` setting (default
+  100, `0` for no limit) caps how many vaults a server holds. Creating a vault on a full
+  server now says so rather than asking for the admin token again.
 
 ## v1.3.2 — 2026-09-29
 

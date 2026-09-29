@@ -119,7 +119,7 @@ pub fn run(args: &[String], config: &Config, now: i64, out: &mut dyn Write) -> R
             let frag = db::fragmentation(&conn).map_err(db_err)?;
             writeln!(
                 out,
-                "{} vault(s), {} of ciphertext; database file {} ({} reclaimable)",
+                "{} vault(s), {} stored (quota accounting); database file {} ({} reclaimable)",
                 vaults.len(),
                 human_bytes(total),
                 human_bytes(frag.total_bytes),

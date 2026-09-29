@@ -107,6 +107,10 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if let Some(problem) = config.admin_token_problem() {
+        eprintln!("configuration error: {problem}");
+        return ExitCode::FAILURE;
+    }
     if !config.allow_open_registration && config.admin_token.is_none() {
         tracing::warn!(
             "open registration is off and no SMARAGD_SYNC_ADMIN_TOKEN is set: \

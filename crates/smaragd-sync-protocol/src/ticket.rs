@@ -24,6 +24,34 @@ pub struct ServerAddr {
 }
 
 impl ServerAddr {
+    /// Whether `host` is a bare host name or IP address — letters, digits, `-`, `.`,
+    /// or an IPv6 literal's hex digits and `:` (optionally bracketed). Anything else
+    /// (`@`, `/`, `?`, `#`, `%`, backslashes, spaces...) could make [`Self::base_url`] point
+    /// somewhere other than the host a person reads, e.g. `trusted.com@evil.example`.
+    pub fn is_plain_host(host: &str) -> bool {
+        let bare = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host);
+        !bare.is_empty()
+            && bare.len() <= 253
+            && bare
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':'))
+    }
+
+    /// Whether `path` is a plain reverse-proxy prefix: path segments of letters,
+    /// digits, `-`, `_`, `.` and `~`, no `..`, and nothing that would end the path
+    /// (`?`, `#`) or smuggle in anything else.
+    pub fn is_plain_path(path: &str) -> bool {
+        path.trim_matches('/').split('/').all(|segment| {
+            segment != ".."
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~'))
+        })
+    }
+
     /// `scheme://host:port[/path]` with no trailing slash, ready to have
     /// [`crate::api::API_PREFIX`] and an endpoint appended.
     pub fn base_url(&self) -> String {
@@ -62,6 +90,8 @@ pub enum TicketError {
     Postcard(#[from] postcard::Error),
     #[error("pairing code is from an unsupported format version {0}")]
     UnsupportedVersion(u8),
+    #[error("pairing code names a malformed server address")]
+    BadServer,
 }
 
 impl SyncTicket {
@@ -84,6 +114,11 @@ impl SyncTicket {
         let ticket: Self = postcard::from_bytes(&bytes)?;
         if ticket.version != CURRENT_VERSION {
             return Err(TicketError::UnsupportedVersion(ticket.version));
+        }
+        if !ServerAddr::is_plain_host(&ticket.server.host)
+            || !ServerAddr::is_plain_path(&ticket.server.path)
+        {
+            return Err(TicketError::BadServer);
         }
         Ok(ticket)
     }
@@ -145,6 +180,40 @@ mod tests {
             SyncTicket::decode(&code),
             Err(TicketError::UnsupportedVersion(v)) if v == CURRENT_VERSION + 1
         ));
+    }
+
+    #[test]
+    fn a_ticket_with_a_deceptive_server_address_is_rejected() {
+        for (host, path) in [
+            ("trusted.example@evil.example", ""),
+            ("evil.example/trusted.example", ""),
+            ("evil.example#trusted.example", ""),
+            ("evil.example?x", ""),
+            ("evil example", ""),
+            ("", ""),
+            ("sync.example.com", "a/../../x"),
+            ("sync.example.com", "x?y"),
+            ("sync.example.com", "@evil.example"),
+        ] {
+            let mut t = ticket();
+            t.server.host = host.into();
+            t.server.path = path.into();
+            assert!(
+                matches!(SyncTicket::decode(&t.encode()), Err(TicketError::BadServer)),
+                "{host:?} {path:?}"
+            );
+        }
+        for (host, path) in [
+            ("sync.example.com", ""),
+            ("192.168.1.10", "smaragd"),
+            ("::1", "/a/b-c_d.e~f/"),
+            ("[fe80::1]", ""),
+        ] {
+            let mut t = ticket();
+            t.server.host = host.into();
+            t.server.path = path.into();
+            assert!(SyncTicket::decode(&t.encode()).is_ok(), "{host:?} {path:?}");
+        }
     }
 
     #[test]

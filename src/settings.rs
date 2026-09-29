@@ -684,10 +684,16 @@ impl Settings {
         if host.is_empty() {
             return Some("Enter the sync server's host name in Settings > Sync.");
         }
-        if host.contains("://") || host.contains('/') || host.contains(char::is_whitespace) {
+        if !smaragd_sync_protocol::ticket::ServerAddr::is_plain_host(host) {
             return Some(
                 "The sync server's host should be just a name like sync.example.com \
                  (no http://, no path) — use the Path field for a sub-path.",
+            );
+        }
+        if !smaragd_sync_protocol::ticket::ServerAddr::is_plain_path(self.sync_server_path.trim()) {
+            return Some(
+                "The sync server's path should be a plain prefix like smaragd \
+                 (letters, digits, -, _ and . only).",
             );
         }
         if self.sync_passphrase.0.is_empty() {

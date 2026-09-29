@@ -35,7 +35,7 @@ pub(super) enum PromptAction {
     /// Join a collaboration session using the pasted connection code (see
     /// `start_collab_join`).
     JoinCollabSession,
-    /// Join a sync vault using the pasted pairing ticket (see `sync_join_with_ticket`).
+    /// Review a pasted pairing ticket before joining its vault (see `sync_join_with_ticket`).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     SyncJoinTicket,
     /// Create a sync vault on a server that needs its admin token (see

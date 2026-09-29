@@ -104,7 +104,28 @@ DELETE FROM pairing_codes;
 ALTER TABLE pairing_codes ADD COLUMN created_by TEXT REFERENCES devices(id) ON DELETE CASCADE;
 ";
 
-const SCHEMA_VERSION: i64 = 3;
+/// What one stored update row costs against the quota beyond its blob: three UUID
+/// strings, the sequence number, timestamps, SQLite's record header and the primary-key
+/// index entry come to about this. Without it a flood of tiny pushes could fill the disk
+/// several times over the quota while barely registering.
+pub const UPDATE_OVERHEAD_BYTES: u64 = 256;
+/// The same for one document row (charged once, when a document first appears).
+pub const DOC_OVERHEAD_BYTES: u64 = 256;
+
+/// v4 starts charging [`UPDATE_OVERHEAD_BYTES`] and [`DOC_OVERHEAD_BYTES`], so every
+/// vault's `bytes_used` is recomputed from what it actually stores. A vault close to its
+/// quota may find itself over it; pushes then get `507` until its clients compact.
+fn migrate_v3_to_v4() -> String {
+    format!(
+        "UPDATE vaults SET bytes_used =
+            COALESCE((SELECT SUM(length(blob)) + COUNT(*) * {UPDATE_OVERHEAD_BYTES}
+                      FROM updates WHERE updates.vault_id = vaults.id), 0)
+          + COALESCE((SELECT SUM(COALESCE(length(snapshot_blob), 0)) + COUNT(*) * {DOC_OVERHEAD_BYTES}
+                      FROM docs WHERE docs.vault_id = vaults.id), 0);"
+    )
+}
+
+const SCHEMA_VERSION: i64 = 4;
 
 fn init(conn: Connection) -> rusqlite::Result<Connection> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
@@ -127,6 +148,12 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
     if version < 3 {
         conn.execute_batch(&format!(
             "BEGIN; {MIGRATE_V2_TO_V3} PRAGMA user_version = 3; COMMIT;"
+        ))?;
+    }
+    if version < 4 {
+        conn.execute_batch(&format!(
+            "BEGIN; {} PRAGMA user_version = 4; COMMIT;",
+            migrate_v3_to_v4()
         ))?;
     }
     Ok(conn)
@@ -242,12 +269,30 @@ pub fn create_vault(
     device_name: &str,
     now: i64,
 ) -> Result<NewDevice, HttpError> {
+    create_vault_within(conn, salt, device_name, None, now)
+}
+
+/// [`create_vault`], refused with [`HttpError::VaultLimit`] if the server already holds
+/// `max_vaults`.
+pub fn create_vault_within(
+    conn: &mut Connection,
+    salt: &[u8],
+    device_name: &str,
+    max_vaults: Option<u64>,
+    now: i64,
+) -> Result<NewDevice, HttpError> {
     let vault = VaultInfo {
         vault_id: VaultId(Uuid::new_v4()),
         kdf_salt: salt.to_vec(),
         key_version: INITIAL_KEY_VERSION,
     };
     let tx = conn.transaction()?;
+    if let Some(max) = max_vaults {
+        let count: i64 = tx.query_row("SELECT COUNT(*) FROM vaults", [], |row| row.get(0))?;
+        if count.max(0) as u64 >= max {
+            return Err(HttpError::VaultLimit(max));
+        }
+    }
     tx.execute(
         "INSERT INTO vaults (id, kdf_salt, key_version, created_at, last_active)
          VALUES (?1, ?2, ?3, ?4, ?4)",
@@ -447,10 +492,20 @@ pub fn push_update(
     now: i64,
 ) -> Result<u64, HttpError> {
     let tx = conn.transaction()?;
-    if bytes_used(&tx, vault)?.saturating_add(blob.len() as u64) > quota {
+    let (v, d) = (vault.to_string(), doc.to_string());
+    let new_doc = tx
+        .query_row(
+            "SELECT 1 FROM docs WHERE vault_id = ?1 AND doc_id = ?2",
+            params![v, d],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_none();
+    let cost =
+        blob.len() as u64 + UPDATE_OVERHEAD_BYTES + if new_doc { DOC_OVERHEAD_BYTES } else { 0 };
+    if bytes_used(&tx, vault)?.saturating_add(cost) > quota {
         return Err(HttpError::QuotaExceeded);
     }
-    let (v, d) = (vault.to_string(), doc.to_string());
     tx.execute(
         "INSERT INTO docs (vault_id, doc_id, latest_seq) VALUES (?1, ?2, 0)
          ON CONFLICT (vault_id, doc_id) DO NOTHING",
@@ -469,7 +524,7 @@ pub fn push_update(
     )?;
     tx.execute(
         "UPDATE vaults SET bytes_used = bytes_used + ?2, last_active = ?3 WHERE id = ?1",
-        params![v, blob.len() as i64, now],
+        params![v, cost as i64, now],
     )?;
     tx.commit()?;
     Ok(seq as u64)
@@ -568,8 +623,10 @@ pub fn put_snapshot(
         return Ok(());
     }
     let freed: i64 = tx.query_row(
-        "SELECT COALESCE(SUM(length(blob)), 0) FROM updates
-         WHERE vault_id = ?1 AND doc_id = ?2 AND seq <= ?3",
+        &format!(
+            "SELECT COALESCE(SUM(length(blob)) + COUNT(*) * {UPDATE_OVERHEAD_BYTES}, 0)
+             FROM updates WHERE vault_id = ?1 AND doc_id = ?2 AND seq <= ?3"
+        ),
         params![v, d, upto as i64],
         |row| row.get(0),
     )?;
@@ -872,15 +929,63 @@ mod tests {
     fn the_quota_caps_pushes_and_compaction_frees_space() {
         let (mut conn, device) = setup();
         let (v, dev) = (device.vault.vault_id, device.device_id);
-        push_update(&mut conn, v, doc(1), dev, &[0; 60], 100, NOW).unwrap();
+        let row = UPDATE_OVERHEAD_BYTES;
+        let quota = DOC_OVERHEAD_BYTES + row + 100;
+        push_update(&mut conn, v, doc(1), dev, &[0; 60], quota, NOW).unwrap();
+        assert_eq!(bytes_used(&conn, v).unwrap(), DOC_OVERHEAD_BYTES + row + 60);
         assert!(matches!(
-            push_update(&mut conn, v, doc(1), dev, &[0; 60], 100, NOW),
+            push_update(&mut conn, v, doc(1), dev, &[0; 60], quota, NOW),
             Err(HttpError::QuotaExceeded)
         ));
-        // Compacting 60 bytes down to a 10-byte snapshot leaves room again.
-        put_snapshot(&mut conn, v, doc(1), 1, &[1; 10], 100).unwrap();
-        push_update(&mut conn, v, doc(1), dev, &[0; 60], 100, NOW).unwrap();
-        assert_eq!(bytes_used(&conn, v).unwrap(), 70);
+        // Compacting the 60-byte update into a 10-byte snapshot frees the update and its
+        // row overhead, leaving room again.
+        put_snapshot(&mut conn, v, doc(1), 1, &[1; 10], quota).unwrap();
+        assert_eq!(bytes_used(&conn, v).unwrap(), DOC_OVERHEAD_BYTES + 10);
+        push_update(&mut conn, v, doc(1), dev, &[0; 60], quota, NOW).unwrap();
+        assert_eq!(bytes_used(&conn, v).unwrap(), DOC_OVERHEAD_BYTES + row + 70);
+    }
+
+    #[test]
+    fn tiny_pushes_and_many_documents_are_charged_for_their_rows() {
+        let (mut conn, device) = setup();
+        let (v, dev) = (device.vault.vault_id, device.device_id);
+        for n in 0..100 {
+            push_update(&mut conn, v, doc(n % 10), dev, &[0; 42], BIG, NOW).unwrap();
+        }
+        assert_eq!(
+            bytes_used(&conn, v).unwrap(),
+            100 * (42 + UPDATE_OVERHEAD_BYTES) + 10 * DOC_OVERHEAD_BYTES
+        );
+        // 100 KiB of quota holds far fewer than 100 KiB / 42 of them.
+        let (mut conn, device) = setup();
+        let (v, dev) = (device.vault.vault_id, device.device_id);
+        let stored = (0..10_000)
+            .take_while(|&n| {
+                push_update(&mut conn, v, doc(n), dev, &[0; 42], 100 * 1024, NOW).is_ok()
+            })
+            .count();
+        assert!(stored < 200, "{stored} tiny documents fit in 100 KiB");
+    }
+
+    #[test]
+    fn a_v3_database_has_its_usage_recomputed_with_row_overhead() {
+        let (mut conn, device) = setup();
+        let (v, dev) = (device.vault.vault_id, device.device_id);
+        push_update(&mut conn, v, doc(1), dev, &[0; 50], BIG, NOW).unwrap();
+        push_update(&mut conn, v, doc(1), dev, &[0; 30], BIG, NOW).unwrap();
+        put_snapshot(&mut conn, v, doc(1), 1, &[0; 20], BIG).unwrap();
+        push_update(&mut conn, v, doc(2), dev, &[0; 5], BIG, NOW).unwrap();
+        let expected = bytes_used(&conn, v).unwrap();
+        // As a v3 server would have left it: blob bytes only.
+        conn.execute_batch("UPDATE vaults SET bytes_used = 55; PRAGMA user_version = 3;")
+            .unwrap();
+
+        let conn = init(conn).unwrap();
+        assert_eq!(bytes_used(&conn, v).unwrap(), expected);
+        assert_eq!(
+            expected,
+            30 + 20 + 5 + 2 * UPDATE_OVERHEAD_BYTES + 2 * DOC_OVERHEAD_BYTES
+        );
     }
 
     #[test]
@@ -1026,6 +1131,19 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM pairing_codes", [], |r| r.get(0))
             .unwrap();
         assert_eq!(codes, 0);
+    }
+
+    #[test]
+    fn the_vault_limit_refuses_one_more_vault() {
+        let mut conn = open_in_memory().unwrap();
+        for _ in 0..2 {
+            create_vault_within(&mut conn, &SALT, "a", Some(2), NOW).unwrap();
+        }
+        assert!(matches!(
+            create_vault_within(&mut conn, &SALT, "a", Some(2), NOW),
+            Err(HttpError::VaultLimit(2))
+        ));
+        create_vault_within(&mut conn, &SALT, "a", None, NOW).unwrap();
     }
 
     #[test]

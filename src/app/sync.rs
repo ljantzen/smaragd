@@ -87,6 +87,8 @@ pub(super) struct SyncState {
     /// paired with (see `DeviceCredentials::trusted_link`). Shown whenever there's no
     /// other notice, since a completed pass clears `notice`.
     link_warning: Option<String>,
+    /// A pasted pairing ticket the user hasn't confirmed yet, and its server as shown.
+    pending_join: Option<(SyncTicket, String)>,
     ticket: Option<String>,
     devices: Option<Vec<DeviceInfo>>,
     /// Documents with a change too large to upload and files over the server's size
@@ -111,6 +113,7 @@ impl Default for SyncState {
             task: None,
             notice: None,
             link_warning: None,
+            pending_join: None,
             ticket: None,
             devices: None,
             too_large: Vec::new(),
@@ -237,6 +240,17 @@ fn too_large_to_download_message(files: &[String]) -> String {
     )
 }
 
+/// `host:port[/path]` of a ticket's server, as the join confirmation shows it.
+fn ticket_server_label(ticket: &SyncTicket) -> String {
+    let server = &ticket.server;
+    let path = server.path.trim_matches('/');
+    if path.is_empty() {
+        format!("{}:{}", server.host, server.port)
+    } else {
+        format!("{}:{}/{path}", server.host, server.port)
+    }
+}
+
 /// `path` relative to `root`, `/`-separated — the form the engine's held set uses.
 fn relative_key(root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(root).ok()?;
@@ -284,6 +298,12 @@ impl SyncState {
             now_unix: unix_now(),
             notice: self.notice.as_deref().or(self.link_warning.as_deref()),
             sync_files,
+            pending_join: self.pending_join.as_ref().map(|(ticket, server)| {
+                crate::ui::sync_panel::PendingJoin {
+                    server,
+                    plain_http: !ticket.server.use_tls,
+                }
+            }),
         }
     }
 
@@ -298,6 +318,7 @@ impl SyncState {
         self.activity = None;
         self.notice = None;
         self.link_warning = None;
+        self.pending_join = None;
         self.ticket = None;
         self.devices = None;
         self.held_sent.clear();
@@ -706,10 +727,31 @@ impl SmaragdApp {
         });
     }
 
-    /// The Join Vault prompt was confirmed with a pasted ticket.
-    pub(super) fn sync_join_with_ticket(&mut self, ctx: &egui::Context, pasted: &str) {
-        let Ok(ticket) = SyncTicket::decode(pasted) else {
-            self.sync.notice = Some("That doesn't look like a pairing ticket.".into());
+    /// The Join Vault prompt was confirmed with a pasted ticket. Nothing is sent yet: the
+    /// ticket names the server to join, so the Sync panel shows it (and warns about plain
+    /// HTTP) and waits for [`Self::sync_join_confirmed`].
+    pub(super) fn sync_join_with_ticket(&mut self, _ctx: &egui::Context, pasted: &str) {
+        match SyncTicket::decode(pasted) {
+            Ok(ticket) => {
+                let server = ticket_server_label(&ticket);
+                self.sync.notice = None;
+                self.sync.pending_join = Some((ticket, server));
+            }
+            Err(smaragd_sync_protocol::ticket::TicketError::BadServer) => {
+                self.sync.notice = Some(
+                    "That pairing ticket names a malformed server address, so it wasn't used."
+                        .into(),
+                );
+            }
+            Err(_) => {
+                self.sync.notice = Some("That doesn't look like a pairing ticket.".into());
+            }
+        }
+    }
+
+    /// The user confirmed the pending ticket's server: join its vault.
+    fn sync_join_confirmed(&mut self, ctx: &egui::Context) {
+        let Some((ticket, _)) = self.sync.pending_join.take() else {
             return;
         };
         let (Some(project), Some(data)) = (self.project.as_ref(), self.sync_data_root()) else {
@@ -762,6 +804,8 @@ impl SmaragdApp {
                     ),
                 });
             }
+            SyncPanelEvent::ConfirmJoin => self.sync_join_confirmed(ctx),
+            SyncPanelEvent::CancelJoin => self.sync.pending_join = None,
             SyncPanelEvent::SyncNow => {
                 if let Some(runner) = &self.sync.runner {
                     runner.sync_now();
@@ -1041,6 +1085,44 @@ mod tests {
         app.sync
             .load_pairing(&*store, dir.path(), Some(data.path().to_path_buf()));
         assert_eq!(app.sync.link_warning, None);
+    }
+
+    #[test]
+    fn a_pasted_ticket_waits_for_the_user_to_confirm_its_server() {
+        use smaragd_sync_protocol::ticket::ServerAddr;
+        let (_dir, mut app) = app_with_project();
+        let ctx = egui::Context::default();
+        let ticket = SyncTicket::new(
+            ServerAddr {
+                host: "sync.example.com".into(),
+                port: 8080,
+                use_tls: false,
+                path: "smaragd".into(),
+            },
+            VAULT,
+            "ABCD-EFGH-JK23".into(),
+        );
+        app.sync_join_with_ticket(&ctx, &ticket.encode());
+        assert!(app.sync.task.is_none(), "nothing is sent before confirming");
+        let settings = app.settings.clone();
+        let pending = app
+            .sync
+            .panel_data(&settings, true, false)
+            .pending_join
+            .expect("the panel asks first");
+        assert_eq!(pending.server, "sync.example.com:8080/smaragd");
+        assert!(pending.plain_http);
+
+        app.handle_sync_panel_event(&ctx, SyncPanelEvent::CancelJoin);
+        assert!(app.sync.pending_join.is_none());
+        assert!(app.sync.task.is_none());
+
+        let mut deceptive = ticket.clone();
+        deceptive.server.host = "sync.example.com@evil.example".into();
+        let code = bs58::encode(postcard::to_stdvec(&deceptive).unwrap()).into_string();
+        app.sync_join_with_ticket(&ctx, &code);
+        assert!(app.sync.pending_join.is_none());
+        assert!(app.sync.notice.as_deref().unwrap().contains("malformed"));
     }
 
     #[test]

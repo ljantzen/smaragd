@@ -35,12 +35,22 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A connection to one sync server, optionally authenticated as one device.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HttpClient {
     agent: ureq::Agent,
     /// `scheme://host:port[/path]/v1`
     api_base: String,
     token: Option<String>,
+}
+
+/// By hand, so the bearer token never lands in a log or panic message.
+impl std::fmt::Debug for HttpClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpClient")
+            .field("api_base", &self.api_base)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish_non_exhaustive()
+    }
 }
 
 enum Body<'a> {
@@ -380,6 +390,16 @@ mod tests {
             elsewhere.accept().is_err(),
             "the redirect target was contacted"
         );
+    }
+
+    #[test]
+    fn debug_output_never_shows_the_token() {
+        let client = HttpClient::new(&closed_port_server()).with_token("sst_supersecret");
+        let transport = client.clone().transport(VaultId(Uuid::from_u128(1)));
+        for shown in [format!("{client:?}"), format!("{transport:?}")] {
+            assert!(!shown.contains("supersecret"), "{shown}");
+            assert!(shown.contains("<redacted>"), "{shown}");
+        }
     }
 
     #[test]
