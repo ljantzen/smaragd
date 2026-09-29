@@ -5,6 +5,11 @@ this file.
 
 ## Unreleased
 
+- Fixed the sync server's Docker image not being published for v1.3.0: the release
+  didn't update the end-to-end tests' own lockfile, so the server workflow's checks
+  failed before publishing. The image is published from this release on; the app
+  itself is unchanged from v1.3.0.
+
 ## v1.3.0 — 2026-09-29
 
 - Added **Search Everywhere**: tap `Shift` twice (or press `Ctrl+Shift+A`, or use `File > Search Everywhere…`) to search documents by name, text inside documents, actions by name, and settings from one box. `Tab` switches between the All, Documents, Text, Actions, and Settings tabs. You can turn the double-Shift gesture off under Settings > Shortcuts.
