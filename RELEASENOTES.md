@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.3.1 — 2026-09-29
+
 - Fixed the sync server's Docker image not being published for v1.3.0: the release
   didn't update the end-to-end tests' own lockfile, so the server workflow's checks
   failed before publishing. The image is published from this release on; the app
