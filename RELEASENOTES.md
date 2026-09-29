@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.3.4 — 2026-09-29
+
 - Fixed the Linux AppImage panicking on start (`Library libxkbcommon-x11.so could not
   be loaded`) on systems that don't already have it, or `libEGL`/`libGL`, installed.
   winit and glutin load these at runtime via `dlopen` rather than linking them, so the
