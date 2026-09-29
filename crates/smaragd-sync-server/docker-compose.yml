@@ -8,8 +8,8 @@
 # same across restarts, upgrades and shells. Changing it later only affects creating
 # new vaults; existing vaults and paired devices keep working.
 #
-# Plain HTTP on :8080; put a TLS-terminating reverse proxy in front for anything
-# beyond your own machine (see README.md). All state lives in the `sync-data` volume.
+# Plain HTTP on localhost:8080; put a TLS-terminating reverse proxy in front for
+# anything beyond your own machine (see README.md). All state lives in the `sync-data` volume.
 services:
   smaragd-sync:
     # Build locally from the repo root ...
@@ -20,7 +20,12 @@ services:
     image: ghcr.io/ljantzen/smaragd-sync-server:latest
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      # Localhost only: plain HTTP carries device tokens and the admin token in the clear,
+      # so other machines should come through a TLS reverse proxy on this host. To serve a
+      # trusted LAN without TLS, use that network's address (e.g. "192.168.1.10:8080:8080");
+      # "8080:8080" exposes it on every interface. A proxy running in another container on
+      # the same Compose network reaches smaragd-sync:8080 without any published port.
+      - "127.0.0.1:8080:8080"
     environment:
       # Needed to create vaults while open registration is off (recommended). Read from .env.
       SMARAGD_SYNC_ADMIN_TOKEN: ${SMARAGD_SYNC_ADMIN_TOKEN:?set SMARAGD_SYNC_ADMIN_TOKEN}

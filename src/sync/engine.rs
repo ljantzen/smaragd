@@ -163,6 +163,10 @@ pub struct SyncReport {
     /// Binary files over the server's advertised size limit (`SMARAGD_SYNC_MAX_FILE_MB`),
     /// left unsynced on this device. Project-relative paths.
     pub files_over_limit: Vec<String>,
+    /// Binary files with a newer version on the server that is over the size limit (the
+    /// server's, capped at `binaries::MAX_FILE_BYTES_CEILING`), so it isn't downloaded:
+    /// a file is assembled in memory. Project-relative paths.
+    pub files_too_large_to_download: Vec<String>,
 }
 
 impl SyncReport {
@@ -3074,6 +3078,47 @@ mod tests {
             2,
             "one entry per file, no duplicate for the adopted one"
         );
+    }
+
+    #[test]
+    fn a_version_over_the_limit_is_not_downloaded() {
+        let server = MemoryServer::default();
+        let mut a = Device::with_files(&server);
+        let mut b = Device::with_files(&server);
+        let small = binary(5_000, 21);
+        a.write_bin("scan.pdf", &small);
+        converge(&mut [&mut a, &mut b]);
+        assert!(b.read_bin("scan.pdf") == small);
+
+        // Uploaded while the server advertised no limit, then the operator set one.
+        let big = binary(30_000, 22);
+        a.write_bin("scan.pdf", &big);
+        a.sync();
+        server.set_max_file_bytes(Some(10_000));
+        let report = b.sync();
+        assert_eq!(
+            report.files_too_large_to_download,
+            vec!["scan.pdf".to_string()]
+        );
+        assert!(
+            b.read_bin("scan.pdf") == small,
+            "the copy here stays as it was"
+        );
+
+        // Once it fits again, the next version comes through as usual.
+        server.set_max_file_bytes(None);
+        let fits = binary(8_000, 23);
+        a.write_bin("scan.pdf", &fits);
+        converge(&mut [&mut a, &mut b]);
+        assert!(b.read_bin("scan.pdf") == fits);
+    }
+
+    #[test]
+    fn the_client_caps_files_even_when_the_server_advertises_no_limit() {
+        use super::binaries::{MAX_FILE_BYTES_CEILING, effective_file_limit};
+        assert_eq!(effective_file_limit(None), MAX_FILE_BYTES_CEILING);
+        assert_eq!(effective_file_limit(Some(10)), 10);
+        assert_eq!(effective_file_limit(Some(u64::MAX)), MAX_FILE_BYTES_CEILING);
     }
 
     #[test]

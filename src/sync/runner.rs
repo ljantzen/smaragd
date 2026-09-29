@@ -35,8 +35,8 @@ pub enum HaltReason {
 pub enum SyncEvent {
     /// A pass has started.
     Syncing,
-    /// A pass finished cleanly.
-    Synced(SyncReport),
+    /// A pass finished cleanly (boxed: a report is far bigger than the other events).
+    Synced(Box<SyncReport>),
     /// The server can't be reached; the next pass retries.
     Offline(String),
     /// A pass failed for a reason that may pass; the next pass retries.
@@ -114,7 +114,7 @@ impl SyncRunner {
                     if due {
                         emit(SyncEvent::Syncing);
                         match engine.sync_once(&*transport) {
-                            Ok(report) => emit(SyncEvent::Synced(report)),
+                            Ok(report) => emit(SyncEvent::Synced(Box::new(report))),
                             Err(error) => {
                                 let event = classify(error);
                                 let halted = matches!(event, SyncEvent::Halted(_));

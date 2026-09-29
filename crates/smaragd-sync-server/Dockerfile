@@ -7,8 +7,12 @@
 #
 # Run:
 #
-#   docker run -d --name smaragd-sync -p 8080:8080 -v smaragd-sync-data:/data \
-#       -e SMARAGD_SYNC_ADMIN_TOKEN=change-me smaragd-sync-server
+#   TOKEN="$(openssl rand -hex 24)"; echo "$TOKEN"    # keep it: it creates vaults
+#   docker run -d --name smaragd-sync -p 127.0.0.1:8080:8080 -v smaragd-sync-data:/data \
+#       -e SMARAGD_SYNC_ADMIN_TOKEN="$TOKEN" smaragd-sync-server
+#
+# (localhost only: it speaks plain HTTP, so put a TLS reverse proxy in front for other
+# machines — see the README)
 #
 # See crates/smaragd-sync-server/README.md for configuration and TLS.
 

@@ -83,6 +83,10 @@ pub(super) struct SyncState {
     held_sent: BTreeSet<String>,
     task: Option<Receiver<TaskOutcome>>,
     notice: Option<String>,
+    /// Set while the project's `sync.json` disagrees with the server this device was
+    /// paired with (see `DeviceCredentials::trusted_link`). Shown whenever there's no
+    /// other notice, since a completed pass clears `notice`.
+    link_warning: Option<String>,
     ticket: Option<String>,
     devices: Option<Vec<DeviceInfo>>,
     /// Documents with a change too large to upload and files over the server's size
@@ -106,6 +110,7 @@ impl Default for SyncState {
             held_sent: BTreeSet::new(),
             task: None,
             notice: None,
+            link_warning: None,
             ticket: None,
             devices: None,
             too_large: Vec::new(),
@@ -220,6 +225,18 @@ fn over_limit_message(files: &[String]) -> String {
     )
 }
 
+fn too_large_to_download_message(files: &[String]) -> String {
+    let which = match files {
+        [one] => format!("A newer version of \u{201c}{one}\u{201d} is"),
+        many => format!("Newer versions of {} files are", many.len()),
+    };
+    format!(
+        "{which} larger than this device downloads through this sync server, so the copy \
+         here stays as it is. Whoever runs the server can raise the limit \
+         (SMARAGD_SYNC_MAX_FILE_MB)."
+    )
+}
+
 /// `path` relative to `root`, `/`-separated — the form the engine's held set uses.
 fn relative_key(root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(root).ok()?;
@@ -265,7 +282,7 @@ impl SyncState {
             devices: self.devices.as_deref(),
             own_device: self.credentials.as_ref().map(|c| c.device_id),
             now_unix: unix_now(),
-            notice: self.notice.as_deref(),
+            notice: self.notice.as_deref().or(self.link_warning.as_deref()),
             sync_files,
         }
     }
@@ -280,6 +297,7 @@ impl SyncState {
         self.phase = Phase::Starting;
         self.activity = None;
         self.notice = None;
+        self.link_warning = None;
         self.ticket = None;
         self.devices = None;
         self.held_sent.clear();
@@ -302,11 +320,30 @@ impl SyncState {
     ) {
         self.link = ProjectLink::load(store, root);
         self.credentials = None;
-        if let (Some(link), Some(data)) = (&self.link, data) {
+        self.link_warning = None;
+        if let (Some(link), Some(data)) = (self.link.clone(), data) {
             let files: std::sync::Arc<dyn crate::project::store::ProjectStore> =
                 crate::project::store::native_store();
-            let state = DirStateStore::new(files, state_dir(&data, link.vault_id));
-            self.credentials = DeviceCredentials::load(&state);
+            let mut state = DirStateStore::new(files, state_dir(&data, link.vault_id));
+            if let Some(mut credentials) = DeviceCredentials::load(&state) {
+                // The link file is part of the project, so anyone who can edit the project
+                // can rewrite it: the server and salt come from the credentials instead.
+                let trusted = credentials.trusted_link(&link);
+                if trusted.newly_bound {
+                    let _ = credentials.save(&mut state);
+                }
+                if trusted.file_differs {
+                    self.link_warning = Some(format!(
+                        "This project's sync settings (.smaragd/sync.json) name a different \
+                         server than this device was paired with. Smaragd keeps syncing with \
+                         {}, the server this device was paired with. If the vault really \
+                         moved, choose Stop Syncing This Project and pair again.",
+                        pairing::describe(&trusted.link)
+                    ));
+                }
+                self.link = Some(trusted.link);
+                self.credentials = Some(credentials);
+            }
             // Best effort: a failure here mustn't stop the project from syncing.
             let _ = DeviceCredentials::make_private(&state);
         }
@@ -427,7 +464,7 @@ impl SmaragdApp {
                         self.sync.phase = Phase::Syncing;
                     }
                 }
-                SyncEvent::Synced(report) => self.sync_handle_report(report),
+                SyncEvent::Synced(report) => self.sync_handle_report(*report),
                 SyncEvent::Offline(reason) => self.sync.phase = Phase::Offline(reason),
                 SyncEvent::Failed(reason) => {
                     self.sync.phase = Phase::Offline(format!("The last pass failed: {reason}"));
@@ -471,10 +508,16 @@ impl SmaragdApp {
         if !report.files_over_limit.is_empty() {
             messages.push(over_limit_message(&report.files_over_limit));
         }
+        if !report.files_too_large_to_download.is_empty() {
+            messages.push(too_large_to_download_message(
+                &report.files_too_large_to_download,
+            ));
+        }
         let stuck: Vec<String> = report
             .too_large
             .into_iter()
             .chain(report.files_over_limit)
+            .chain(report.files_too_large_to_download)
             .collect();
         if stuck != self.sync.too_large {
             for message in &messages {
@@ -952,6 +995,55 @@ mod tests {
     }
 
     #[test]
+    fn a_tampered_link_file_never_sends_the_token_to_another_server() {
+        use crate::sync::link::{DeviceCredentials, ProjectLink};
+        use crate::sync::state::DirStateStore;
+        use smaragd_sync_protocol::ticket::ServerAddr;
+
+        let (dir, mut app) = app_with_project();
+        let data = tempfile::tempdir().unwrap();
+        let store = native_store();
+        let genuine = ProjectLink {
+            version: 1,
+            server: ServerAddr {
+                host: "sync.example.com".into(),
+                port: 443,
+                use_tls: true,
+                path: String::new(),
+            },
+            vault_id: VAULT,
+            kdf_salt: SALT.to_vec(),
+            key_version: 1,
+        };
+        let mut state = DirStateStore::new(store.clone(), state_dir(data.path(), VAULT));
+        DeviceCredentials::new(DeviceId(Uuid::new_v4()), "token".into(), &genuine)
+            .save(&mut state)
+            .unwrap();
+
+        // Someone with write access to the project points it at their own server.
+        let mut hostile = genuine.clone();
+        hostile.server.host = "attacker.example".into();
+        hostile.save(&*store, dir.path()).unwrap();
+
+        app.sync
+            .load_pairing(&*store, dir.path(), Some(data.path().to_path_buf()));
+        let link = app.sync.link.clone().expect("still paired");
+        assert_eq!(link.server, genuine.server);
+        assert_eq!(
+            app.sync.server_label.as_deref(),
+            Some("sync.example.com:443")
+        );
+        let warning = app.sync.link_warning.clone().expect("the user is told");
+        assert!(warning.contains("sync.json"), "{warning}");
+
+        // An untouched link loads quietly.
+        genuine.save(&*store, dir.path()).unwrap();
+        app.sync
+            .load_pairing(&*store, dir.path(), Some(data.path().to_path_buf()));
+        assert_eq!(app.sync.link_warning, None);
+    }
+
+    #[test]
     fn a_vault_is_not_created_with_a_weak_passphrase() {
         let (_dir, mut app) = app_with_project();
         app.settings.sync_server_host = "sync.example.com".into();
@@ -1144,17 +1236,19 @@ mod tests {
         app.settings.sync_enabled = true;
         app.settings.sync_server_host = "sync.example.com".into();
         app.settings.sync_passphrase = crate::settings::SecretString("wrong".into());
-        app.sync.link = Some(ProjectLink {
+        let link = ProjectLink {
             version: 1,
             server: app.settings.sync_server_addr().unwrap(),
             vault_id: VAULT,
             kdf_salt: SALT.to_vec(),
             key_version: 1,
-        });
-        app.sync.credentials = Some(DeviceCredentials {
-            device_id: DeviceId(Uuid::new_v4()),
-            token: "token".into(),
-        });
+        };
+        app.sync.credentials = Some(DeviceCredentials::new(
+            DeviceId(Uuid::new_v4()),
+            "token".into(),
+            &link,
+        ));
+        app.sync.link = Some(link);
         let signature = app.sync_signature();
         assert!(signature.is_some());
         app.sync.running_for = signature.clone();

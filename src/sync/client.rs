@@ -53,6 +53,10 @@ impl HttpClient {
     pub fn new(server: &ServerAddr) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            // The API never redirects, and following one would be a leak: ureq drops only
+            // `Authorization` on a redirect, so the admin token header (and every request
+            // body) would go wherever the `Location` says, even from https to http.
+            .max_redirects(0)
             .timeout_connect(Some(CONNECT_TIMEOUT))
             .timeout_global(Some(REQUEST_TIMEOUT))
             .build()
@@ -340,6 +344,41 @@ mod tests {
         assert_eq!(
             HttpClient::new(&server).api_base,
             "https://sync.example.com:8443/smaragd/v1"
+        );
+    }
+
+    #[test]
+    fn a_redirect_is_never_followed_so_the_admin_token_stays_put() {
+        use std::io::{Read as _, Write as _};
+        let elsewhere = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        elsewhere.set_nonblocking(true).unwrap();
+        let target = elsewhere.local_addr().unwrap();
+        let redirector = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = redirector.local_addr().unwrap().port();
+        let serve = std::thread::spawn(move || {
+            let (mut conn, _) = redirector.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = conn.read(&mut buf);
+            let reply = format!(
+                "HTTP/1.1 302 Found\r\nLocation: http://{target}/v1/vaults\r\n\
+                 Content-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            conn.write_all(reply.as_bytes()).unwrap();
+        });
+
+        let server = ServerAddr {
+            host: "127.0.0.1".into(),
+            port,
+            use_tls: false,
+            path: String::new(),
+        };
+        let result =
+            HttpClient::new(&server).delete_vault("admin-secret", VaultId(Uuid::from_u128(1)));
+        serve.join().unwrap();
+        assert!(result.is_err(), "a redirect is not a deleted vault");
+        assert!(
+            elsewhere.accept().is_err(),
+            "the redirect target was contacted"
         );
     }
 

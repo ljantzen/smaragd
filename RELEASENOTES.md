@@ -25,6 +25,18 @@ this file.
 - Sync: creating a vault needs a passphrase of at least 12 characters that isn't one
   repeated pattern or just a number; Settings warns about a weak one. Existing vaults
   keep working with the passphrase they were created with.
+- Sync: a device's token is only ever sent to the server that issued it. Previously,
+  whoever could change a project's `.smaragd/sync.json` (a git collaborator, a
+  restored backup) could point sync at their own server and receive the token and the
+  encrypted project. Existing pairings are bound to the server they use on first
+  launch; a `sync.json` that disagrees is ignored and the Sync panel explains.
+- Sync: the app never follows HTTP redirects from the sync server, which could have
+  sent the admin token elsewhere.
+- Sync: a synced file larger than the server's size limit (or 1 GiB when the server
+  sets none) is no longer downloaded or held in memory, and only the records of
+  versions that can still win are buffered.
+- Sync server: the example Docker commands and `docker-compose.yml` publish the port on
+  localhost only, so the plain-HTTP port isn't exposed to the network by default.
 
 ## v1.3.2 — 2026-09-29
 

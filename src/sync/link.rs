@@ -10,6 +10,13 @@
 //! - **[`DeviceCredentials`]** — this device's access token — live *outside* the project,
 //!   in the same OS data-dir store as the engine's CRDT state ([`state_dir`]).
 //!
+//! Because the link travels with the project, anyone who can change the project's files
+//! (a git collaborator, a restored backup) can rewrite it. So the link is never trusted
+//! with anything that matters: the credentials also record the server that issued the
+//! token and the vault's salt ([`TrustedVault`]), and [`DeviceCredentials::trusted_link`]
+//! always takes those from the credentials. A `sync.json` naming another server can't
+//! send the token — or the project, sealed under the passphrase — anywhere else.
+//!
 //! The encryption key is in neither: it is derived in memory from the passphrase in
 //! Settings and never written anywhere.
 
@@ -85,6 +92,43 @@ impl ProjectLink {
 pub struct DeviceCredentials {
     pub device_id: DeviceId,
     pub token: String,
+    /// The server that issued `token` and the vault's key-derivation facts, as this
+    /// device learned them when it paired. `None` only in credentials saved before this
+    /// was recorded; [`Self::trusted_link`] fills it in.
+    #[serde(default)]
+    pub vault: Option<TrustedVault>,
+}
+
+/// What the credentials, not the project's link file, say about the vault.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustedVault {
+    pub server: ServerAddr,
+    #[serde(with = "b64")]
+    pub kdf_salt: Vec<u8>,
+    pub key_version: u8,
+}
+
+impl TrustedVault {
+    fn of(link: &ProjectLink) -> Self {
+        Self {
+            server: link.server.clone(),
+            kdf_salt: link.kdf_salt.clone(),
+            key_version: link.key_version,
+        }
+    }
+}
+
+/// The link to sync with, as [`DeviceCredentials::trusted_link`] settles it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedLink {
+    /// The project's vault, with the server and salt taken from the credentials.
+    pub link: ProjectLink,
+    /// The project's `sync.json` names a different server or salt than this device was
+    /// paired with — ignored, but worth telling the user about.
+    pub file_differs: bool,
+    /// The credentials predate [`DeviceCredentials::vault`] and were just bound to the
+    /// link as it stands; save them.
+    pub newly_bound: bool,
 }
 
 impl std::fmt::Debug for DeviceCredentials {
@@ -97,6 +141,41 @@ impl std::fmt::Debug for DeviceCredentials {
 }
 
 impl DeviceCredentials {
+    /// Fresh credentials from pairing, bound to the server and vault they came from.
+    pub fn new(device_id: DeviceId, token: String, link: &ProjectLink) -> Self {
+        Self {
+            device_id,
+            token,
+            vault: Some(TrustedVault::of(link)),
+        }
+    }
+
+    /// The link to actually use for `from_project` (the project's `sync.json`): its vault,
+    /// but the server, salt and key version these credentials were issued with.
+    ///
+    /// Credentials saved before the server was recorded are bound to `from_project` as it
+    /// is now (trust on first use) — the best that can be done for them, and no worse than
+    /// before; the caller saves them so it happens only once.
+    pub fn trusted_link(&mut self, from_project: &ProjectLink) -> TrustedLink {
+        let newly_bound = self.vault.is_none();
+        let trusted = self
+            .vault
+            .get_or_insert_with(|| TrustedVault::of(from_project))
+            .clone();
+        let file_differs = trusted != TrustedVault::of(from_project);
+        TrustedLink {
+            link: ProjectLink {
+                version: CURRENT_VERSION,
+                server: trusted.server,
+                vault_id: from_project.vault_id,
+                kdf_salt: trusted.kdf_salt,
+                key_version: trusted.key_version,
+            },
+            file_differs,
+            newly_bound,
+        }
+    }
+
     pub fn load(state: &dyn StateStore) -> Option<Self> {
         let bytes = state.get(CREDENTIALS_KEY).ok()??;
         serde_json::from_slice(&bytes).ok()
@@ -224,13 +303,56 @@ mod tests {
     }
 
     #[test]
+    fn a_rewritten_link_file_cannot_redirect_the_token_or_change_the_salt() {
+        let genuine = link();
+        let mut creds = DeviceCredentials::new(DeviceId(Uuid::from_u128(3)), "t".into(), &genuine);
+
+        let untouched = creds.trusted_link(&genuine);
+        assert_eq!(untouched.link, genuine);
+        assert!(!untouched.file_differs && !untouched.newly_bound);
+
+        let mut hostile = genuine.clone();
+        hostile.server.host = "attacker.example".into();
+        hostile.server.use_tls = false;
+        hostile.kdf_salt = vec![0; 16];
+        let settled = creds.trusted_link(&hostile);
+        assert_eq!(
+            settled.link, genuine,
+            "the credentials' server and salt win"
+        );
+        assert!(settled.file_differs);
+        assert!(!settled.newly_bound);
+    }
+
+    #[test]
+    fn credentials_saved_before_binding_are_bound_on_first_use() {
+        // What an older version saved: no `vault` field.
+        let json = br#"{"device_id":"00000000-0000-0000-0000-000000000003","token":"t"}"#;
+        let mut store = MemoryStateStore::default();
+        store.put("device", json).unwrap();
+        let mut creds = DeviceCredentials::load(&store).expect("still readable");
+        assert_eq!(creds.vault, None);
+
+        let first = creds.trusted_link(&link());
+        assert!(first.newly_bound && !first.file_differs);
+        assert_eq!(first.link, link());
+
+        let mut moved = link();
+        moved.server.host = "elsewhere.example".into();
+        let later = creds.trusted_link(&moved);
+        assert_eq!(later.link, link(), "bound to what it first saw");
+        assert!(later.file_differs && !later.newly_bound);
+    }
+
+    #[test]
     fn credentials_round_trip_and_never_print_the_token() {
         let mut store = MemoryStateStore::default();
         assert_eq!(DeviceCredentials::load(&store), None);
-        let creds = DeviceCredentials {
-            device_id: DeviceId(Uuid::from_u128(3)),
-            token: "sst_supersecret".into(),
-        };
+        let creds = DeviceCredentials::new(
+            DeviceId(Uuid::from_u128(3)),
+            "sst_supersecret".into(),
+            &link(),
+        );
         creds.save(&mut store).unwrap();
         assert_eq!(DeviceCredentials::load(&store), Some(creds.clone()));
         assert!(!format!("{creds:?}").contains("supersecret"));

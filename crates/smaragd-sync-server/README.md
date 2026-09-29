@@ -58,11 +58,17 @@ Then, with Docker (image published to GHCR on each release, or build it yourself
 
 ```sh
 docker run -d --name smaragd-sync --restart unless-stopped \
-  -p 8080:8080 \
+  -p 127.0.0.1:8080:8080 \
   -v smaragd-sync-data:/data \
   -e SMARAGD_SYNC_ADMIN_TOKEN="$TOKEN" \
   ghcr.io/ljantzen/smaragd-sync-server:latest
 ```
+
+This publishes the port on **localhost only**: the server speaks plain HTTP, so other
+machines should reach it through a TLS reverse proxy on this host (see
+[TLS](#putting-it-behind-tls)). To use it without TLS on a network you trust, publish it
+on that network's address instead (e.g. `-p 192.168.1.10:8080:8080`), or on every
+interface with `-p 8080:8080`.
 
 The token is fixed when the container is created, so it survives restarts and
 reboots. When you recreate the container (for example to upgrade), pass the same
@@ -73,7 +79,8 @@ curl http://localhost:8080/v1/health
 # {"status":"ok","version":"0.1.0"}
 ```
 
-With Docker Compose, use [`docker-compose.yml`](docker-compose.yml) in this directory.
+With Docker Compose, use [`docker-compose.yml`](docker-compose.yml) in this directory
+(it also publishes the port on localhost only; its comments say how to change that).
 Write the token **once** into a `.env` file next to it — Compose reads that file on
 every `docker compose up`, so the token stays the same across restarts, upgrades and
 new shells:

@@ -98,12 +98,10 @@ pub fn create_vault(
             }
             (other, _) => other.into(),
         })?;
+    let link = ProjectLink::new(server.clone(), &created.vault);
     let paired = Paired {
-        link: ProjectLink::new(server.clone(), &created.vault),
-        credentials: DeviceCredentials {
-            device_id: created.device_id,
-            token: created.device_token,
-        },
+        credentials: DeviceCredentials::new(created.device_id, created.device_token, &link),
+        link,
     };
     persist(files, project_root, data_root, &paired)?;
     Ok(paired)
@@ -124,12 +122,10 @@ pub fn join_vault(
             "The server returned a different vault than the ticket names.".into(),
         ));
     }
+    let link = ProjectLink::new(ticket.server.clone(), &joined.vault);
     let paired = Paired {
-        link: ProjectLink::new(ticket.server.clone(), &joined.vault),
-        credentials: DeviceCredentials {
-            device_id: joined.device_id,
-            token: joined.device_token,
-        },
+        credentials: DeviceCredentials::new(joined.device_id, joined.device_token, &link),
+        link,
     };
     persist(files, project_root, data_root, &paired)?;
     Ok(paired)

@@ -126,7 +126,7 @@ Setting up a second device with a copy of the project (from a backup, a zip, a c
 
 **On your own devices nothing is encrypted by Sync.** Your Markdown files are plain files, and Smaragd's local sync bookkeeping (in its data folder, next to the backup folder) contains readable copies of your document text, including earlier revisions, so it deserves the same protection as the project itself — full-disk encryption is the right tool for that.
 
-Files on your side: a small, non-secret file `.smaragd/sync.json` in the project says which vault it belongs to (it's safe to commit or copy); this device's access token and sync bookkeeping live in Smaragd's data folder, **outside** the project, so they never end up in [git](git-integration.md) or a [backup](backups.md).
+Files on your side: a small, non-secret file `.smaragd/sync.json` in the project says which vault it belongs to (it's safe to commit or copy); this device's access token and sync bookkeeping live in Smaragd's data folder, **outside** the project, so they never end up in [git](git-integration.md) or a [backup](backups.md). The token only ever goes to the server this device paired with: if `sync.json` is changed to name another server (say, by someone else pushing to the project's git repository), Smaragd ignores that, keeps syncing with the original server and says so in the Sync panel. To really move a project to a new server, choose *Stop syncing this project* and pair again.
 
 ## Sync is not a backup
 

@@ -58,6 +58,19 @@ use crate::sync::transport::SyncTransport;
 /// Largest piece of a file sent as one update: comfortably under the server's
 /// per-blob limit once sealed and framed.
 pub(super) const CHUNK_BYTES: usize = 4 * 1024 * 1024;
+/// The largest file this device will download or upload when the server advertises no
+/// limit. A file is assembled in memory, so something has to bound it; this matches the
+/// server's default vault quota.
+pub(super) const MAX_FILE_BYTES_CEILING: u64 = 1024 * 1024 * 1024;
+
+/// The file-size limit this device actually applies: the server's, capped at
+/// [`MAX_FILE_BYTES_CEILING`].
+pub(super) fn effective_file_limit(advertised: Option<u64>) -> u64 {
+    advertised.map_or(MAX_FILE_BYTES_CEILING, |limit| {
+        limit.min(MAX_FILE_BYTES_CEILING)
+    })
+}
+
 /// How many ancestor versions a header lists, for telling a successor from a
 /// concurrent replacement even after the versions in between were trimmed away.
 const LINEAGE_LEN: usize = 32;
@@ -218,22 +231,34 @@ struct Reading {
     scan_from: u64,
     /// Records from other devices that were read.
     records: usize,
+    /// A version was left alone for being over the size limit.
+    too_large: bool,
 }
 
 /// Reads `id`'s log from `since` on (every page) and works out the winner. `current` is
 /// the version on disk here; neither it nor any of its ancestors can win (see the
 /// module docs on replays).
+///
+/// Only chunks that can matter are kept in memory: those of a version whose header was
+/// read, that isn't superseded, and whose size is within `limit` (see
+/// [`effective_file_limit`]) and consistent with its chunk count. A version over the
+/// limit is skipped and flagged. So the log — which a peer or the server could have
+/// filled with anything sealed under the vault key — can't make this device buffer more
+/// than about `limit` per live candidate version.
 fn read_log(
     engine: &SyncEngine,
     transport: &dyn SyncTransport,
     id: DocId,
     since: u64,
     current: Option<&Header>,
+    limit: u64,
 ) -> Result<(Reading, u64), SyncError> {
     let (key, vault) = (&engine.cfg.key, engine.cfg.vault);
+    let superseded = |header: &Header| current.is_some_and(|c| c.lineage.contains(&header.version));
     let mut headers: Vec<(u64, Header)> = Vec::new();
+    let mut wanted: HashMap<Uuid, u32> = HashMap::new();
     let mut chunks: HashMap<Uuid, BTreeMap<u32, Vec<u8>>> = HashMap::new();
-    let (mut last, mut records) = (since, 0);
+    let (mut last, mut records, mut too_large) = (since, 0, false);
     loop {
         let page = transport.pull(id, last)?;
         if let Some(snapshot) = page.snapshot {
@@ -248,13 +273,26 @@ fn read_log(
             }
             // A record this version doesn't understand is skipped, not fatal.
             match postcard::from_bytes::<Record>(&plain) {
-                Ok(Record::Header(header)) => headers.push((update.seq, header)),
+                Ok(Record::Header(header)) => {
+                    let consistent =
+                        u64::from(header.chunks) == header.size.div_ceil(CHUNK_BYTES as u64);
+                    if header.size > limit {
+                        too_large = true;
+                    } else if consistent && !superseded(&header) {
+                        wanted.insert(header.version, header.chunks);
+                        headers.push((update.seq, header));
+                    }
+                }
                 Ok(Record::Chunk {
                     version,
                     index,
                     data,
                 }) => {
-                    chunks.entry(version).or_default().insert(index, data);
+                    if wanted.get(&version).is_some_and(|&count| index < count)
+                        && data.len() <= CHUNK_BYTES
+                    {
+                        chunks.entry(version).or_default().insert(index, data);
+                    }
                 }
                 Ok(Record::Trimmed) | Err(_) => {}
             }
@@ -277,10 +315,9 @@ fn read_log(
         })
         .map(|header| header.version)
         .collect();
-    let superseded = |header: &Header| current.is_some_and(|c| c.lineage.contains(&header.version));
     let mut winner = None;
     for (seq, header) in headers.iter().rev() {
-        if !complete.contains(&header.version) || superseded(header) {
+        if !complete.contains(&header.version) {
             continue;
         }
         let got = chunks.remove(&header.version).unwrap_or_default();
@@ -308,6 +345,7 @@ fn read_log(
             winner,
             scan_from,
             records,
+            too_large,
         },
         last,
     ))
@@ -574,6 +612,7 @@ impl SyncEngine {
                 entry.doc_id,
                 state.scan_from,
                 current.as_ref(),
+                effective_file_limit(max_file_bytes),
             )?;
             if reading.winner.is_some_and(|(header, _, _)| {
                 Some(header.version) != current.as_ref().map(|c| c.version)
@@ -605,8 +644,12 @@ impl SyncEngine {
         if remote_latest > seen_upto {
             let since = self.bins[&id].scan_from;
             let current = self.bins[&id].synced.as_ref().map(|s| s.header.clone());
-            let (reading, last) = read_log(self, transport, id, since, current.as_ref())?;
+            let limit = effective_file_limit(max_file_bytes);
+            let (reading, last) = read_log(self, transport, id, since, current.as_ref(), limit)?;
             report.pulled_updates += reading.records;
+            if reading.too_large {
+                report.files_too_large_to_download.push(path.clone());
+            }
             if let Some((winner, winner_seq, content)) = reading.winner {
                 self.adopt(&path, id, &winner, winner_seq, &content, report)?;
                 self.trim(transport, id, winner_seq, report)?;
@@ -630,9 +673,7 @@ impl SyncEngine {
             return Ok(());
         }
         let bytes = files.read_bytes(&abs(&root, &path))?;
-        if let Some(limit) = max_file_bytes
-            && bytes.len() as u64 > limit
-        {
+        if bytes.len() as u64 > effective_file_limit(max_file_bytes) {
             report.files_over_limit.push(path);
             return Ok(());
         }
