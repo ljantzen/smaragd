@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.3.3 — 2026-09-29
+
 - Sync server: deleting a vault now takes the server's admin token; a device token
   alone can no longer wipe a vault (devices leave by revoking themselves, as the app
   already does).
