@@ -5,6 +5,12 @@ this file.
 
 ## Unreleased
 
+- Fixed the Linux AppImage panicking on start (`Library libxkbcommon-x11.so could not
+  be loaded`) on systems that don't already have it, or `libEGL`/`libGL`, installed.
+  winit and glutin load these at runtime via `dlopen` rather than linking them, so the
+  release pipeline's automatic dependency bundling missed them; they're now bundled
+  explicitly.
+
 ## v1.3.3 — 2026-09-29
 
 - Sync server: deleting a vault now takes the server's admin token; a device token

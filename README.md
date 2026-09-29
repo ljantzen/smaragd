@@ -84,7 +84,7 @@ Version control uses [jj (Jujutsu)](https://github.com/jj-vcs/jj) with the git b
 
 Pushing a semantic-version tag (`v1.2.3` or `1.2.3`, prerelease suffixes like `-rc.1` allowed) triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds:
 
-- **Linux**: an x86_64 release binary and an AppImage (via `linuxdeploy`, using [`packaging/smaragd.desktop`](packaging/smaragd.desktop) and the app icon — see below).
+- **Linux**: an x86_64 release binary and an AppImage (via `linuxdeploy`, using [`packaging/smaragd.desktop`](packaging/smaragd.desktop) and the app icon — see below). `libxkbcommon(-x11)`, `libEGL`, and `libGL` are bundled explicitly: winit and glutin load them via `dlopen` rather than linking them, so `linuxdeploy`'s automatic (ldd-based) dependency scan can't see them.
 - **Windows**: an x86_64 build, packaged as a zip.
 - **macOS**: arm64 and x86_64 cross-compiled on a single arm64 runner, lipo'd into a universal binary, assembled into a `Smaragd.app` bundle (via [`packaging/macos/Info.plist.template`](packaging/macos/Info.plist.template)) and ad-hoc signed (required for arm64 under Gatekeeper).
 

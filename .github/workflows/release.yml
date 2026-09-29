@@ -57,6 +57,7 @@ jobs:
             libxcb-shape0-dev \
             libxcb-xfixes0-dev \
             libgl1-mesa-dev \
+            libegl1 \
             libssl-dev \
             libspeechd-dev \
             librsvg2-bin \
@@ -96,11 +97,37 @@ jobs:
 
       - name: Assemble AppDir
         run: |
+          # winit (X11 backend) and glutin don't link these directly; they
+          # dlopen them at runtime via xkbcommon-dl/glutin's own loader, so
+          # linuxdeploy's ldd-based scan of the executable never finds them
+          # and they'd otherwise be missing from the AppImage. That's exactly
+          # what broke the AppImage on a minimal test runner: it panicked
+          # with "Library libxkbcommon-x11.so could not be loaded." List them
+          # explicitly with -l so linuxdeploy bundles them (and their own
+          # transitive deps) too.
+          find_lib() {
+            ldconfig -p | awk -v pat="$1" '$1 == pat { print $NF; exit }'
+          }
+          XKBCOMMON="$(find_lib libxkbcommon.so.0)"
+          XKBCOMMON_X11="$(find_lib libxkbcommon-x11.so.0)"
+          EGL="$(find_lib libEGL.so.1)"
+          GL="$(find_lib libGL.so.1)"
+          for lib in "$XKBCOMMON" "$XKBCOMMON_X11" "$EGL" "$GL"; do
+            if [ -z "$lib" ]; then
+              echo "::error::Could not resolve a required runtime library via ldconfig"
+              exit 1
+            fi
+          done
+
           ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
             -e target/release/smaragd \
             -d packaging/smaragd.desktop \
-            -i smaragd.png
+            -i smaragd.png \
+            -l "$XKBCOMMON" \
+            -l "$XKBCOMMON_X11" \
+            -l "$EGL" \
+            -l "$GL"
 
       - name: Build AppImage
         env:
