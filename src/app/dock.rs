@@ -21,6 +21,7 @@ pub(super) enum DockTab {
     Pomodoro,
     WordCount,
     Collab,
+    Sync,
     Streak,
     Bookmarks,
 }

@@ -428,6 +428,28 @@ impl SmaragdApp {
                             self.toggle_dock_tab(DockTab::Streak);
                         }
                         ui.separator();
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let sync_panel_shortcut =
+                                self.settings.shortcuts.get(ShortcutAction::ToggleSyncPanel);
+                            if nav
+                                .shortcut_button(ui, "Sync Panel", sync_panel_shortcut)
+                                .clicked()
+                            {
+                                self.show_sync_panel();
+                            }
+                            let sync_now_shortcut =
+                                self.settings.shortcuts.get(ShortcutAction::SyncNow);
+                            ui.add_enabled_ui(self.sync_is_running(), |ui| {
+                                if nav
+                                    .shortcut_button(ui, "Sync Now", sync_now_shortcut)
+                                    .clicked()
+                                {
+                                    self.sync_now();
+                                }
+                            });
+                            ui.separator();
+                        }
                         if nav.button(ui, "Reload Plugins").clicked() {
                             self.reload_plugins();
                         }

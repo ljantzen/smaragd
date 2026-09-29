@@ -237,4 +237,10 @@ pub struct ProjectMeta {
     /// language. `None` until spell check has been used here at all.
     #[serde(default)]
     pub last_spell_check_language: Option<crate::spellcheck::SpellCheckLanguage>,
+    /// Whether [Sync](crate::sync) also carries this project's other files —
+    /// images, PDFs and any other non-Markdown file — not just its documents.
+    /// A project setting that itself syncs, so every device agrees on it; off by
+    /// default (attachments can be large). See `sync::binaries`.
+    #[serde(default)]
+    pub sync_files: bool,
 }

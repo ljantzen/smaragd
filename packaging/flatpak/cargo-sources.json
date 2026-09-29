@@ -366,6 +366,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/argon2/argon2-0.5.3.crate",
+        "sha256": "3c3610892ee6e0cbce8ae2700349fcf8f98adb0dbfbee85aec3c9179d29cc072",
+        "dest": "cargo/vendor/argon2-0.5.3"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"3c3610892ee6e0cbce8ae2700349fcf8f98adb0dbfbee85aec3c9179d29cc072\", \"files\": {}}",
+        "dest": "cargo/vendor/argon2-0.5.3",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/arrayref/arrayref-0.3.9.crate",
         "sha256": "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb",
         "dest": "cargo/vendor/arrayref-0.3.9"
@@ -829,6 +842,19 @@
         "type": "inline",
         "contents": "{\"package\": \"b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da\", \"files\": {}}",
         "dest": "cargo/vendor/bitflags-2.13.1",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/blake2/blake2-0.10.6.crate",
+        "sha256": "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe",
+        "dest": "cargo/vendor/blake2-0.10.6"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe\", \"files\": {}}",
+        "dest": "cargo/vendor/blake2-0.10.6",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -5964,6 +5990,19 @@
         "type": "inline",
         "contents": "{\"package\": \"2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1\", \"files\": {}}",
         "dest": "cargo/vendor/parking_lot_core-0.9.12",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/password-hash/password-hash-0.5.0.crate",
+        "sha256": "346f04948ba92c43e8469c1ee6736c7563d71012b17d40745260fe106aac2166",
+        "dest": "cargo/vendor/password-hash-0.5.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"346f04948ba92c43e8469c1ee6736c7563d71012b17d40745260fe106aac2166\", \"files\": {}}",
+        "dest": "cargo/vendor/password-hash-0.5.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {

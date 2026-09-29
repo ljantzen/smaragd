@@ -1,6 +1,6 @@
 # Collaboration
 
-The **`Collaborate`** menu (and its dockable **Collaboration Panel**, `Ctrl+Shift+L`) lets two people edit the same document together in real time, peer-to-peer — no server, no account, no third-party service ever holds the manuscript text.
+The **`Collaborate`** menu (and its dockable **Collaboration Panel**, `Ctrl+Shift+L`) lets two people edit the same document together in real time, peer-to-peer — no server, no account, no third-party service ever holds the manuscript text. (To keep *your own* devices in step in the background, see [Sync](sync.md) — a separate, experimental feature that does use a server, one you host, with everything encrypted before it leaves your device.)
 
 ## Hosting a session
 
@@ -31,7 +31,7 @@ If about a minute passes with no luck, the panel falls back to **"Lost connectio
 
 ## Privacy and security
 
-- **No server holds your text.** Peers connect directly to each other via [iroh](https://iroh.computer) (falling back to iroh's relay infrastructure only to help establish that direct connection when needed, the same way most peer-to-peer / video-call tools do) — the manuscript itself is never uploaded anywhere or stored by a third party.
+- **No server holds your text** — in this feature. (Sync, described in [its own chapter](sync.md), is different: it stores your project on a server you host, encrypted so the server can't read it.) Peers connect directly to each other via [iroh](https://iroh.computer) (falling back to iroh's relay infrastructure only to help establish that direct connection when needed, the same way most peer-to-peer / video-call tools do) — the manuscript itself is never uploaded anywhere or stored by a third party.
 - **End-to-end encrypted**, on top of iroh's own transport encryption: every edit exchanged between peers is additionally encrypted with a key derived from a secret that exists only inside the connection code itself, so even iroh's own relay infrastructure can't read the content it's helping relay.
 - **The connection code is the credential.** Whoever holds it can join the session — treat it like a password for as long as the session is open, and don't post it somewhere public. Joining requires proving you hold the secret from the code before the other side ever reports you as connected, so a stranger who reaches the host's network endpoint without the code can neither read the session nor block the real collaborator from pairing.
 - Each session's encryption keys are freshly derived per session and tied to that specific connection code — an old code from a past session can't be reused to rejoin a new one.

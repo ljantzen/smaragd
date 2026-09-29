@@ -1,0 +1,20 @@
+[package]
+name = "smaragd-sync-e2e"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "End-to-end tests: the real Smaragd sync client and engine against the real sync server"
+repository = "https://github.com/ljantzen/smaragd"
+publish = false
+
+# Its own workspace (and lockfile), like the server: this crate links the whole
+# desktop app *and* the server, and neither the app's flatpak-vendored lockfile nor
+# the server's Docker build should see the other's dependency tree.
+[workspace]
+
+[dev-dependencies]
+smaragd = { path = "../.." }
+smaragd-sync-protocol = { path = "../smaragd-sync-protocol" }
+smaragd-sync-server = { path = "../smaragd-sync-server" }
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }

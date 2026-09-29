@@ -63,6 +63,26 @@ pub trait ProjectStore: std::fmt::Debug + Send + Sync {
     fn exists(&self, path: &Path) -> bool;
     /// Whether `path` exists and is specifically a directory (not a file).
     fn is_dir(&self, path: &Path) -> bool;
+
+    /// A file's raw bytes. Only sync reads non-text files (see
+    /// `sync::binaries`); the default suits a store that only holds text.
+    fn read_bytes(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.read_to_string(path).map(String::into_bytes)
+    }
+
+    /// Every regular file under `root` that *isn't* a `.md` document — images,
+    /// PDFs and other attachments — under the same ignore/hidden-file rules as
+    /// `list_tree`. Empty for a store with no such files (the default).
+    fn list_other_files(&self, _root: &Path) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
+    /// A cheap fingerprint of a file's current content — its size and
+    /// modification time — so sync can tell an unchanged file without hashing
+    /// it. `None` when unknown (the default), which makes sync hash every time.
+    fn file_stamp(&self, _path: &Path) -> Option<(u64, u128)> {
+        None
+    }
 }
 
 /// The only implementation today: a thin wrapper over `std::fs`, behaving
@@ -141,6 +161,33 @@ impl ProjectStore for NativeStore {
 
     fn is_dir(&self, path: &Path) -> bool {
         path.is_dir()
+    }
+
+    fn read_bytes(&self, path: &Path) -> io::Result<Vec<u8>> {
+        std::fs::read(path)
+    }
+
+    fn list_other_files(&self, root: &Path) -> Vec<PathBuf> {
+        // Same walker and rules as `list_tree` (hidden and git-ignored entries
+        // skipped, symlinks never followed or listed).
+        ignore::WalkBuilder::new(root)
+            .require_git(false)
+            .build()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_some_and(|ft| ft.is_file()))
+            .map(ignore::DirEntry::into_path)
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) != Some("md"))
+            .collect()
+    }
+
+    fn file_stamp(&self, path: &Path) -> Option<(u64, u128)> {
+        let meta = std::fs::symlink_metadata(path).ok()?;
+        let modified = meta
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        meta.is_file().then_some((meta.len(), modified.as_nanos()))
     }
 }
 

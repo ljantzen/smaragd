@@ -22,6 +22,7 @@ pub mod search_everywhere;
 pub mod settings_panel;
 pub mod story_grid_panel;
 pub mod streak_panel;
+pub mod sync_panel;
 pub mod tags_panel;
 pub mod word_count_panel;
 

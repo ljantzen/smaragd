@@ -1,0 +1,9 @@
+# The only Docker build in this repository is the sync server's
+# (crates/smaragd-sync-server/Dockerfile), built with the repo root as context.
+# Allow-list just what it needs so the context stays tiny and no local build
+# output, VCS metadata or secrets can leak into the image.
+*
+!crates/smaragd-sync-protocol
+!crates/smaragd-sync-server
+**/target
+**/.env

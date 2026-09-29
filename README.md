@@ -10,7 +10,7 @@ See the [User Manual](https://ljantzen.github.io/smaragd/manual/) for a full use
 
 Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https://github.com/ljantzen/smaragd/releases/latest). They aren't signed with a paid code-signing certificate, so Windows and macOS show a first-run warning — expected, not a broken download. See [Installation](https://ljantzen.github.io/smaragd/manual/installation.html) in the user manual for how to get past it on each OS.
 
-There's also an experimental [browser edition](https://ljantzen.github.io/smaragd/app/) — no install, runs entirely client-side, project stored in the browser's own local storage rather than on disk. It's a preview, not a replacement for the native app: no git, no collaboration, no Scrivener import. See [Browser Edition](https://ljantzen.github.io/smaragd/manual/browser-edition.html) in the user manual.
+There's also an experimental [browser edition](https://ljantzen.github.io/smaragd/app/) — no install, runs entirely client-side, project stored in the browser's own local storage rather than on disk. It's a preview, not a replacement for the native app: no git, no collaboration, no sync, no Scrivener import. See [Browser Edition](https://ljantzen.github.io/smaragd/manual/browser-edition.html) in the user manual.
 
 ## Features
 
@@ -46,7 +46,8 @@ There's also an experimental [browser edition](https://ljantzen.github.io/smarag
 - Word Count targets 
 - Writing Streak tracker 
 - Fully remappable keyboard shortcuts 
-- Real-time peer-to-peer private collaborative editing with no shared server infrastructure 
+- Real-time peer-to-peer private collaborative editing with no shared server infrastructure
+- *(Experimental)* Background **sync** of a project across your own devices through a small server you host yourself (Docker image included, with built-in housekeeping and an admin CLI): end-to-end encrypted, so the server only ever stores ciphertext, with edits from different devices merged automatically — see the [self-hosting guide](crates/smaragd-sync-server/README.md) 
 - Spell check with on-demand Hunspell dictionary downloads for 20 languages, right-click suggestions, and "Add to Dictionary" for names and invented words
 - An experimental browser (WebAssembly) edition — try it at https://ljantzen.github.io/smaragd/app/ with no install, project stored locally in the browser
 
@@ -61,11 +62,17 @@ cargo run
 A [`justfile`](justfile) wraps the common commands (`just --list` to see all of them):
 
 ```sh
-just check      # fmt-check + clippy + test — same as CI, run before committing
-just test       # cargo test --all-targets --all-features
-just clippy     # cargo clippy --all-targets --all-features -- -D warnings
-just fmt        # cargo fmt
+just check         # fmt-check + clippy + test (app, sync server, end-to-end) — same as CI, run before committing
+just test          # cargo test --workspace --all-targets --all-features
+just clippy        # cargo clippy --workspace --all-targets --all-features -- -D warnings
+just fmt           # cargo fmt --all
+just server-check  # fmt-check + clippy + test for the sync server (its own Cargo workspace)
+just e2e           # end-to-end tests: the real sync client against the real server
+just docker-build  # build the sync server's Docker image
+just docker-smoke  # build it and smoke-test it as a running container, as CI does
 ```
+
+The sync server and its end-to-end tests are separate Cargo workspaces under `crates/` (see [ARCHITECTURE.md](ARCHITECTURE.md#sync-self-hosted-server) for why); the server has its own [self-hosting guide](crates/smaragd-sync-server/README.md).
 
 (Equivalent plain `cargo` commands work too, if you don't have [`just`](https://github.com/casey/just) installed — see the justfile for the exact invocations.)
 

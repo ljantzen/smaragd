@@ -1,0 +1,43 @@
+# Smaragd sync server — example compose file.
+#
+#   echo "SMARAGD_SYNC_ADMIN_TOKEN=$(openssl rand -hex 24)" > .env   # once; keep it secret
+#   chmod 600 .env
+#   docker compose up -d
+#
+# Compose reads `.env` next to this file on every `up`, so the admin token stays the
+# same across restarts, upgrades and shells. Changing it later only affects creating
+# new vaults; existing vaults and paired devices keep working.
+#
+# Plain HTTP on :8080; put a TLS-terminating reverse proxy in front for anything
+# beyond your own machine (see README.md). All state lives in the `sync-data` volume.
+services:
+  smaragd-sync:
+    # Build locally from the repo root ...
+    build:
+      context: ../..
+      dockerfile: crates/smaragd-sync-server/Dockerfile
+    # ... or comment `build` out and pull a published image instead:
+    image: ghcr.io/ljantzen/smaragd-sync-server:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Needed to create vaults while open registration is off (recommended). Read from .env.
+      SMARAGD_SYNC_ADMIN_TOKEN: ${SMARAGD_SYNC_ADMIN_TOKEN:?set SMARAGD_SYNC_ADMIN_TOKEN}
+      SMARAGD_SYNC_ALLOW_OPEN_REGISTRATION: "false"
+      SMARAGD_SYNC_VAULT_QUOTA_MB: "1024"
+      # Housekeeping (0 turns each off): how often the maintenance task runs, and how long
+      # a vault with no devices left is kept before it is deleted.
+      SMARAGD_SYNC_MAINTENANCE_INTERVAL_HOURS: "6"
+      SMARAGD_SYNC_EMPTY_VAULT_RETENTION_DAYS: "30"
+    # Docker keeps container logs forever by default; cap them.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - sync-data:/data
+
+volumes:
+  sync-data:

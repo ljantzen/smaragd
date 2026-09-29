@@ -74,6 +74,21 @@ fn extract_block(contents: &str) -> Option<Frontmatter<'_>> {
     None
 }
 
+/// Splits `contents` into `(raw block, yaml, body)` at its leading frontmatter
+/// block, if any: `raw block` is everything up to and including the closing `---`
+/// line (delimiters, comments and all, byte for byte), `yaml` is just the content
+/// between the delimiters, and `body` is the rest. Used by `sync::crdt`, which
+/// merges frontmatter keys and body text separately and needs the original block
+/// verbatim so an unchanged block is never reformatted.
+pub(crate) fn split_block(contents: &str) -> Option<(&str, &str, &str)> {
+    let fm = extract_block(contents)?;
+    Some((
+        &contents[..fm.body_start],
+        fm.yaml,
+        &contents[fm.body_start..],
+    ))
+}
+
 fn parse_yaml_block(yaml: &str) -> DocumentMeta {
     // An empty (or whitespace-only) block means "no fields set" — handled explicitly
     // rather than relying on serde_norway's empty-document behavior, since an empty

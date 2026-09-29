@@ -27,6 +27,9 @@ mod session;
 mod settings_persist;
 mod spell_check;
 mod streak_events;
+#[cfg_attr(not(target_arch = "wasm32"), path = "sync.rs")]
+#[cfg_attr(target_arch = "wasm32", path = "sync_stub.rs")]
+mod sync;
 mod toast;
 mod word_count_events;
 use backup::BackupTrigger;
@@ -108,6 +111,10 @@ pub struct SmaragdApp {
     prompt: Option<PendingPrompt>,
     recording_shortcut: Option<ShortcutTarget>,
     settings_category: ui::settings_panel::SettingsCategory,
+    /// State shared between the Sync settings page and `sync.rs` (Test Connection).
+    sync_settings_ui: ui::settings_panel::SyncSettingsUi,
+    /// Background sync for the open project — see `sync.rs`.
+    sync: sync::SyncState,
     /// Which of the Streak dock tab's two inner tabs is showing — reset to
     /// the sensible default (`Streak` if the newly opened project already
     /// has tracking on, `Configure` otherwise) by `set_project`
@@ -356,6 +363,8 @@ impl SmaragdApp {
             prompt: None,
             recording_shortcut: None,
             settings_category: ui::settings_panel::SettingsCategory::General,
+            sync_settings_ui: ui::settings_panel::SyncSettingsUi::default(),
+            sync: sync::SyncState::default(),
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
             belief_timeline_character: String::new(),
             settings_path_override: None,
@@ -468,6 +477,8 @@ impl SmaragdApp {
             prompt: None,
             recording_shortcut: None,
             settings_category: ui::settings_panel::SettingsCategory::General,
+            sync_settings_ui: ui::settings_panel::SyncSettingsUi::default(),
+            sync: sync::SyncState::default(),
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
             belief_timeline_character: String::new(),
             // Always set, unconditionally — see this field's doc comment.
@@ -797,6 +808,14 @@ impl SmaragdApp {
             #[cfg(target_arch = "wasm32")]
             ShortcutAction::ToggleCollabPanel => {}
             ShortcutAction::ToggleStreak => self.toggle_dock_tab(DockTab::Streak),
+            // Desktop-only, like the Collaboration Panel above: the browser build's
+            // `sync_stub.rs` has no panel to show and nothing to sync.
+            #[cfg(not(target_arch = "wasm32"))]
+            ShortcutAction::ToggleSyncPanel => self.show_sync_panel(),
+            #[cfg(not(target_arch = "wasm32"))]
+            ShortcutAction::SyncNow => self.sync_now(),
+            #[cfg(target_arch = "wasm32")]
+            ShortcutAction::ToggleSyncPanel | ShortcutAction::SyncNow => {}
             ShortcutAction::CycleBinderColorMode => self.cycle_binder_color_mode(),
             // Filtered out of the consumption pass above and handled inline in
             // `editor_panel::show` instead — never actually reached, but the match
@@ -873,6 +892,7 @@ impl SmaragdApp {
         if result.is_ok() {
             self.run_backup(BackupTrigger::ManualSave);
             self.refresh_git_dirty_paths();
+            self.sync_after_save();
         }
         result
     }
@@ -1085,6 +1105,7 @@ impl SmaragdApp {
             &plugin_shortcut_rows,
             dictionary_downloading,
             &mut dictionary_download_request,
+            &mut self.sync_settings_ui,
         ) {
             if self.settings.ui_font != previous_ui_font {
                 crate::editor_font::apply_ui_font(ui.ctx(), self.settings.ui_font);
@@ -1484,6 +1505,7 @@ impl eframe::App for SmaragdApp {
         #[cfg(target_arch = "wasm32")]
         self.poll_browser_import();
         self.poll_collab_events(ui.ctx());
+        self.poll_sync(ui.ctx());
         self.tick_pomodoro(ui.ctx());
         self.check_external_changes(ui.ctx());
         self.show_toasts(ui.ctx());
@@ -1693,6 +1715,11 @@ impl eframe::App for SmaragdApp {
             });
         } else {
             egui::CentralPanel::default().show(ui, |ui| {
+                let has_project = self.project.is_some();
+                let sync_files = self.project.as_ref().is_some_and(|p| p.meta.sync_files);
+                let sync_view = self
+                    .sync
+                    .panel_data(&self.settings, has_project, sync_files);
                 let collab_status = match &self.collab {
                     None => CollabStatus::Idle,
                     Some(session) if session.session_ended => CollabStatus::Disconnected {
@@ -1752,6 +1779,7 @@ impl eframe::App for SmaragdApp {
                     actions: Vec::new(),
                     focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
                     collab_status,
+                    sync_view,
                     collaborating: self.collab.is_some(),
                 };
                 egui_dock::DockArea::new(&mut self.dock_state)
@@ -1796,6 +1824,7 @@ impl eframe::App for SmaragdApp {
                         DockAction::Collab(event) => {
                             self.handle_collab_panel_event(ui.ctx(), event)
                         }
+                        DockAction::Sync(event) => self.handle_sync_panel_event(ui.ctx(), event),
                         DockAction::Streak(event) => self.handle_streak_event(event),
                         DockAction::RequestNewProject => self.start_new_project(),
                         DockAction::RequestOpenProject => self.browse_for_project(ui.ctx()),

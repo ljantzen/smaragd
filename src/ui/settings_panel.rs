@@ -30,18 +30,20 @@ pub enum SettingsCategory {
     SpellCheck,
     Templates,
     History,
+    Sync,
     Pomodoro,
     Shortcuts,
 }
 
 impl SettingsCategory {
-    pub const ALL: [SettingsCategory; 8] = [
+    pub const ALL: [SettingsCategory; 9] = [
         SettingsCategory::General,
         SettingsCategory::Appearance,
         SettingsCategory::Editor,
         SettingsCategory::SpellCheck,
         SettingsCategory::Templates,
         SettingsCategory::History,
+        SettingsCategory::Sync,
         SettingsCategory::Pomodoro,
         SettingsCategory::Shortcuts,
     ];
@@ -54,6 +56,7 @@ impl SettingsCategory {
             SettingsCategory::SpellCheck => "Spell Check",
             SettingsCategory::Templates => "Templates",
             SettingsCategory::History => "History",
+            SettingsCategory::Sync => "Sync",
             SettingsCategory::Pomodoro => "Pomodoro",
             SettingsCategory::Shortcuts => "Shortcuts",
         }
@@ -137,6 +140,11 @@ pub const SETTINGS_INDEX: &[SettingsEntry] = {
         entry("Back up on every manual save", "backup", History),
         entry("Backups to keep", "backup count", History),
         entry("Backup folder", "backup directory location", History),
+        entry("Enable sync", "server devices", Sync),
+        entry("Sync server", "host port path https tls url", Sync),
+        entry("Sync passphrase", "password encryption key", Sync),
+        entry("Device name", "sync this device", Sync),
+        entry("Test connection", "sync server reachable", Sync),
         entry("Pomodoro work session length", "timer minutes", Pomodoro),
         entry("Pomodoro short break", "timer minutes", Pomodoro),
         entry("Pomodoro long break", "timer minutes", Pomodoro),
@@ -155,6 +163,25 @@ pub const SETTINGS_INDEX: &[SettingsEntry] = {
         entry("Plugin shortcuts", "keybindings", Shortcuts),
     ]
 };
+
+/// The outcome of the Sync page's "Test Connection" button. The request itself is a
+/// network call, so the caller runs it and reports back here; this module only draws.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SyncTestStatus {
+    #[default]
+    Idle,
+    Testing,
+    Reachable(String),
+    Failed(String),
+}
+
+/// Session-local state shared between the Sync settings page and the app.
+#[derive(Debug, Default)]
+pub struct SyncSettingsUi {
+    /// Set by the page when the user presses Test Connection; the caller clears it.
+    pub test_requested: bool,
+    pub test_status: SyncTestStatus,
+}
 
 /// Renders the settings dialog when `open` is true (does nothing and returns
 /// `false` otherwise — unlike `egui::Window`, `egui::Modal` has no built-in
@@ -187,6 +214,7 @@ pub fn show(
     plugin_shortcut_rows: &[(String, Option<egui::KeyboardShortcut>)],
     dictionary_downloading: Option<SpellCheckLanguage>,
     dictionary_download_request: &mut Option<SpellCheckLanguage>,
+    sync_ui: &mut SyncSettingsUi,
 ) -> bool {
     // Detects the dialog's closed->open transition (not persisted to disk, just
     // session-local `Context` memory) so `show_category_nav` can grab keyboard
@@ -252,6 +280,7 @@ pub fn show(
                     ),
                     SettingsCategory::Templates => show_templates_category(ui, settings),
                     SettingsCategory::History => show_history_category(ui, settings),
+                    SettingsCategory::Sync => show_sync_category(ui, settings, sync_ui),
                     SettingsCategory::Pomodoro => show_pomodoro_category(ui, settings),
                     SettingsCategory::Shortcuts => show_shortcuts_category(
                         ctx,
@@ -655,6 +684,173 @@ fn show_templates_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
         crate::templates::format_date(&settings.template_date_format)
     ));
     changed
+}
+
+/// Settings > Sync: the global half of sync setup (server, passphrase, on/off). Pairing a
+/// *project* with a vault happens in the Sync dock tab, not here.
+fn show_sync_category(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    sync_ui: &mut SyncSettingsUi,
+) -> bool {
+    #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
+    let mut changed = false;
+    ui.heading("Sync");
+    ui.add_space(8.0);
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (settings, sync_ui);
+        ui.label("Sync isn't available in the browser edition yet.");
+        return changed;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ui.weak(
+            "Keeps a project identical across your own devices through a server you host. \
+             Your text is encrypted on this device before it is uploaded; the server only ever \
+             stores ciphertext it cannot read.",
+        );
+        ui.add_space(8.0);
+        changed |= ui
+            .checkbox(&mut settings.sync_enabled, "Enable sync")
+            .on_hover_text(
+                "A project only syncs when this is on and the project has been paired with a \
+                 vault from the Sync panel.",
+            )
+            .changed();
+        ui.add_enabled_ui(settings.sync_enabled, |ui| {
+            ui.add_space(6.0);
+            ui.strong("Server");
+            egui::Grid::new("sync_server_grid")
+                .num_columns(2)
+                .spacing([8.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Host:");
+                    changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut settings.sync_server_host)
+                                .hint_text("sync.example.com")
+                                .desired_width(280.0),
+                        )
+                        .changed();
+                    ui.end_row();
+
+                    ui.label("Port:");
+                    ui.horizontal(|ui| {
+                        let mut port = settings.sync_server_port;
+                        if ui
+                            .add(egui::DragValue::new(&mut port).range(0..=65535))
+                            .changed()
+                        {
+                            settings.sync_server_port = port;
+                            changed = true;
+                        }
+                        ui.weak(format!(
+                            "0 = default ({})",
+                            settings.resolve_sync_server_port()
+                        ));
+                    });
+                    ui.end_row();
+
+                    ui.label("Path:");
+                    changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut settings.sync_server_path)
+                                .hint_text("(usually blank)")
+                                .desired_width(280.0),
+                        )
+                        .on_hover_text(
+                            "Only if a reverse proxy serves the server under a sub-path, \
+                             e.g. \"smaragd\" for https://example.com/smaragd/.",
+                        )
+                        .changed();
+                    ui.end_row();
+                });
+            let mut tls = settings.sync_use_tls();
+            if ui.checkbox(&mut tls, "Use HTTPS (TLS)").changed() {
+                settings.sync_plain_http = !tls;
+                changed = true;
+            }
+            if settings.sync_plain_http {
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    "Plain HTTP sends your device token unencrypted. Your text stays encrypted, \
+                     but only use this on a network you trust.",
+                );
+            }
+
+            ui.add_space(10.0);
+            ui.strong("Encryption");
+            let show_id = egui::Id::new("sync_passphrase_visible");
+            let mut visible = ui.data(|d| d.get_temp::<bool>(show_id).unwrap_or(false));
+            ui.horizontal(|ui| {
+                ui.label("Passphrase:");
+                changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(&mut settings.sync_passphrase.0)
+                            .password(!visible)
+                            .desired_width(280.0),
+                    )
+                    .changed();
+                if ui.checkbox(&mut visible, "Show").changed() {
+                    ui.data_mut(|d| d.insert_temp(show_id, visible));
+                }
+            });
+            ui.weak(
+                "Use the same passphrase on every device. It never leaves this device and cannot \
+                 be recovered: if you lose it, your synced data cannot be decrypted. Changing it \
+                 later makes existing vaults unreadable. It is stored in plain text in \
+                 smaragd.toml, like your other settings.",
+            );
+
+            ui.add_space(10.0);
+            ui.strong("This device");
+            let default_name = settings.resolve_sync_device_name();
+            ui.horizontal(|ui| {
+                ui.label("Name:");
+                changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(&mut settings.sync_device_name)
+                            .hint_text(default_name)
+                            .desired_width(280.0),
+                    )
+                    .on_hover_text("How this device appears in a vault's device list.")
+                    .changed();
+            });
+
+            ui.add_space(10.0);
+            let problem = settings.sync_config_problem();
+            ui.horizontal(|ui| {
+                let can_test = settings.sync_server_addr().is_some()
+                    && sync_ui.test_status != SyncTestStatus::Testing;
+                if ui
+                    .add_enabled(can_test, egui::Button::new("Test Connection"))
+                    .clicked()
+                {
+                    sync_ui.test_requested = true;
+                }
+                match &sync_ui.test_status {
+                    SyncTestStatus::Idle => {}
+                    SyncTestStatus::Testing => {
+                        ui.weak("Contacting the server…");
+                    }
+                    SyncTestStatus::Reachable(message) => {
+                        ui.colored_label(egui::Color32::from_rgb(0x3c, 0xb0, 0x5a), message);
+                    }
+                    SyncTestStatus::Failed(message) => {
+                        ui.colored_label(ui.visuals().error_fg_color, message);
+                    }
+                }
+            });
+            if let Some(problem) = problem {
+                ui.add_space(4.0);
+                ui.colored_label(ui.visuals().warn_fg_color, problem);
+            }
+        });
+        changed
+    }
 }
 
 fn show_history_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
@@ -1122,6 +1318,7 @@ mod tests {
                 &[],
                 None,
                 &mut dictionary_download_request,
+                &mut SyncSettingsUi::default(),
             );
         });
     }
@@ -1235,6 +1432,7 @@ mod tests {
                     &[],
                     None,
                     &mut dictionary_download_request,
+                    &mut SyncSettingsUi::default(),
                 );
             });
         }
@@ -1381,5 +1579,50 @@ mod tests {
         }
 
         assert_eq!(harness.category, SettingsCategory::Shortcuts);
+    }
+
+    #[test]
+    fn the_sync_page_renders_in_every_configuration_and_reports_test_requests() {
+        let ctx = egui::Context::default();
+        let configs = [
+            Settings::default(),
+            Settings {
+                sync_enabled: true,
+                ..Default::default()
+            },
+            Settings {
+                sync_enabled: true,
+                sync_server_host: "https://bad/host".into(),
+                sync_plain_http: true,
+                ..Default::default()
+            },
+            Settings {
+                sync_enabled: true,
+                sync_server_host: "sync.example.com".into(),
+                sync_passphrase: crate::settings::SecretString("pw".into()),
+                ..Default::default()
+            },
+        ];
+        for mut settings in configs {
+            for status in [
+                SyncTestStatus::Idle,
+                SyncTestStatus::Testing,
+                SyncTestStatus::Reachable("Connected.".into()),
+                SyncTestStatus::Failed("refused".into()),
+            ] {
+                let mut sync_ui = SyncSettingsUi {
+                    test_requested: false,
+                    test_status: status,
+                };
+                crate::egui_test_support::run_ui_and_discard(
+                    &ctx,
+                    egui::RawInput::default(),
+                    |ui| {
+                        show_sync_category(ui, &mut settings, &mut sync_ui);
+                    },
+                );
+                assert!(!sync_ui.test_requested, "nothing was clicked");
+            }
+        }
     }
 }

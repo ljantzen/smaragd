@@ -24,6 +24,17 @@ pull request, and the bot will mark it signed:
 2. Keep pull requests focused — one logical change per PR.
 3. Open a pull request against `main` describing what changed and why.
 
+## Working on sync
+
+The self-hosted sync feature is experimental (its formats and protocol may still change without migrations). It spans four places, each with its own tests:
+
+- `src/sync/` — the client core (CRDT documents, manifest, engine, crypto). Unit tests include multi-device simulations against an in-memory server, so most logic can be tested without a network: `cargo test --lib sync::`.
+- `crates/smaragd-sync-protocol/` — wire types shared by client and server. `cargo test -p smaragd-sync-protocol`.
+- `crates/smaragd-sync-server/` — the server. It is its **own Cargo workspace** with its own `Cargo.lock` (so its dependencies stay out of the app's flatpak-vendored lockfile): `cd crates/smaragd-sync-server && cargo test`, or `just server-check`.
+- `crates/smaragd-sync-e2e/` — end-to-end tests of the real client against the real server. Also its own workspace: `just e2e`.
+
+`just check` runs everything CI does across all of them. Building the server's Docker image needs the repository root as the build context: `just docker-build`. `just docker-smoke` also starts the image and checks it works as a container (health check, volume permissions, admin token, restart), as CI does before publishing.
+
 ## Reporting issues
 
 Please use GitHub Issues for bug reports and feature requests.

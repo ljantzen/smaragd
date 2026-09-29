@@ -6,7 +6,21 @@ license = "GPL-3.0-or-later"
 description = "A native desktop authoring tool for writers"
 repository = "https://github.com/ljantzen/smaragd"
 
+# The root package is also a workspace member. The sync *server* and the crate that
+# tests it end to end are deliberately excluded: each is its own workspace with its
+# own Cargo.lock so their dependencies (axum, rusqlite, ...) never enter this
+# lockfile, which the flatpak build vendors wholesale (see
+# scripts/update-flatpak-sources.sh).
+[workspace]
+members = ["crates/smaragd-sync-protocol"]
+exclude = ["crates/smaragd-sync-server", "crates/smaragd-sync-e2e"]
+
 [dependencies]
+# Argon2id for the sync passphrase KDF (src/sync/crypto.rs). Pure Rust, so it also
+# builds for wasm32; default features are off because "rand"/"password-hash" would
+# pull in an OS-rng path we don't use (salts come from the vault record).
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+base64 = "0.22"
 blake3 = "1.8.5"
 bs58 = "0.5.1"
 chacha20poly1305 = "0.11.0"
@@ -30,6 +44,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_norway = "0.9"
 sha2 = "0.11"
+smaragd-sync-protocol = { path = "crates/smaragd-sync-protocol" }
 spellbook = "0.4.2"
 thiserror = "2.0.19"
 # Just the channel types `collab` needs to keep its public API identical on
@@ -46,8 +61,10 @@ web-time = "1"
 ttf-parser = "0.25"
 typst-as-lib = { version = "0.16.0", features = ["typst-kit-fonts", "typst-kit-embed-fonts"] }
 typst-pdf = "0.15.1"
+unicode-normalization = "0.1"
 uuid = { version = "1.24", features = ["v4", "serde", "rng-getrandom"] }
 yrs = "0.28.0"
+zeroize = "1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 # Native-only: raw sockets (iroh), the multi-threaded/net/time tokio runtime

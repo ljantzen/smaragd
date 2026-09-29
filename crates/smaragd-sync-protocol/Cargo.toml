@@ -1,0 +1,22 @@
+[package]
+name = "smaragd-sync-protocol"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Wire types shared by Smaragd's sync client and sync server"
+repository = "https://github.com/ljantzen/smaragd"
+publish = false
+
+# Deliberately tiny and free of networking/crypto-primitive dependencies: the
+# desktop app, the browser (wasm32) build and the sync server all depend on this
+# crate, so it must build for every target the app does.
+[dependencies]
+base64 = "0.22"
+bs58 = "0.5.1"
+postcard = { version = "1.1.3", features = ["use-std"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0.19"
+uuid = { version = "1.24", features = ["serde"] }
+
+[dev-dependencies]
+serde_json = "1.0"
