@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.3.2 — 2026-09-29
+
 - Fixed the Linux packages (AppImage, .deb, .rpm, flatpak) missing from v1.3.1: a
   release check still expected an AppImage header patch that had been removed.
   The app itself is unchanged from v1.3.0.
