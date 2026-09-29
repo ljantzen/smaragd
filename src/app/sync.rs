@@ -1091,8 +1091,20 @@ mod tests {
             text.contains("From the desktop.") && text.contains("From the laptop.")
         });
         assert!(app.sync.held_sent.is_empty());
-        laptop_engine.sync_once(&laptop_transport).unwrap();
-        assert!(read(&laptop.path().join("Scene.md")).contains("From the desktop."));
+        // The merged text reaches disk before that pass pushes it, so the laptop may
+        // need a few passes before the desktop's edit is on the server.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            laptop_engine.sync_once(&laptop_transport).unwrap();
+            if read(&laptop.path().join("Scene.md")).contains("From the desktop.") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the desktop's edit never reached the laptop"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]
