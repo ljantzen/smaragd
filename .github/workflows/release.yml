@@ -108,27 +108,6 @@ jobs:
         run: |
           ./appimagetool-x86_64.AppImage AppDir "dist/smaragd-${VERSION}-x86_64.AppImage"
 
-      - name: Patch AppImage ELF ABI-version byte
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          # Every current AppImage type-2 runtime (including upstream's newest
-          # appimagetool/type2-runtime builds, verified directly) stamps its
-          # "AI\x02" magic starting at ELF header offset 8, which is
-          # e_ident[EI_ABIVERSION]. glibc's loader requires that byte to be 0
-          # and, on newer glibc (e.g. 2.41+, as shipped by Fedora 42 and other
-          # current rolling-release distros), now enforces this even for a
-          # plain `execve` of the AppImage itself, not just explicit dynamic
-          # loading - so it fails with a misleading "No such file or
-          # directory" (the underlying loader error is "ELF file ABI version
-          # invalid"). Zeroing just this one byte fixes execution and doesn't
-          # touch the rest of the AppImage magic (offset 9-10) or the
-          # embedded squashfs; the only cost is that tools which identify
-          # AppImages purely by the 3-byte "AI\x02" magic (e.g. appimaged,
-          # some file-manager integrations) won't recognize the file anymore.
-          appimage="dist/smaragd-${VERSION}-x86_64.AppImage"
-          printf '\x00' | dd of="$appimage" bs=1 seek=8 count=1 conv=notrunc status=none
-
       - name: Smoke test AppImage
         env:
           VERSION: ${{ steps.version.outputs.version }}
