@@ -57,14 +57,8 @@ impl From<ignore::Error> for BackupError {
 /// `directories`-based path in `settings.rs`, which all use `config_dir()`
 /// instead — `data_dir()` here since these are archive files, not
 /// configuration).
-#[cfg(not(target_arch = "wasm32"))]
 pub fn default_backup_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd").map(|dirs| dirs.data_dir().join("backups"))
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn default_backup_dir() -> Option<PathBuf> {
-    None
 }
 
 /// Zip `project_root` into a timestamped archive under `backup_dir`, named

@@ -2,9 +2,8 @@ name: Deploy Pages
 
 # Deployed only as part of a release (a `v`-prefixed version tag, the same
 # pattern the `github-pages` environment's deployment rules allow), so the
-# published manual and browser edition always match the latest released
-# version rather than whatever is on `main`. Can still be run manually from
-# the Actions tab.
+# published manual always matches the latest released version rather than
+# whatever is on `main`. Can still be run manually from the Actions tab.
 on:
   push:
     tags:
@@ -38,22 +37,6 @@ jobs:
       - name: Build the user manual
         run: mdbook build book-src
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: wasm32-unknown-unknown
-
-      - uses: taiki-e/install-action@trunk
-
-      # Served from a GitHub Pages project site, so the app lives under
-      # /smaragd/app/ rather than the domain root — trunk needs to know
-      # that to emit correct asset URLs in the built index.html.
-      - name: Build the browser edition
-        run: trunk build --release --public-url /smaragd/app/
-
       - name: Assemble the site
         run: |
           mkdir -p _site
@@ -61,8 +44,6 @@ jobs:
           rm -f _site/user-manual.md
           mkdir -p _site/manual
           cp -r book-src/book/. _site/manual/
-          mkdir -p _site/app
-          cp -r dist/. _site/app/
 
       - uses: actions/configure-pages@v6
 

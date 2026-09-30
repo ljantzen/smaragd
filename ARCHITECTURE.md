@@ -36,7 +36,7 @@ src/
     crypto.rs                app-level end-to-end encryption layered on top of iroh's transport security (directional keys, implicit counter nonces, host identity folded into key derivation)
     net.rs                   iroh networking on its own background thread/tokio runtime: pairing handshake, encrypted frame exchange
   sync/
-    mod.rs                 module overview; the sync core is pure and wasm-compatible, only client.rs is native-only
+    mod.rs                 module overview; the sync core is pure and synchronous, only client.rs talks to the network
     crypto.rs               passphrase -> key (NFKC + Argon2id + blake3 subkey) and sealing/opening updates (XChaCha20-Poly1305, random nonce, AAD bound to vault + doc + key version)
     crdt.rs                 FileDoc: one synced markdown file as a CRDT (frontmatter keys as per-key registers + body as text)
     manifest.rs             ManifestDoc: doc id -> {path, kind (file/folder), deleted} CRDT (renames/deletes merge; deletes are tombstones) + path-safety checks for untrusted paths
@@ -58,7 +58,6 @@ src/
     pdf.rs                  print-PDF rendering via the embedded Typst compiler (typst-as-lib)
   project/
     store.rs               ProjectStore trait (read/write/list/rename/delete by path) + NativeStore (std::fs); the I/O boundary all of project/, settings.rs, backup.rs, plugins.rs, and spellcheck.rs go through instead of touching the filesystem directly
-    browser_store.rs        BrowserStore: the wasm32 ProjectStore impl, an in-memory HashMap<PathBuf, Entry> synced to IndexedDB (browser_store/idb.rs, via rexie) on every mutation
     model.rs              BinderTree/BinderNode data model
     scan.rs                folder -> BinderTree via ignore::WalkBuilder
     mod.rs                 Project: type defs (FolderRole, ProjectMeta, StoryCard, ...) + core lifecycle/CRUD (load/initialize/rescan, create/rename/delete/move)
@@ -108,7 +107,7 @@ The repository is a Cargo workspace with **three deliberately separate lockfiles
 ```
 Cargo.toml / Cargo.lock       the desktop app (+ crates/smaragd-sync-protocol as a workspace member)
 crates/
-  smaragd-sync-protocol/      wire types shared by client and server: ids, encrypted-envelope layout + AAD, the SyncTicket pairing code, HTTP API request/response types (wasm32-compatible; its rustdoc is the protocol reference)
+  smaragd-sync-protocol/      wire types shared by client and server: ids, encrypted-envelope layout + AAD, the SyncTicket pairing code, HTTP API request/response types (its rustdoc is the protocol reference)
   smaragd-sync-server/        the axum + SQLite server, its Dockerfile/compose file and self-hosting README. Its OWN workspace and Cargo.lock. Also runs unattended housekeeping (`maintenance.rs`: expired pairing codes, vaults with no devices left after a retention period, vacuum when worthwhile) and has an operator CLI (`admin.rs`: list/delete-vault/purge-empty/vacuum/maintenance, destructive ones need --yes)
   smaragd-sync-e2e/           end-to-end tests: the real client + engine (from the app crate) against the real server. Its OWN workspace and Cargo.lock
 ```
@@ -117,10 +116,6 @@ The server and e2e crates are `exclude`d from the root workspace because `script
 
 Where state lives: nothing secret goes inside the project folder (`git.rs` runs `git add -A`; `backup.rs` zips `.smaragd/`). The engine's CRDT state goes through `sync::state::StateStore` (an OS data-dir location, chosen by the app), keys are derived in memory from the passphrase and never written to disk, and the server holds only hashes of device tokens and pairing codes.
 
-## The wasm32 (browser) build
+## Sync in the app
 
-The same crate also targets `wasm32-unknown-unknown`, built with [`trunk`](https://trunkrs.dev/) from the repo-root `index.html` (`trunk build`/`trunk serve`; the [Pages workflow](.github/workflows/pages.yml) publishes a release build to https://ljantzen.github.io/smaragd/app/ each time a version is tagged). `Cargo.toml`'s `[target.'cfg(...)'.dependencies]` tables split native-only deps (iroh, tokio, directories, notify-rust, ureq, rfd's native dialogs) from wasm32-only ones (rexie, serde-wasm-bindgen, wasm-bindgen(-futures), console_error_panic_hook). Features with no browser equivalent — git, p2p collaboration, the HTTP sync client (the rest of `src/sync/` is pure and compiles for wasm32; a `fetch`-based `SyncTransport` is future work), native notifications, plugin subprocess execution, Scrivener import — are `#[cfg(not(target_arch = "wasm32"))]`-gated out of the UI rather than attempted; see `project/store.rs`/`browser_store.rs` above for the storage side of that split. Synchronous fs-shaped call sites keep working unchanged on both targets through the `ProjectStore` trait; the few genuinely async boundaries (project bundle load, browser file pick/save, IndexedDB persistence) use a `wasm_bindgen_futures::spawn_local` + `std::sync::mpsc::channel` + poll-once-per-frame pattern instead of threading async through the whole app (see `app/project_lifecycle.rs`'s `spawn_browser_project_load`/`poll_browser_project_load` for the shape).
-
-### Sync in the app
-
-`app/sync.rs` (with `app/sync_stub.rs` as the browser build's no-op twin, selected by `#[cfg_attr(..., path = ...)]`) owns everything app-side, modeled on `app/collab.rs`: a `SyncState` polled once per frame by `poll_sync`. It notices project open/close, loads the project's `ProjectLink` and this device's credentials, and starts/stops/restarts the runner whenever the settings, project or pairing change (a `Signature` of root + vault + passphrase + server; a runner that halted for a signature is not restarted until that changes). One-off server calls (create/join/ticket/devices/revoke/leave/test connection) run on short-lived threads and report back through a channel. Two integration rules worth knowing: when the engine reports `meta_written`, the app calls `Project::reload_metadata` (otherwise its next `save_metadata` would overwrite the merged file); and the app tells the engine which file has unsaved edits (`SyncRunner::set_held_paths`) so it is never overwritten on disk — the engine diffs the saved file against the version it was last in sync with, so the edit is merged with whatever arrived meanwhile rather than reverting it. A *clean* open file is just rewritten on disk and reloaded by the existing 2-second external-change scan (`app/external_watch.rs`).
+`app/sync.rs` owns everything app-side, modeled on `app/collab.rs`: a `SyncState` polled once per frame by `poll_sync`. It notices project open/close, loads the project's `ProjectLink` and this device's credentials, and starts/stops/restarts the runner whenever the settings, project or pairing change (a `Signature` of root + vault + passphrase + server; a runner that halted for a signature is not restarted until that changes). One-off server calls (create/join/ticket/devices/revoke/leave/test connection) run on short-lived threads and report back through a channel. Two integration rules worth knowing: when the engine reports `meta_written`, the app calls `Project::reload_metadata` (otherwise its next `save_metadata` would overwrite the merged file); and the app tells the engine which file has unsaved edits (`SyncRunner::set_held_paths`) so it is never overwritten on disk — the engine diffs the saved file against the version it was last in sync with, so the edit is merged with whatever arrived meanwhile rather than reverting it. A *clean* open file is just rewritten on disk and reloaded by the existing 2-second external-change scan (`app/external_watch.rs`).

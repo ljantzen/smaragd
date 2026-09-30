@@ -128,8 +128,7 @@ pub enum ShortcutAction {
     /// of Shift (`crate::double_tap`), which isn't expressible as a
     /// `KeyboardShortcut` and so lives outside this map.
     SearchEverywhere,
-    /// Open/close the Sync dock tab. Desktop-only, like `ToggleCollabPanel`: a no-op
-    /// in the browser build, and hidden from Search Everywhere there.
+    /// Open/close the Sync dock tab.
     ToggleSyncPanel,
     /// Run a sync pass right away instead of waiting for the next periodic one — see
     /// `SmaragdApp::sync_now`. Does nothing while sync isn't running for the project.

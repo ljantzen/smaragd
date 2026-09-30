@@ -39,7 +39,6 @@
 //! actually calls.
 
 use std::collections::HashMap;
-#[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -253,17 +252,9 @@ fn load_placeholder(language: SpellCheckLanguage) -> Option<spellbook::Dictionar
 /// convention. `None` only when the platform has no meaningful data directory
 /// (`directories` couldn't resolve one), in which case downloading is simply
 /// unavailable and every language falls back to its placeholder.
-#[cfg(not(target_arch = "wasm32"))]
 fn dictionaries_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.data_dir().join("dictionaries"))
-}
-
-/// No OS data directory in a browser; a web build would need a browser
-/// storage-backed dictionary cache instead (see the wasm feasibility plan).
-#[cfg(target_arch = "wasm32")]
-fn dictionaries_dir() -> Option<PathBuf> {
-    None
 }
 
 fn downloaded_file_path(language_code: &str, filename: &str) -> Option<PathBuf> {
@@ -288,7 +279,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
     let mut response = ureq::get(url)
         .call()
@@ -300,13 +290,6 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
         .read_to_end(&mut bytes)
         .map_err(|err| format!("reading response body: {err}"))?;
     Ok(bytes)
-}
-
-/// `ureq`'s blocking, socket-based client has no browser story; a web build
-/// would need a `fetch`-based replacement (see the wasm feasibility plan).
-#[cfg(target_arch = "wasm32")]
-fn fetch(_url: &str) -> Result<Vec<u8>, String> {
-    Err("dictionary downloads are not available in the web build".to_string())
 }
 
 /// Download every file in `language`'s catalog entry, verify each one's SHA-256

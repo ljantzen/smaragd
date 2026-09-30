@@ -10,8 +10,6 @@ See the [User Manual](https://ljantzen.github.io/smaragd/manual/) for a full use
 
 Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https://github.com/ljantzen/smaragd/releases/latest). They aren't signed with a paid code-signing certificate, so Windows and macOS show a first-run warning — expected, not a broken download. See [Installation](https://ljantzen.github.io/smaragd/manual/installation.html) in the user manual for how to get past it on each OS.
 
-There's also an experimental [browser edition](https://ljantzen.github.io/smaragd/app/) — no install, runs entirely client-side, project stored in the browser's own local storage rather than on disk. It's a preview, not a replacement for the native app: no git, no collaboration, no sync, no Scrivener import. See [Browser Edition](https://ljantzen.github.io/smaragd/manual/browser-edition.html) in the user manual.
-
 ## Features
 
 - Dockable views that can be moved freely around
@@ -19,6 +17,7 @@ There's also an experimental [browser edition](https://ljantzen.github.io/smarag
 - Markdown text editor 
 - Optional line-number gutter in the editor
 - Bookmarks: mark a line with a shortcut or a gutter click, jump back from a dedicated dock or Alt+Up/Alt+Down navigation
+- Notes: pin a short piece of text to the cursor's exact line and column, with a dedicated dock listing every note and jump-to navigation
 - fzf-style quick-switcher between documents 
 - Browser-style Go Back/Go Forward document history, restoring your cursor position in each
 - Project templates 
@@ -45,11 +44,11 @@ There's also an experimental [browser edition](https://ljantzen.github.io/smarag
 - A Pomodoro timer 
 - Word Count targets 
 - Writing Streak tracker 
+- Dashboard: session count/length, word count, and documents created/modified over time, plus activity-by-day-of-week and activity-by-hour charts 
 - Fully remappable keyboard shortcuts 
 - Real-time peer-to-peer private collaborative editing with no shared server infrastructure
 - *(Experimental)* Background **sync** of a project across your own devices through a small server you host yourself (Docker image included, with built-in housekeeping and an admin CLI): end-to-end encrypted, so the server only ever stores ciphertext, with edits from different devices merged automatically — see the [self-hosting guide](crates/smaragd-sync-server/README.md) 
 - Spell check with on-demand Hunspell dictionary downloads for 20 languages, right-click suggestions, and "Add to Dictionary" for names and invented words
-- An experimental browser (WebAssembly) edition — try it at https://ljantzen.github.io/smaragd/app/ with no install, project stored locally in the browser
 
 ## Running
 

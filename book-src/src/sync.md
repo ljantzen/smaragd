@@ -13,8 +13,6 @@ Sync is one of three ways Smaragd can move a project around, and they do differe
 | [Git](git-integration.md) | Deliberate, named versions and sharing through a git host | A git remote, if you push | Yes |
 | [Backups](backups.md) | Restorable zipped snapshots on this machine | No | Yes |
 
-Sync is available in the desktop app only; the [browser edition](browser-edition.md) doesn't have it.
-
 ## What you need
 
 - **A sync server.** It's a single small program you run on a machine you control — a home server, a VPS, a Raspberry Pi — either as a Docker container or directly, for example as a systemd service. Setting one up is covered in the server's own [self-hosting guide](https://github.com/ljantzen/smaragd/tree/main/crates/smaragd-sync-server); it takes a few minutes with Docker. If someone else runs one for you, you just need its address.
@@ -144,7 +142,6 @@ The server's own [self-hosting guide](https://github.com/ljantzen/smaragd/tree/m
 - **The vault stays compact.** As a file accumulates changes, Smaragd periodically replaces the old ones on the server with a single snapshot, so the vault doesn't grow without bound and a new device catches up quickly. There's also a per-vault size limit on the server (1 GiB by default).
 - **Bookmarks** point to a line number, so if two devices edit above a bookmarked line at the same time, the bookmark may end up a line or two off.
 - **One vault per project**, and a project remembers the server it was paired with; the server in Settings is used when you create or join.
-- Sync needs a project **folder on disk** — it isn't available in the browser edition.
 
 ## Troubleshooting
 

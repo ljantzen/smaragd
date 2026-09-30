@@ -1,7 +1,6 @@
 mod activity;
 mod binder_color_mode;
 mod bookmarks;
-pub mod browser_store;
 mod create;
 mod folder_meta;
 mod meta;
@@ -155,8 +154,7 @@ impl Project {
     }
 
     /// [`Self::load_from_folder`], against an explicitly chosen store rather
-    /// than always [`store::NativeStore`] — the seam a future browser build's
-    /// storage backend would call through instead.
+    /// than always [`store::NativeStore`].
     pub fn load_from_folder_with_store(
         root: &Path,
         store: Arc<dyn ProjectStore>,

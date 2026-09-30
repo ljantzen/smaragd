@@ -6,11 +6,7 @@
 //! only stores and relays opaque encrypted blobs. All merging happens here, on the
 //! clients, after decryption — every synced file is a CRDT document.
 //!
-//! This module and its children are pure and synchronous, and deliberately free of
-//! native-only dependencies so the same core compiles for the browser build; only
-//! the eventual HTTP transport is native-only.
-//!
-//! - `client` (native only) — the blocking `ureq` implementation of the transport, plus
+//! - `client` — the blocking `ureq` implementation of the transport, plus
 //!   the control-plane calls (create a vault, pair and manage devices).
 //! - [`crdt`] — the CRDT document behind one synced markdown file (frontmatter keys
 //!   as per-key registers, body as text).
@@ -23,9 +19,9 @@
 //!   local edits, pull and merge remote ones, apply renames/deletes, push.
 //! - [`transport`] — the engine's blocking view of the server, so it's testable
 //!   against an in-memory fake with several simulated devices.
-//! - `pairing` (native only) — create a vault, join one with a ticket, list/revoke
+//! - `pairing` — create a vault, join one with a ticket, list/revoke
 //!   devices, leave: the one-off server operations behind the Sync panel.
-//! - `runner` (native only) — runs the engine on a background thread and reports
+//! - `runner` — runs the engine on a background thread and reports
 //!   [`runner::SyncEvent`]s to the UI.
 //! - [`state`] — where the engine keeps its local CRDT state between runs.
 //! - [`link`] — the project<->vault pairing (`.smaragd/sync.json`, non-secret) and this
@@ -33,7 +29,6 @@
 //! - [`manifest`] — which documents exist, where they live, and whether they were
 //!   deleted (tombstones), itself a CRDT so renames and deletes merge.
 
-#[cfg(not(target_arch = "wasm32"))]
 pub mod client;
 pub mod crdt;
 pub mod crypto;
@@ -41,9 +36,7 @@ pub mod engine;
 pub mod link;
 pub mod manifest;
 pub mod meta_crdt;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod pairing;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod runner;
 pub mod state;
 pub mod transport;

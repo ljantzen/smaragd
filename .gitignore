@@ -1,5 +1,4 @@
 /target
 /crates/*/target
 /book-src/book
-/dist
 /crates/smaragd-sync-server/.env

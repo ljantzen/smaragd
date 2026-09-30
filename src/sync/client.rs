@@ -1,10 +1,6 @@
-//! The native HTTP client for the sync server: a blocking `ureq` implementation of
+//! The HTTP client for the sync server: a blocking `ureq` implementation of
 //! [`SyncTransport`] (what the engine needs) plus the control-plane calls the UI
 //! needs to create a vault, pair devices and manage them.
-//!
-//! Native-only: `ureq` is a blocking socket client with no browser story. A future
-//! browser build would implement [`SyncTransport`] over `fetch` instead; nothing in
-//! the engine changes.
 //!
 //! Every failure to *reach* the server (DNS, refused, timeout, TLS) is reported as
 //! [`TransportError::Offline`] — retryable, and local edits keep queuing meanwhile —

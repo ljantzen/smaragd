@@ -476,17 +476,9 @@ pub struct Settings {
 
 /// The full path to the settings file, e.g. `~/.config/smaragd/smaragd.toml` on
 /// Linux. `None` if the platform's config directory can't be determined.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn config_file_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.config_dir().join("smaragd.toml"))
-}
-
-/// No OS config directory in a browser; the web build will need a browser
-/// storage-backed settings store instead (see the wasm feasibility plan).
-#[cfg(target_arch = "wasm32")]
-pub fn config_file_path() -> Option<PathBuf> {
-    None
 }
 
 /// The full path to the persisted dock layout (which tabs are open, and how
@@ -496,15 +488,9 @@ pub fn config_file_path() -> Option<PathBuf> {
 /// derived `Serialize` impl emits constructs — like a sequence of tables mixed with
 /// non-table values — that TOML's format can't represent), but does through JSON.
 /// `None` if the platform's config directory can't be determined.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn dock_layout_file_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.config_dir().join("dock_layout.json"))
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn dock_layout_file_path() -> Option<PathBuf> {
-    None
 }
 
 /// The full path to the user's named, saved dock layouts (Window > Save Current
@@ -514,15 +500,9 @@ pub fn dock_layout_file_path() -> Option<PathBuf> {
 /// persisted immediately whenever the user explicitly saves one. Same JSON (not
 /// TOML) reasoning as `dock_layout_file_path`. `None` if the platform's config
 /// directory can't be determined.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn saved_layouts_file_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.config_dir().join("saved_layouts.json"))
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn saved_layouts_file_path() -> Option<PathBuf> {
-    None
 }
 
 impl Settings {

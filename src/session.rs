@@ -79,18 +79,9 @@ impl SessionState {
 /// The full path to the saved session, e.g. `~/.config/smaragd/session.json`
 /// on Linux, alongside `dock_layout.json`. `None` if the platform's config
 /// directory can't be determined.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn session_file_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd")
         .map(|dirs| dirs.config_dir().join("session.json"))
-}
-
-/// No config directory in a browser — the browser edition reopens its
-/// project its own way (`SmaragdApp::spawn_browser_project_load`), and has
-/// no window to size.
-#[cfg(target_arch = "wasm32")]
-pub fn session_file_path() -> Option<PathBuf> {
-    None
 }
 
 /// `builder` with the previous session's window size, position and

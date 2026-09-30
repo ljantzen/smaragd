@@ -1,10 +1,9 @@
 //! Where the engine keeps its local CRDT state between runs.
 //!
 //! This is a plain key → bytes store. The production implementation ([`DirStateStore`])
-//! writes through the [`ProjectStore`] trait, so the same code works on native
-//! (real files, in the OS data dir — never inside the project folder, since the
-//! project may be under git or copied around) and, later, in the browser
-//! (IndexedDB). Tests use [`MemoryStateStore`], which can be cloned to simulate a
+//! writes through the [`ProjectStore`] trait to real files, in the OS data dir —
+//! never inside the project folder, since the project may be under git or copied
+//! around. Tests use [`MemoryStateStore`], which can be cloned to simulate a
 //! restart.
 
 use std::collections::HashMap;

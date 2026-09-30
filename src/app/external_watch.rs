@@ -1,7 +1,7 @@
 use super::*;
 use std::time::Duration;
 
-use web_time::Instant;
+use std::time::Instant;
 
 /// How often `check_external_changes` actually does any work — gates both the
 /// binder rescan (a directory walk; see `scan::scan_project`) and the open

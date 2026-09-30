@@ -91,19 +91,17 @@ impl Project {
     /// `document_created` (which has no other source of truth), the
     /// filesystem already tracks this, and reading it live also credits a
     /// document touched outside smaragd entirely (an external editor, a
-    /// `git pull`), not just edits made through the app. Native-only, same
-    /// raw-`std::fs`-bypassing-`ProjectStore` precedent `editor::read_mtime`
-    /// already sets for mtime specifically. Recomputed fresh from disk every
-    /// call — can be slow for a large project, so callers should run it off
-    /// the UI thread, same convention as `word_count`.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// `git pull`), not just edits made through the app. Same raw-`std::fs`-
+    /// bypassing-`ProjectStore` precedent `editor::read_mtime` already sets
+    /// for mtime specifically. Recomputed fresh from disk every call — can
+    /// be slow for a large project, so callers should run it off the UI
+    /// thread, same convention as `word_count`.
     pub fn document_modified_times(&self) -> HashMap<PathBuf, std::time::SystemTime> {
         let mut out = HashMap::new();
         self.collect_modified_times(&self.tree.root, &mut out);
         out
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn collect_modified_times(
         &self,
         node: &BinderNode,
@@ -292,7 +290,6 @@ mod tests {
         assert!(!project.meta.document_created.contains_key("Doomed.md"));
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn document_modified_times_reads_every_tracked_documents_mtime() {
         let dir = tempfile::tempdir().unwrap();
@@ -304,7 +301,6 @@ mod tests {
         assert!(times.contains_key(&path));
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn document_modified_times_excludes_trash_and_templates() {
         let dir = tempfile::tempdir().unwrap();

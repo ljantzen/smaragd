@@ -107,7 +107,6 @@ pub fn show(ui: &mut egui::Ui, project: &Project, metric: &mut ActivityMetric) {
 
 const WEEKDAY_LABELS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-#[cfg(not(target_arch = "wasm32"))]
 fn show_modified_chart(ui: &mut egui::Ui, project: &Project, days: &[chrono::NaiveDate]) {
     // Read live from disk rather than a persisted field — see
     // `Project::document_modified_times`'s doc comment for why. A plain
@@ -125,11 +124,6 @@ fn show_modified_chart(ui: &mut egui::Ui, project: &Project, days: &[chrono::Nai
         .map(|date| modified_by_day.get(date).copied().unwrap_or(0))
         .collect();
     day_bar_chart(ui, "dashboard_modified_chart", days, &counts);
-}
-
-#[cfg(target_arch = "wasm32")]
-fn show_modified_chart(ui: &mut egui::Ui, _project: &Project, _days: &[chrono::NaiveDate]) {
-    ui.weak("Not available in the browser build.");
 }
 
 /// A bar chart over `days` (index i -> `values[i]`), with the x-axis grid

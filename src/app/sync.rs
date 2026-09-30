@@ -4,8 +4,7 @@
 //! threads so the UI never waits on the network.
 //!
 //! Modeled on how collaboration is wired (`collab.rs`): a session object polled once a
-//! frame, whose events become status messages, toasts and repaints. `sync_stub.rs` is the
-//! browser build's no-op twin.
+//! frame, whose events become status messages, toasts and repaints.
 //!
 //! Merging remote edits into a file the user has open is deliberately *not* done through
 //! the editor buffer. While a file has unsaved edits the engine is told to hold it

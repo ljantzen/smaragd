@@ -693,178 +693,166 @@ fn show_sync_category(
     settings: &mut Settings,
     sync_ui: &mut SyncSettingsUi,
 ) -> bool {
-    #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
     let mut changed = false;
     ui.heading("Sync");
     ui.add_space(8.0);
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (settings, sync_ui);
-        ui.label("Sync isn't available in the browser edition yet.");
-        return changed;
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        ui.weak(
-            "Keeps a project identical across your own devices through a server you host. \
+    ui.weak(
+        "Keeps a project identical across your own devices through a server you host. \
              Your text is encrypted on this device before it is uploaded; the server only ever \
              stores ciphertext it cannot read.",
-        );
-        ui.add_space(8.0);
-        changed |= ui
-            .checkbox(&mut settings.sync_enabled, "Enable sync")
-            .on_hover_text(
-                "A project only syncs when this is on and the project has been paired with a \
+    );
+    ui.add_space(8.0);
+    changed |= ui
+        .checkbox(&mut settings.sync_enabled, "Enable sync")
+        .on_hover_text(
+            "A project only syncs when this is on and the project has been paired with a \
                  vault from the Sync panel.",
-            )
-            .changed();
-        ui.add_enabled_ui(settings.sync_enabled, |ui| {
-            ui.add_space(6.0);
-            ui.strong("Server");
-            egui::Grid::new("sync_server_grid")
-                .num_columns(2)
-                .spacing([8.0, 6.0])
-                .show(ui, |ui| {
-                    ui.label("Host:");
-                    changed |= ui
-                        .add(
-                            egui::TextEdit::singleline(&mut settings.sync_server_host)
-                                .hint_text("sync.example.com")
-                                .desired_width(280.0),
-                        )
-                        .changed();
-                    ui.end_row();
-
-                    ui.label("Port:");
-                    ui.horizontal(|ui| {
-                        let mut port = settings.sync_server_port;
-                        if ui
-                            .add(egui::DragValue::new(&mut port).range(0..=65535))
-                            .changed()
-                        {
-                            settings.sync_server_port = port;
-                            changed = true;
-                        }
-                        ui.weak(format!(
-                            "0 = default ({})",
-                            settings.resolve_sync_server_port()
-                        ));
-                    });
-                    ui.end_row();
-
-                    ui.label("Path:");
-                    changed |= ui
-                        .add(
-                            egui::TextEdit::singleline(&mut settings.sync_server_path)
-                                .hint_text("(usually blank)")
-                                .desired_width(280.0),
-                        )
-                        .on_hover_text(
-                            "Only if a reverse proxy serves the server under a sub-path, \
-                             e.g. \"smaragd\" for https://example.com/smaragd/.",
-                        )
-                        .changed();
-                    ui.end_row();
-                });
-            let mut tls = settings.sync_use_tls();
-            if ui.checkbox(&mut tls, "Use HTTPS (TLS)").changed() {
-                settings.sync_plain_http = !tls;
-                changed = true;
-            }
-            if settings.sync_plain_http {
-                ui.colored_label(
-                    ui.visuals().warn_fg_color,
-                    "Plain HTTP sends your device token unencrypted. Your text stays encrypted, \
-                     but only use this on a network you trust.",
-                );
-            }
-
-            ui.add_space(10.0);
-            ui.strong("Encryption");
-            let show_id = egui::Id::new("sync_passphrase_visible");
-            let mut visible = ui.data(|d| d.get_temp::<bool>(show_id).unwrap_or(false));
-            ui.horizontal(|ui| {
-                ui.label("Passphrase:");
+        )
+        .changed();
+    ui.add_enabled_ui(settings.sync_enabled, |ui| {
+        ui.add_space(6.0);
+        ui.strong("Server");
+        egui::Grid::new("sync_server_grid")
+            .num_columns(2)
+            .spacing([8.0, 6.0])
+            .show(ui, |ui| {
+                ui.label("Host:");
                 changed |= ui
                     .add(
-                        egui::TextEdit::singleline(&mut settings.sync_passphrase.0)
-                            .password(!visible)
+                        egui::TextEdit::singleline(&mut settings.sync_server_host)
+                            .hint_text("sync.example.com")
                             .desired_width(280.0),
                     )
                     .changed();
-                if ui.checkbox(&mut visible, "Show").changed() {
-                    ui.data_mut(|d| d.insert_temp(show_id, visible));
-                }
+                ui.end_row();
+
+                ui.label("Port:");
+                ui.horizontal(|ui| {
+                    let mut port = settings.sync_server_port;
+                    if ui
+                        .add(egui::DragValue::new(&mut port).range(0..=65535))
+                        .changed()
+                    {
+                        settings.sync_server_port = port;
+                        changed = true;
+                    }
+                    ui.weak(format!(
+                        "0 = default ({})",
+                        settings.resolve_sync_server_port()
+                    ));
+                });
+                ui.end_row();
+
+                ui.label("Path:");
+                changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(&mut settings.sync_server_path)
+                            .hint_text("(usually blank)")
+                            .desired_width(280.0),
+                    )
+                    .on_hover_text(
+                        "Only if a reverse proxy serves the server under a sub-path, \
+                             e.g. \"smaragd\" for https://example.com/smaragd/.",
+                    )
+                    .changed();
+                ui.end_row();
             });
-            if !settings.sync_passphrase.0.is_empty()
-                && let Some(why) =
-                    crate::sync::crypto::passphrase_weakness(&settings.sync_passphrase.0)
-            {
-                ui.colored_label(
-                    ui.visuals().warn_fg_color,
-                    format!(
-                        "Weak passphrase: {why}. Anyone who gets hold of the server's data \
+        let mut tls = settings.sync_use_tls();
+        if ui.checkbox(&mut tls, "Use HTTPS (TLS)").changed() {
+            settings.sync_plain_http = !tls;
+            changed = true;
+        }
+        if settings.sync_plain_http {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                "Plain HTTP sends your device token unencrypted. Your text stays encrypted, \
+                     but only use this on a network you trust.",
+            );
+        }
+
+        ui.add_space(10.0);
+        ui.strong("Encryption");
+        let show_id = egui::Id::new("sync_passphrase_visible");
+        let mut visible = ui.data(|d| d.get_temp::<bool>(show_id).unwrap_or(false));
+        ui.horizontal(|ui| {
+            ui.label("Passphrase:");
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut settings.sync_passphrase.0)
+                        .password(!visible)
+                        .desired_width(280.0),
+                )
+                .changed();
+            if ui.checkbox(&mut visible, "Show").changed() {
+                ui.data_mut(|d| d.insert_temp(show_id, visible));
+            }
+        });
+        if !settings.sync_passphrase.0.is_empty()
+            && let Some(why) = crate::sync::crypto::passphrase_weakness(&settings.sync_passphrase.0)
+        {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                format!(
+                    "Weak passphrase: {why}. Anyone who gets hold of the server's data \
                          can try guesses offline. New vaults need a stronger one; an existing \
                          vault keeps the passphrase it was created with."
-                    ),
-                );
-            }
-            ui.weak(
-                "Use the same passphrase on every device. It never leaves this device and cannot \
+                ),
+            );
+        }
+        ui.weak(
+            "Use the same passphrase on every device. It never leaves this device and cannot \
                  be recovered: if you lose it, your synced data cannot be decrypted. Changing it \
                  later makes existing vaults unreadable. It is stored in plain text in \
                  smaragd.toml, like your other settings, in a file only your user account \
                  can read.",
-            );
+        );
 
-            ui.add_space(10.0);
-            ui.strong("This device");
-            let default_name = settings.resolve_sync_device_name();
-            ui.horizontal(|ui| {
-                ui.label("Name:");
-                changed |= ui
-                    .add(
-                        egui::TextEdit::singleline(&mut settings.sync_device_name)
-                            .hint_text(default_name)
-                            .desired_width(280.0),
-                    )
-                    .on_hover_text("How this device appears in a vault's device list.")
-                    .changed();
-            });
+        ui.add_space(10.0);
+        ui.strong("This device");
+        let default_name = settings.resolve_sync_device_name();
+        ui.horizontal(|ui| {
+            ui.label("Name:");
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut settings.sync_device_name)
+                        .hint_text(default_name)
+                        .desired_width(280.0),
+                )
+                .on_hover_text("How this device appears in a vault's device list.")
+                .changed();
+        });
 
-            ui.add_space(10.0);
-            let problem = settings.sync_config_problem();
-            ui.horizontal(|ui| {
-                let can_test = settings.sync_server_addr().is_some()
-                    && sync_ui.test_status != SyncTestStatus::Testing;
-                if ui
-                    .add_enabled(can_test, egui::Button::new("Test Connection"))
-                    .clicked()
-                {
-                    sync_ui.test_requested = true;
+        ui.add_space(10.0);
+        let problem = settings.sync_config_problem();
+        ui.horizontal(|ui| {
+            let can_test = settings.sync_server_addr().is_some()
+                && sync_ui.test_status != SyncTestStatus::Testing;
+            if ui
+                .add_enabled(can_test, egui::Button::new("Test Connection"))
+                .clicked()
+            {
+                sync_ui.test_requested = true;
+            }
+            match &sync_ui.test_status {
+                SyncTestStatus::Idle => {}
+                SyncTestStatus::Testing => {
+                    ui.weak("Contacting the server…");
                 }
-                match &sync_ui.test_status {
-                    SyncTestStatus::Idle => {}
-                    SyncTestStatus::Testing => {
-                        ui.weak("Contacting the server…");
-                    }
-                    SyncTestStatus::Reachable(message) => {
-                        ui.colored_label(egui::Color32::from_rgb(0x3c, 0xb0, 0x5a), message);
-                    }
-                    SyncTestStatus::Failed(message) => {
-                        ui.colored_label(ui.visuals().error_fg_color, message);
-                    }
+                SyncTestStatus::Reachable(message) => {
+                    ui.colored_label(egui::Color32::from_rgb(0x3c, 0xb0, 0x5a), message);
                 }
-            });
-            if let Some(problem) = problem {
-                ui.add_space(4.0);
-                ui.colored_label(ui.visuals().warn_fg_color, problem);
+                SyncTestStatus::Failed(message) => {
+                    ui.colored_label(ui.visuals().error_fg_color, message);
+                }
             }
         });
-        changed
-    }
+        if let Some(problem) = problem {
+            ui.add_space(4.0);
+            ui.colored_label(ui.visuals().warn_fg_color, problem);
+        }
+    });
+    changed
 }
 
 fn show_history_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
@@ -941,10 +929,6 @@ fn show_history_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
                 false,
                 egui::TextEdit::singleline(&mut dir_text).desired_width(300.0),
             );
-            // Folder picking has no browser equivalent (the File System
-            // Access API's directory picker doesn't map onto "point at any
-            // folder on disk"); native-only for now.
-            #[cfg(not(target_arch = "wasm32"))]
             if ui.button("Browse…").clicked()
                 && let Some(picked) = rfd::FileDialog::new().pick_folder()
             {
@@ -1011,18 +995,12 @@ fn show_pomodoro_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
         }
     });
     ui.add_space(12.0);
-    // No OS notification center to talk to in a browser (see
-    // notifications::show's own wasm32 stub, which already no-ops this
-    // setting even when left on) — hidden rather than shown-and-inert.
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        changed |= ui
-            .checkbox(
-                &mut settings.pomodoro_notifications_enabled,
-                "Show a desktop notification when a phase completes",
-            )
-            .changed();
-    }
+    changed |= ui
+        .checkbox(
+            &mut settings.pomodoro_notifications_enabled,
+            "Show a desktop notification when a phase completes",
+        )
+        .changed();
     changed
 }
 

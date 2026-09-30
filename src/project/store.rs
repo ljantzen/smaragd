@@ -1,27 +1,16 @@
 //! Abstracts the point read/write/delete operations `project/`'s production
 //! code (not its test fixtures, which exercise a real tempdir directly) does
-//! against a project's files, so a future browser build can swap in a
-//! browser-storage-backed implementation without touching the logic above it
-//! — see the wasm feasibility plan's "storage abstraction layer" phase.
+//! against a project's files, behind `NativeStore`, its one implementation.
 //!
-//! Deliberately narrow for now: the point read/write/delete operations
-//! `project/`'s production code actually calls (`fs::write`/`read_to_string`/
+//! Deliberately narrow: the point read/write/delete operations `project/`'s
+//! production code actually calls (`fs::write`/`read_to_string`/
 //! `create_dir_all`/`rename`/`remove_dir_all`/`remove_file`), a flat,
 //! single-level `read_dir` (added for `backup::prune_old_backups` and
 //! `plugins::load`, both of which just list one directory's immediate
 //! entries), and a recursive, gitignore-aware `list_tree` (added for
-//! `scan::scan_project`).
-//!
-//! `list_tree` is the trait's biggest concession to how much harder a real
-//! browser implementation would be than `NativeStore`'s: on native it's a
-//! near-verbatim port of `scan_project`'s old `ignore::WalkBuilder` loop
-//! (same `.gitignore`/hidden-file/symlink-exclusion behavior, see its own doc
-//! comment), but a browser backend has no such crate to build on against
-//! IndexedDB/OPFS — it would need to reimplement equivalent `.gitignore`
-//! pattern matching itself (or ship a wasm-compatible gitignore-matching
-//! crate) against whatever files it actually has stored. This trait only
-//! commits to the *shape* of that capability, not how a browser store would
-//! satisfy it.
+//! `scan::scan_project`, a near-verbatim port of its old
+//! `ignore::WalkBuilder` loop — same `.gitignore`/hidden-file/symlink-
+//! exclusion behavior, see its own doc comment).
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -56,10 +45,7 @@ pub trait ProjectStore: std::fmt::Debug + Send + Sync {
     /// sub-entry is just skipped, mirroring `read_dir`), matching
     /// `scan_project`'s own total-success contract.
     fn list_tree(&self, root: &Path) -> Vec<(PathBuf, TreeEntryKind)>;
-    /// Whether anything exists at `path` at all (file or directory) — added
-    /// alongside `is_dir` once a non-native store existed: production code
-    /// used to call `Path::exists()` directly, which is silently wrong for
-    /// any path that isn't a real filesystem path (see `BrowserStore`).
+    /// Whether anything exists at `path` at all (file or directory).
     fn exists(&self, path: &Path) -> bool;
     /// Whether `path` exists and is specifically a directory (not a file).
     fn is_dir(&self, path: &Path) -> bool;

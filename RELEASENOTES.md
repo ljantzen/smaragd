@@ -11,6 +11,15 @@ this file.
   line gets a dot there). The new **Notes** dock (`View > Notes`, `Ctrl+Shift+N`)
   lists every note in the project with a jump-to link and its text; `Ctrl+Alt+Down`/
   `Ctrl+Alt+Up` step between them, mirroring Bookmarks' own `Alt+Down`/`Alt+Up`.
+- Added a **Dashboard** dock tab (#15, `Tools > Dashboard`, `Ctrl+Alt+G`):
+  writing statistics as they evolve over time, as both numbers and graphs.
+  A summary row (session count, total writing time, words written across
+  sessions, documents created) plus bar charts for word count, sessions,
+  and documents created/modified over the last 60 days, and two
+  activity-pattern charts — by day of week and by hour of day — toggled
+  between Words and Time. A session starts when a project opens and ends
+  when it closes or you switch projects, tracked separately from the Word
+  Count panel's daily Session Target.
 - Added a manual ordering mode to the Story Grid (#79): an **Order** dropdown
   switches between **Manuscript** (the previous, read-only, binder-position
   order) and **Manual**, which shows the same freeform order as Corkboard and
@@ -22,6 +31,12 @@ this file.
   not whatever order Manual reordering happened to leave behind. Manuscript
   stays the default for existing projects; the chosen mode is remembered per
   project.
+- **Removed the experimental browser (WebAssembly) edition.** It was a useful
+  experiment, but keeping the wasm32 build working alongside every native
+  feature wasn't sustainable. The native desktop app (Linux, Windows, macOS)
+  is unaffected; only the `wasm32-unknown-unknown` target, the
+  `https://ljantzen.github.io/smaragd/app/` demo, and the manual's Browser
+  Edition page are gone.
 
 ## v1.3.4 — 2026-09-29
 

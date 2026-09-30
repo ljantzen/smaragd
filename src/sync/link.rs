@@ -195,15 +195,9 @@ impl DeviceCredentials {
 
 /// The directory under which every vault's local state and this device's credentials
 /// live: the OS data directory, never a project folder. `None` if the platform has no
-/// data dir (and always on the browser build, which has no sync yet).
-#[cfg(not(target_arch = "wasm32"))]
+/// data dir.
 pub fn data_root() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd").map(|dirs| dirs.data_dir().join("sync"))
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn data_root() -> Option<PathBuf> {
-    None
 }
 
 /// One vault's state directory under `data_root`.

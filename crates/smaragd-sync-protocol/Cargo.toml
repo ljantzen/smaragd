@@ -7,9 +7,8 @@ description = "Wire types shared by Smaragd's sync client and sync server"
 repository = "https://github.com/ljantzen/smaragd"
 publish = false
 
-# Deliberately tiny and free of networking/crypto-primitive dependencies: the
-# desktop app, the browser (wasm32) build and the sync server all depend on this
-# crate, so it must build for every target the app does.
+# Deliberately tiny and free of networking/crypto-primitive dependencies: both
+# the desktop app and the sync server depend on this crate.
 [dependencies]
 base64 = "0.22"
 bs58 = "0.5.1"

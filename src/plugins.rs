@@ -42,14 +42,8 @@ use crate::shortcuts::is_safe_binding;
 /// The global, always-loaded plugin directory: `<config_dir>/smaragd/plugins`,
 /// the same base path `settings::config_file_path` uses for `smaragd.toml`.
 /// `None` if the platform's config directory can't be determined.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn global_plugins_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "smaragd").map(|dirs| dirs.config_dir().join("plugins"))
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn global_plugins_dir() -> Option<PathBuf> {
-    None
 }
 
 /// The live values a running plugin function reads/writes, shared with the

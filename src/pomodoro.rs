@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use web_time::Instant;
+use std::time::Instant;
 
 use crate::settings::Settings;
 

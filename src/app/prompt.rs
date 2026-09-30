@@ -18,8 +18,6 @@ pub(super) enum PromptAction {
     RenameTag {
         old_tag: String,
     },
-    /// Desktop only: the browser edition creates projects without a folder picker.
-    #[cfg(not(target_arch = "wasm32"))]
     NewProject {
         location: PathBuf,
         template_id: String,
@@ -36,11 +34,9 @@ pub(super) enum PromptAction {
     /// `start_collab_join`).
     JoinCollabSession,
     /// Review a pasted pairing ticket before joining its vault (see `sync_join_with_ticket`).
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     SyncJoinTicket,
     /// Create a sync vault on a server that needs its admin token (see
     /// `sync_create_vault_with_token`).
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     SyncAdminToken,
     /// Save the current project's structure as a new custom template under the
     /// confirmed name (see `save_project_as_template`).
@@ -267,7 +263,6 @@ impl SmaragdApp {
             } => self.create_document_from_template(&parent, name, &template_path),
             PromptAction::Rename { path } => self.rename_node(&path, name),
             PromptAction::RenameTag { old_tag } => self.rename_tag(&old_tag, name),
-            #[cfg(not(target_arch = "wasm32"))]
             PromptAction::NewProject {
                 location,
                 template_id,

@@ -453,7 +453,6 @@ impl SmaragdApp {
     /// flight rather than queuing or racing it. The spawned thread requests a
     /// repaint once it has a result, so `poll_word_count` (called every frame)
     /// picks it up promptly.
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn spawn_word_count_recompute(&mut self, ctx: &egui::Context) {
         let Some(project) = &self.project else {
             self.word_count.cache = 0;
@@ -489,25 +488,6 @@ impl SmaragdApp {
             repaint_ctx.request_repaint();
         });
         self.word_count.pending = Some(receiver);
-    }
-
-    /// No threads on wasm32 (no atomics/shared memory in this build) — computed
-    /// inline instead of backgrounded. Fine for a browser-sized project; mirrors
-    /// both what the native version's background thread computes and what
-    /// `poll_word_count` does with the result (including the session rollover),
-    /// combined into one synchronous call since there's no polling to do here.
-    #[cfg(target_arch = "wasm32")]
-    pub(super) fn spawn_word_count_recompute(&mut self, _ctx: &egui::Context) {
-        let Some(project) = &mut self.project else {
-            self.word_count.cache = 0;
-            return;
-        };
-        let total = project.word_count(project.meta.word_count_scope);
-        let folder_totals = project.folder_word_counts();
-        self.word_count.cache = total;
-        self.word_count.folder_totals = folder_totals;
-        let _ = project.maybe_roll_over_session(total);
-        let _ = project.maybe_capture_session_baseline(total);
     }
 
     /// Check whether an in-flight `word_count.pending` recompute has finished,
