@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.4.0 — 2026-09-30
+
 - Added Notes: pin a short piece of text to the cursor's exact position — line *and*
   column, unlike a Bookmark's line-only granularity — with `Ctrl+Shift+J`, or by
   clicking a line's note icon slot in the gutter (left of the bookmark diamond; a noted
