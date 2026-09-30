@@ -1497,19 +1497,6 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/console_error_panic_hook/console_error_panic_hook-0.1.7.crate",
-        "sha256": "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc",
-        "dest": "cargo/vendor/console_error_panic_hook-0.1.7"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc\", \"files\": {}}",
-        "dest": "cargo/vendor/console_error_panic_hook-0.1.7",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/const-oid/const-oid-0.10.2.crate",
         "sha256": "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c",
         "dest": "cargo/vendor/const-oid-0.10.2"
@@ -2389,6 +2376,19 @@
         "type": "inline",
         "contents": "{\"package\": \"606ed4167daf341e5753d703285c4c1d562324b2c07aa8f405cd7d066fe58f3b\", \"files\": {}}",
         "dest": "cargo/vendor/egui_glow-0.36.2",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/egui_plot/egui_plot-0.37.0.crate",
+        "sha256": "90f3711a5032bb65a41011b23fcdc6c4bb599757b82cc0181d41e7d1de16986a",
+        "dest": "cargo/vendor/egui_plot-0.37.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"90f3711a5032bb65a41011b23fcdc6c4bb599757b82cc0181d41e7d1de16986a\", \"files\": {}}",
+        "dest": "cargo/vendor/egui_plot-0.37.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -4053,19 +4053,6 @@
         "type": "inline",
         "contents": "{\"package\": \"e4a2c462a4d927d512f5f882a033ddd62f33a05bb9f230d98f736ac3dc85938f\", \"files\": {}}",
         "dest": "cargo/vendor/icu_segmenter_data-2.2.0",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/idb/idb-0.6.5.crate",
-        "sha256": "6554f394e990a1af530a528a7fdcad6e01b29cb1b990f89df3ffd62cf15f7828",
-        "dest": "cargo/vendor/idb-0.6.5"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"6554f394e990a1af530a528a7fdcad6e01b29cb1b990f89df3ffd62cf15f7828\", \"files\": {}}",
-        "dest": "cargo/vendor/idb-0.6.5",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -7100,19 +7087,6 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/rexie/rexie-0.6.2.crate",
-        "sha256": "887466cfa8a12c08ee4b174998135cea8ff0fd84858627cd793e56535a045bc9",
-        "dest": "cargo/vendor/rexie-0.6.2"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"887466cfa8a12c08ee4b174998135cea8ff0fd84858627cd793e56535a045bc9\", \"files\": {}}",
-        "dest": "cargo/vendor/rexie-0.6.2",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/rfd/rfd-0.17.2.crate",
         "sha256": "20dafead71c16a34e1ff357ddefc8afc11e7d51d6d2b9fbd07eaa48e3e540220",
         "dest": "cargo/vendor/rfd-0.17.2"
@@ -7563,19 +7537,6 @@
         "type": "inline",
         "contents": "{\"package\": \"4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba\", \"files\": {}}",
         "dest": "cargo/vendor/serde-1.0.229",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/serde-wasm-bindgen/serde-wasm-bindgen-0.6.5.crate",
-        "sha256": "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b",
-        "dest": "cargo/vendor/serde-wasm-bindgen-0.6.5"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b\", \"files\": {}}",
-        "dest": "cargo/vendor/serde-wasm-bindgen-0.6.5",
         "dest-filename": ".cargo-checksum.json"
     },
     {
