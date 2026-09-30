@@ -43,6 +43,7 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Refresh Word Count | `F5` |
 | Toggle Collaboration Panel | `Ctrl+Shift+L` |
 | Toggle Streak Tracking | `Ctrl+Alt+S` |
+| Toggle Dashboard | `Ctrl+Alt+G` |
 | Toggle Bookmark | `Ctrl+F2` |
 | Toggle Bookmarks | `Ctrl+Alt+B` |
 | Next Bookmark | `Alt+Down` |

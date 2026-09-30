@@ -32,6 +32,7 @@
 - [Pomodoro Timer](pomodoro.md)
 - [Word Count](word-count.md)
 - [Writing Streak](writing-streak.md)
+- [Dashboard](dashboard.md)
 - [Collaboration](collaboration.md)
 - [Sync (experimental)](sync.md)
 - [Plugins](plugins.md)

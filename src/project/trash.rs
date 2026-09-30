@@ -101,9 +101,11 @@ impl Project {
             self.meta.folder_roles.retain(|k, _| !under_prefix(k));
             self.meta.trashed_origins.retain(|k, _| !under_prefix(k));
             self.meta.folder_meta.retain(|k, _| !under_prefix(k));
+            self.meta.document_created.retain(|k, _| !under_prefix(k));
         } else {
             self.meta.folder_roles.remove(&key);
             self.meta.trashed_origins.remove(&key);
+            self.meta.document_created.remove(&key);
         }
         // Unlike a move/rename/trash round trip (`rewrite_bookmark_paths`,
         // which keeps a bookmark following its document), the document is

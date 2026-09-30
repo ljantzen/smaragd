@@ -28,9 +28,18 @@ impl SmaragdApp {
     }
 
     fn set_project(&mut self, ctx: &egui::Context, mut project: Project, path: &Path) {
+        // Close the outgoing project's session (see `Project::close_session`)
+        // before opening the new one — covers switching projects mid-run, not
+        // just app shutdown (`ui()`'s `close_requested` handling covers that
+        // case separately, since there's no "new project" here to hand off
+        // to).
+        if let Some(previous) = &mut self.project {
+            let _ = previous.close_session(self.word_count.cache);
+        }
         if self.settings.create_starter_folders {
             Self::ensure_starter_folders(&mut project);
         }
+        let _ = project.start_session();
         // Default to whichever inner Streak tab is more useful for this
         // specific project — `Streak` (the live badge/progress view) if
         // tracking is already on, `Configure` otherwise — but only as a

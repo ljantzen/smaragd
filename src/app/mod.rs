@@ -123,6 +123,11 @@ pub struct SmaragdApp {
     /// (`project_lifecycle.rs`) every time a project is opened; the user can
     /// freely switch away from that default afterward.
     streak_sub_tab: ui::streak_panel::StreakSubTab,
+    /// Which quantity the Dashboard tab's two activity-pattern charts
+    /// (by day of week, by hour of day) sum per bucket — pure UI-local
+    /// state, not persisted and not reset by `set_project`, same convention
+    /// as `belief_timeline_character` below.
+    dashboard_activity_metric: crate::dashboard::ActivityMetric,
     /// The Belief Timeline tab's currently selected POV character — starts blank
     /// (defaults to the first known character the panel finds, see
     /// `ui::belief_timeline_panel::show`) and isn't reset by `set_project`, unlike
@@ -372,6 +377,7 @@ impl SmaragdApp {
             sync_settings_ui: ui::settings_panel::SyncSettingsUi::default(),
             sync: sync::SyncState::default(),
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
+            dashboard_activity_metric: crate::dashboard::ActivityMetric::default(),
             belief_timeline_character: String::new(),
             settings_path_override: None,
             is_test_fixture: false,
@@ -487,6 +493,7 @@ impl SmaragdApp {
             sync_settings_ui: ui::settings_panel::SyncSettingsUi::default(),
             sync: sync::SyncState::default(),
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
+            dashboard_activity_metric: crate::dashboard::ActivityMetric::default(),
             belief_timeline_character: String::new(),
             // Always set, unconditionally — see this field's doc comment.
             // Any test built on `test_fixture` must never be able to reach
@@ -816,6 +823,7 @@ impl SmaragdApp {
             #[cfg(target_arch = "wasm32")]
             ShortcutAction::ToggleCollabPanel => {}
             ShortcutAction::ToggleStreak => self.toggle_dock_tab(DockTab::Streak),
+            ShortcutAction::ToggleDashboard => self.toggle_dock_tab(DockTab::Dashboard),
             // Desktop-only, like the Collaboration Panel above: the browser build's
             // `sync_stub.rs` has no panel to show and nothing to sync.
             #[cfg(not(target_arch = "wasm32"))]
@@ -1560,6 +1568,13 @@ impl eframe::App for SmaragdApp {
             if self.has_unsaved_changes() && !self.exit_confirm.open {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.exit_confirm.open = true;
+            } else if let Some(project) = &mut self.project {
+                // Only closed once the close is actually going through — not
+                // on a frame that's about to be vetoed above (Cancel in the
+                // modal means the app keeps running with nothing left to
+                // resume tracking, since nothing restarts a closed session
+                // short of opening a project again).
+                let _ = project.close_session(self.word_count.cache);
             }
         }
 
@@ -1813,6 +1828,7 @@ impl eframe::App for SmaragdApp {
                     char_activity: self.word_count.char_activity,
                     today_words_so_far,
                     streak_sub_tab: &mut self.streak_sub_tab,
+                    dashboard_activity_metric: &mut self.dashboard_activity_metric,
                     belief_timeline_character: &mut self.belief_timeline_character,
                     actions: Vec::new(),
                     focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),

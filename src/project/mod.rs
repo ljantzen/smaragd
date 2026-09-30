@@ -1,3 +1,4 @@
+mod activity;
 mod binder_color_mode;
 mod bookmarks;
 pub mod browser_store;

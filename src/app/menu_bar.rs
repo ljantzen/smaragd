@@ -434,6 +434,14 @@ impl SmaragdApp {
                         if nav.shortcut_button(ui, "Streak", streak_shortcut).clicked() {
                             self.toggle_dock_tab(DockTab::Streak);
                         }
+                        let dashboard_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::ToggleDashboard);
+                        if nav
+                            .shortcut_button(ui, "Dashboard", dashboard_shortcut)
+                            .clicked()
+                        {
+                            self.toggle_dock_tab(DockTab::Dashboard);
+                        }
                         ui.separator();
                         #[cfg(not(target_arch = "wasm32"))]
                         {

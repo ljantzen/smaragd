@@ -140,6 +140,11 @@ pub(super) struct AppTabViewer<'a> {
     /// `streak_sub_tab` above uses, rather than round-tripping through a
     /// `DockAction` for something that's pure tab-local UI state.
     pub(super) belief_timeline_character: &'a mut String,
+    /// The Dashboard tab's Words/Time toggle for its two activity-pattern
+    /// charts — see `SmaragdApp::dashboard_activity_metric`. Same
+    /// direct-mutation, not-persisted convention as `streak_sub_tab`/
+    /// `belief_timeline_character`.
+    pub(super) dashboard_activity_metric: &'a mut crate::dashboard::ActivityMetric,
     pub(super) actions: Vec<DockAction>,
     /// See `SmaragdApp::focus_binder_requested`.
     pub(super) focus_binder_requested: bool,
@@ -179,6 +184,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::Streak => "Streak".into(),
             DockTab::Bookmarks => "Bookmarks".into(),
             DockTab::Notes => "Notes".into(),
+            DockTab::Dashboard => "Dashboard".into(),
         }
     }
 
@@ -635,6 +641,14 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     ) {
                         self.actions.push(DockAction::Streak(event));
                     }
+                }
+                None => {
+                    ui.label("Open a project folder to get started.");
+                }
+            },
+            DockTab::Dashboard => match self.project {
+                Some(project) => {
+                    ui::dashboard_panel::show(ui, project, self.dashboard_activity_metric);
                 }
                 None => {
                     ui.label("Open a project folder to get started.");

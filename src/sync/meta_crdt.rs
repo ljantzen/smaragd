@@ -87,6 +87,10 @@ pub const LOCAL_ONLY_FIELDS: &[&str] = &[
     "streak_schedule",
     "streak_evaluation_mode",
     "streak_red_threshold_weeks",
+    "session_log",
+    "current_session_started",
+    "current_session_baseline_words",
+    "document_created",
 ];
 /// Fields with structure of their own, handled individually below.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -147,6 +151,10 @@ fn classify_exhaustively(meta: &ProjectMeta) {
         notes: _,
         last_spell_check_language: _,
         sync_files: _,
+        session_log: _,
+        current_session_started: _,
+        current_session_baseline_words: _,
+        document_created: _,
     } = meta;
 }
 

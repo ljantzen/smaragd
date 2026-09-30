@@ -53,6 +53,7 @@ impl Project {
         let path = parent.join(&filename);
         ensure_does_not_exist(self.store.as_ref(), &path)?;
         self.store.write(&path, contents.as_bytes())?;
+        self.record_document_created(&path);
         self.record_new_child(parent, &filename)?;
         self.rescan();
         Ok(path)

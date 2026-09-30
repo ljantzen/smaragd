@@ -249,4 +249,32 @@ pub struct ProjectMeta {
     /// default (attachments can be large). See `sync::binaries`.
     #[serde(default)]
     pub sync_files: bool,
+    /// Every completed app session against this project — see
+    /// [`crate::dashboard::SessionRecord`] and `Project::start_session`/
+    /// `close_session`. The Dashboard dock tab's session/activity charts'
+    /// data source.
+    #[serde(default)]
+    pub session_log: Vec<crate::dashboard::SessionRecord>,
+    /// When the in-progress app session against this project began
+    /// (`%Y-%m-%dT%H:%M:%S`, local time) — `None` whenever this project
+    /// isn't the currently active one. Set by `Project::start_session`,
+    /// cleared (and moved into `session_log`) by `Project::close_session`.
+    #[serde(default)]
+    pub current_session_started: Option<String>,
+    /// The tracked word count as of the first word-count recompute after
+    /// `current_session_started` was set — `None` until that first recompute
+    /// runs (see `Project::maybe_capture_session_baseline`), same
+    /// "captured lazily off the UI thread" reasoning as
+    /// `session_baseline_words`. What `close_session` measures the session's
+    /// `words_written` against.
+    #[serde(default)]
+    pub current_session_baseline_words: Option<u32>,
+    /// Each document's creation time (`%Y-%m-%dT%H:%M:%S`, local time),
+    /// keyed the same `/`-joined-relative-path way `node_order` is. Set once
+    /// by `Project::record_document_created` when the document is first
+    /// written (`create.rs`); there's no other source of truth for this (a
+    /// document's on-disk mtime, unlike its creation time, is read live
+    /// instead of persisted — see `Project::document_modified_times`).
+    #[serde(default)]
+    pub document_created: HashMap<String, String>,
 }

@@ -63,6 +63,7 @@ pub enum ShortcutAction {
     RefreshWordCount,
     ToggleCollabPanel,
     ToggleStreak,
+    ToggleDashboard,
     /// Advance `ProjectMeta::binder_color_mode` to the next of Status/POV/
     /// Word Count Progress — see `SmaragdApp::cycle_binder_color_mode`. The
     /// same three options are also directly selectable from `View > Color
@@ -174,6 +175,7 @@ impl ShortcutAction {
         Self::RefreshWordCount,
         Self::ToggleCollabPanel,
         Self::ToggleStreak,
+        Self::ToggleDashboard,
         Self::CycleBinderColorMode,
         Self::ToggleBookmark,
         Self::ToggleBookmarksPanel,
@@ -248,6 +250,7 @@ impl ShortcutAction {
             Self::RefreshWordCount => "Refresh Word Count",
             Self::ToggleCollabPanel => "Toggle Collaboration Panel",
             Self::ToggleStreak => "Toggle Streak Tracking",
+            Self::ToggleDashboard => "Toggle Dashboard",
             Self::CycleBinderColorMode => "Cycle Binder Color Mode",
             Self::ToggleBookmark => "Toggle Bookmark",
             Self::ToggleBookmarksPanel => "Toggle Bookmarks",
@@ -312,6 +315,7 @@ impl ShortcutAction {
             Self::RefreshWordCount => "refresh_word_count",
             Self::ToggleCollabPanel => "toggle_collab_panel",
             Self::ToggleStreak => "toggle_streak",
+            Self::ToggleDashboard => "toggle_dashboard",
             Self::CycleBinderColorMode => "cycle_binder_color_mode",
             Self::ToggleBookmark => "toggle_bookmark",
             Self::ToggleBookmarksPanel => "toggle_bookmarks_panel",
@@ -389,6 +393,7 @@ impl ShortcutAction {
             | Self::RefreshWordCount
             | Self::ToggleCollabPanel
             | Self::ToggleStreak
+            | Self::ToggleDashboard
             | Self::ToggleSyncPanel
             | Self::SyncNow => ShortcutCategory::Tools,
         }
@@ -479,6 +484,9 @@ impl ShortcutAction {
             }
             Self::ToggleStreak => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::S)
+            }
+            Self::ToggleDashboard => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::G)
             }
             Self::CycleBinderColorMode => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::C)

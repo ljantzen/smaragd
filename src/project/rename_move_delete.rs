@@ -56,6 +56,10 @@ impl Project {
             &relative_key(&self.root, path),
             &relative_key(&self.root, &new_path),
         );
+        self.rewrite_document_created_prefix(
+            &relative_key(&self.root, path),
+            &relative_key(&self.root, &new_path),
+        );
 
         self.save_metadata()?;
         self.rescan();
@@ -306,6 +310,10 @@ impl Project {
             &relative_key(&self.root, &dest),
         );
         self.rewrite_note_paths(
+            &relative_key(&self.root, path),
+            &relative_key(&self.root, &dest),
+        );
+        self.rewrite_document_created_prefix(
             &relative_key(&self.root, path),
             &relative_key(&self.root, &dest),
         );

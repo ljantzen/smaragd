@@ -507,6 +507,7 @@ impl SmaragdApp {
         self.word_count.cache = total;
         self.word_count.folder_totals = folder_totals;
         let _ = project.maybe_roll_over_session(total);
+        let _ = project.maybe_capture_session_baseline(total);
     }
 
     /// Check whether an in-flight `word_count.pending` recompute has finished,
@@ -532,6 +533,7 @@ impl SmaragdApp {
         self.word_count.folder_totals = result.folder_totals;
         if let Some(project) = &mut self.project {
             let _ = project.maybe_roll_over_session(result.total);
+            let _ = project.maybe_capture_session_baseline(result.total);
         }
     }
 }
