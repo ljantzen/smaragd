@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.4.1 — 2026-10-01
+
 - Added **auto-commit**: a project can commit its own changes on an interval
   (`File > Project Settings > Git`, off by default, 15 minutes when turned
   on), with an independent "push after each automatic commit" toggle. Reuses
