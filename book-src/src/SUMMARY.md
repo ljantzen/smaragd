@@ -47,3 +47,4 @@
 - [Notifications](notifications.md)
 - [Spell Check](spell-check.md)
 - [Settings](settings.md)
+- [Project Settings](project-settings.md)

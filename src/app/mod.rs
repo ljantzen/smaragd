@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+mod auto_commit;
 mod backup;
 mod bookmarks;
 mod collab;
@@ -21,6 +22,7 @@ mod menu_nav;
 mod notes;
 mod pomodoro;
 mod project_lifecycle;
+mod project_settings;
 mod prompt;
 mod refresh;
 mod search_everywhere;
@@ -111,6 +113,8 @@ pub struct SmaragdApp {
     prompt: Option<PendingPrompt>,
     recording_shortcut: Option<ShortcutTarget>,
     settings_category: ui::settings_panel::SettingsCategory,
+    show_project_settings: bool,
+    project_settings_category: ui::project_settings_panel::ProjectSettingsCategory,
     /// State shared between the Sync settings page and `sync.rs` (Test Connection).
     sync_settings_ui: ui::settings_panel::SyncSettingsUi,
     /// Background sync for the open project — see `sync.rs`.
@@ -158,6 +162,10 @@ pub struct SmaragdApp {
     /// editing a note at a specific `(path, line, column)` — see
     /// `open_note_prompt`.
     note_prompt: Option<NotePromptState>,
+    /// The Commit-message prompt (`ui::git_commit_prompt`), open while the
+    /// user is reviewing/editing a manual commit's pre-filled message — see
+    /// `prompt_git_commit`.
+    git_commit_prompt: Option<ui::git_commit_prompt::GitCommitPromptState>,
     command_prompt: CommandPromptState,
     open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState,
     search_everywhere: ui::search_everywhere::SearchEverywhereState,
@@ -183,6 +191,17 @@ pub struct SmaragdApp {
     /// open, rather than ever going stale-but-nonempty — see
     /// `refresh_git_dirty_paths`, which every call site funnels through.
     git_dirty_paths: std::collections::HashSet<PathBuf>,
+    /// The open project's `GIT_LOG_LIMIT` most recent commits, newest first —
+    /// see `refresh_git_log`, called at the same sites as
+    /// `refresh_git_dirty_paths` above (and by the same rules for when it's
+    /// kept empty). Feeds the Version Activity panel's commit history.
+    git_log_cache: Vec<crate::git::CommitLogEntry>,
+    /// What smaragd itself has done (or tried to do) via git this session —
+    /// commits, pushes, pulls, both manual and automatic — newest first, see
+    /// `record_git_activity`. Unlike `git_dirty_paths`/`git_log_cache`, not
+    /// re-derived from git state on refresh; cleared only when a project
+    /// closes or another one opens (`set_project`/`close_project`).
+    git_activity_log: std::collections::VecDeque<crate::git::GitActivityEntry>,
     /// Every `[[wikilink]]` elsewhere in the project pointing at the open
     /// document, kept in sync with whichever document is open (see
     /// `refresh_backlinks_if_needed`).
@@ -288,6 +307,11 @@ pub struct SmaragdApp {
     /// see `external_watch::EXTERNAL_SCAN_INTERVAL`. `None` until the first
     /// check after a project's opened.
     external_scan_at: Option<std::time::Instant>,
+    /// When `maybe_run_auto_commit` last actually committed (or was reset by
+    /// opening a project), gating it the same way `external_scan_at` gates
+    /// `check_external_changes` — see `ProjectMeta::git_auto_commit_enabled`.
+    /// `None` with no project open.
+    auto_commit_last_run: Option<std::time::Instant>,
     /// The open document, set when its on-disk content changed while
     /// `editor.dirty` was still true — an external write racing an unsaved
     /// local edit. Left for `external_conflict_prompt` to ask the user which
@@ -341,6 +365,8 @@ impl SmaragdApp {
             prompt: None,
             recording_shortcut: None,
             settings_category: ui::settings_panel::SettingsCategory::General,
+            show_project_settings: false,
+            project_settings_category: ui::project_settings_panel::ProjectSettingsCategory::Git,
             sync_settings_ui: ui::settings_panel::SyncSettingsUi::default(),
             sync: sync::SyncState::default(),
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
@@ -351,6 +377,7 @@ impl SmaragdApp {
             find_replace: FindReplaceState::default(),
             card_draft: None,
             note_prompt: None,
+            git_commit_prompt: None,
             command_prompt: CommandPromptState::default(),
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
             search_everywhere: ui::search_everywhere::SearchEverywhereState::default(),
@@ -361,6 +388,8 @@ impl SmaragdApp {
             metadata: MetadataState::default(),
             document_status_cache: DocumentStatusCache::default(),
             git_dirty_paths: std::collections::HashSet::new(),
+            git_log_cache: Vec::new(),
+            git_activity_log: std::collections::VecDeque::new(),
             backlinks: BacklinksState::default(),
             tags: TagsState::default(),
             word_count: WordCountState::default(),
@@ -382,6 +411,7 @@ impl SmaragdApp {
             collab: None,
             exit_confirm: ui::exit_confirm_prompt::ExitConfirmState::default(),
             external_scan_at: None,
+            auto_commit_last_run: None,
             external_conflict: None,
         };
         app.reload_typeset_styles(&cc.egui_ctx);
@@ -442,6 +472,8 @@ impl SmaragdApp {
             prompt: None,
             recording_shortcut: None,
             settings_category: ui::settings_panel::SettingsCategory::General,
+            show_project_settings: false,
+            project_settings_category: ui::project_settings_panel::ProjectSettingsCategory::Git,
             sync_settings_ui: ui::settings_panel::SyncSettingsUi::default(),
             sync: sync::SyncState::default(),
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
@@ -459,6 +491,7 @@ impl SmaragdApp {
             find_replace: FindReplaceState::default(),
             card_draft: None,
             note_prompt: None,
+            git_commit_prompt: None,
             command_prompt: CommandPromptState::default(),
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
             search_everywhere: ui::search_everywhere::SearchEverywhereState::default(),
@@ -469,6 +502,8 @@ impl SmaragdApp {
             metadata: MetadataState::default(),
             document_status_cache: DocumentStatusCache::default(),
             git_dirty_paths: std::collections::HashSet::new(),
+            git_log_cache: Vec::new(),
+            git_activity_log: std::collections::VecDeque::new(),
             backlinks: BacklinksState::default(),
             tags: TagsState::default(),
             word_count: WordCountState::default(),
@@ -490,6 +525,7 @@ impl SmaragdApp {
             collab: None,
             exit_confirm: ui::exit_confirm_prompt::ExitConfirmState::default(),
             external_scan_at: None,
+            auto_commit_last_run: None,
             external_conflict: None,
         }
     }
@@ -630,6 +666,13 @@ impl SmaragdApp {
             ShortcutAction::OpenProject => self.browse_for_project(ctx),
             ShortcutAction::CloseProject => self.close_project(ctx),
             ShortcutAction::OpenSettings => self.show_settings = true,
+            ShortcutAction::OpenProjectSettings => {
+                if self.project.is_some() {
+                    self.show_project_settings = true;
+                } else {
+                    self.push_error_toast("No project open");
+                }
+            }
             ShortcutAction::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             ShortcutAction::TogglePreview => {
                 self.toggle_dock_tab_near(DockTab::Preview, DockTab::Editor)
@@ -730,6 +773,16 @@ impl SmaragdApp {
                     self.run_git_push(ctx);
                 }
             }
+            ShortcutAction::GitPull => {
+                if self.settings.git_integration_enabled() {
+                    self.run_git_pull(ctx);
+                }
+            }
+            ShortcutAction::GitCommitAndPush => {
+                if self.settings.git_integration_enabled() {
+                    self.prompt_git_commit(true);
+                }
+            }
             ShortcutAction::ToggleBacklinks => self.toggle_dock_tab(DockTab::Backlinks),
             ShortcutAction::ToggleTags => self.toggle_dock_tab(DockTab::Tags),
             ShortcutAction::EditMetadata => self.toggle_dock_tab(DockTab::Metadata),
@@ -766,6 +819,7 @@ impl SmaragdApp {
             ShortcutAction::ToggleDashboard => self.toggle_dock_tab(DockTab::Dashboard),
             ShortcutAction::ToggleSyncPanel => self.show_sync_panel(),
             ShortcutAction::SyncNow => self.sync_now(),
+            ShortcutAction::ToggleVersionActivity => self.toggle_dock_tab(DockTab::VersionActivity),
             ShortcutAction::CycleBinderColorMode => self.cycle_binder_color_mode(),
             // Filtered out of the consumption pass above and handled inline in
             // `editor_panel::show` instead — never actually reached, but the match
@@ -1080,6 +1134,21 @@ impl SmaragdApp {
             self.spawn_dictionary_download(ui.ctx(), language);
         }
 
+        if self.project.is_none() {
+            self.show_project_settings = false;
+        }
+        if let Some(project) = &self.project
+            && let Some(event) = ui::project_settings_panel::show(
+                ui.ctx(),
+                &mut self.show_project_settings,
+                &mut self.project_settings_category,
+                project,
+                &self.settings,
+            )
+        {
+            self.handle_project_settings_event(event);
+        }
+
         if self.prompt.is_some() {
             let outcome = {
                 let pending = self.prompt.as_mut().expect("checked above");
@@ -1097,6 +1166,16 @@ impl SmaragdApp {
             };
             if let Some(outcome) = outcome {
                 self.handle_note_prompt_outcome(outcome);
+            }
+        }
+
+        if self.git_commit_prompt.is_some() {
+            let outcome = {
+                let prompt = self.git_commit_prompt.as_mut().expect("checked above");
+                ui::git_commit_prompt::show(ui.ctx(), prompt)
+            };
+            if let Some(outcome) = outcome {
+                self.handle_git_commit_prompt_outcome(ui.ctx(), outcome);
             }
         }
 
@@ -1470,6 +1549,7 @@ impl eframe::App for SmaragdApp {
         self.poll_sync(ui.ctx());
         self.tick_pomodoro(ui.ctx());
         self.check_external_changes(ui.ctx());
+        self.maybe_run_auto_commit(ui.ctx());
         self.show_toasts(ui.ctx());
         self.clear_status_message_if_expired(ui.ctx());
 
@@ -1697,10 +1777,7 @@ impl eframe::App for SmaragdApp {
         } else {
             egui::CentralPanel::default().show(ui, |ui| {
                 let has_project = self.project.is_some();
-                let sync_files = self.project.as_ref().is_some_and(|p| p.meta.sync_files);
-                let sync_view = self
-                    .sync
-                    .panel_data(&self.settings, has_project, sync_files);
+                let sync_view = self.sync.panel_data(&self.settings, has_project);
                 let collab_status = match &self.collab {
                     None => CollabStatus::Idle,
                     Some(session) if session.session_ended => CollabStatus::Disconnected {
@@ -1745,6 +1822,8 @@ impl eframe::App for SmaragdApp {
                     document_status_cache: &self.document_status_cache,
                     folder_word_counts: &self.word_count.folder_totals,
                     git_dirty_paths: &self.git_dirty_paths,
+                    git_log_cache: &self.git_log_cache,
+                    git_activity_log: &self.git_activity_log,
                     editor: &mut self.editor,
                     settings: &self.settings,
                     typeset_styles: &self.typeset_styles,
@@ -1810,6 +1889,10 @@ impl eframe::App for SmaragdApp {
                         DockAction::Streak(event) => self.handle_streak_event(event),
                         DockAction::RequestNewProject => self.start_new_project(),
                         DockAction::RequestOpenProject => self.browse_for_project(ui.ctx()),
+                        DockAction::RefreshVersionActivity => {
+                            self.refresh_git_dirty_paths();
+                            self.refresh_git_log();
+                        }
                         DockAction::ToggleBookmark(line) => {
                             if let Some(path) = self.editor.open_path.clone() {
                                 self.toggle_bookmark(&path, line);
@@ -2021,7 +2104,35 @@ mod execute_command_tests {
 
         app.dispatch_shortcut_action(&ctx, ShortcutAction::GitCommit);
         app.dispatch_shortcut_action(&ctx, ShortcutAction::GitPush);
+        app.dispatch_shortcut_action(&ctx, ShortcutAction::GitPull);
+        app.dispatch_shortcut_action(&ctx, ShortcutAction::GitCommitAndPush);
 
+        assert!(app.toasts.is_empty());
+    }
+
+    #[test]
+    fn open_project_settings_shortcut_without_a_project_pushes_an_error_toast() {
+        let mut app = SmaragdApp::test_fixture();
+        let ctx = egui::Context::default();
+
+        app.dispatch_shortcut_action(&ctx, ShortcutAction::OpenProjectSettings);
+
+        assert_eq!(app.toasts.len(), 1);
+        assert_eq!(app.toasts[0].message, "No project open");
+        assert!(!app.show_project_settings);
+    }
+
+    #[test]
+    fn open_project_settings_shortcut_opens_the_dialog_with_a_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        let ctx = egui::Context::default();
+
+        app.dispatch_shortcut_action(&ctx, ShortcutAction::OpenProjectSettings);
+
+        assert!(app.show_project_settings);
         assert!(app.toasts.is_empty());
     }
 }

@@ -283,4 +283,35 @@ pub struct ProjectMeta {
     /// instead of persisted — see `Project::document_modified_times`).
     #[serde(default)]
     pub document_created: HashMap<String, String>,
+    /// Whether smaragd should periodically commit this project's changes on its
+    /// own, without the user triggering Commit manually — only takes effect when
+    /// `git_enabled` is also true (and the global `Settings::git_integration_enabled`
+    /// switch is on). See `app::auto_commit`.
+    #[serde(default)]
+    pub git_auto_commit_enabled: bool,
+    /// Minutes between automatic commits when `git_auto_commit_enabled` is on.
+    /// `0` means "not yet configured," resolved to a real default via
+    /// `resolve_git_auto_commit_interval_minutes` — same blank-means-unset
+    /// convention `streak_red_threshold_weeks` uses.
+    #[serde(default)]
+    pub git_auto_commit_interval_minutes: u32,
+    /// Whether an automatic commit is followed by a push, same as ticking
+    /// "Commit and Push" manually would. Independent of `git_auto_commit_enabled`
+    /// so a project can auto-commit locally without ever auto-pushing.
+    #[serde(default)]
+    pub git_auto_commit_push_enabled: bool,
+}
+
+/// `git_auto_commit_interval_minutes == 0` (not yet configured) resolves to this.
+const DEFAULT_GIT_AUTO_COMMIT_INTERVAL_MINUTES: u32 = 15;
+
+impl ProjectMeta {
+    /// See `git_auto_commit_interval_minutes`'s doc comment.
+    pub fn resolve_git_auto_commit_interval_minutes(&self) -> u32 {
+        if self.git_auto_commit_interval_minutes > 0 {
+            self.git_auto_commit_interval_minutes
+        } else {
+            DEFAULT_GIT_AUTO_COMMIT_INTERVAL_MINUTES
+        }
+    }
 }

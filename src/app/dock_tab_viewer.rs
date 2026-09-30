@@ -70,6 +70,9 @@ pub(super) enum DockAction {
     /// it doesn't own a way to mutate it (see this struct's own doc comment).
     RequestNewProject,
     RequestOpenProject,
+    /// The Version Activity tab's "Refresh" button was clicked — see
+    /// `ui::version_activity_panel::VersionActivityEvent::Refresh`.
+    RefreshVersionActivity,
 }
 
 /// A short-lived `egui_dock::TabViewer` impl, constructed fresh each frame right
@@ -105,6 +108,10 @@ pub(super) struct AppTabViewer<'a> {
     pub(super) folder_word_counts: &'a HashMap<PathBuf, usize>,
     /// See `SmaragdApp::git_dirty_paths`.
     pub(super) git_dirty_paths: &'a HashSet<PathBuf>,
+    /// See `SmaragdApp::git_log_cache`.
+    pub(super) git_log_cache: &'a [crate::git::CommitLogEntry],
+    /// See `SmaragdApp::git_activity_log`.
+    pub(super) git_activity_log: &'a std::collections::VecDeque<crate::git::GitActivityEntry>,
     pub(super) editor: &'a mut EditorState,
     pub(super) settings: &'a Settings,
     /// The selectable typesetting styles (see `SmaragdApp::typeset_styles`) —
@@ -185,6 +192,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             DockTab::Bookmarks => "Bookmarks".into(),
             DockTab::Notes => "Notes".into(),
             DockTab::Dashboard => "Dashboard".into(),
+            DockTab::VersionActivity => "Version Activity".into(),
         }
     }
 
@@ -654,6 +662,37 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     ui.label("Open a project folder to get started.");
                 }
             },
+            DockTab::VersionActivity => {
+                let git_available = self.settings.git_integration_enabled()
+                    && self.project.is_some_and(|project| project.meta.git_enabled);
+                let mut dirty_files: Vec<String> = self
+                    .project
+                    .map(|project| {
+                        self.git_dirty_paths
+                            .iter()
+                            .map(|path| {
+                                path.strip_prefix(&project.root)
+                                    .map(|rel| rel.display().to_string())
+                                    .unwrap_or_else(|_| path.display().to_string())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                dirty_files.sort();
+                let data = ui::version_activity_panel::VersionActivityData {
+                    has_project: self.project.is_some(),
+                    git_available,
+                    dirty_files: &dirty_files,
+                    commits: self.git_log_cache,
+                    activity: self.git_activity_log,
+                    now_unix: unix_now(),
+                };
+                if let Some(ui::version_activity_panel::VersionActivityEvent::Refresh) =
+                    ui::version_activity_panel::show(ui, &data)
+                {
+                    self.actions.push(DockAction::RefreshVersionActivity);
+                }
+            }
         }
     }
 }
@@ -666,4 +705,13 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
 fn non_empty(s: &str) -> Option<String> {
     let trimmed = s.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+/// Seconds since the Unix epoch, for `VersionActivityData::now_unix` — same
+/// shape as `app::sync`'s own private `unix_now`, duplicated rather than
+/// shared across these two otherwise-independent modules.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }

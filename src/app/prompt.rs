@@ -22,11 +22,6 @@ pub(super) enum PromptAction {
         location: PathBuf,
         template_id: String,
     },
-    /// Commit with the (editable) message the prompt was confirmed with; `push_after`
-    /// carries through whether this was "Commit" or "Commit and Push".
-    GitCommit {
-        push_after: bool,
-    },
     /// Save the current dock layout under the confirmed name (see
     /// `save_named_layout`).
     SaveLayout,
@@ -267,7 +262,6 @@ impl SmaragdApp {
                 location,
                 template_id,
             } => self.create_project(ctx, &location, name, &template_id),
-            PromptAction::GitCommit { push_after } => self.run_git_commit(ctx, name, push_after),
             PromptAction::SaveLayout => self.save_named_layout(ctx, name),
             PromptAction::SaveProjectAsTemplate => self.save_project_as_template(name),
             PromptAction::JoinCollabSession => self.start_collab_join(ctx, name),

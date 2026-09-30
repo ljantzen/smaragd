@@ -134,6 +134,11 @@ pub const SETTINGS_INDEX: &[SettingsEntry] = {
             "version control commit push",
             History,
         ),
+        entry(
+            "Commit message template",
+            "git template placeholder date time numFiles linesAdded linesChanged linesDeleted fileList",
+            History,
+        ),
         entry("Enable automatic backups", "snapshot zip", History),
         entry("Back up when opening a project", "backup", History),
         entry("Back up when closing a project", "backup", History),
@@ -874,6 +879,83 @@ fn show_history_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
         settings.git_integration_disabled = !enabled;
         changed = true;
     }
+    ui.add_enabled_ui(settings.git_integration_enabled(), |ui| {
+        ui.label("Commit message template:");
+        let mut template = settings.resolve_git_commit_message_template();
+        if ui
+            .add(
+                egui::TextEdit::multiline(&mut template)
+                    .desired_rows(4)
+                    .desired_width(400.0),
+            )
+            .on_hover_text(
+                "Placeholders: {{date}}, {{time}}, {{numFiles}}, {{linesAdded}}, \
+                 {{linesChanged}}, {{linesDeleted}}, {{fileList}}. Used for a manual \
+                 commit's pre-filled message and for every automatic commit. A blank \
+                 line starts the commit body, same as git's own subject/body convention.",
+            )
+            .changed()
+        {
+            settings.git_commit_message_template = Some(template);
+            changed = true;
+        }
+        ui.add_space(4.0);
+        let preview_root = std::path::Path::new("/project");
+        let preview_files = [
+            crate::git::ChangedFile {
+                kind: crate::git::FileChangeKind::Added,
+                path: preview_root.join("Chapter Three.md"),
+            },
+            crate::git::ChangedFile {
+                kind: crate::git::FileChangeKind::Changed,
+                path: preview_root.join("Chapter Two.md"),
+            },
+            crate::git::ChangedFile {
+                kind: crate::git::FileChangeKind::Deleted,
+                path: preview_root.join("Old Outline.md"),
+            },
+        ];
+        ui.weak(format!(
+            "Preview: {}",
+            crate::git::render_commit_message(
+                &settings.resolve_git_commit_message_template(),
+                &crate::git::CommitContext {
+                    date: &crate::templates::format_date(&settings.template_date_format),
+                    time: &crate::git::format_commit_time(),
+                    num_files: 3,
+                    diff: Some(&crate::git::DiffStat {
+                        files_changed: 3,
+                        insertions: 42,
+                        deletions: 7,
+                    }),
+                    files: &preview_files,
+                    root: preview_root,
+                },
+            )
+        ));
+        ui.add_space(4.0);
+        egui::Grid::new("git_commit_template_placeholders")
+            .num_columns(2)
+            .spacing([12.0, 2.0])
+            .show(ui, |ui| {
+                let placeholder = |ui: &mut egui::Ui, name: &str, meaning: &str| {
+                    ui.weak(name);
+                    ui.weak(meaning);
+                    ui.end_row();
+                };
+                placeholder(ui, "{{date}}", "today, formatted per Settings > Templates");
+                placeholder(ui, "{{time}}", "current time, HH:MM (24-hour)");
+                placeholder(ui, "{{numFiles}}", "number of dirty files");
+                placeholder(ui, "{{linesAdded}}", "lines inserted");
+                placeholder(ui, "{{linesDeleted}}", "lines deleted");
+                placeholder(ui, "{{linesChanged}}", "lines inserted + deleted");
+                placeholder(
+                    ui,
+                    "{{fileList}}",
+                    "one line per changed file: \"A/M/D path\"",
+                );
+            });
+    });
 
     ui.add_space(20.0);
     ui.heading("Backups");

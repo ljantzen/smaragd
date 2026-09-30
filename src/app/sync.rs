@@ -265,7 +265,6 @@ impl SyncState {
         &'a self,
         settings: &'a Settings,
         has_project: bool,
-        sync_files: bool,
     ) -> SyncPanelData<'a> {
         let phase = if !settings.sync_enabled {
             SyncPanelPhase::Off
@@ -296,7 +295,6 @@ impl SyncState {
             own_device: self.credentials.as_ref().map(|c| c.device_id),
             now_unix: unix_now(),
             notice: self.notice.as_deref().or(self.link_warning.as_deref()),
-            sync_files,
             pending_join: self.pending_join.as_ref().map(|(ticket, server)| {
                 crate::ui::sync_panel::PendingJoin {
                     server,
@@ -781,18 +779,6 @@ impl SmaragdApp {
                 self.show_settings = true;
             }
             SyncPanelEvent::CreateVault => self.sync_create_vault(ctx, None),
-            SyncPanelEvent::SetSyncFiles(on) => {
-                let Some(project) = self.project.as_mut() else {
-                    return;
-                };
-                match project.set_sync_files(on) {
-                    // The next pass reads the new setting from project.json.
-                    Ok(()) => self.sync_now(),
-                    Err(err) => {
-                        self.push_error_toast(format!("Couldn't save the project settings: {err}"));
-                    }
-                }
-            }
             SyncPanelEvent::JoinVault => {
                 self.prompt = Some(PendingPrompt {
                     action: PromptAction::SyncJoinTicket,
@@ -938,25 +924,22 @@ mod tests {
     fn the_panel_phase_follows_settings_before_pairing() {
         let state = SyncState::default();
         let mut settings = Settings::default();
-        assert_eq!(
-            state.panel_data(&settings, true, false).phase,
-            SyncPanelPhase::Off
-        );
+        assert_eq!(state.panel_data(&settings, true).phase, SyncPanelPhase::Off);
 
         settings.sync_enabled = true;
         assert_eq!(
-            state.panel_data(&settings, false, false).phase,
+            state.panel_data(&settings, false).phase,
             SyncPanelPhase::NoProject
         );
         assert!(matches!(
-            state.panel_data(&settings, true, false).phase,
+            state.panel_data(&settings, true).phase,
             SyncPanelPhase::NeedsSettings(_)
         ));
 
         settings.sync_server_host = "sync.example.com".into();
         settings.sync_passphrase = crate::settings::SecretString("pw".into());
         assert_eq!(
-            state.panel_data(&settings, true, false).phase,
+            state.panel_data(&settings, true).phase,
             SyncPanelPhase::NotPaired
         );
     }
@@ -1106,7 +1089,7 @@ mod tests {
         let settings = app.settings.clone();
         let pending = app
             .sync
-            .panel_data(&settings, true, false)
+            .panel_data(&settings, true)
             .pending_join
             .expect("the panel asks first");
         assert_eq!(pending.server, "sync.example.com:8080/smaragd");
@@ -1182,20 +1165,6 @@ mod tests {
             app.toasts
                 .iter()
                 .any(|toast| toast.message.contains("Scene (conflict copy).md"))
-        );
-    }
-
-    #[test]
-    fn the_files_checkbox_saves_the_project_setting() {
-        let (dir, mut app) = app_with_project();
-        let ctx = egui::Context::default();
-        app.handle_sync_panel_event(&ctx, SyncPanelEvent::SetSyncFiles(true));
-        assert!(app.project.as_ref().unwrap().meta.sync_files);
-        assert!(
-            Project::load_from_folder(dir.path())
-                .unwrap()
-                .meta
-                .sync_files
         );
     }
 

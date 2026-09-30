@@ -92,6 +92,9 @@ pub const LOCAL_ONLY_FIELDS: &[&str] = &[
     "current_session_started",
     "current_session_baseline_words",
     "document_created",
+    "git_auto_commit_enabled",
+    "git_auto_commit_interval_minutes",
+    "git_auto_commit_push_enabled",
 ];
 /// Fields with structure of their own, handled individually below.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -157,6 +160,9 @@ fn classify_exhaustively(meta: &ProjectMeta) {
         current_session_started: _,
         current_session_baseline_words: _,
         document_created: _,
+        git_auto_commit_enabled: _,
+        git_auto_commit_interval_minutes: _,
+        git_auto_commit_push_enabled: _,
     } = meta;
 }
 

@@ -15,6 +15,10 @@ impl SmaragdApp {
                             self.settings.shortcuts.get(ShortcutAction::OpenProject);
                         let open_settings_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::OpenSettings);
+                        let open_project_settings_shortcut = self
+                            .settings
+                            .shortcuts
+                            .get(ShortcutAction::OpenProjectSettings);
                         let exit_shortcut = self.settings.shortcuts.get(ShortcutAction::Exit);
                         let open_document_shortcut =
                             self.settings.shortcuts.get(ShortcutAction::OpenDocument);
@@ -205,6 +209,18 @@ impl SmaragdApp {
                         {
                             self.show_settings = true;
                         }
+                        ui.add_enabled_ui(self.project.is_some(), |ui| {
+                            if nav
+                                .shortcut_button(
+                                    ui,
+                                    "Project Settings…",
+                                    open_project_settings_shortcut,
+                                )
+                                .clicked()
+                            {
+                                self.show_project_settings = true;
+                            }
+                        });
                         ui.separator();
                         if nav.shortcut_button(ui, "Exit", exit_shortcut).clicked() {
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -531,7 +547,18 @@ impl SmaragdApp {
                                 // bookkeeping needed.
                                 let git_busy = self.pending_git.is_some();
                                 ui.add_enabled_ui(!git_busy, |ui| {
-                                    if nav.button(ui, "Commit and Push").clicked() {
+                                    let commit_and_push_shortcut = self
+                                        .settings
+                                        .shortcuts
+                                        .get(ShortcutAction::GitCommitAndPush);
+                                    if nav
+                                        .shortcut_button(
+                                            ui,
+                                            "Commit and Push",
+                                            commit_and_push_shortcut,
+                                        )
+                                        .clicked()
+                                    {
                                         self.prompt_git_commit(true);
                                     }
                                     let push_shortcut =
@@ -539,10 +566,23 @@ impl SmaragdApp {
                                     if nav.shortcut_button(ui, "Push", push_shortcut).clicked() {
                                         self.run_git_push(ui.ctx());
                                     }
-                                    if nav.button(ui, "Pull").clicked() {
+                                    let pull_shortcut =
+                                        self.settings.shortcuts.get(ShortcutAction::GitPull);
+                                    if nav.shortcut_button(ui, "Pull", pull_shortcut).clicked() {
                                         self.run_git_pull(ui.ctx());
                                     }
                                 });
+                            }
+                            ui.separator();
+                            let version_activity_shortcut = self
+                                .settings
+                                .shortcuts
+                                .get(ShortcutAction::ToggleVersionActivity);
+                            if nav
+                                .shortcut_button(ui, "Version Activity", version_activity_shortcut)
+                                .clicked()
+                            {
+                                self.toggle_dock_tab(DockTab::VersionActivity);
                             }
                         });
                     }

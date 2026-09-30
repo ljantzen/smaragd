@@ -50,6 +50,12 @@ const MAX_RECENT_PROJECTS: usize = 10;
 /// is `0` (unconfigured — see its own doc comment).
 const DEFAULT_BACKUP_KEEP_COUNT: u32 = 10;
 
+/// `Settings::git_commit_message_template`'s effective default, used whenever
+/// that field is `None`. Lists every added/changed/deleted file in the body
+/// via `{{fileList}}` (see `git::render_commit_message`) rather than leaving
+/// that out until someone discovers the placeholder.
+const DEFAULT_GIT_COMMIT_MESSAGE_TEMPLATE: &str = "Smaragd backup\n\n{{fileList}}";
+
 /// A user's explicit choice for a plugin-registered `:` command's shortcut, kept
 /// separate from a plain `Option<KeyboardShortcut>` so `Unbound` can be told apart
 /// from "no override recorded yet" (see `plugin_shortcut_overrides`'s doc comment)
@@ -277,6 +283,16 @@ pub struct Settings {
     /// and the one-time "enable git?" prompt/auto-repair on project open never
     /// runs — see `SmaragdApp::set_project`.
     pub git_integration_disabled: bool,
+    /// The commit message used for a manual Commit's pre-filled prompt and for
+    /// every automatic commit (`ProjectMeta::git_auto_commit_enabled`), with
+    /// `{{date}}`, `{{time}}`, `{{numFiles}}`, `{{linesAdded}}`,
+    /// `{{linesChanged}}` and `{{linesDeleted}}` placeholders (see
+    /// `git::render_commit_message`).
+    /// `None` means "not yet configured," resolved to
+    /// `DEFAULT_GIT_COMMIT_MESSAGE_TEMPLATE` at the point of use
+    /// (`resolve_git_commit_message_template`) — same `Option<String>`
+    /// "never configured" convention `color_theme`/`backup_dir` use.
+    pub git_commit_message_template: Option<String>,
     /// Master switch for automatic project backups (Scrivener-style zipped
     /// snapshots — see `crate::backup`), set via Settings > History. Unlike
     /// `git_integration_disabled` this is a brand new feature with no prior
@@ -611,6 +627,14 @@ impl Settings {
     /// Resolves `double_shift_search_disabled`'s inverted storage.
     pub fn double_shift_search_enabled(&self) -> bool {
         !self.double_shift_search_disabled
+    }
+
+    /// Resolve `git_commit_message_template`'s "not yet configured" (`None`)
+    /// convention to an actual template — same shape as `resolve_backup_dir`.
+    pub fn resolve_git_commit_message_template(&self) -> String {
+        self.git_commit_message_template
+            .clone()
+            .unwrap_or_else(|| DEFAULT_GIT_COMMIT_MESSAGE_TEMPLATE.to_string())
     }
 
     /// Resolve `backup_keep_count`'s blank-means-unset (`0`) convention to an
@@ -1053,6 +1077,60 @@ mod tests {
     }
 
     #[test]
+    fn git_commit_message_template_defaults_to_none() {
+        assert_eq!(Settings::default().git_commit_message_template, None);
+    }
+
+    #[test]
+    fn resolve_git_commit_message_template_falls_back_to_the_default_when_unconfigured() {
+        let settings = Settings::default();
+        assert_eq!(
+            settings.resolve_git_commit_message_template(),
+            DEFAULT_GIT_COMMIT_MESSAGE_TEMPLATE
+        );
+    }
+
+    #[test]
+    fn the_default_commit_template_lists_changed_files_in_its_body() {
+        let root = PathBuf::from("/project");
+        let files = [
+            crate::git::ChangedFile {
+                kind: crate::git::FileChangeKind::Added,
+                path: root.join("new.md"),
+            },
+            crate::git::ChangedFile {
+                kind: crate::git::FileChangeKind::Deleted,
+                path: root.join("old.md"),
+            },
+        ];
+        let message = crate::git::render_commit_message(
+            DEFAULT_GIT_COMMIT_MESSAGE_TEMPLATE,
+            &crate::git::CommitContext {
+                date: "2026-09-30",
+                time: "14:05",
+                num_files: 2,
+                diff: None,
+                files: &files,
+                root: &root,
+            },
+        );
+
+        assert_eq!(message, "Smaragd backup\n\nA new.md\nD old.md");
+    }
+
+    #[test]
+    fn resolve_git_commit_message_template_uses_the_configured_value() {
+        let settings = Settings {
+            git_commit_message_template: Some("{{date}}: backup".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            settings.resolve_git_commit_message_template(),
+            "{{date}}: backup"
+        );
+    }
+
+    #[test]
     fn defaults_to_following_the_system_theme() {
         assert_eq!(
             Settings::default().theme_preference,
@@ -1208,6 +1286,9 @@ mod tests {
             ],
             create_starter_folders: true,
             git_integration_disabled: true,
+            git_commit_message_template: Some(
+                "Auto backup: {{date}} ({{numFiles}} files)".to_string(),
+            ),
             backup_enabled: true,
             backup_on_open: true,
             backup_on_close: true,

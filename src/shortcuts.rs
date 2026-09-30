@@ -18,6 +18,9 @@ pub enum ShortcutAction {
     OpenProject,
     CloseProject,
     OpenSettings,
+    /// Open the Project Settings dialog (`ui::project_settings_panel`) — a
+    /// no-op with no project open, same guard `OpenDocument`/`RecentFiles` use.
+    OpenProjectSettings,
     Exit,
     TogglePreview,
     Save,
@@ -37,6 +40,11 @@ pub enum ShortcutAction {
     CommandPrompt,
     GitCommit,
     GitPush,
+    GitPull,
+    /// "Commit and Push" in the Versions menu — a plain commit followed by a
+    /// push, both via `prompt_git_commit(true)`, same as `GitCommit`'s `false`
+    /// case just chains a push on success.
+    GitCommitAndPush,
     EditMetadata,
     ToggleBinderFocus,
     ToggleFocusMode,
@@ -130,6 +138,9 @@ pub enum ShortcutAction {
     SearchEverywhere,
     /// Open/close the Sync dock tab.
     ToggleSyncPanel,
+    /// Open/close the Version Activity dock tab (commit history, current
+    /// dirty files, and a log of smaragd's own automatic/manual git actions).
+    ToggleVersionActivity,
     /// Run a sync pass right away instead of waiting for the next periodic one — see
     /// `SmaragdApp::sync_now`. Does nothing while sync isn't running for the project.
     SyncNow,
@@ -141,6 +152,7 @@ impl ShortcutAction {
         Self::OpenProject,
         Self::CloseProject,
         Self::OpenSettings,
+        Self::OpenProjectSettings,
         Self::Exit,
         Self::TogglePreview,
         Self::Save,
@@ -160,6 +172,8 @@ impl ShortcutAction {
         Self::CommandPrompt,
         Self::GitCommit,
         Self::GitPush,
+        Self::GitPull,
+        Self::GitCommitAndPush,
         Self::EditMetadata,
         Self::ToggleBinderFocus,
         Self::ToggleFocusMode,
@@ -192,6 +206,7 @@ impl ShortcutAction {
         Self::SearchEverywhere,
         Self::ToggleSyncPanel,
         Self::SyncNow,
+        Self::ToggleVersionActivity,
     ];
 
     /// Actions consumed inline inside `editor_panel::show` (see each variant's
@@ -216,6 +231,7 @@ impl ShortcutAction {
             Self::OpenProject => "Open Project",
             Self::CloseProject => "Close Project",
             Self::OpenSettings => "Settings",
+            Self::OpenProjectSettings => "Project Settings",
             Self::Exit => "Exit",
             Self::TogglePreview => "Toggle Preview",
             Self::Save => "Save",
@@ -235,6 +251,8 @@ impl ShortcutAction {
             Self::CommandPrompt => "Command Prompt",
             Self::GitCommit => "Commit (Git)",
             Self::GitPush => "Push (Git)",
+            Self::GitPull => "Pull (Git)",
+            Self::GitCommitAndPush => "Commit and Push (Git)",
             Self::EditMetadata => "Metadata",
             Self::ToggleBinderFocus => "Toggle Binder/Editor Focus",
             Self::ToggleFocusMode => "Toggle Focus Mode",
@@ -267,6 +285,7 @@ impl ShortcutAction {
             Self::SearchEverywhere => "Search Everywhere",
             Self::ToggleSyncPanel => "Toggle Sync Panel",
             Self::SyncNow => "Sync Now",
+            Self::ToggleVersionActivity => "Toggle Version Activity",
         }
     }
 
@@ -281,6 +300,7 @@ impl ShortcutAction {
             Self::OpenProject => "open_project",
             Self::CloseProject => "close_project",
             Self::OpenSettings => "open_settings",
+            Self::OpenProjectSettings => "open_project_settings",
             Self::Exit => "exit",
             Self::TogglePreview => "toggle_preview",
             Self::Save => "save",
@@ -300,6 +320,8 @@ impl ShortcutAction {
             Self::CommandPrompt => "command_prompt",
             Self::GitCommit => "git_commit",
             Self::GitPush => "git_push",
+            Self::GitPull => "git_pull",
+            Self::GitCommitAndPush => "git_commit_and_push",
             Self::EditMetadata => "edit_metadata",
             Self::ToggleBinderFocus => "toggle_binder_focus",
             Self::ToggleFocusMode => "toggle_focus_mode",
@@ -332,6 +354,7 @@ impl ShortcutAction {
             Self::SearchEverywhere => "search_everywhere",
             Self::ToggleSyncPanel => "toggle_sync_panel",
             Self::SyncNow => "sync_now",
+            Self::ToggleVersionActivity => "toggle_version_activity",
         }
     }
 
@@ -345,7 +368,10 @@ impl ShortcutAction {
     pub fn category(&self) -> ShortcutCategory {
         match self {
             Self::OpenSettings | Self::Exit => ShortcutCategory::Application,
-            Self::NewProject | Self::OpenProject | Self::CloseProject => ShortcutCategory::Project,
+            Self::NewProject
+            | Self::OpenProject
+            | Self::CloseProject
+            | Self::OpenProjectSettings => ShortcutCategory::Project,
             Self::NewFile
             | Self::NewFolder
             | Self::Rename
@@ -383,7 +409,11 @@ impl ShortcutAction {
             | Self::PreviewZoomIn
             | Self::PreviewZoomOut
             | Self::PreviewZoomReset => ShortcutCategory::View,
-            Self::GitCommit | Self::GitPush => ShortcutCategory::Git,
+            Self::GitCommit
+            | Self::GitPush
+            | Self::GitPull
+            | Self::GitCommitAndPush
+            | Self::ToggleVersionActivity => ShortcutCategory::Git,
             Self::CommandPrompt
             | Self::TogglePomodoro
             | Self::ToggleWordCount
@@ -414,6 +444,10 @@ impl ShortcutAction {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::W)
             }
             Self::OpenSettings => KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma),
+            // Bare F4 — safe modifier-free per `is_modifier_free_safe_key`, and
+            // otherwise unused; distinct from `OpenSettings`' Ctrl+, since this
+            // opens the *project*-scoped dialog, not the app-wide one.
+            Self::OpenProjectSettings => KeyboardShortcut::new(Modifiers::NONE, Key::F4),
             Self::Exit => KeyboardShortcut::new(Modifiers::COMMAND, Key::Q),
             Self::TogglePreview => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::P)
@@ -449,6 +483,17 @@ impl ShortcutAction {
             Self::CommandPrompt => KeyboardShortcut::new(Modifiers::COMMAND, Key::Colon),
             Self::GitCommit => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::C),
             Self::GitPush => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::P),
+            // `L` for pulL — `P` is already `GitPush`'s.
+            Self::GitPull => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::L),
+            // One modifier up from `GitCommit`'s Ctrl+Alt+C, the same
+            // "stronger version of the same action" relationship a plain Save
+            // (Ctrl+S) has to Save As (Ctrl+Shift+S) in other apps — this
+            // codebase's first three-modifier default, but no different in
+            // kind from the two-modifier chords above it.
+            Self::GitCommitAndPush => KeyboardShortcut::new(
+                Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT,
+                Key::C,
+            ),
             Self::EditMetadata => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::M)
             }
@@ -563,6 +608,10 @@ impl ShortcutAction {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Y)
             }
             Self::SyncNow => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::Y),
+            // `V` for Version — otherwise unused.
+            Self::ToggleVersionActivity => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::V)
+            }
         }
     }
 }

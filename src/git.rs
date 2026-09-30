@@ -1,7 +1,7 @@
-//! Thin wrapper around the system `git` binary scoped
-//! down to manually-triggered actions (no auto-commit timer or auto-push): the app
-//! shells out to whatever `git` is on `PATH`, the same way that plugin ultimately
-//! does, rather than embedding a git implementation.
+//! Thin wrapper around the system `git` binary: the app shells out to whatever
+//! `git` is on `PATH` rather than embedding a git implementation. Commit/push/
+//! pull can be triggered manually or, per project, on an interval (see
+//! `app::auto_commit`).
 
 use std::collections::HashSet;
 use std::fmt;
@@ -91,13 +91,23 @@ pub fn pull(root: &Path) -> Result<(), GitError> {
 /// integration is enabled, so a project that never turned git on never pays
 /// for this.
 pub fn status(root: &Path) -> Result<HashSet<PathBuf>, GitError> {
+    Ok(porcelain_entries(root)?
+        .into_iter()
+        .map(|(_, _, path)| path)
+        .collect())
+}
+
+/// `(index_status, worktree_status, path)` for every entry `git status
+/// --porcelain -z` reports — the shared low-level parse `status`,
+/// `untracked_paths` (via `diff_stat`), and `changed_files` all build on.
+/// `-z` NUL-terminates every field instead of newline-terminating whole
+/// lines, so a path containing a newline (or one git would otherwise
+/// quote/escape) round-trips exactly — each entry is `XY<space>PATH`,
+/// except a rename/copy (`R`/`C` in either status column), which is
+/// followed by one extra field holding the path it was renamed *from*.
+fn porcelain_entries(root: &Path) -> Result<Vec<(u8, u8, PathBuf)>, GitError> {
     let output = run(root, &["status", "--porcelain", "-z"])?;
-    let mut paths = HashSet::new();
-    // `-z` NUL-terminates every field instead of newline-terminating whole
-    // lines, so a path containing a newline (or one git would otherwise
-    // quote/escape) round-trips exactly — each entry is `XY<space>PATH`,
-    // except a rename/copy (`R`/`C` in either status column), which is
-    // followed by one extra field holding the path it was renamed *from*.
+    let mut entries = Vec::new();
     let mut fields = output.stdout.split(|&b| b == 0).filter(|f| !f.is_empty());
     while let Some(entry) = fields.next() {
         if entry.len() < 3 {
@@ -105,12 +115,281 @@ pub fn status(root: &Path) -> Result<HashSet<PathBuf>, GitError> {
         }
         let (x, y) = (entry[0], entry[1]);
         let path = root.join(String::from_utf8_lossy(&entry[3..]).into_owned());
-        paths.insert(path);
+        entries.push((x, y, path));
         if x == b'R' || x == b'C' || y == b'R' || y == b'C' {
             fields.next(); // the rename/copy source path, not itself a live file
         }
     }
-    Ok(paths)
+    Ok(entries)
+}
+
+/// One commit from `log`'s history — the Version Activity panel's commit list
+/// (`ui::version_activity_panel`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitLogEntry {
+    pub hash: String,
+    pub author: String,
+    /// Git's own human-phrased relative date (`%ar`, e.g. "2 hours ago") —
+    /// reused as-is rather than computed here, so it always agrees with what
+    /// `git log` itself would print.
+    pub relative_date: String,
+    pub subject: String,
+}
+
+/// The `limit` most recent commits on the current branch, newest first.
+/// Best-effort like `diff_stat`: a brand-new repo with no commits yet (or any
+/// other `git log` failure) is reported as an empty list rather than an
+/// error — this is informational display, not a user-triggered action with
+/// its own error to surface.
+pub fn log(root: &Path, limit: usize) -> Vec<CommitLogEntry> {
+    let Ok(output) = run(
+        root,
+        &[
+            "log",
+            "-n",
+            &limit.to_string(),
+            // `\x1f` (unit separator) between fields: `%s` (subject) is
+            // guaranteed single-line, so a plain newline safely separates
+            // records without needing `-z`-style NUL framing the way
+            // `status`'s paths do.
+            "--pretty=format:%H\u{1f}%an\u{1f}%ar\u{1f}%s",
+        ],
+    ) else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(4, '\u{1f}');
+            Some(CommitLogEntry {
+                hash: fields.next()?.to_string(),
+                author: fields.next()?.to_string(),
+                relative_date: fields.next()?.to_string(),
+                subject: fields.next()?.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// One thing smaragd itself did (or tried to do) via git — distinct from
+/// `log`'s output (git's own commit history): this also records no-ops
+/// ("Nothing to commit") and push/pull outcomes, and covers automatic
+/// (`app::auto_commit`) as well as manual actions. Populated by `app::git`/
+/// `app::auto_commit` as each action completes; rendered by
+/// `ui::version_activity_panel`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitActivityEntry {
+    /// Seconds since the Unix epoch, to phrase relative times the same way
+    /// `ui::sync_panel::humanize_age` does.
+    pub at_unix: u64,
+    pub message: String,
+    pub outcome: GitActivityOutcome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitActivityOutcome {
+    Success,
+    /// Neither a success nor a failure — e.g. "Nothing to commit."
+    Neutral,
+    Error,
+}
+
+/// How much a project's working tree differs from `HEAD`, for commit-message
+/// placeholders (see `render_commit_message`). Best-effort: a brand-new repo
+/// with no commits yet (no `HEAD` to diff against) is reported as zero tracked
+/// changes rather than an error, same philosophy as `status()`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DiffStat {
+    pub files_changed: usize,
+    pub insertions: usize,
+    pub deletions: usize,
+}
+
+/// `diff_stat` for `root`: tracked changes come from `git diff --shortstat HEAD`;
+/// untracked files aren't covered by that (there's nothing in `HEAD` to diff them
+/// against), so each is counted as one changed file with its on-disk line count
+/// added to `insertions` — read directly rather than needing a git call per file.
+pub fn diff_stat(root: &Path) -> Result<DiffStat, GitError> {
+    let mut stat = match run(root, &["diff", "--shortstat", "HEAD"]) {
+        Ok(output) => parse_shortstat(&String::from_utf8_lossy(&output.stdout)),
+        Err(_) => DiffStat::default(),
+    };
+    for path in untracked_paths(root)? {
+        let lines = std::fs::read_to_string(&path)
+            .map(|content| content.lines().count())
+            .unwrap_or(0);
+        stat.files_changed += 1;
+        stat.insertions += lines;
+    }
+    Ok(stat)
+}
+
+/// Parses `git diff --shortstat`'s single summary line, e.g.
+/// `" 2 files changed, 10 insertions(+), 3 deletions(-)"`. Tolerant of any
+/// subset of the three parts being absent (a diff with only insertions omits
+/// the deletions clause entirely, and vice versa) and of empty input (no
+/// changes at all).
+fn parse_shortstat(text: &str) -> DiffStat {
+    let mut stat = DiffStat::default();
+    for part in text.trim().split(',') {
+        let part = part.trim();
+        let Some((num, rest)) = part.split_once(' ') else {
+            continue;
+        };
+        let Ok(n) = num.parse::<usize>() else {
+            continue;
+        };
+        if rest.contains("file") {
+            stat.files_changed = n;
+        } else if rest.contains("insertion") {
+            stat.insertions = n;
+        } else if rest.contains("deletion") {
+            stat.deletions = n;
+        }
+    }
+    stat
+}
+
+/// Every untracked (`??`) path reported by `git status --porcelain -z` — a
+/// narrower cousin of `status()`, which reports every kind of dirty path but
+/// discards which kind each one was.
+fn untracked_paths(root: &Path) -> Result<Vec<PathBuf>, GitError> {
+    Ok(porcelain_entries(root)?
+        .into_iter()
+        .filter(|(x, y, _)| *x == b'?' && *y == b'?')
+        .map(|(_, _, path)| path)
+        .collect())
+}
+
+/// Which of the three buckets a changed file falls into — deliberately
+/// coarser than git's own status letters (M/R/C/T/U all collapse into
+/// `Changed`): the `{{fileList}}` commit-message placeholder lists "added,
+/// changed or deleted" files, not a full status-letter legend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileChangeKind {
+    Added,
+    Changed,
+    Deleted,
+}
+
+impl FileChangeKind {
+    pub fn letter(self) -> &'static str {
+        match self {
+            FileChangeKind::Added => "A",
+            FileChangeKind::Changed => "M",
+            FileChangeKind::Deleted => "D",
+        }
+    }
+}
+
+/// One file `changed_files` reports — an absolute path, same convention as
+/// `status()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangedFile {
+    pub kind: FileChangeKind,
+    pub path: PathBuf,
+}
+
+/// Every dirty file under `root`, classified and sorted by path — the data
+/// source for the `{{fileList}}` commit-message placeholder (see
+/// `format_file_list`) and for a richer file-by-file view than `status()`'s
+/// plain path set.
+pub fn changed_files(root: &Path) -> Result<Vec<ChangedFile>, GitError> {
+    let mut files: Vec<ChangedFile> = porcelain_entries(root)?
+        .into_iter()
+        .map(|(x, y, path)| ChangedFile {
+            kind: classify_change(x, y),
+            path,
+        })
+        .collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// Maps a porcelain entry's index/worktree status letters onto
+/// [`FileChangeKind`]. Untracked (`??`) is `Added`; otherwise `D` on either
+/// side wins over `A` (a path can't usefully be "added" and "deleted" at
+/// once, but prioritizing deletion matches what a user most needs to notice),
+/// and everything else (`M`, `R`, `C`, `T`, `U`, ...) falls back to `Changed`.
+fn classify_change(x: u8, y: u8) -> FileChangeKind {
+    if x == b'?' && y == b'?' {
+        FileChangeKind::Added
+    } else if x == b'D' || y == b'D' {
+        FileChangeKind::Deleted
+    } else if x == b'A' || y == b'A' {
+        FileChangeKind::Added
+    } else {
+        FileChangeKind::Changed
+    }
+}
+
+/// Renders `files` as one `"<letter> <path relative to root>"` line each,
+/// sorted, for the `{{fileList}}` commit-message placeholder — empty when
+/// `files` is empty, so a template with `{{fileList}}` in its body doesn't
+/// leave a stray blank line behind.
+pub fn format_file_list(root: &Path, files: &[ChangedFile]) -> String {
+    files
+        .iter()
+        .map(|file| {
+            let relative = file.path.strip_prefix(root).unwrap_or(&file.path);
+            format!("{} {}", file.kind.letter(), relative.display())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Everything a commit-message template's placeholders resolve from — see
+/// `render_commit_message`. A struct rather than more positional arguments:
+/// `render_commit_message` was already at five before `{{fileList}}` added a
+/// sixth.
+pub struct CommitContext<'a> {
+    pub date: &'a str,
+    pub time: &'a str,
+    /// Dirty-file count for `{{numFiles}}` — cheap, usually already known by
+    /// the caller, so it's taken as-is rather than derived from `files`
+    /// (which may itself be an empty placeholder run, e.g. the Settings
+    /// preview's illustrative sample).
+    pub num_files: usize,
+    pub diff: Option<&'a DiffStat>,
+    /// For `{{fileList}}` — pass `&[]` when there's nothing to list (a fresh
+    /// repo, or the caller didn't fetch `changed_files`).
+    pub files: &'a [ChangedFile],
+    /// The project root `files`' paths are relative to, for `{{fileList}}`'s
+    /// display (see `format_file_list`).
+    pub root: &'a Path,
+}
+
+/// Fills in a commit-message template: `{{date}}`, `{{time}}`, `{{numFiles}}`,
+/// `{{linesAdded}}` / `{{linesDeleted}}` (from `ctx.diff`), `{{linesChanged}}`
+/// (`insertions + deletions` — git itself has no single "changed" stat; this
+/// is smaragd's own derived total line-level churn), and `{{fileList}}` (see
+/// `format_file_list`). Every `lines*` placeholder resolves to `"0"` when
+/// `ctx.diff` is `None` (e.g. `diff_stat` wasn't run, or failed) rather than
+/// leaking the literal placeholder text into the commit message.
+pub fn render_commit_message(template: &str, ctx: &CommitContext) -> String {
+    let (added, deleted, changed) = match ctx.diff {
+        Some(stat) => (
+            stat.insertions,
+            stat.deletions,
+            stat.insertions + stat.deletions,
+        ),
+        None => (0, 0, 0),
+    };
+    template
+        .replace("{{date}}", ctx.date)
+        .replace("{{time}}", ctx.time)
+        .replace("{{numFiles}}", &ctx.num_files.to_string())
+        .replace("{{linesAdded}}", &added.to_string())
+        .replace("{{linesDeleted}}", &deleted.to_string())
+        .replace("{{linesChanged}}", &changed.to_string())
+        .replace("{{fileList}}", &format_file_list(ctx.root, ctx.files))
+}
+
+/// The current local time as `HH:MM` (24-hour) for `{{time}}` — a fixed
+/// format, unlike `{{date}}`, which uses whatever strftime pattern
+/// `Settings::template_date_format` is configured with.
+pub fn format_commit_time() -> String {
+    chrono::Local::now().format("%H:%M").to_string()
 }
 
 fn run(root: &Path, args: &[&str]) -> Result<std::process::Output, GitError> {
@@ -259,5 +538,187 @@ mod tests {
         let dirty = status(dir.path()).unwrap();
 
         assert_eq!(dirty, [dir.path().join("staged.md")].into_iter().collect());
+    }
+
+    #[test]
+    fn log_is_empty_before_any_commit_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        init(dir.path()).unwrap();
+
+        assert_eq!(log(dir.path(), 20), Vec::new());
+    }
+
+    #[test]
+    fn log_returns_recent_commits_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        init_with_identity(dir.path());
+        fs::write(dir.path().join("a.md"), "a").unwrap();
+        commit_all(dir.path(), "first commit").unwrap();
+        fs::write(dir.path().join("b.md"), "b").unwrap();
+        commit_all(dir.path(), "second commit").unwrap();
+
+        let entries = log(dir.path(), 20);
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].subject, "second commit");
+        assert_eq!(entries[1].subject, "first commit");
+        assert_eq!(entries[0].author, "Smaragd Tests");
+        assert!(!entries[0].hash.is_empty());
+        assert!(!entries[0].relative_date.is_empty());
+    }
+
+    #[test]
+    fn log_respects_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        init_with_identity(dir.path());
+        for n in 0..5 {
+            fs::write(dir.path().join("a.md"), n.to_string()).unwrap();
+            commit_all(dir.path(), &format!("commit {n}")).unwrap();
+        }
+
+        assert_eq!(log(dir.path(), 2).len(), 2);
+    }
+
+    #[test]
+    fn diff_stat_is_zero_before_any_commit_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        init(dir.path()).unwrap();
+
+        assert_eq!(diff_stat(dir.path()).unwrap(), DiffStat::default());
+    }
+
+    #[test]
+    fn diff_stat_counts_tracked_and_untracked_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        init_with_identity(dir.path());
+        fs::write(dir.path().join("a.md"), "one\ntwo\n").unwrap();
+        commit_all(dir.path(), "first commit").unwrap();
+        fs::write(dir.path().join("a.md"), "one\ntwo\nthree\n").unwrap();
+        fs::write(dir.path().join("new.md"), "brand\nnew\nfile\n").unwrap();
+
+        let stat = diff_stat(dir.path()).unwrap();
+
+        assert_eq!(stat.files_changed, 2);
+        assert_eq!(stat.insertions, 4); // 1 line added to a.md + 3 lines in new.md
+        assert_eq!(stat.deletions, 0);
+    }
+
+    fn context<'a>(
+        diff: Option<&'a DiffStat>,
+        files: &'a [ChangedFile],
+        root: &'a Path,
+    ) -> CommitContext<'a> {
+        CommitContext {
+            date: "2026-09-30",
+            time: "14:05",
+            num_files: 2,
+            diff,
+            files,
+            root,
+        }
+    }
+
+    #[test]
+    fn render_commit_message_substitutes_every_placeholder() {
+        let diff = DiffStat {
+            files_changed: 2,
+            insertions: 10,
+            deletions: 3,
+        };
+        let root = Path::new("/project");
+        let files = [ChangedFile {
+            kind: FileChangeKind::Added,
+            path: root.join("new.md"),
+        }];
+        let message = render_commit_message(
+            "{{date}} {{time}}: {{numFiles}} files, +{{linesAdded}} -{{linesDeleted}} \
+             ({{linesChanged}} changed)\n\n{{fileList}}",
+            &context(Some(&diff), &files, root),
+        );
+
+        assert_eq!(
+            message,
+            "2026-09-30 14:05: 2 files, +10 -3 (13 changed)\n\nA new.md"
+        );
+    }
+
+    #[test]
+    fn render_commit_message_degrades_gracefully_with_no_diff_stat_or_files() {
+        let root = Path::new("/project");
+        let message = render_commit_message(
+            "+{{linesAdded}} -{{linesDeleted}} ({{linesChanged}}) [{{fileList}}]",
+            &context(None, &[], root),
+        );
+
+        assert_eq!(message, "+0 -0 (0) []");
+    }
+
+    #[test]
+    fn render_commit_message_leaves_a_template_with_no_placeholders_untouched() {
+        let root = Path::new("/project");
+        assert_eq!(
+            render_commit_message("Smaragd backup", &context(None, &[], root)),
+            "Smaragd backup"
+        );
+    }
+
+    #[test]
+    fn format_commit_time_is_hh_mm() {
+        let time = format_commit_time();
+        assert_eq!(time.len(), 5);
+        assert_eq!(time.as_bytes()[2], b':');
+        assert!(time[..2].chars().all(|c| c.is_ascii_digit()));
+        assert!(time[3..].chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn changed_files_classifies_added_changed_and_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        init_with_identity(dir.path());
+        fs::write(dir.path().join("keep.md"), "one\n").unwrap();
+        fs::write(dir.path().join("remove.md"), "bye\n").unwrap();
+        commit_all(dir.path(), "initial commit").unwrap();
+        fs::write(dir.path().join("keep.md"), "one\ntwo\n").unwrap();
+        fs::remove_file(dir.path().join("remove.md")).unwrap();
+        fs::write(dir.path().join("new.md"), "brand new\n").unwrap();
+
+        let files = changed_files(dir.path()).unwrap();
+
+        assert_eq!(
+            files
+                .iter()
+                .map(|f| (f.kind, f.path.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (FileChangeKind::Changed, dir.path().join("keep.md")),
+                (FileChangeKind::Added, dir.path().join("new.md")),
+                (FileChangeKind::Deleted, dir.path().join("remove.md")),
+            ]
+        );
+    }
+
+    #[test]
+    fn format_file_list_renders_one_line_per_file_relative_to_root() {
+        let root = Path::new("/project");
+        let files = vec![
+            ChangedFile {
+                kind: FileChangeKind::Deleted,
+                path: root.join("old.md"),
+            },
+            ChangedFile {
+                kind: FileChangeKind::Added,
+                path: root.join("Chapters/new.md"),
+            },
+        ];
+
+        assert_eq!(
+            format_file_list(root, &files),
+            "D old.md\nA Chapters/new.md"
+        );
+    }
+
+    #[test]
+    fn format_file_list_is_empty_with_no_files() {
+        assert_eq!(format_file_list(Path::new("/project"), &[]), "");
     }
 }

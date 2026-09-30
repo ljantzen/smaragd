@@ -319,6 +319,27 @@ impl Project {
         self.save_metadata()
     }
 
+    /// Turn periodic automatic commits on or off — see
+    /// `ProjectMeta::git_auto_commit_enabled`.
+    pub fn set_git_auto_commit_enabled(&mut self, enabled: bool) -> io::Result<()> {
+        self.meta.git_auto_commit_enabled = enabled;
+        self.save_metadata()
+    }
+
+    /// Set how many minutes elapse between automatic commits — see
+    /// `ProjectMeta::git_auto_commit_interval_minutes`.
+    pub fn set_git_auto_commit_interval_minutes(&mut self, minutes: u32) -> io::Result<()> {
+        self.meta.git_auto_commit_interval_minutes = minutes;
+        self.save_metadata()
+    }
+
+    /// Turn "also push after an automatic commit" on or off — see
+    /// `ProjectMeta::git_auto_commit_push_enabled`.
+    pub fn set_git_auto_commit_push_enabled(&mut self, enabled: bool) -> io::Result<()> {
+        self.meta.git_auto_commit_push_enabled = enabled;
+        self.save_metadata()
+    }
+
     /// Set the book-level title/subtitle/author/typesetting-style shown in the
     /// Export dialog — see `ProjectMeta::book_title`/`book_subtitle`/
     /// `book_author`/`book_style`. An empty title/subtitle/author is stored as
@@ -778,6 +799,25 @@ mod tests {
         assert!(!project.meta.plugins_enabled);
         let reloaded = Project::load_from_folder(dir.path()).unwrap();
         assert!(!reloaded.meta.plugins_enabled);
+    }
+
+    #[test]
+    fn git_auto_commit_settings_persist_across_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        assert!(!project.meta.git_auto_commit_enabled);
+        assert_eq!(project.meta.resolve_git_auto_commit_interval_minutes(), 15);
+        assert!(!project.meta.git_auto_commit_push_enabled);
+
+        project.set_git_auto_commit_enabled(true).unwrap();
+        project.set_git_auto_commit_interval_minutes(45).unwrap();
+        project.set_git_auto_commit_push_enabled(true).unwrap();
+
+        let reloaded = Project::load_from_folder(dir.path()).unwrap();
+        assert!(reloaded.meta.git_auto_commit_enabled);
+        assert_eq!(reloaded.meta.git_auto_commit_interval_minutes, 45);
+        assert_eq!(reloaded.meta.resolve_git_auto_commit_interval_minutes(), 45);
+        assert!(reloaded.meta.git_auto_commit_push_enabled);
     }
 
     #[test]

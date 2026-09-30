@@ -52,9 +52,6 @@ pub struct SyncPanelData<'a> {
     pub now_unix: u64,
     /// The most recent failure of a one-off request, if any.
     pub notice: Option<&'a str>,
-    /// Whether the open project also syncs its non-Markdown files
-    /// (`ProjectMeta::sync_files`).
-    pub sync_files: bool,
     /// A pasted pairing ticket waiting for the user to confirm its server.
     pub pending_join: Option<PendingJoin<'a>>,
 }
@@ -87,8 +84,6 @@ pub enum SyncPanelEvent {
     Revoke(DeviceId),
     /// Stop syncing this project and remove this device from the vault.
     LeaveVault,
-    /// Turn syncing of the project's images, PDFs and other files on or off.
-    SetSyncFiles(bool),
 }
 
 /// "just now", "3 min ago", "2 h ago", "5 days ago".
@@ -257,21 +252,7 @@ fn show_paired(
 
     ui.add_space(10.0);
     ui.separator();
-    let mut sync_files = data.sync_files;
-    if ui
-        .add_enabled(
-            !data.busy,
-            egui::Checkbox::new(&mut sync_files, "Also sync images, PDFs and other files"),
-        )
-        .changed()
-    {
-        event = Some(SyncPanelEvent::SetSyncFiles(sync_files));
-    }
-    ui.weak(
-        "Every other file in the project folder, whole, up to the server's size limit \
-         (100 MB unless its operator changed it). A project setting: it applies on every \
-         device syncing this project.",
-    );
+    ui.weak("Also syncing images, PDFs and other files? Configure in Project Settings > Sync.");
 
     ui.add_space(10.0);
     ui.separator();
@@ -398,7 +379,6 @@ mod tests {
             own_device: Some(DeviceId(Uuid::from_u128(1))),
             now_unix: 1_000_000,
             notice: Some("Couldn't reach the server"),
-            sync_files: false,
             pending_join: None,
         }
     }
@@ -476,48 +456,6 @@ mod tests {
                 });
             }
         }
-    }
-
-    #[test]
-    fn ticking_the_files_box_asks_to_sync_files() {
-        let panel = data(
-            SyncPanelPhase::UpToDate {
-                last_synced: "just now",
-            },
-            None,
-        );
-        let screen = Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(600.0, 1400.0),
-        ));
-        // Click down the left edge (a fresh panel each time) until the checkbox answers.
-        let found = (0..350).any(|step| {
-            let ctx = egui::Context::default();
-            let frame = |events: Vec<egui::Event>| {
-                let mut got = None;
-                let input = egui::RawInput {
-                    screen_rect: screen,
-                    events,
-                    ..Default::default()
-                };
-                run_ui_and_discard(&ctx, input, |ui| got = show(ui, &panel));
-                got
-            };
-            frame(vec![]);
-            let pos = egui::pos2(24.0, step as f32 * 4.0);
-            let button = |pressed| egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            };
-            frame(vec![
-                egui::Event::PointerMoved(pos),
-                button(true),
-                button(false),
-            ]) == Some(SyncPanelEvent::SetSyncFiles(true))
-        });
-        assert!(found, "no click on the panel toggled the files checkbox");
     }
 
     #[test]

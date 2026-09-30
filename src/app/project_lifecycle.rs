@@ -58,6 +58,12 @@ impl SmaragdApp {
         self.metadata.folder_computed_for = None;
         self.document_status_cache.clear();
         self.external_scan_at = None;
+        // Baselined to "now" rather than left `None`, so turning on (or already
+        // having on) auto-commit doesn't immediately fire the moment a project
+        // opens — see `maybe_run_auto_commit`.
+        self.auto_commit_last_run = Some(std::time::Instant::now());
+        // A previous project's activity has no bearing on this one.
+        self.git_activity_log.clear();
         self.external_conflict = None;
         self.clear_status_message();
         self.settings.last_project_path = Some(path.to_path_buf());
@@ -78,6 +84,7 @@ impl SmaragdApp {
                 self.push_error_toast(format!("Couldn't initialize git: {err}"));
             }
             self.refresh_git_dirty_paths();
+            self.refresh_git_log();
         }
         self.run_backup(BackupTrigger::Open);
         self.reload_plugins();
@@ -307,6 +314,8 @@ impl SmaragdApp {
         self.clear_status_message();
         self.run_backup(BackupTrigger::Close);
         self.git_dirty_paths.clear();
+        self.git_log_cache.clear();
+        self.git_activity_log.clear();
         self.export = None;
         if self.focus_mode {
             self.set_focus_mode(ctx, false);
@@ -319,6 +328,7 @@ impl SmaragdApp {
         self.tags = TagsState::default();
         self.word_count = WordCountState::default();
         self.external_scan_at = None;
+        self.auto_commit_last_run = None;
         self.external_conflict = None;
         self.settings.last_project_path = None;
         self.persist_settings();

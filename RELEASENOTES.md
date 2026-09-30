@@ -5,6 +5,35 @@ this file.
 
 ## Unreleased
 
+- Added **auto-commit**: a project can commit its own changes on an interval
+  (`File > Project Settings > Git`, off by default, 15 minutes when turned
+  on), with an independent "push after each automatic commit" toggle. Reuses
+  the same commit path a manual Commit does, so a "nothing to commit" tick or
+  a failure behaves identically either way.
+- Added a **commit message template** (`File > Settings > History`,
+  multi-line, with a live preview and a placeholder quick-reference):
+  `{{date}}`, `{{time}}`, `{{numFiles}}`, `{{linesAdded}}`, `{{linesDeleted}}`,
+  `{{linesChanged}}`, and `{{fileList}}` (one `A`/`M`/`D` line per
+  added/changed/deleted file). The default template now lists every changed
+  file in the commit body. The manual Commit dialog is also a real fix: it
+  used to always pre-fill the literal text "Smaragd backup" regardless of any
+  configured template — it now renders the template like every automatic
+  commit does, in a new multi-line dialog (`Ctrl+Enter` to confirm) instead of
+  the single-line rename-style prompt it used to reuse.
+- Added a **Version Activity** dock tab (`Versions > Version Activity`,
+  `Ctrl+Alt+V`): current dirty files, the last 20 commits (`git log`), and a
+  running log of every commit/push/pull smaragd itself triggered this
+  session — manual or automatic — each with its outcome. A **Refresh** button
+  re-reads git state on demand.
+- Added **`File > Project Settings…`** (`F4`, grouped next to `Settings`): a
+  per-project counterpart to the app-wide Settings dialog, same two-pane
+  layout. Starts with **Git** (the auto-commit controls above), **Sync**
+  (moved here from the Sync panel: "Also sync images, PDFs and other files"),
+  and **Binder** (the `Color Binder By` mode, alongside its existing homes in
+  the `View` menu and the binder's right-click menu).
+- Added keyboard shortcuts for **Pull** (`Ctrl+Alt+L`) and **Commit and Push**
+  (`Ctrl+Alt+Shift+C`) — both were Versions-menu-only before.
+
 ## v1.4.0 — 2026-09-30
 
 - Added Notes: pin a short piece of text to the cursor's exact position — line *and*

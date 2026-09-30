@@ -69,13 +69,13 @@ Below the status:
 - **Project settings** — the binder order, folder roles, story cards, bookmarks, colors, word-count targets, the book title and the project's title/logline/synopsis — everything in [Project Metadata](project-metadata.md) and its neighbours **except** the per-device parts described next.
 - **Images, PDFs and other files** — *only if you switch it on* (see [below](#images-pdfs-and-other-files)).
 
-**What stays on each device:** whether git support is switched on, whether this project's plugins are enabled, the running session word count and daily history, and the Writing Streak switch and schedule. Those are yours alone on each device. In particular, **turning on plugins is never synced** — a plugin runs code, so you decide device by device.
+**What stays on each device:** whether git support is switched on and its [auto-commit settings](git-integration.md#auto-commit), whether this project's plugins are enabled, the running session word count and daily history, and the Writing Streak switch and schedule. Those are yours alone on each device. In particular, **turning on plugins is never synced** — a plugin runs code, so you decide device by device.
 
 **What doesn't sync at all:** your plugin scripts, your backups, and hidden or git-ignored files — and, unless you switch it on, anything that isn't a Markdown document.
 
 ### Images, PDFs and other files
 
-By default only your Markdown documents sync. To also sync everything else in the project folder — cover images, reference PDFs, maps, research scans — tick **Also sync images, PDFs and other files** in the Sync panel. It's a project setting, so it switches on (or off) on every device syncing that project.
+By default only your Markdown documents sync. To also sync everything else in the project folder — cover images, reference PDFs, maps, research scans — tick **Also sync images, PDFs and other files** in **`File > Project Settings > Sync`** (see [Project Settings](project-settings.md)). It's a project setting, so it switches on (or off) on every device syncing that project.
 
 - Files are synced **whole**, encrypted like everything else, in pieces so that large ones work. A file is only uploaded again when its content changes; renaming or moving it doesn't re-upload it.
 - There's a **size limit** per file, set by whoever runs the server — 100 MB unless they changed it. A bigger file stays on this device and the Sync panel says so.

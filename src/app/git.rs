@@ -17,7 +17,51 @@ impl GitOperation {
     }
 }
 
+/// How many recent commits `refresh_git_log` fetches — the Version Activity
+/// panel shows a short history, not the whole log.
+const GIT_LOG_LIMIT: usize = 20;
+
+/// Bounds `SmaragdApp::git_activity_log`'s length — the most recent actions
+/// only; `git_log_cache` (real git history) has no such limit's worth of
+/// concern since git itself is the source of truth there.
+const GIT_ACTIVITY_LOG_LIMIT: usize = 50;
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
 impl SmaragdApp {
+    /// Append `message` to `git_activity_log`, newest first, trimmed to
+    /// `GIT_ACTIVITY_LOG_LIMIT` — called alongside every `set_status_message`/
+    /// `push_error_toast` a git action already triggers, so the Version
+    /// Activity panel's history always agrees with what the status bar/toasts
+    /// showed at the time.
+    pub(super) fn record_git_activity(
+        &mut self,
+        message: impl Into<String>,
+        outcome: crate::git::GitActivityOutcome,
+    ) {
+        self.git_activity_log
+            .push_front(crate::git::GitActivityEntry {
+                at_unix: unix_now(),
+                message: message.into(),
+                outcome,
+            });
+        self.git_activity_log.truncate(GIT_ACTIVITY_LOG_LIMIT);
+    }
+
+    /// Refresh `git_log_cache` from `git log`, or clear it if git integration
+    /// is off (globally or for this project) or no project is open — same
+    /// shape and call sites as `refresh_git_dirty_paths`.
+    pub(super) fn refresh_git_log(&mut self) {
+        let log = self.project.as_ref().and_then(|project| {
+            (self.settings.git_integration_enabled() && project.meta.git_enabled)
+                .then(|| crate::git::log(&project.root, GIT_LOG_LIMIT))
+        });
+        self.git_log_cache = log.unwrap_or_default();
+    }
     /// If git support is enabled for `project` but its `.git` directory is missing —
     /// deleted outside the app, or `project.json` synced somewhere that never had one
     /// — recreate it. A no-op both when git isn't enabled and when the repo already
@@ -109,6 +153,11 @@ impl SmaragdApp {
             Ok(()) => {
                 self.set_status_message("Git support enabled");
                 self.refresh_git_dirty_paths();
+                self.refresh_git_log();
+                self.record_git_activity(
+                    "Git support enabled",
+                    crate::git::GitActivityOutcome::Success,
+                );
             }
             Err(err) => self.push_error_toast(format!("Couldn't save settings: {err}")),
         }
@@ -131,9 +180,35 @@ impl SmaragdApp {
         self.git_dirty_paths = dirty.unwrap_or_default();
     }
 
-    /// Open the commit-message prompt (the existing name-prompt modal, reused),
-    /// pre-filled with a default message. Shared by the Versions menu, the
-    /// `GitCommit` shortcut, and `:git commit`/`:git backup` with no inline message.
+    /// Renders the configured commit-message template (`Settings::
+    /// git_commit_message_template`) against `project`'s current git state —
+    /// shared by `prompt_git_commit` (the manual Commit prompt's pre-fill) and
+    /// `maybe_run_auto_commit`, so a manual commit and an automatic one are
+    /// never worded differently for the same template.
+    pub(super) fn render_commit_message_for(&self, project: &Project) -> String {
+        let template = self.settings.resolve_git_commit_message_template();
+        let date = crate::templates::format_date(&self.settings.template_date_format);
+        let time = crate::git::format_commit_time();
+        let num_files = self.git_dirty_paths.len();
+        let diff = crate::git::diff_stat(&project.root).ok();
+        let files = crate::git::changed_files(&project.root).unwrap_or_default();
+        crate::git::render_commit_message(
+            &template,
+            &crate::git::CommitContext {
+                date: &date,
+                time: &time,
+                num_files,
+                diff: diff.as_ref(),
+                files: &files,
+                root: &project.root,
+            },
+        )
+    }
+
+    /// Open the commit-message prompt (`ui::git_commit_prompt`), pre-filled
+    /// via `render_commit_message_for`. Shared by the Versions menu, the
+    /// `GitCommit`/`GitCommitAndPush` shortcuts, and `:git commit`/`:git
+    /// backup` with no inline message.
     pub(super) fn prompt_git_commit(&mut self, push_after: bool) {
         let Some(project) = &self.project else {
             self.push_error_toast("No project open");
@@ -143,18 +218,25 @@ impl SmaragdApp {
             self.push_error_toast("Git support isn't enabled for this project");
             return;
         }
-        self.prompt = Some(PendingPrompt {
-            action: PromptAction::GitCommit { push_after },
-            state: NamePromptState::new(
-                "Commit",
-                if push_after {
-                    "Commit and Push"
-                } else {
-                    "Commit"
-                },
-                "Smaragd backup",
-            ),
-        });
+        let message = self.render_commit_message_for(project);
+        self.git_commit_prompt = Some(ui::git_commit_prompt::GitCommitPromptState::new(
+            message, push_after,
+        ));
+    }
+
+    /// Resolve the Commit prompt's outcome: commit with the (edited) message
+    /// on confirm, or do nothing on cancel.
+    pub(super) fn handle_git_commit_prompt_outcome(
+        &mut self,
+        ctx: &egui::Context,
+        outcome: ui::git_commit_prompt::GitCommitPromptOutcome,
+    ) {
+        let Some(prompt) = self.git_commit_prompt.take() else {
+            return;
+        };
+        if let ui::git_commit_prompt::GitCommitPromptOutcome::Confirmed(message) = outcome {
+            self.run_git_commit(ctx, &message, prompt.push_after);
+        }
     }
 
     pub(super) fn run_git_commit(&mut self, ctx: &egui::Context, message: &str, push_after: bool) {
@@ -174,14 +256,24 @@ impl SmaragdApp {
             Ok(()) => {
                 self.set_status_message("Committed");
                 self.refresh_git_dirty_paths();
+                self.refresh_git_log();
+                self.record_git_activity("Committed", crate::git::GitActivityOutcome::Success);
                 if push_after {
                     self.run_git_push(ctx);
                 }
             }
             Err(crate::git::GitError::NothingToCommit) => {
                 self.set_status_message("Nothing to commit");
+                self.record_git_activity(
+                    "Nothing to commit",
+                    crate::git::GitActivityOutcome::Neutral,
+                );
             }
-            Err(err) => self.push_error_toast(format!("Commit failed: {err}")),
+            Err(err) => {
+                let message = format!("Commit failed: {err}");
+                self.push_error_toast(message.clone());
+                self.record_git_activity(message, crate::git::GitActivityOutcome::Error);
+            }
         }
     }
 
@@ -254,10 +346,9 @@ impl SmaragdApp {
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 let (operation, _) = self.pending_git.take().expect("checked above");
-                self.push_error_toast(format!(
-                    "{} failed: background thread panicked",
-                    operation.label()
-                ));
+                let message = format!("{} failed: background thread panicked", operation.label());
+                self.push_error_toast(message.clone());
+                self.record_git_activity(message, crate::git::GitActivityOutcome::Error);
                 return;
             }
         };
@@ -271,10 +362,15 @@ impl SmaragdApp {
                     self.spawn_word_count_recompute(ctx);
                 }
                 self.refresh_git_dirty_paths();
-                self.set_status_message(format!("{}ed", operation.label()));
+                self.refresh_git_log();
+                let message = format!("{}ed", operation.label());
+                self.set_status_message(message.clone());
+                self.record_git_activity(message, crate::git::GitActivityOutcome::Success);
             }
             Err(err) => {
-                self.push_error_toast(format!("{} failed: {err}", operation.label()));
+                let message = format!("{} failed: {err}", operation.label());
+                self.push_error_toast(message.clone());
+                self.record_git_activity(message, crate::git::GitActivityOutcome::Error);
             }
         }
     }
@@ -356,5 +452,138 @@ mod tests {
         app.refresh_git_dirty_paths();
 
         assert!(app.git_dirty_paths.is_empty());
+    }
+
+    #[test]
+    fn refresh_git_log_picks_up_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        init_repo_with_identity(&project.root);
+        project.enable_git_support().unwrap();
+        crate::git::commit_all(&project.root, "initial commit").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+
+        app.refresh_git_log();
+
+        assert_eq!(app.git_log_cache.len(), 1);
+        assert_eq!(app.git_log_cache[0].subject, "initial commit");
+    }
+
+    #[test]
+    fn refresh_git_log_is_empty_when_global_git_integration_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        init_repo_with_identity(&project.root);
+        project.enable_git_support().unwrap();
+        crate::git::commit_all(&project.root, "initial commit").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.settings.git_integration_disabled = true;
+
+        app.refresh_git_log();
+
+        assert!(app.git_log_cache.is_empty());
+    }
+
+    #[test]
+    fn record_git_activity_prepends_and_trims_to_the_limit() {
+        let mut app = SmaragdApp::test_fixture();
+
+        for n in 0..(GIT_ACTIVITY_LOG_LIMIT + 5) {
+            app.record_git_activity(
+                format!("entry {n}"),
+                crate::git::GitActivityOutcome::Success,
+            );
+        }
+
+        assert_eq!(app.git_activity_log.len(), GIT_ACTIVITY_LOG_LIMIT);
+        assert_eq!(
+            app.git_activity_log.front().unwrap().message,
+            format!("entry {}", GIT_ACTIVITY_LOG_LIMIT + 4)
+        );
+    }
+
+    #[test]
+    fn prompt_git_commit_pre_fills_the_configured_template() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        init_repo_with_identity(&project.root);
+        project.enable_git_support().unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.settings.git_commit_message_template = Some("Backup at {{time}}".to_string());
+
+        app.prompt_git_commit(false);
+
+        let message = &app.git_commit_prompt.as_ref().unwrap().message;
+        assert!(
+            message.starts_with("Backup at ") && !message.contains("{{"),
+            "expected the template rendered, got {message:?}"
+        );
+    }
+
+    #[test]
+    fn prompt_git_commit_lists_dirty_files_via_the_default_template() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        init_repo_with_identity(&project.root);
+        project.enable_git_support().unwrap();
+        crate::git::commit_all(&project.root, "initial commit").unwrap();
+        std::fs::write(project.root.join("new.md"), "hi").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+
+        app.prompt_git_commit(false);
+
+        let message = &app.git_commit_prompt.as_ref().unwrap().message;
+        assert!(
+            message.contains("A new.md"),
+            "expected the default template's file list, got {message:?}"
+        );
+    }
+
+    #[test]
+    fn a_successful_commit_is_recorded_as_activity() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        init_repo_with_identity(&project.root);
+        project.enable_git_support().unwrap();
+        std::fs::write(dir.path().join("new.md"), "hi").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        let ctx = egui::Context::default();
+
+        app.run_git_commit(&ctx, "a commit", false);
+
+        assert_eq!(app.git_activity_log.len(), 1);
+        assert_eq!(app.git_activity_log[0].message, "Committed");
+        assert_eq!(
+            app.git_activity_log[0].outcome,
+            crate::git::GitActivityOutcome::Success
+        );
+        assert_eq!(app.git_log_cache.len(), 1);
+        assert_eq!(app.git_log_cache[0].subject, "a commit");
+    }
+
+    #[test]
+    fn a_no_op_commit_is_recorded_as_neutral_activity() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        init_repo_with_identity(&project.root);
+        project.enable_git_support().unwrap();
+        crate::git::commit_all(&project.root, "initial commit").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        let ctx = egui::Context::default();
+
+        app.run_git_commit(&ctx, "nothing changed", false);
+
+        assert_eq!(app.git_activity_log.len(), 1);
+        assert_eq!(app.git_activity_log[0].message, "Nothing to commit");
+        assert_eq!(
+            app.git_activity_log[0].outcome,
+            crate::git::GitActivityOutcome::Neutral
+        );
     }
 }

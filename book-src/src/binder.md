@@ -20,7 +20,7 @@ The left-hand panel is the **binder** — a tree view of your project folder, on
 
 ## Binder Background Coloring
 
-Binder rows — documents and folders alike — can be background-colored to make status, POV, or progress toward a word count target visible at a glance without opening the Metadata dock for each one. Four modes are available, switchable via **`View > Color Binder By`**, the remappable **"Cycle Binder Color Mode"** shortcut (default `Ctrl+Shift+C`, cycling through the modes below in order), or by clicking the mode indicator that appears in the status bar once a mode other than `Off` is active (clicking it cycles too):
+Binder rows — documents and folders alike — can be background-colored to make status, POV, or progress toward a word count target visible at a glance without opening the Metadata dock for each one. Four modes are available, switchable via **`View > Color Binder By`**, **`File > Project Settings > Binder`** (see [Project Settings](project-settings.md)), the remappable **"Cycle Binder Color Mode"** shortcut (default `Ctrl+Shift+C`, cycling through the modes below in order), or by clicking the mode indicator that appears in the status bar once a mode other than `Off` is active (clicking it cycles too):
 
 - **Off** — no background coloring at all. The default, so a new project's binder starts uncolored until you opt in.
 - **Status** — colors each row by its own `status` value, using whatever color you've assigned that status (see below).

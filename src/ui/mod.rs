@@ -12,6 +12,7 @@ pub mod exit_confirm_prompt;
 pub mod export_panel;
 pub mod external_conflict_prompt;
 pub mod find_replace_panel;
+pub mod git_commit_prompt;
 pub mod markdown_preview;
 pub mod metadata_panel;
 pub mod name_prompt;
@@ -20,6 +21,7 @@ pub mod note_prompt;
 pub mod notes_panel;
 pub mod open_document_prompt;
 pub mod pomodoro_panel;
+pub mod project_settings_panel;
 pub mod recent_files_prompt;
 pub mod search_everywhere;
 pub mod settings_panel;
@@ -27,6 +29,7 @@ pub mod story_grid_panel;
 pub mod streak_panel;
 pub mod sync_panel;
 pub mod tags_panel;
+pub mod version_activity_panel;
 pub mod word_count_panel;
 
 /// A user request to navigate to a `[[wikilink]]` target, raised by a click in the
