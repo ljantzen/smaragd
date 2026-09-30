@@ -13,7 +13,7 @@ Only one bookmark per line — toggling on an already-bookmarked line removes it
 
 ## The Bookmarks dock
 
-**`View > Bookmarks`** (or `Ctrl+Alt+B`) opens a dock listing every bookmark in the project, sorted by document then line. Each row is a clickable link (like a Backlinks or Tags row) — click it to open that document and jump straight to the line — plus a **Delete** button.
+**`Tools > Bookmarks`** (or `Ctrl+Alt+B`) opens a dock listing every bookmark in the project, sorted by document then line. Each row is a clickable link (like a Backlinks or Tags row) — click it to open that document and jump straight to the line — plus a **Delete** button.
 
 A bookmark follows its document through a rename, a drag-and-drop move, and a move to [Trash](folder-roles.md) — including the round trip back out via **Restore** — so the dock keeps linking to it throughout. It's only actually removed once the document is truly gone: permanently deleted (no Trash configured), or via **Empty Trash**. If a bookmarked document somehow can't be resolved anyway, its row shows **(not found)** instead of a link — still listed (and deletable) even though there's nowhere left to jump to, the same tolerant-of-drift behavior a Story Card's linked document has if that document goes away.
 

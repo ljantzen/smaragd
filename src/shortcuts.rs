@@ -379,8 +379,6 @@ impl ShortcutAction {
             | Self::ToggleBinderFocus
             | Self::ToggleFocusMode
             | Self::CycleBinderColorMode
-            | Self::ToggleBookmarksPanel
-            | Self::ToggleNotesPanel
             | Self::ToggleDocumentStats
             | Self::PreviewZoomIn
             | Self::PreviewZoomOut
@@ -393,6 +391,8 @@ impl ShortcutAction {
             | Self::ToggleCollabPanel
             | Self::ToggleStreak
             | Self::ToggleDashboard
+            | Self::ToggleBookmarksPanel
+            | Self::ToggleNotesPanel
             | Self::ToggleSyncPanel
             | Self::SyncNow => ShortcutCategory::Tools,
         }

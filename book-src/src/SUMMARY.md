@@ -14,6 +14,7 @@
 - [Wikilinks](wikilinks.md)
 - [Backlinks](backlinks.md)
 - [Document Metadata (Frontmatter)](document-metadata.md)
+- [Folder Metadata](folder-metadata.md)
 - [Project Metadata](project-metadata.md)
 - [Tags](tags.md)
 - [Bookmarks](bookmarks.md)

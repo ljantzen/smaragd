@@ -8,7 +8,7 @@ this file.
 - Added Notes: pin a short piece of text to the cursor's exact position — line *and*
   column, unlike a Bookmark's line-only granularity — with `Ctrl+Shift+J`, or by
   clicking a line's note icon slot in the gutter (left of the bookmark diamond; a noted
-  line gets a dot there). The new **Notes** dock (`View > Notes`, `Ctrl+Shift+N`)
+  line gets a dot there). The new **Notes** dock (`Tools > Notes`, `Ctrl+Shift+N`)
   lists every note in the project with a jump-to link and its text; `Ctrl+Alt+Down`/
   `Ctrl+Alt+Up` step between them, mirroring Bookmarks' own `Alt+Down`/`Alt+Up`.
 - Added a **Dashboard** dock tab (#15, `Tools > Dashboard`, `Ctrl+Alt+G`):
@@ -31,6 +31,11 @@ this file.
   not whatever order Manual reordering happened to leave behind. Manuscript
   stays the default for existing projects; the chosen mode is remembered per
   project.
+- Moved **Bookmarks** and **Notes** from the **View** menu to **Tools**, next to
+  the other dock-tab toggles they work the same way as (Word Count, Streak,
+  Dashboard) — `View` had grouped them with content panels (Binder, Preview,
+  Backlinks) for no real reason. Same shortcuts, same docks; only the menu
+  location changed.
 - **Removed the experimental browser (WebAssembly) edition.** It was a useful
   experiment, but keeping the wasm32 build working alongside every native
   feature wasn't sustainable. The native desktop app (Linux, Windows, macOS)

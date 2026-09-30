@@ -13,7 +13,7 @@ Saving an empty note deletes it instead of leaving a blank one behind.
 
 ## The Notes dock
 
-**`View > Notes`** (or `Ctrl+Shift+N`) opens a dock listing every note in the project, sorted by document, then line, then column. Each row is a clickable link (like a Bookmarks row) showing `line:column`, followed by a short excerpt of the note's text — click the link to open that document and jump straight to the note's exact position — plus a **Delete** button.
+**`Tools > Notes`** (or `Ctrl+Shift+N`) opens a dock listing every note in the project, sorted by document, then line, then column. Each row is a clickable link (like a Bookmarks row) showing `line:column`, followed by a short excerpt of the note's text — click the link to open that document and jump straight to the note's exact position — plus a **Delete** button.
 
 A note follows its document through a rename, a drag-and-drop move, and a move to [Trash](folder-roles.md) — including the round trip back out via **Restore** — the same as a bookmark. It's only actually removed once the document is truly gone: permanently deleted (no Trash configured), or via **Empty Trash**. If a noted document somehow can't be resolved anyway, its row shows **(not found)** instead of a link — still listed (and deletable) even though there's nowhere left to jump to.
 

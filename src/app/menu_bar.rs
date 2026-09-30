@@ -267,16 +267,38 @@ impl SmaragdApp {
                         if nav.button(ui, "Editor").clicked() {
                             self.toggle_dock_tab(DockTab::Editor);
                         }
-                        if nav.button(ui, "Preview").clicked() {
+                        let preview_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::TogglePreview);
+                        if nav
+                            .shortcut_button(ui, "Preview", preview_shortcut)
+                            .clicked()
+                        {
                             self.toggle_dock_tab_near(DockTab::Preview, DockTab::Editor);
                         }
-                        if nav.button(ui, "Corkboard").clicked() {
+                        let corkboard_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::ToggleCorkboard);
+                        if nav
+                            .shortcut_button(ui, "Corkboard", corkboard_shortcut)
+                            .clicked()
+                        {
                             self.toggle_dock_tab_near(DockTab::Corkboard, DockTab::Editor);
                         }
-                        if nav.button(ui, "Story Grid").clicked() {
+                        let story_grid_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::ToggleStoryGrid);
+                        if nav
+                            .shortcut_button(ui, "Story Grid", story_grid_shortcut)
+                            .clicked()
+                        {
                             self.toggle_dock_tab_near(DockTab::StoryGrid, DockTab::Editor);
                         }
-                        if nav.button(ui, "Belief Timeline").clicked() {
+                        let belief_timeline_shortcut = self
+                            .settings
+                            .shortcuts
+                            .get(ShortcutAction::ToggleBeliefTimeline);
+                        if nav
+                            .shortcut_button(ui, "Belief Timeline", belief_timeline_shortcut)
+                            .clicked()
+                        {
                             self.toggle_dock_tab_near(DockTab::BeliefTimeline, DockTab::Editor);
                         }
                         ui.separator();
@@ -291,28 +313,17 @@ impl SmaragdApp {
                         {
                             self.toggle_dock_tab(DockTab::Metadata);
                         }
-                        if nav.button(ui, "Backlinks").clicked() {
-                            self.toggle_dock_tab(DockTab::Backlinks);
-                        }
-                        if nav.button(ui, "Tags").clicked() {
-                            self.toggle_dock_tab(DockTab::Tags);
-                        }
-                        let bookmarks_shortcut = self
-                            .settings
-                            .shortcuts
-                            .get(ShortcutAction::ToggleBookmarksPanel);
+                        let backlinks_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::ToggleBacklinks);
                         if nav
-                            .shortcut_button(ui, "Bookmarks", bookmarks_shortcut)
+                            .shortcut_button(ui, "Backlinks", backlinks_shortcut)
                             .clicked()
                         {
-                            self.toggle_dock_tab(DockTab::Bookmarks);
+                            self.toggle_dock_tab(DockTab::Backlinks);
                         }
-                        let notes_shortcut = self
-                            .settings
-                            .shortcuts
-                            .get(ShortcutAction::ToggleNotesPanel);
-                        if nav.shortcut_button(ui, "Notes", notes_shortcut).clicked() {
-                            self.toggle_dock_tab(DockTab::Notes);
+                        let tags_shortcut = self.settings.shortcuts.get(ShortcutAction::ToggleTags);
+                        if nav.shortcut_button(ui, "Tags", tags_shortcut).clicked() {
+                            self.toggle_dock_tab(DockTab::Tags);
                         }
                         ui.separator();
                         nav_submenu(ui, nav, "Theme", |ui, nav| {
@@ -370,7 +381,12 @@ impl SmaragdApp {
                         }
                     });
                     top_menu_button(ui, "Tools", egui::Key::T, |ui, nav| {
-                        if nav.button(ui, "Focus Mode").clicked() {
+                        let focus_mode_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::ToggleFocusMode);
+                        if nav
+                            .shortcut_button(ui, "Focus Mode", focus_mode_shortcut)
+                            .clicked()
+                        {
                             let ctx = ui.ctx().clone();
                             self.set_focus_mode(&ctx, !self.focus_mode);
                         }
@@ -409,16 +425,6 @@ impl SmaragdApp {
                         {
                             self.toggle_dock_tab(DockTab::WordCount);
                         }
-                        let refresh_word_count_shortcut = self
-                            .settings
-                            .shortcuts
-                            .get(ShortcutAction::RefreshWordCount);
-                        if nav
-                            .shortcut_button(ui, "Refresh Word Count", refresh_word_count_shortcut)
-                            .clicked()
-                        {
-                            self.spawn_word_count_recompute(ui.ctx());
-                        }
                         // Always shown, unlike the earlier global-Settings
                         // design: the enable checkbox now lives inside the
                         // Streak tab itself (per-project), so hiding this
@@ -436,6 +442,23 @@ impl SmaragdApp {
                             .clicked()
                         {
                             self.toggle_dock_tab(DockTab::Dashboard);
+                        }
+                        let bookmarks_shortcut = self
+                            .settings
+                            .shortcuts
+                            .get(ShortcutAction::ToggleBookmarksPanel);
+                        if nav
+                            .shortcut_button(ui, "Bookmarks", bookmarks_shortcut)
+                            .clicked()
+                        {
+                            self.toggle_dock_tab(DockTab::Bookmarks);
+                        }
+                        let notes_shortcut = self
+                            .settings
+                            .shortcuts
+                            .get(ShortcutAction::ToggleNotesPanel);
+                        if nav.shortcut_button(ui, "Notes", notes_shortcut).clicked() {
+                            self.toggle_dock_tab(DockTab::Notes);
                         }
                         ui.separator();
                         let sync_panel_shortcut =
