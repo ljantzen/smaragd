@@ -33,6 +33,8 @@ this file.
   the `View` menu and the binder's right-click menu).
 - Added keyboard shortcuts for **Pull** (`Ctrl+Alt+L`) and **Commit and Push**
   (`Ctrl+Alt+Shift+C`) — both were Versions-menu-only before.
+- Added a **User Manual** item to the **Help** menu, opening
+  <https://ljantzen.github.io/smaragd/manual/> in your browser.
 
 ## v1.4.0 — 2026-09-30
 

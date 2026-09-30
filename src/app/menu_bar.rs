@@ -658,6 +658,12 @@ impl SmaragdApp {
                         }
                     });
                     top_menu_button(ui, "Help", egui::Key::H, |ui, nav| {
+                        if nav.button(ui, "User Manual").clicked() {
+                            ui.ctx().open_url(egui::OpenUrl::same_tab(
+                                "https://ljantzen.github.io/smaragd/manual/",
+                            ));
+                        }
+                        ui.separator();
                         if nav.button(ui, "About").clicked() {
                             self.show_about = true;
                         }
