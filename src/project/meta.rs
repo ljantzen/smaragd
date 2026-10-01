@@ -139,6 +139,27 @@ pub struct ProjectMeta {
     /// Same as `type_picklist_folder`, for the Status field.
     #[serde(default)]
     pub status_picklist_folder: Option<String>,
+    /// Where a pasted/dropped attachment (image, PDF, ...) is saved — see
+    /// [`crate::project::attachments::AttachmentDestination`]. `#[default]
+    /// SameAsDocument` needs no folder of its own and preserves that behavior
+    /// for projects saved before this setting existed.
+    #[serde(default)]
+    pub attachment_destination: crate::project::attachments::AttachmentDestination,
+    /// The relative key (same `/`-joined, root-is-`""` encoding
+    /// `type_picklist_folder` uses) of the folder attachments are saved into
+    /// when `attachment_destination` is `ConfiguredFolder`. `None` until the
+    /// user has picked one — see `Project::resolve_attachment_dir`.
+    #[serde(default)]
+    pub attachments_folder: Option<String>,
+    /// Whether pasting an image from the clipboard refuses images larger than
+    /// `clipboard_image_size_limit_mb` once PNG-encoded. Off by default (no
+    /// cap) — same opt-in shape as `git_auto_commit_enabled`.
+    #[serde(default)]
+    pub clipboard_image_size_limit_enabled: bool,
+    /// The threshold `clipboard_image_size_limit_enabled` enforces, in
+    /// megabytes. Only consulted when that flag is on.
+    #[serde(default)]
+    pub clipboard_image_size_limit_mb: u32,
     /// Overall manuscript word-count goal (Scrivener's "Draft Target"), edited in
     /// the Word Count panel. `None` until set — no target means no progress bar
     /// to show, not a target of 0. Deliberately named differently from

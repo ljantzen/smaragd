@@ -10,7 +10,9 @@
 //! exactly the division `sync_panel`'s `SyncPanelEvent` already uses for the
 //! same reason.
 
-use crate::project::{BinderColorMode, Project};
+use std::path::PathBuf;
+
+use crate::project::{AttachmentDestination, BinderColorMode, Project};
 use crate::settings::Settings;
 
 /// Keyboard filter claimed on a focused category row — see
@@ -31,13 +33,15 @@ pub enum ProjectSettingsCategory {
     Git,
     Sync,
     Binder,
+    Attachments,
 }
 
 impl ProjectSettingsCategory {
-    pub const ALL: [ProjectSettingsCategory; 3] = [
+    pub const ALL: [ProjectSettingsCategory; 4] = [
         ProjectSettingsCategory::Git,
         ProjectSettingsCategory::Sync,
         ProjectSettingsCategory::Binder,
+        ProjectSettingsCategory::Attachments,
     ];
 
     pub fn label(self) -> &'static str {
@@ -45,6 +49,7 @@ impl ProjectSettingsCategory {
             ProjectSettingsCategory::Git => "Git",
             ProjectSettingsCategory::Sync => "Sync",
             ProjectSettingsCategory::Binder => "Binder",
+            ProjectSettingsCategory::Attachments => "Attachments",
         }
     }
 }
@@ -53,7 +58,7 @@ impl ProjectSettingsCategory {
 /// project (a `Project::set_*` call, each of which persists immediately) and
 /// reports any error, plus runs whatever side effect the change needs (e.g.
 /// `SetSyncFiles` should be followed by a resync).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectSettingsEvent {
     SetGitAutoCommitEnabled(bool),
     SetGitAutoCommitIntervalMinutes(u32),
@@ -61,6 +66,11 @@ pub enum ProjectSettingsEvent {
     /// See `ProjectMeta::sync_files`; moved here from the Sync dock tab.
     SetSyncFiles(bool),
     SetBinderColorMode(BinderColorMode),
+    SetAttachmentDestination(AttachmentDestination),
+    /// `None` clears the configured folder (Reset).
+    SetAttachmentsFolder(Option<PathBuf>),
+    SetClipboardImageSizeLimitEnabled(bool),
+    SetClipboardImageSizeLimitMb(u32),
 }
 
 /// Renders the Project Settings dialog when `open` is true (a no-op
@@ -117,6 +127,9 @@ pub fn show(
                     ProjectSettingsCategory::Git => show_git_category(ui, project, settings),
                     ProjectSettingsCategory::Sync => show_sync_category(ui, project),
                     ProjectSettingsCategory::Binder => show_binder_category(ui, project),
+                    ProjectSettingsCategory::Attachments => {
+                        show_attachments_category(ui, project)
+                    }
                 };
             });
         });
@@ -265,6 +278,97 @@ fn show_binder_category(ui: &mut egui::Ui, project: &Project) -> Option<ProjectS
     event
 }
 
+fn show_attachments_category(ui: &mut egui::Ui, project: &Project) -> Option<ProjectSettingsEvent> {
+    let mut event = None;
+    ui.heading("Attachments");
+    ui.add_space(12.0);
+    ui.label("Save pasted/dropped images and files:");
+    let mut destination = project.attachment_destination();
+    if ui
+        .radio_value(
+            &mut destination,
+            AttachmentDestination::SameAsDocument,
+            "In the same folder as the document",
+        )
+        .changed()
+    {
+        event = Some(ProjectSettingsEvent::SetAttachmentDestination(destination));
+    }
+    if ui
+        .radio_value(
+            &mut destination,
+            AttachmentDestination::ConfiguredFolder,
+            "In a specific folder",
+        )
+        .changed()
+    {
+        event = Some(ProjectSettingsEvent::SetAttachmentDestination(destination));
+    }
+    let folder_error_id = ui.id().with("attachments_folder_error");
+    ui.add_enabled_ui(
+        project.attachment_destination() == AttachmentDestination::ConfiguredFolder,
+        |ui| {
+            ui.horizontal(|ui| {
+                let mut dir_text = project
+                    .attachments_folder()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "(not set)".to_string());
+                ui.add_enabled(
+                    false,
+                    egui::TextEdit::singleline(&mut dir_text).desired_width(260.0),
+                );
+                if ui.button("Browse…").clicked()
+                    && let Some(picked) = rfd::FileDialog::new()
+                        .set_directory(&project.root)
+                        .pick_folder()
+                {
+                    if picked.strip_prefix(&project.root).is_ok() {
+                        ui.ctx().data_mut(|d| d.remove::<String>(folder_error_id));
+                        event = Some(ProjectSettingsEvent::SetAttachmentsFolder(Some(picked)));
+                    } else {
+                        ui.ctx().data_mut(|d| {
+                            d.insert_temp(
+                                folder_error_id,
+                                "The attachments folder must be inside the project.".to_string(),
+                            )
+                        });
+                    }
+                }
+                if project.attachments_folder().is_some() && ui.button("Reset").clicked() {
+                    ui.ctx().data_mut(|d| d.remove::<String>(folder_error_id));
+                    event = Some(ProjectSettingsEvent::SetAttachmentsFolder(None));
+                }
+            });
+        },
+    );
+    if let Some(err) = ui.ctx().data(|d| d.get_temp::<String>(folder_error_id)) {
+        ui.colored_label(ui.visuals().error_fg_color, err);
+    }
+    ui.add_space(10.0);
+    let mut limit_enabled = project.clipboard_image_size_limit_enabled();
+    if ui
+        .checkbox(&mut limit_enabled, "Limit clipboard image paste size")
+        .changed()
+    {
+        event = Some(ProjectSettingsEvent::SetClipboardImageSizeLimitEnabled(
+            limit_enabled,
+        ));
+    }
+    ui.add_enabled_ui(project.clipboard_image_size_limit_enabled(), |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Maximum size:");
+            let mut mb = project.clipboard_image_size_limit_mb();
+            if ui
+                .add(egui::DragValue::new(&mut mb).range(1..=1000).suffix(" MB"))
+                .changed()
+            {
+                event = Some(ProjectSettingsEvent::SetClipboardImageSizeLimitMb(mb));
+            }
+        });
+    });
+    event
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,6 +426,39 @@ mod tests {
 
         run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
             event = show_binder_category(ui, &project);
+        });
+
+        // Nothing clicked yet — a bare render reports no event.
+        assert!(event.is_none());
+    }
+
+    #[test]
+    fn attachments_category_renders_without_panicking_in_both_destination_modes() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
+            show_attachments_category(ui, &project);
+        });
+
+        project
+            .set_attachment_destination(AttachmentDestination::ConfiguredFolder)
+            .unwrap();
+        run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
+            show_attachments_category(ui, &project);
+        });
+    }
+
+    #[test]
+    fn attachments_category_reports_the_clicked_destination() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut event = None;
+
+        run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
+            event = show_attachments_category(ui, &project);
         });
 
         // Nothing clicked yet — a bare render reports no event.

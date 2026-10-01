@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashSet};
+use std::path::Path;
 
 use egui::text::{CCursor, CCursorRange};
 use egui::widgets::text_edit::TextEditOutput;
@@ -39,6 +40,24 @@ pub enum EditorEvent {
     /// instead (no event needed — unlike this, it doesn't touch app state outside
     /// the open document).
     AddToDictionary(String),
+    /// Saving a pasted/dropped attachment (image, PDF, ...) to disk failed — see
+    /// `handle_attachment_input`. A successful paste/drop needs no event: the
+    /// snippet is already spliced into `editor.buffer` directly.
+    AttachmentError(String),
+}
+
+/// What `editor_panel::show` needs to save a pasted/dropped attachment where the
+/// project's settings say it should go — see `project::attachments` for the
+/// setting itself. `None` (no project open, or a joined collaboration session
+/// with none) disables paste/drop attachment handling entirely; ordinary text
+/// paste is unaffected either way.
+#[derive(Clone, Copy)]
+pub struct AttachmentSettings<'a> {
+    pub destination: crate::project::AttachmentDestination,
+    pub folder: Option<&'a Path>,
+    pub project_root: &'a Path,
+    /// See `Project::clipboard_image_size_limit_bytes`.
+    pub size_limit_bytes: Option<u64>,
 }
 
 /// Cap on how many `[[wikilink]]`/`#tag` suggestions are shown at once, matching
@@ -213,6 +232,7 @@ pub fn show(
     toggle_bookmark_shortcut: Option<KeyboardShortcut>,
     noted_lines: &HashSet<usize>,
     add_note_shortcut: Option<KeyboardShortcut>,
+    attachment_settings: Option<AttachmentSettings<'_>>,
 ) -> Option<EditorEvent> {
     // A joined collaboration session deliberately has no `open_path` (it
     // isn't tied to any of the joiner's own files — see `CollabSession`'s
@@ -371,6 +391,12 @@ pub fn show(
     let number_width = digit_width * digit_count as f32;
     let gutter_padding = 8.0;
     let gutter_width = icon_width * 2.0 + number_width + gutter_padding;
+
+    if let Some(settings) = attachment_settings.as_ref()
+        && let Some(event) = handle_attachment_input(ui, editor, text_edit_id, store, settings)
+    {
+        return Some(event);
+    }
 
     let mut gutter_click: Option<GutterClick> = None;
     let output = egui::ScrollArea::vertical()
@@ -1014,14 +1040,272 @@ pub fn move_cursor_to(ctx: &egui::Context, id: Id, text: &str, byte_offset: usiz
     ctx.memory_mut(|m| m.request_focus(id));
 }
 
+/// Where a new attachment should actually be written — `settings.folder` if the
+/// project is set to `ConfiguredFolder` and one is actually assigned, else
+/// `document_dir`, else `settings.project_root`. Mirrors
+/// `Project::resolve_attachment_dir` exactly, but works from the small borrowed
+/// `AttachmentSettings` rather than a full `&Project`, keeping this module
+/// decoupled from `Project`'s API the same way it already is for `store`.
+fn resolve_attachment_dest_dir(
+    settings: &AttachmentSettings<'_>,
+    document_dir: Option<&Path>,
+) -> std::path::PathBuf {
+    if settings.destination == crate::project::AttachmentDestination::ConfiguredFolder
+        && let Some(folder) = settings.folder
+    {
+        return folder.to_path_buf();
+    }
+    document_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| settings.project_root.to_path_buf())
+}
+
+/// Saves `bytes` as a new attachment and splices the resulting markdown snippet
+/// into `editor.buffer` at byte offset `at`, returning the byte offset just past
+/// the inserted snippet. The one terminal step shared by all three paste/drop
+/// input paths in `handle_attachment_input`. Takes an explicit `at` (rather than
+/// reading `editor.cursor_byte` itself) so a caller inserting several snippets in
+/// a row (drag-dropping multiple files) can thread the advancing position
+/// through without each insertion clobbering the last — `editor.cursor_byte`
+/// itself only catches up a frame later, once the `TextEdit` below re-renders.
+fn insert_attachment(
+    editor: &mut EditorState,
+    store: &dyn crate::project::store::ProjectStore,
+    settings: &AttachmentSettings<'_>,
+    at: usize,
+    suggested_name: &str,
+    bytes: &[u8],
+) -> Result<usize, String> {
+    let document_dir = editor.open_path.as_deref().and_then(Path::parent);
+    let dest_dir = resolve_attachment_dest_dir(settings, document_dir);
+    let document_dir = document_dir.unwrap_or(settings.project_root);
+    let saved =
+        crate::attachments::save_attachment(store, &dest_dir, document_dir, suggested_name, bytes)
+            .map_err(|err| err.to_string())?;
+    editor.buffer.insert_str(at, &saved.snippet);
+    editor.mark_dirty();
+    Ok(at + saved.snippet.len())
+}
+
+/// Intercepts a clipboard-image paste, a pasted file path/URI, or files
+/// dropped onto the editor — run *before* `TextEdit::show` so a clipboard
+/// image or a detected file path never also reaches it as a literal text
+/// paste. Returns `Some` only on a failure the caller should surface; a
+/// successful save mutates `editor.buffer` directly and returns `None`, the
+/// same as an untouched ordinary text paste falling through to `TextEdit`.
+fn handle_attachment_input(
+    ui: &egui::Ui,
+    editor: &mut EditorState,
+    text_edit_id: Id,
+    store: &dyn crate::project::store::ProjectStore,
+    settings: &AttachmentSettings<'_>,
+) -> Option<EditorEvent> {
+    // Triggered by `Event::Paste` itself, not a raw Ctrl+V key event: egui-winit
+    // intercepts Ctrl+V at the winit-event level (see `is_paste_command` in
+    // `egui-winit`), reads the OS clipboard's *text* right there, and pushes
+    // `Event::Paste` instead of ever emitting a `Key::V` press — so a raw-key
+    // peek here would never fire. A clipboard holding both an image and a text
+    // fallback (e.g. a browser's "Copy Image", which also puts a `text/html`/
+    // URL representation on the clipboard) still produces `Event::Paste(url)`
+    // this way; checking for an image first and removing the event below if
+    // one's found is what keeps that URL from also landing in the buffer as
+    // literal text.
+    if ui.ctx().memory(|m| m.has_focus(text_edit_id))
+        && ui
+            .ctx()
+            .input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))))
+    {
+        // A failure to even *check* the clipboard (no clipboard service
+        // available, a permission issue, ...) is treated the same as "no
+        // image found" — never blocks an ordinary text paste over it. Only a
+        // failure to *save* an image/file we've already confirmed exists
+        // becomes an `AttachmentError`.
+        let image_bytes = crate::attachments::clipboard_image_png(settings.size_limit_bytes)
+            .unwrap_or(None);
+        if let Some(png_bytes) = image_bytes {
+            // A text clipboard fallback alongside the image (some clipboard
+            // managers keep both) must not also be inserted literally.
+            ui.ctx()
+                .input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Paste(_))));
+            let name = crate::attachments::suggested_clipboard_image_name(chrono::Local::now());
+            let at = editor.cursor_byte.min(editor.buffer.len());
+            match insert_attachment(editor, store, settings, at, &name, &png_bytes) {
+                Ok(new_cursor) => move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, new_cursor),
+                Err(err) => {
+                    return Some(EditorEvent::AttachmentError(format!(
+                        "Couldn't save pasted image: {err}"
+                    )));
+                }
+            }
+        } else {
+            // No image on the clipboard — this may still be a copied *file*
+            // (not text to type), which a file manager's "Copy" typically
+            // puts on the clipboard as a `file://` URI or bare path.
+            let pasted_text = ui.ctx().input(|i| {
+                i.events.iter().find_map(|event| match event {
+                    egui::Event::Paste(text) => Some(text.clone()),
+                    _ => None,
+                })
+            });
+            // An unreadable source file falls through to an ordinary text
+            // paste of the path/URI string — no worse than today.
+            if let Some(text) = pasted_text
+                && let Some(path) = crate::attachments::pasted_text_as_file_path(&text)
+                && let Ok(bytes) = std::fs::read(&path)
+            {
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "attachment".to_string());
+                ui.ctx().input_mut(|i| {
+                    i.events.retain(|e| !matches!(e, egui::Event::Paste(_)));
+                });
+                let at = editor.cursor_byte.min(editor.buffer.len());
+                match insert_attachment(editor, store, settings, at, &name, &bytes) {
+                    Ok(new_cursor) => {
+                        move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, new_cursor);
+                    }
+                    Err(err) => {
+                        return Some(EditorEvent::AttachmentError(format!(
+                            "Couldn't save pasted file: {err}"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    if editor.open_path.is_some() {
+        let dropped = ui.ctx().input(|i| i.raw.dropped_files.clone());
+        let dropped_here = !dropped.is_empty()
+            && ui
+                .ctx()
+                .pointer_latest_pos()
+                .is_some_and(|pos| ui.max_rect().contains(pos));
+        if dropped_here {
+            let mut at = editor.cursor_byte.min(editor.buffer.len());
+            for file in &dropped {
+                let Ok(bytes) = file.bytes() else { continue };
+                let name = file
+                    .path()
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "attachment".to_string());
+                match insert_attachment(editor, store, settings, at, &name, &bytes) {
+                    Ok(new_cursor) => {
+                        editor.buffer.insert(new_cursor, '\n');
+                        at = new_cursor + 1;
+                    }
+                    Err(err) => {
+                        return Some(EditorEvent::AttachmentError(format!(
+                            "Couldn't save dropped file: {err}"
+                        )));
+                    }
+                }
+            }
+            move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, at);
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        BTreeSet, EditorEvent, HashSet, Key, SpellCheckLanguage, build_editor_layout_job,
-        editor_text_edit_id, is_flagged_word, misspelled_word_at, paragraph_byte_range, show,
+        AttachmentSettings, BTreeSet, EditorEvent, HashSet, Key, SpellCheckLanguage,
+        build_editor_layout_job, editor_text_edit_id, is_flagged_word, misspelled_word_at,
+        paragraph_byte_range, show,
     };
     use crate::editor::EditorState;
     use crate::editor_font::EditorFont;
+    use crate::project::AttachmentDestination;
+
+    /// A synthetic drop for [`dropping_a_file_onto_the_editor_saves_it_and_inserts_a_link`]
+    /// — real OS drag-and-drop can't be driven from a test, but egui's own
+    /// `DroppedFile` is just a trait (the integration owns the concrete file
+    /// handle), so a fake implementation exercises `handle_attachment_input`'s
+    /// drop-handling path exactly as a real one would.
+    #[derive(Debug)]
+    struct FakeDroppedFile {
+        path: std::path::PathBuf,
+        bytes: Vec<u8>,
+    }
+
+    impl egui::DroppedFile for FakeDroppedFile {
+        fn path(&self) -> &std::path::Path {
+            &self.path
+        }
+
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            Ok(self.bytes.clone())
+        }
+    }
+
+    #[test]
+    fn dropping_a_file_onto_the_editor_saves_it_and_inserts_a_link() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let dir = tempfile::tempdir().unwrap();
+        let doc_path = dir.path().join("Chapter One.md");
+        std::fs::write(&doc_path, "Existing text.").unwrap();
+        let mut editor = EditorState {
+            open_path: Some(doc_path),
+            buffer: "Existing text.".to_string(),
+            cursor_byte: "Existing text.".len(),
+            ..Default::default()
+        };
+        let dropped: egui::DroppedFileHandle = std::sync::Arc::new(FakeDroppedFile {
+            path: std::path::PathBuf::from("photo.png"),
+            bytes: b"fake png bytes".to_vec(),
+        });
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            dropped_files: vec![dropped],
+            events: vec![egui::Event::PointerMoved(egui::pos2(100.0, 100.0))],
+            ..Default::default()
+        };
+        let attachment_settings = AttachmentSettings {
+            destination: AttachmentDestination::SameAsDocument,
+            folder: None,
+            project_root: dir.path(),
+            size_limit_bytes: None,
+        };
+
+        crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
+            show(
+                ui,
+                &mut editor,
+                &crate::project::store::NativeStore,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+                SpellCheckLanguage::Off,
+                &BTreeSet::new(),
+                false,
+                &HashSet::new(),
+                None,
+                &HashSet::new(),
+                None,
+                Some(attachment_settings),
+            );
+        });
+
+        assert!(
+            editor.buffer.contains("![[photo.png]]"),
+            "expected an image embed in: {}",
+            editor.buffer
+        );
+        let saved_path = dir.path().join("photo.png");
+        assert_eq!(std::fs::read(saved_path).unwrap(), b"fake png bytes");
+    }
 
     /// Reproduces the reported bug: a short document's actual *interactive* area
     /// (what you can click to focus/place the cursor) used to stop at content
@@ -1077,6 +1361,7 @@ mod tests {
                 None,
                 &HashSet::new(),
                 None,
+                None,
             );
         });
 
@@ -1131,6 +1416,7 @@ mod tests {
                 None,
                 &HashSet::new(),
                 None,
+                None,
             );
         });
 
@@ -1181,6 +1467,7 @@ mod tests {
                 &HashSet::new(),
                 None,
                 &HashSet::new(),
+                None,
                 None,
             );
         });
@@ -1238,6 +1525,7 @@ mod tests {
                     None,
                     &HashSet::new(),
                     None,
+                    None,
                 );
             });
             ctx.read_response(editor_text_edit_id())
@@ -1271,6 +1559,7 @@ mod tests {
                     &HashSet::new(),
                     None,
                     &HashSet::new(),
+                    None,
                     None,
                 );
             });
@@ -1358,6 +1647,7 @@ mod tests {
                 None,
                 &HashSet::new(),
                 None,
+                None,
             );
         });
 
@@ -1389,6 +1679,7 @@ mod tests {
                 &HashSet::new(),
                 None,
                 &HashSet::new(),
+                None,
                 None,
             );
         });
@@ -1440,6 +1731,7 @@ mod tests {
                 None,
                 &HashSet::new(),
                 None,
+                None,
             );
         });
 
@@ -1478,6 +1770,7 @@ mod tests {
                 &HashSet::new(),
                 None,
                 &HashSet::new(),
+                None,
                 None,
             );
         });
@@ -1534,6 +1827,7 @@ mod tests {
                 None,
                 &HashSet::new(),
                 None,
+                None,
             );
         });
 
@@ -1567,6 +1861,7 @@ mod tests {
                 &HashSet::new(),
                 Some(shortcut),
                 &HashSet::new(),
+                None,
                 None,
             );
         });
@@ -1609,6 +1904,7 @@ mod tests {
                 None,
                 &HashSet::new(),
                 None,
+                None,
             );
         });
 
@@ -1640,6 +1936,7 @@ mod tests {
                 &HashSet::new(),
                 None,
                 &HashSet::new(),
+                None,
                 None,
             );
         });
@@ -1692,6 +1989,7 @@ mod tests {
                 None,
                 &HashSet::new(),
                 None,
+                None,
             );
         });
 
@@ -1726,6 +2024,7 @@ mod tests {
                 None,
                 &HashSet::new(),
                 Some(shortcut),
+                None,
             );
         });
 
@@ -1774,6 +2073,7 @@ mod tests {
                 None,
                 &HashSet::new(),
                 None,
+                None,
             );
         });
 
@@ -1813,6 +2113,7 @@ mod tests {
                 &HashSet::new(),
                 None,
                 &HashSet::new(),
+                None,
                 None,
             );
         });

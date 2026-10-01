@@ -443,12 +443,14 @@ struct WikilinkPlaceholder {
     is_embed: bool,
 }
 
-/// Image filename extensions recognized for `![[Target]]` embeds.
-const IMAGE_EXTENSIONS: &[&str] = &[
+/// Image filename extensions recognized for `![[Target]]` embeds, and (via
+/// [`has_image_extension`]) for deciding whether a pasted/dropped attachment
+/// gets an image embed or a plain link — see `crate::attachments`.
+pub(crate) const IMAGE_EXTENSIONS: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "tif", "tiff", "ico",
 ];
 
-fn has_image_extension(name: &str) -> bool {
+pub(crate) fn has_image_extension(name: &str) -> bool {
     name.rsplit('.').next().is_some_and(|ext| {
         IMAGE_EXTENSIONS
             .iter()

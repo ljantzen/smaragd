@@ -59,12 +59,14 @@ const SCALAR_FIELDS: &[&str] = &[
     "last_spell_check_language",
     "sync_files",
     "story_grid_order_mode",
+    "attachment_destination",
 ];
 /// `Option<String>` fields holding a folder's path key; synced as that folder's id.
 const FOLDER_REF_FIELDS: &[&str] = &[
     "type_picklist_folder",
     "pov_picklist_folder",
     "status_picklist_folder",
+    "attachments_folder",
 ];
 /// Prose fields, merged as text.
 const TEXT_FIELDS: &[&str] = &[
@@ -95,6 +97,10 @@ pub const LOCAL_ONLY_FIELDS: &[&str] = &[
     "git_auto_commit_enabled",
     "git_auto_commit_interval_minutes",
     "git_auto_commit_push_enabled",
+    // A per-device bandwidth/storage preference, not a shared project policy —
+    // same reasoning as the git_auto_commit_* fields above.
+    "clipboard_image_size_limit_enabled",
+    "clipboard_image_size_limit_mb",
 ];
 /// Fields with structure of their own, handled individually below.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -163,6 +169,10 @@ fn classify_exhaustively(meta: &ProjectMeta) {
         git_auto_commit_enabled: _,
         git_auto_commit_interval_minutes: _,
         git_auto_commit_push_enabled: _,
+        attachment_destination: _,
+        attachments_folder: _,
+        clipboard_image_size_limit_enabled: _,
+        clipboard_image_size_limit_mb: _,
     } = meta;
 }
 

@@ -1,4 +1,5 @@
 pub mod app;
+pub mod attachments;
 pub mod autocomplete;
 pub mod backup;
 pub mod collab;

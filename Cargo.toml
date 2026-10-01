@@ -18,6 +18,10 @@ exclude = ["crates/smaragd-sync-server", "crates/smaragd-sync-e2e"]
 [dependencies]
 # Argon2id for the sync passphrase KDF (src/sync/crypto.rs).
 argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+# OS clipboard image access for pasting images into the editor (src/attachments.rs).
+# `wayland-data-control`: without it, arboard only speaks X11 and can't see a
+# Wayland app's (e.g. a browser's) clipboard image on a native Wayland session.
+arboard = { version = "3.6", features = ["wayland-data-control"] }
 base64 = "0.22"
 blake3 = "1.8.5"
 bs58 = "0.5.1"
@@ -32,6 +36,8 @@ egui_extras = { version = "0.36.1", features = ["image", "file"] }
 egui_plot = "0.37"
 epub-builder = "0.8.3"
 ignore = "0.4"
+# PNG-encoding clipboard images for pasting into the editor (src/attachments.rs).
+image = { version = "0.25", default-features = false, features = ["png"] }
 iroh = "1.0.3"
 notify-rust = { version = "4.18.0", default-features = false, features = ["d_vendored"] }
 nucleo-matcher = "0.3"

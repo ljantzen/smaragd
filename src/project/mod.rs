@@ -1,4 +1,5 @@
 mod activity;
+pub mod attachments;
 mod binder_color_mode;
 mod bookmarks;
 mod create;
@@ -20,6 +21,7 @@ mod streak;
 mod trash;
 mod word_count;
 
+pub use attachments::AttachmentDestination;
 pub use binder_color_mode::BinderColorMode;
 pub use bookmarks::{Bookmark, ResolvedBookmark};
 pub use meta::ProjectMeta;

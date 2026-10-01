@@ -13,6 +13,7 @@ impl SmaragdApp {
         let Some(project) = self.project.as_mut() else {
             return;
         };
+        let is_sync_files = matches!(event, ProjectSettingsEvent::SetSyncFiles(_));
         let result = match event {
             ProjectSettingsEvent::SetGitAutoCommitEnabled(on) => {
                 project.set_git_auto_commit_enabled(on)
@@ -25,13 +26,25 @@ impl SmaragdApp {
             }
             ProjectSettingsEvent::SetSyncFiles(on) => project.set_sync_files(on),
             ProjectSettingsEvent::SetBinderColorMode(mode) => project.set_binder_color_mode(mode),
+            ProjectSettingsEvent::SetAttachmentDestination(mode) => {
+                project.set_attachment_destination(mode)
+            }
+            ProjectSettingsEvent::SetAttachmentsFolder(path) => {
+                project.set_attachments_folder(path.as_deref())
+            }
+            ProjectSettingsEvent::SetClipboardImageSizeLimitEnabled(enabled) => {
+                project.set_clipboard_image_size_limit_enabled(enabled)
+            }
+            ProjectSettingsEvent::SetClipboardImageSizeLimitMb(mb) => {
+                project.set_clipboard_image_size_limit_mb(mb)
+            }
         };
         match result {
             Ok(()) => {
                 // Sync reads `ProjectMeta::sync_files` fresh from the project every
                 // pass, so this only needs to wake the runner up sooner — same
                 // effect the removed `SyncPanelEvent::SetSyncFiles` handler had.
-                if matches!(event, ProjectSettingsEvent::SetSyncFiles(_)) {
+                if is_sync_files {
                     self.sync_now();
                 }
             }

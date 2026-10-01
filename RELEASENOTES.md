@@ -5,6 +5,14 @@ this file.
 
 ## Unreleased
 
+- Added **paste/drop attachments** into the editor: paste a clipboard image
+  (Ctrl+V), paste a file copied in a file manager, or drag a file onto the
+  editor, and it's saved to disk with a markdown image embed or link inserted
+  at the cursor — like Obsidian. A new **Attachments** page in
+  `File > Project Settings…` controls where files are saved (next to the
+  document, or a specific project folder) and an optional clipboard-image
+  size cap.
+
 ## v1.4.1 — 2026-10-01
 
 - Added **auto-commit**: a project can commit its own changes on an interval

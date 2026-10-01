@@ -23,6 +23,9 @@ pub(super) enum DockAction {
     /// `ui::markdown_preview::PreviewClick::Tag`.
     PreviewTagClicked(String),
     EditorSaveError(String),
+    /// Saving a pasted/dropped attachment failed — see
+    /// `ui::editor_panel::EditorEvent::AttachmentError`.
+    EditorAttachmentError(String),
     Wikilink(WikilinkActivation),
     /// The Editor's gutter (a click on a bookmarked/unbookmarked line's
     /// diamond slot) or its `ShortcutAction::ToggleBookmark` shortcut fired
@@ -466,6 +469,15 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     .project
                     .map(|p| p.store.as_ref())
                     .unwrap_or(&crate::project::store::NativeStore);
+                let attachments_folder = self.project.and_then(|p| p.attachments_folder());
+                let attachment_settings =
+                    self.project
+                        .map(|project| ui::editor_panel::AttachmentSettings {
+                            destination: project.attachment_destination(),
+                            folder: attachments_folder.as_deref(),
+                            project_root: project.root.as_path(),
+                            size_limit_bytes: project.clipboard_image_size_limit_bytes(),
+                        });
                 match ui::editor_panel::show(
                     ui,
                     self.editor,
@@ -484,6 +496,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     toggle_bookmark_shortcut,
                     &noted_lines,
                     add_note_shortcut,
+                    attachment_settings,
                 ) {
                     Some(EditorEvent::SaveError(err)) => {
                         self.actions.push(DockAction::EditorSaveError(err));
@@ -499,6 +512,9 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     }
                     Some(EditorEvent::AddToDictionary(word)) => {
                         self.actions.push(DockAction::SpellCheckAddWord(word));
+                    }
+                    Some(EditorEvent::AttachmentError(err)) => {
+                        self.actions.push(DockAction::EditorAttachmentError(err));
                     }
                     None => {}
                 }

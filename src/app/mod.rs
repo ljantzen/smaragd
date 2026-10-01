@@ -1738,6 +1738,17 @@ impl eframe::App for SmaragdApp {
                     .unwrap_or_default();
                 let editor_store = self.editor_store();
                 let spell_check_language = self.effective_spell_check_language();
+                let attachments_folder =
+                    self.project.as_ref().and_then(|p| p.attachments_folder());
+                let attachment_settings =
+                    self.project
+                        .as_ref()
+                        .map(|project| ui::editor_panel::AttachmentSettings {
+                            destination: project.attachment_destination(),
+                            folder: attachments_folder.as_deref(),
+                            project_root: project.root.as_path(),
+                            size_limit_bytes: project.clipboard_image_size_limit_bytes(),
+                        });
                 match ui::editor_panel::show(
                     &mut column_ui,
                     &mut self.editor,
@@ -1756,6 +1767,7 @@ impl eframe::App for SmaragdApp {
                     toggle_bookmark_shortcut,
                     &noted_lines,
                     add_note_shortcut,
+                    attachment_settings,
                 ) {
                     Some(EditorEvent::SaveError(err)) => self.push_error_toast(err),
                     Some(EditorEvent::Wikilink(activation)) => self.activate_wikilink(activation),
@@ -1771,6 +1783,7 @@ impl eframe::App for SmaragdApp {
                         self.settings.spell_check_custom_words.insert(word);
                         self.persist_settings();
                     }
+                    Some(EditorEvent::AttachmentError(err)) => self.push_error_toast(err),
                     None => {}
                 }
             });
@@ -1857,6 +1870,7 @@ impl eframe::App for SmaragdApp {
                         DockAction::RenameTag(tag) => self.prompt_rename_tag(tag),
                         DockAction::PreviewTagClicked(tag) => self.activate_tag(tag),
                         DockAction::EditorSaveError(err) => self.push_error_toast(err),
+                        DockAction::EditorAttachmentError(err) => self.push_error_toast(err),
                         DockAction::Wikilink(activation) => self.activate_wikilink(activation),
                         DockAction::SetBookStyle(style_id) => {
                             if let Some(project) = &mut self.project
