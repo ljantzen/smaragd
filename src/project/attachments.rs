@@ -145,9 +145,7 @@ mod tests {
         project
             .set_attachment_destination(AttachmentDestination::ConfiguredFolder)
             .unwrap();
-        project
-            .set_attachments_folder(Some(&attachments))
-            .unwrap();
+        project.set_attachments_folder(Some(&attachments)).unwrap();
         let docs = dir.path().join("Chapters");
 
         assert_eq!(project.resolve_attachment_dir(Some(&docs)), attachments);
@@ -192,9 +190,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
         let attachments = project.create_folder(dir.path(), "Attachments").unwrap();
-        project
-            .set_attachments_folder(Some(&attachments))
-            .unwrap();
+        project.set_attachments_folder(Some(&attachments)).unwrap();
         project.set_attachments_folder(None).unwrap();
 
         assert!(project.attachments_folder().is_none());
@@ -213,7 +209,9 @@ mod tests {
     fn clipboard_image_size_limit_bytes_converts_megabytes() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
-        project.set_clipboard_image_size_limit_enabled(true).unwrap();
+        project
+            .set_clipboard_image_size_limit_enabled(true)
+            .unwrap();
         project.set_clipboard_image_size_limit_mb(20).unwrap();
 
         assert_eq!(

@@ -127,9 +127,7 @@ pub fn show(
                     ProjectSettingsCategory::Git => show_git_category(ui, project, settings),
                     ProjectSettingsCategory::Sync => show_sync_category(ui, project),
                     ProjectSettingsCategory::Binder => show_binder_category(ui, project),
-                    ProjectSettingsCategory::Attachments => {
-                        show_attachments_category(ui, project)
-                    }
+                    ProjectSettingsCategory::Attachments => show_attachments_category(ui, project),
                 };
             });
         });

@@ -1120,8 +1120,8 @@ fn handle_attachment_input(
         // image found" — never blocks an ordinary text paste over it. Only a
         // failure to *save* an image/file we've already confirmed exists
         // becomes an `AttachmentError`.
-        let image_bytes = crate::attachments::clipboard_image_png(settings.size_limit_bytes)
-            .unwrap_or(None);
+        let image_bytes =
+            crate::attachments::clipboard_image_png(settings.size_limit_bytes).unwrap_or(None);
         if let Some(png_bytes) = image_bytes {
             // A text clipboard fallback alongside the image (some clipboard
             // managers keep both) must not also be inserted literally.
@@ -1130,7 +1130,9 @@ fn handle_attachment_input(
             let name = crate::attachments::suggested_clipboard_image_name(chrono::Local::now());
             let at = editor.cursor_byte.min(editor.buffer.len());
             match insert_attachment(editor, store, settings, at, &name, &png_bytes) {
-                Ok(new_cursor) => move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, new_cursor),
+                Ok(new_cursor) => {
+                    move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, new_cursor)
+                }
                 Err(err) => {
                     return Some(EditorEvent::AttachmentError(format!(
                         "Couldn't save pasted image: {err}"

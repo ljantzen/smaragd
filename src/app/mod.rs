@@ -1738,8 +1738,7 @@ impl eframe::App for SmaragdApp {
                     .unwrap_or_default();
                 let editor_store = self.editor_store();
                 let spell_check_language = self.effective_spell_check_language();
-                let attachments_folder =
-                    self.project.as_ref().and_then(|p| p.attachments_folder());
+                let attachments_folder = self.project.as_ref().and_then(|p| p.attachments_folder());
                 let attachment_settings =
                     self.project
                         .as_ref()

@@ -177,11 +177,15 @@ pub fn clipboard_image_png(size_limit_bytes: Option<u64>) -> Result<Option<Vec<u
         Err(arboard::Error::ContentNotAvailable) => return Ok(None),
         Err(e) => return Err(e.to_string()),
     };
-    let rgba = image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned())
-        .ok_or("clipboard image data didn't match its reported dimensions")?;
+    let rgba =
+        image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned())
+            .ok_or("clipboard image data didn't match its reported dimensions")?;
     let mut png_bytes = Vec::new();
     image::DynamicImage::ImageRgba8(rgba)
-        .write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+        .write_to(
+            &mut std::io::Cursor::new(&mut png_bytes),
+            image::ImageFormat::Png,
+        )
         .map_err(|e| e.to_string())?;
     if let Some(limit) = size_limit_bytes
         && png_bytes.len() as u64 > limit
@@ -200,10 +204,7 @@ mod tests {
 
     #[test]
     fn markdown_snippet_builds_a_wikilink_image_embed() {
-        assert_eq!(
-            markdown_snippet("pic.png", "pic.png", true),
-            "![[pic.png]]"
-        );
+        assert_eq!(markdown_snippet("pic.png", "pic.png", true), "![[pic.png]]");
     }
 
     #[test]
@@ -241,7 +242,10 @@ mod tests {
     #[test]
     fn relative_markdown_path_in_the_same_directory_is_just_the_filename() {
         assert_eq!(
-            relative_markdown_path(Path::new("/vault/Chapters"), Path::new("/vault/Chapters/pic.png")),
+            relative_markdown_path(
+                Path::new("/vault/Chapters"),
+                Path::new("/vault/Chapters/pic.png")
+            ),
             "pic.png"
         );
     }
@@ -282,7 +286,9 @@ mod tests {
     #[test]
     fn suggested_clipboard_image_name_is_deterministic() {
         use chrono::TimeZone;
-        let now = chrono::Local.with_ymd_and_hms(2026, 3, 5, 14, 30, 7).unwrap();
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 3, 5, 14, 30, 7)
+            .unwrap();
         assert_eq!(
             suggested_clipboard_image_name(now),
             "pasted-image-20260305-143007.png"
@@ -311,10 +317,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("pic.png");
         std::fs::write(&file, b"").unwrap();
-        assert_eq!(
-            pasted_text_as_file_path(file.to_str().unwrap()),
-            Some(file)
-        );
+        assert_eq!(pasted_text_as_file_path(file.to_str().unwrap()), Some(file));
     }
 
     #[test]
@@ -322,10 +325,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("My File.png");
         std::fs::write(&file, b"").unwrap();
-        let uri = format!(
-            "file://{}",
-            file.to_str().unwrap().replace(' ', "%20")
-        );
+        let uri = format!("file://{}", file.to_str().unwrap().replace(' ', "%20"));
         assert_eq!(pasted_text_as_file_path(&uri), Some(file));
     }
 
@@ -364,7 +364,8 @@ mod tests {
         let doc_dir = dir.path().join("Chapters");
         std::fs::create_dir(&doc_dir).unwrap();
 
-        let saved = save_attachment(&NativeStore, &doc_dir, &doc_dir, "report.pdf", b"pdf").unwrap();
+        let saved =
+            save_attachment(&NativeStore, &doc_dir, &doc_dir, "report.pdf", b"pdf").unwrap();
         assert_eq!(saved.snippet, "[report.pdf](report.pdf)");
     }
 }
