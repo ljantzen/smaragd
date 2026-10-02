@@ -105,6 +105,18 @@ impl BinderNode {
         }
     }
 
+    /// Collect the absolute path of every folder in this subtree (root
+    /// included, if this node itself is one), in tree order — the candidate
+    /// list for `ui::move_file_prompt`'s in-app folder picker.
+    pub fn folder_paths(&self, out: &mut Vec<PathBuf>) {
+        if matches!(self.kind, BinderNodeKind::Folder { .. }) {
+            out.push(self.path.clone());
+        }
+        for child in self.children() {
+            child.folder_paths(out);
+        }
+    }
+
     /// Insert `node` as a child of the folder at `parent_path`. Returns `true` if a
     /// matching folder was found and the node was inserted.
     pub fn insert_under(&mut self, parent_path: &Path, node: BinderNode) -> bool {
@@ -160,6 +172,14 @@ impl BinderTree {
     pub fn document_paths(&self) -> Vec<PathBuf> {
         let mut paths = Vec::new();
         self.root.document_paths(&mut paths);
+        paths
+    }
+
+    /// The absolute path of every folder in the project (the root included),
+    /// in tree order.
+    pub fn folder_paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        self.root.folder_paths(&mut paths);
         paths
     }
 }

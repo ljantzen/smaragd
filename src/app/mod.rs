@@ -171,6 +171,10 @@ pub struct SmaragdApp {
     /// user is reviewing/editing a manual commit's pre-filled message — see
     /// `prompt_git_commit`.
     git_commit_prompt: Option<ui::git_commit_prompt::GitCommitPromptState>,
+    /// The "Move file to..." picker (`ui::move_file_prompt`), open while the
+    /// user is choosing a destination folder for the Editor pane's ☰ menu's
+    /// "Move file to..." item — see `prompt_move_file`.
+    move_file_prompt: Option<ui::move_file_prompt::MoveFilePromptState>,
     command_prompt: CommandPromptState,
     open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState,
     search_everywhere: ui::search_everywhere::SearchEverywhereState,
@@ -384,6 +388,7 @@ impl SmaragdApp {
             card_draft: None,
             note_prompt: None,
             git_commit_prompt: None,
+            move_file_prompt: None,
             command_prompt: CommandPromptState::default(),
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
             search_everywhere: ui::search_everywhere::SearchEverywhereState::default(),
@@ -499,6 +504,7 @@ impl SmaragdApp {
             card_draft: None,
             note_prompt: None,
             git_commit_prompt: None,
+            move_file_prompt: None,
             command_prompt: CommandPromptState::default(),
             open_document_prompt: ui::open_document_prompt::OpenDocumentPromptState::default(),
             search_everywhere: ui::search_everywhere::SearchEverywhereState::default(),
@@ -1183,6 +1189,21 @@ impl SmaragdApp {
             };
             if let Some(outcome) = outcome {
                 self.handle_git_commit_prompt_outcome(ui.ctx(), outcome);
+            }
+        }
+
+        if self.move_file_prompt.is_some() {
+            let candidates = self
+                .project
+                .as_ref()
+                .map(|project| project.folder_candidates())
+                .unwrap_or_default();
+            let outcome = {
+                let prompt = self.move_file_prompt.as_mut().expect("checked above");
+                ui::move_file_prompt::show(ui.ctx(), prompt, &candidates)
+            };
+            if let Some(outcome) = outcome {
+                self.handle_move_file_prompt_outcome(outcome);
             }
         }
 

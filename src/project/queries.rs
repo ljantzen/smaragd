@@ -226,6 +226,30 @@ impl Project {
         matches.sort_by_key(|(_, title)| title.to_lowercase());
         matches
     }
+
+    /// Every folder in the project as `(display path, absolute path)` pairs,
+    /// sorted — the candidate list for `ui::move_file_prompt`'s fuzzy "Move
+    /// file to..." picker (see `fuzzy::fuzzy_match_documents`, which expects
+    /// exactly this shape). The project root itself is included, displayed as
+    /// `"/"`.
+    pub fn folder_candidates(&self) -> Vec<(String, PathBuf)> {
+        let mut candidates: Vec<(String, PathBuf)> = self
+            .tree
+            .folder_paths()
+            .into_iter()
+            .map(|path| {
+                let display = path.strip_prefix(&self.root).unwrap_or(&path);
+                let display = if display.as_os_str().is_empty() {
+                    "/".to_string()
+                } else {
+                    display.display().to_string()
+                };
+                (display, path)
+            })
+            .collect();
+        candidates.sort_by_key(|(display, _)| display.to_lowercase());
+        candidates
+    }
 }
 
 #[cfg(test)]
@@ -543,5 +567,39 @@ mod tests {
         project.rename_tag("old-tag", "new-tag").unwrap();
 
         assert_eq!(project.all_tags(), vec!["new-tag"]);
+    }
+
+    #[test]
+    fn folder_candidates_includes_the_root_as_a_slash() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+
+        let candidates = project.folder_candidates();
+
+        assert_eq!(
+            candidates,
+            vec![("/".to_string(), dir.path().to_path_buf())]
+        );
+    }
+
+    #[test]
+    fn folder_candidates_lists_nested_folders_by_relative_path_sorted() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let research = project.create_folder(dir.path(), "Research").unwrap();
+        let chapters = project.create_folder(dir.path(), "Chapters").unwrap();
+        let act1 = project.create_folder(&chapters, "Act 1").unwrap();
+
+        let candidates = project.folder_candidates();
+
+        assert_eq!(
+            candidates,
+            vec![
+                ("/".to_string(), dir.path().to_path_buf()),
+                ("Chapters".to_string(), chapters.clone()),
+                ("Chapters/Act 1".to_string(), act1),
+                ("Research".to_string(), research),
+            ]
+        );
     }
 }

@@ -312,18 +312,26 @@ impl SmaragdApp {
 
     /// "Move file to...": the destination-folder picker, then reuses
     /// `move_item`'s existing move + rebase-open-path logic as-is.
+    /// Opens the in-app "Move file to..." picker (`ui::move_file_prompt`) —
+    /// deliberately not an OS-native folder dialog, since any destination
+    /// outside the project would be meaningless for a move within it.
     fn prompt_move_file(&mut self, path: PathBuf) {
-        let Some(root) = self.project.as_ref().map(|project| project.root.clone()) else {
+        self.move_file_prompt = Some(ui::move_file_prompt::MoveFilePromptState::new(path));
+    }
+
+    /// Resolve the "Move file to..." picker's outcome: move on a chosen
+    /// destination, do nothing on cancel. Reuses `move_item`'s existing move +
+    /// rebase-open-path logic as-is.
+    pub(super) fn handle_move_file_prompt_outcome(
+        &mut self,
+        outcome: ui::move_file_prompt::MoveFilePromptOutcome,
+    ) {
+        let Some(prompt) = self.move_file_prompt.take() else {
             return;
         };
-        let Some(destination) = rfd::FileDialog::new().set_directory(&root).pick_folder() else {
-            return;
-        };
-        if destination.strip_prefix(&root).is_err() {
-            self.push_error_toast("Destination must be inside the project");
-            return;
+        if let ui::move_file_prompt::MoveFilePromptOutcome::Chosen(destination) = outcome {
+            self.move_item(&prompt.moving, &destination);
         }
-        self.move_item(&path, &destination);
     }
 
     pub(super) fn handle_story_grid_event(&mut self, event: StoryGridEvent) {
