@@ -23,6 +23,11 @@ this file.
   Delete file. The Source/Reading toggle (Ctrl+E, Obsidian's own default)
   and the inline-backlinks toggle (Ctrl+B) also have keyboard shortcuts,
   remappable like any other in `Settings > Shortcuts`.
+- Fixed: the Binder's git-dirty marker could go stale after a commit/push —
+  a plain edit saved via the usual focus-loss autosave (rather than an
+  explicit Ctrl+S) didn't refresh it, so it stayed looking "clean" until
+  something unrelated happened to trigger a refresh. Now picked up within
+  a couple of seconds regardless of which save path ran.
 
 ## v1.4.1 — 2026-10-01
 

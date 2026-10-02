@@ -46,6 +46,21 @@ impl SmaragdApp {
             self.document_status_cache.clear();
         }
         self.check_open_document_for_external_change();
+        // Catches the Binder's git-dirty marker going stale after a plain
+        // edit: the focus-loss autosave in `editor_panel.rs` and the
+        // save-before-switching-documents path inside `EditorState::open`
+        // both save straight to disk without telling `SmaragdApp` a save
+        // happened (see `save_editor`'s doc comment — only the explicit
+        // Ctrl+S/`:w` path refreshes `git_dirty_paths` directly), so without
+        // this, committing/pushing once would correctly clear a document's
+        // dirty marker, but it would then never reappear until something else
+        // happened to call `refresh_git_dirty_paths` (a manual save, a git
+        // action, or reopening the project). Piggybacking on this same
+        // `EXTERNAL_SCAN_INTERVAL` poll picks it up within a couple of
+        // seconds regardless of which save path ran — a no-op in CPU terms
+        // when git isn't enabled, since `refresh_git_dirty_paths` itself
+        // checks that first.
+        self.refresh_git_dirty_paths();
     }
 
     /// If the open document's on-disk content moved since it was last read or
@@ -223,5 +238,53 @@ mod tests {
         app.check_external_changes(&ctx);
 
         assert!(app.external_scan_at.is_none());
+    }
+
+    fn init_repo_with_identity(root: &Path) {
+        crate::git::init(root).unwrap();
+        std::process::Command::new("git")
+            .current_dir(root)
+            .args(["config", "--local", "user.email", "test@example.com"])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .current_dir(root)
+            .args(["config", "--local", "user.name", "Smaragd Tests"])
+            .output()
+            .unwrap();
+    }
+
+    /// Regression test: after a commit cleared the Binder's git-dirty marker,
+    /// a plain edit saved via the focus-loss autosave (not the explicit
+    /// Ctrl+S/`:w` path `save_editor` itself refreshes after) used to leave
+    /// the marker stuck clean until something unrelated happened to call
+    /// `refresh_git_dirty_paths` again. `scan_for_external_changes` now
+    /// refreshes it on every poll, so a save via *any* path is picked up
+    /// within one `EXTERNAL_SCAN_INTERVAL`.
+    #[test]
+    fn scan_picks_up_a_file_that_went_dirty_without_an_explicit_save_refresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        init_repo_with_identity(&project.root);
+        project.enable_git_support().unwrap();
+        let doc = project.create_document(dir.path(), "Scene").unwrap();
+        fs::write(&doc, "original").unwrap();
+        crate::git::commit_all(&project.root, "initial commit").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.scan_for_external_changes();
+        assert!(
+            app.git_dirty_paths.is_empty(),
+            "freshly committed, nothing should be dirty yet"
+        );
+
+        // Simulate the focus-loss autosave: a write straight to disk, with no
+        // call anywhere to `refresh_git_dirty_paths` — exactly what
+        // `EditorState::save_with_store` does on its own.
+        fs::write(&doc, "edited, but never explicitly saved via Ctrl+S").unwrap();
+
+        app.scan_for_external_changes();
+
+        assert!(app.git_dirty_paths.contains(&doc));
     }
 }
