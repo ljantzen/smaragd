@@ -26,6 +26,8 @@ All shortcuts are fully remappable in **`File > Settings`**, listed with a Categ
 | Cycle Binder Color Mode | `Ctrl+Shift+C` |
 | Toggle Document Stats in Binder | `Ctrl+Alt+D` |
 | Toggle Backlinks | `Ctrl+Shift+B` |
+| Toggle Source/Reading View | `Ctrl+E` |
+| Toggle Backlinks in Document | `Ctrl+B` |
 | Toggle Tags | `Ctrl+Shift+T` |
 | Command Prompt | `Ctrl+:` |
 | Commit (Git) | `Ctrl+Alt+C` |

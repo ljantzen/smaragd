@@ -14,7 +14,8 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 
 - Dockable views that can be moved freely around
 - Binder tree view of the writing project
-- Markdown text editor 
+- Markdown text editor, with an Obsidian-style ☰ menu for Source/Reading view toggling, inline backlinks, rename/move/delete, Find & Replace, and opening/revealing the file in the OS
+- Paste or drag-drop images and other files straight into the editor, Obsidian-style (`![[attachment.png]]`), saved next to the document or in a configurable attachments folder
 - Optional line-number gutter in the editor
 - Bookmarks: mark a line with a shortcut or a gutter click, jump back from a dedicated dock or Alt+Up/Alt+Down navigation
 - Notes: pin a short piece of text to the cursor's exact line and column, with a dedicated dock listing every note and jump-to navigation
@@ -32,7 +33,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Live manuscript-styled markdown preview, tied to the selected export typesetting style
 - Obsidian-style `[[Topic]]` / `[[Topic|Alias]]` wikilinks
 - Wikilink autocomplete while typing `[[`: filtered suggestions, arrow-key/Tab/Enter navigation, mouse click
-- Backlinks. A dockable tool window like Binder/Metadata above): every other document that `[[links]]` to the one currently open
+- Backlinks. A dockable tool window like Binder/Metadata above): every other document that `[[links]]` to the one currently open — or shown inline below the editor itself, via the ☰ menu
 - Document annotations with #tags in the text and/or in the document frontmatter, with autocomplete, project-wide rename, hierarchical grouping of nested tags, and a chip-style tag editor 
 - Find and Replace 
 - Helix/vim-style command prompt 

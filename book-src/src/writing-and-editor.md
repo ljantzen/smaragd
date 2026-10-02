@@ -18,6 +18,25 @@ smaragd periodically notices files added, removed, or edited outside the app —
 - If the *open* document changed on disk and you have no unsaved edits to it, it's silently reloaded to match.
 - If the open document changed on disk *and* you have unsaved edits, smaragd doesn't guess: a prompt lets you choose **Keep Mine** (your edits stay; the on-disk change is otherwise ignored) or **Reload from Disk** (your unsaved edits are discarded in favor of the external version).
 
+## The ☰ menu
+
+A **☰** button sits in the Editor tab's top-right corner:
+
+- **Backlinks in document** — toggles a resizable panel below the editor's own content showing every document that links here (see [Backlinks](backlinks.md)), independent of the separate Backlinks dock tab. Also bound to **`Ctrl+B`**.
+- **Source mode** / **Reading view** — switches the Editor tab itself between the plain-text editor and a rendered markdown preview, without needing the separate Preview tab. Also bound to **`Ctrl+E`**.
+- **Rename…** / **Move file to…** / **Delete file** — the same actions as the Binder's own context menu, for whichever document is currently open. Move file to… opens an in-app, fuzzy-searchable folder picker rather than an OS file dialog.
+- **Find & Replace…** — opens [Find and Replace](find-and-replace.md) scoped to the current file.
+- **Open in default app** / **Show in system explorer** — hands the file to the OS's default application, or reveals it in the platform's file manager.
+- **Reveal file in navigation** — expands every collapsed ancestor folder in the Binder and focuses the file's row there.
+
+The last six rows only appear while a document is open.
+
+## Pasting and dropping attachments
+
+Pasting (`Ctrl+V`) or drag-and-dropping an image or other file onto the editor saves a copy into the project and inserts a reference at the cursor, an image becomes a `![[attachment.png]]` embed, anything else a `[attachment.pdf](<attachment.pdf>)` link. A clipboard image with no filename (e.g. a browser screenshot copy) gets a generated one.
+
+Where the file is saved is a per-project setting (**`File > Project Settings > Attachments`**): next to the document that receives it, or in a single configurable folder for the whole project. An optional size cap can reject oversized clipboard images instead of silently saving them.
+
 ## Line numbers
 
 A gutter down the left edge of the Editor can show each line's number — off by default, turned on with **Show line numbers** under **Settings > Editor** (`Ctrl+,`; see [Settings](settings.md)). Numbers count logical lines (real line breaks in the file), not wrapped visual rows, so a long paragraph that wraps across several rows only gets numbered once, at the row where it starts — the same convention word-wrap-aware code editors use. Two strips to the left of the numbers show per-line markers: a bookmarked line's diamond (see [Bookmarks](bookmarks.md)) and, to its left, a noted line's dot (see [Notes](notes.md)).

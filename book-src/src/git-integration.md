@@ -53,7 +53,7 @@ An automatic commit uses the same template and rendering as a manual one, and re
 
 - **Dirty files** — the same set that drives the Binder's "•" marker, listed out.
 - **Recent commits** — `git log`'s last 20 commits: short hash, subject, author, and relative date.
-- **Activity** — a running log of what smaragd itself did via git this session (commits, pushes, pulls, both manual and automatic), each with an outcome (success, "nothing to commit," or an error) and how long ago. Cleared when you close the project or open another one; not saved to disk.
+- **Activity** — a running log of what smaragd itself did via git this session (commits, pushes, pulls, both manual and automatic), each with an outcome (success, "nothing to commit," or an error) and how long ago. A push or pull entry expands to list the files it actually transferred. Cleared when you close the project or open another one; not saved to disk.
 
 A **Refresh** button re-reads dirty files and the commit log on demand, for changes made outside the app (e.g. a `git commit` from a terminal).
 
