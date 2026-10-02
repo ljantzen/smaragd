@@ -1,8 +1,9 @@
 name: Sync server
 
 # The sync server (crates/smaragd-sync-server) is its own Cargo workspace with its
-# own Cargo.lock, so it has its own workflow: it only runs when the server or the
-# shared protocol crate changes, and it publishes the Docker image on version tags.
+# own Cargo.lock, so it has its own workflow: it only runs when the server, the
+# shared protocol crate, or the e2e crate (its own separate Cargo.lock too) changes,
+# and it publishes the Docker image on version tags.
 
 on:
   push:
@@ -11,6 +12,7 @@ on:
     paths:
       - "crates/smaragd-sync-server/**"
       - "crates/smaragd-sync-protocol/**"
+      - "crates/smaragd-sync-e2e/**"
       - "src/sync/**"
       - ".github/workflows/sync-server.yml"
       - "scripts/sync-server-smoke-test.sh"
@@ -19,6 +21,7 @@ on:
     paths:
       - "crates/smaragd-sync-server/**"
       - "crates/smaragd-sync-protocol/**"
+      - "crates/smaragd-sync-e2e/**"
       - "src/sync/**"
       - ".github/workflows/sync-server.yml"
       - "scripts/sync-server-smoke-test.sh"
