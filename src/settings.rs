@@ -475,7 +475,7 @@ pub struct Settings {
     /// absent from this set is shown. See [`StoryGridColumn`].
     pub story_grid_hidden_columns: BTreeSet<StoryGridColumn>,
     /// Show each document's line/word/character count as a trailing readout on
-    /// its Binder row (see `ui::binder_panel::document_display_label`), sourced
+    /// its Binder row (see `ui::binder_panel::document_stats_label`), sourced
     /// from `frontmatter::count_lines`/`count_words`/`count_chars` over the
     /// document body. Off by default, same opt-in convention
     /// `show_editor_gutter` above uses: most of the time the binder is read as

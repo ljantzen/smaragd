@@ -244,11 +244,31 @@ fn role_prefix(role: Option<FolderRole>) -> &'static str {
 
 /// A trailing marker (`•`, verified present in the `Ubuntu-Light` fallback
 /// every UI font keeps in its chain — see `editor_font::install`'s doc
-/// comment) appended to a row's label when it has uncommitted git changes.
-/// Kept as a plain text suffix rather than a full-row recolor so it composes
-/// with any `BinderColorMode` instead of competing with it — see
-/// `folder_row_color`'s doc comment on why only one color mode can be active
-/// at a time.
+/// comment) painted after a row's label when it has uncommitted git changes —
+/// in `ui.visuals().hyperlink_color` (the active theme's `accent`, see
+/// `color_theme::apply`), not the row's own text color, so it actually stands
+/// out rather than blending into the label it's attached to. Painted as its
+/// own small galley (see `document_row`/`folder_header`) rather than baked
+/// into the label string, which is what let it go unnoticed as "just another
+/// character" in the first place; a full-row recolor was deliberately not
+/// used instead, so it still composes with any `BinderColorMode` rather than
+/// competing with it — see `folder_row_color`'s doc comment on why only one
+/// color mode can be active at a time.
+///
+/// Built as an `egui::RichText` with an explicit `.color(...)`, deliberately
+/// *not* `egui::WidgetText::from(&str)` like every other label in this file:
+/// every built-in/custom `ColorTheme` sets `Visuals::override_text_color`
+/// (see `color_theme::apply`), and plain `WidgetText` text bakes that
+/// override in as its *actual* color at the point the galley is built —
+/// `egui::Painter::galley`'s own fallback-color argument only ever replaces
+/// `Color32::PLACEHOLDER` runs, which plain text only gets when
+/// `override_text_color` is unset (i.e. the "Default" theme, `color_theme::
+/// reset`). Under any named theme, that fallback color (what the previous,
+/// buggy version of this code relied on) was silently never applied, so the
+/// marker always rendered in the row's own text color after all. `RichText::
+/// color` sets an explicit, non-placeholder color at build time instead,
+/// which `WidgetText::get_text_color` returns before ever consulting
+/// `override_text_color` — so this wins under every theme, not just Default.
 const GIT_DIRTY_MARKER: &str = " •";
 
 /// A folder counts as dirty if *any* path under it (at any depth) has
@@ -257,17 +277,6 @@ const GIT_DIRTY_MARKER: &str = " •";
 /// scan per folder row beats maintaining a second precomputed set.
 fn folder_is_dirty(git_dirty: &std::collections::HashSet<PathBuf>, folder_path: &Path) -> bool {
     git_dirty.iter().any(|path| path.starts_with(folder_path))
-}
-
-/// A document row's label — `document_label`'s extension-stripped name, plus
-/// `GIT_DIRTY_MARKER` when `dirty`.
-fn document_display_label(name: &str, dirty: bool) -> String {
-    let base = document_label(name);
-    if dirty {
-        format!("{base}{GIT_DIRTY_MARKER}")
-    } else {
-        base.to_string()
-    }
 }
 
 /// The compact `lines/words/chars` readout painted right-aligned on a
@@ -371,6 +380,7 @@ fn folder_header(
     label: &str,
     default_open: bool,
     is_selected: bool,
+    dirty: bool,
     status_color: Option<egui::Color32>,
 ) -> (
     egui::Response,
@@ -389,7 +399,20 @@ fn folder_header(
         wrap_width,
         egui::TextStyle::Button,
     );
-    let desired_width = text_pos.x + galley.size().x + button_padding.x - available.left();
+    let dirty_galley = dirty.then(|| {
+        egui::WidgetText::from(
+            egui::RichText::new(GIT_DIRTY_MARKER).color(ui.visuals().hyperlink_color),
+        )
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            wrap_width,
+            egui::TextStyle::Button,
+        )
+    });
+    let dirty_width = dirty_galley.as_ref().map_or(0.0, |g| g.size().x);
+    let desired_width =
+        text_pos.x + galley.size().x + dirty_width + button_padding.x - available.left();
     let desired_size = egui::vec2(desired_width, galley.size().y + 2.0 * button_padding.y)
         .at_least(ui.spacing().interact_size);
     let (_, rect) = ui.allocate_space(desired_size);
@@ -421,7 +444,17 @@ fn folder_header(
         ));
         let icon_response = header_response.clone().with_new_rect(icon_rect);
         paint_default_icon(ui, openness, &icon_response);
+        let label_width = galley.size().x;
         ui.painter().galley(text_pos, galley, visuals.text_color());
+        if let Some(dirty_galley) = dirty_galley {
+            let dirty_pos = egui::pos2(
+                text_pos.x + label_width,
+                header_response.rect.center().y - dirty_galley.size().y / 2.0,
+            );
+            // See `document_row`'s identical use of `hyperlink_color` for why.
+            ui.painter()
+                .galley(dirty_pos, dirty_galley, ui.visuals().hyperlink_color);
+        }
     }
 
     (header_response, state)
@@ -440,6 +473,7 @@ fn folder_header(
 fn document_row(
     ui: &mut egui::Ui,
     label: &str,
+    dirty: bool,
     stats: Option<&str>,
     is_selected: bool,
     status_color: Option<egui::Color32>,
@@ -454,6 +488,17 @@ fn document_row(
         wrap_width,
         egui::TextStyle::Button,
     );
+    let dirty_galley = dirty.then(|| {
+        egui::WidgetText::from(
+            egui::RichText::new(GIT_DIRTY_MARKER).color(ui.visuals().hyperlink_color),
+        )
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            wrap_width,
+            egui::TextStyle::Button,
+        )
+    });
     let stats_galley = stats.map(|stats| {
         egui::WidgetText::from(stats).into_galley(
             ui,
@@ -475,7 +520,19 @@ fn document_row(
             rect.min.x + button_padding.x,
             rect.center().y - galley.size().y / 2.0,
         );
+        let label_width = galley.size().x;
         ui.painter().galley(text_pos, galley, visuals.text_color());
+        if let Some(dirty_galley) = dirty_galley {
+            let dirty_pos = egui::pos2(
+                text_pos.x + label_width,
+                rect.center().y - dirty_galley.size().y / 2.0,
+            );
+            // The active theme's accent color (see `color_theme::apply`), not
+            // the row's own text color — see `GIT_DIRTY_MARKER`'s doc comment
+            // on why this needs to actually stand out.
+            ui.painter()
+                .galley(dirty_pos, dirty_galley, ui.visuals().hyperlink_color);
+        }
         if let Some(stats_galley) = stats_galley {
             let stats_pos = egui::pos2(
                 rect.max.x - button_padding.x - stats_galley.size().x,
@@ -508,18 +565,14 @@ fn show_node(
     match &node.kind {
         BinderNodeKind::Folder { children } => {
             let role = project.folder_role(&node.path);
-            let dirty_marker = if folder_is_dirty(git_dirty, &node.path) {
-                GIT_DIRTY_MARKER
-            } else {
-                ""
-            };
-            let label = format!("{}{}{}", role_prefix(role), node.name, dirty_marker);
+            let label = format!("{}{}", role_prefix(role), node.name);
+            let dirty = folder_is_dirty(git_dirty, &node.path);
             let id = folder_collapsing_id(&node.path);
             let is_selected =
                 folder_row_is_selected(is_root, project_selected, selected_folder, &node.path);
             let status_color = folder_row_color(project, &node.path, folder_word_counts);
             let (header_response, mut state) =
-                folder_header(ui, id, &label, true, is_selected, status_color);
+                folder_header(ui, id, &label, true, is_selected, dirty, status_color);
             visible_rows.push((node.path.clone(), header_response.id));
 
             if header_response.clicked() {
@@ -744,11 +797,13 @@ fn show_node(
         BinderNodeKind::Document => {
             let is_selected = selected == Some(node.path.as_path());
             let status_color = document_row_color(&node.path);
-            let label = document_display_label(&node.name, git_dirty.contains(&node.path));
+            let label = document_label(&node.name);
+            let dirty = git_dirty.contains(&node.path);
             let stats_label = document_stats_label(document_stats(&node.path));
             let response = document_row(
                 ui,
-                &label,
+                label,
+                dirty,
                 stats_label.as_deref(),
                 is_selected,
                 status_color,
@@ -828,15 +883,6 @@ fn show_node(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn document_display_label_appends_the_marker_only_when_dirty() {
-        assert_eq!(document_display_label("01-opening.md", false), "01-opening");
-        assert_eq!(
-            document_display_label("01-opening.md", true),
-            format!("01-opening{GIT_DIRTY_MARKER}")
-        );
-    }
 
     #[test]
     fn document_stats_label_formats_as_slash_separated_lines_words_chars() {

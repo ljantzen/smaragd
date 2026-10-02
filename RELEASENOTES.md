@@ -28,6 +28,11 @@ this file.
   explicit Ctrl+S) didn't refresh it, so it stayed looking "clean" until
   something unrelated happened to trigger a refresh. Now picked up within
   a couple of seconds regardless of which save path ran.
+- The Binder's git-dirty marker (`•`) is now painted in the active theme's
+  accent color instead of the row's own text color under every theme
+  (previously only the no-theme "Default" actually showed a difference —
+  every named theme's own text-color override silently won), so it stands
+  out instead of blending into the label it's attached to.
 
 ## v1.4.1 — 2026-10-01
 
