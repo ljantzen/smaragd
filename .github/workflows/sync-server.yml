@@ -111,7 +111,7 @@ jobs:
       # Always builds (catching a broken Dockerfile on PRs) and loads the image locally
       # so it can be started and checked before anything is published.
       - name: Build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: crates/smaragd-sync-server/Dockerfile
@@ -128,7 +128,7 @@ jobs:
       # Tags only, and only after the smoke test passed; the layers come from the cache.
       - name: Push
         if: startsWith(github.ref, 'refs/tags/')
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: crates/smaragd-sync-server/Dockerfile
