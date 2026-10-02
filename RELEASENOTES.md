@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.5.0 — 2026-10-03
+
 - Added **paste/drop attachments** into the editor: paste a clipboard image
   (Ctrl+V), paste a file copied in a file manager, or drag a file onto the
   editor, and it's saved to disk with a markdown image embed or link inserted
