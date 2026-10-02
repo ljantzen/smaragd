@@ -33,6 +33,9 @@ this file.
   (previously only the no-theme "Default" actually showed a difference —
   every named theme's own text-color override silently won), so it stands
   out instead of blending into the label it's attached to.
+- **Ctrl+click** a `[[wikilink]]` in the Source mode editor (not just Reading
+  view) to follow it, same as pressing the Activate Wikilink shortcut on it —
+  a plain click still just places the cursor there.
 
 ## v1.4.1 — 2026-10-01
 

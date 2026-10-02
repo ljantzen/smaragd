@@ -533,6 +533,35 @@ pub fn show(
         return Some(event);
     }
 
+    // Ctrl+click follows a wikilink the same way the keyboard shortcut does.
+    // `output.cursor_range` can't be used here: a plain click only moves it
+    // (via `TextEditState::pointer_interaction`, deep inside `TextEdit`'s
+    // widget code) *after* this frame's `cursor_range` was already computed,
+    // so it still reflects wherever the cursor was *before* this click — it
+    // only catches up the following frame. Converting the click's own
+    // on-screen position straight to a byte offset via the galley (the same
+    // `cursor_from_pos` egui's own click handling uses internally) gets the
+    // right position in the same frame as the click. A plain click (no
+    // modifier) is left alone to just place the cursor as usual, matching
+    // the Reading-view preview's own click/Ctrl+click split in
+    // `markdown_preview.rs`.
+    if output.response.clicked()
+        && ui.input(|i| i.modifiers.command)
+        && let Some(pointer_pos) = output.response.interact_pointer_pos()
+    {
+        let local_pos = pointer_pos - output.galley_pos;
+        let cursor_byte = char_offset_to_byte(
+            &editor.buffer,
+            output.galley.cursor_from_pos(local_pos).index.0,
+        );
+        if let Some(target) = wikilink_target_at(&editor.buffer, cursor_byte) {
+            return Some(EditorEvent::Wikilink(WikilinkActivation {
+                target,
+                force_create: true,
+            }));
+        }
+    }
+
     if activate_wikilink_requested && let Some(range) = output.cursor_range {
         let cursor_byte = char_offset_to_byte(&editor.buffer, range.primary.index.0);
         if let Some(target) = wikilink_target_at(&editor.buffer, cursor_byte) {
@@ -1739,6 +1768,176 @@ mod tests {
         });
 
         assert!(matches!(event, Some(EditorEvent::ToggleBookmark(2))));
+    }
+
+    /// Ctrl+clicking a `[[wikilink]]` in the (Source mode) editor must follow
+    /// it, the same as the `activate_wikilink_shortcut` keyboard binding
+    /// already does — a plain click (no modifier) just places the cursor
+    /// there instead, matching the Reading-view preview's own click/
+    /// Ctrl+click split (`markdown_preview.rs`).
+    #[test]
+    fn ctrl_clicking_a_wikilink_in_the_editor_navigates_to_it() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let mut editor = EditorState {
+            open_path: Some(std::path::PathBuf::from("scene.md")),
+            buffer: "[[Other Scene]] and more text".to_string(),
+            ..Default::default()
+        };
+        let input = fixed_viewport_input();
+
+        crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
+            show(
+                ui,
+                &mut editor,
+                &crate::project::store::NativeStore,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+                SpellCheckLanguage::Off,
+                &BTreeSet::new(),
+                false,
+                &HashSet::new(),
+                None,
+                &HashSet::new(),
+                None,
+                None,
+            );
+        });
+
+        let text_rect = ctx
+            .read_response(editor_text_edit_id())
+            .expect("the text edit registers a response")
+            .rect;
+        // Just inside the top-left corner, over the wikilink's opening `[[`.
+        let click_pos = text_rect.min + egui::vec2(1.0, 2.0);
+        let click_input = egui::RawInput {
+            // `ModifiersChanged` is what actually feeds `InputState::modifiers`
+            // (what `ui.input(|i| i.modifiers)` reads) — a `PointerButton`
+            // event's own `modifiers` field doesn't, on its own, so without
+            // this the held Ctrl would be invisible to the click handler.
+            events: vec![
+                egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+                egui::Event::PointerMoved(click_pos),
+                egui::Event::PointerButton {
+                    pos: click_pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::COMMAND,
+                },
+                egui::Event::PointerButton {
+                    pos: click_pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::COMMAND,
+                },
+            ],
+            ..input
+        };
+        let mut event = None;
+        crate::egui_test_support::run_ui_and_discard(&ctx, click_input, |ui| {
+            event = show(
+                ui,
+                &mut editor,
+                &crate::project::store::NativeStore,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+                SpellCheckLanguage::Off,
+                &BTreeSet::new(),
+                false,
+                &HashSet::new(),
+                None,
+                &HashSet::new(),
+                None,
+                None,
+            );
+        });
+
+        let Some(EditorEvent::Wikilink(activation)) = event else {
+            panic!("expected a Wikilink activation");
+        };
+        assert_eq!(activation.target, "Other Scene");
+    }
+
+    /// The same click with no modifier held must *not* navigate — it should
+    /// just place the cursor, same as clicking anywhere else in the text.
+    #[test]
+    fn a_plain_click_on_a_wikilink_does_not_navigate() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let mut editor = EditorState {
+            open_path: Some(std::path::PathBuf::from("scene.md")),
+            buffer: "[[Other Scene]] and more text".to_string(),
+            ..Default::default()
+        };
+        let input = fixed_viewport_input();
+
+        crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
+            show(
+                ui,
+                &mut editor,
+                &crate::project::store::NativeStore,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+                SpellCheckLanguage::Off,
+                &BTreeSet::new(),
+                false,
+                &HashSet::new(),
+                None,
+                &HashSet::new(),
+                None,
+                None,
+            );
+        });
+
+        let text_rect = ctx
+            .read_response(editor_text_edit_id())
+            .expect("the text edit registers a response")
+            .rect;
+        let click_pos = text_rect.min + egui::vec2(1.0, 2.0);
+        let click_input = egui::RawInput {
+            events: click_events(click_pos),
+            ..input
+        };
+        let mut event = None;
+        crate::egui_test_support::run_ui_and_discard(&ctx, click_input, |ui| {
+            event = show(
+                ui,
+                &mut editor,
+                &crate::project::store::NativeStore,
+                &[],
+                &[],
+                None,
+                false,
+                EditorFont::Monospace,
+                14.0,
+                false,
+                SpellCheckLanguage::Off,
+                &BTreeSet::new(),
+                false,
+                &HashSet::new(),
+                None,
+                &HashSet::new(),
+                None,
+                None,
+            );
+        });
+
+        assert!(event.is_none());
     }
 
     /// A long paragraph that wraps across several visual rows must still
