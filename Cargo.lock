@@ -6622,7 +6622,7 @@ version = "1.4.1"
 dependencies = [
  "arboard",
  "argon2",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blake3",
  "bs58",
  "chacha20poly1305",
@@ -6676,7 +6676,7 @@ dependencies = [
 name = "smaragd-sync-protocol"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bs58",
  "postcard",
  "serde",
