@@ -77,12 +77,78 @@ pub fn commit_all(root: &Path, message: &str) -> Result<(), GitError> {
     }
 }
 
-pub fn push(root: &Path) -> Result<(), GitError> {
-    run(root, &["push"]).map(|_| ())
+/// What [`push`]/[`pull`] resolve to — named so `app::SmaragdApp::pending_git`'s
+/// background-thread channel doesn't need to spell out the full nested type
+/// (clippy's `type_complexity` lint).
+pub type PushOrPullResult = Result<Vec<ChangedFile>, GitError>;
+
+/// Pushes the current branch, returning which files it actually sent — every
+/// file touched by a commit between the upstream branch's position just
+/// before the push and the local `HEAD` it just pushed there. `Ok(vec![])`
+/// (not an error) when there's no upstream to diff against yet (e.g. this is
+/// the very first push on a branch git hasn't started tracking) — the push
+/// itself can still have succeeded with nothing to report a file list for.
+pub fn push(root: &Path) -> PushOrPullResult {
+    let before_upstream = rev_parse(root, "@{u}");
+    run(root, &["push"])?;
+    Ok(match before_upstream {
+        Some(before) => diff_name_status(root, &before, "HEAD").unwrap_or_default(),
+        None => Vec::new(),
+    })
 }
 
-pub fn pull(root: &Path) -> Result<(), GitError> {
-    run(root, &["pull"]).map(|_| ())
+/// Pulls into the current branch, returning which files it actually brought
+/// in — every file touched by a commit between `HEAD`'s position just before
+/// the pull and where it ended up. `Ok(vec![])` when there was no prior
+/// `HEAD` to diff against (a brand-new repo with no commits yet).
+pub fn pull(root: &Path) -> PushOrPullResult {
+    let before_head = rev_parse(root, "HEAD");
+    run(root, &["pull"])?;
+    Ok(match before_head {
+        Some(before) => diff_name_status(root, &before, "HEAD").unwrap_or_default(),
+        None => Vec::new(),
+    })
+}
+
+/// Resolves `rev` (e.g. `"HEAD"`, `"@{u}"`) to a commit hash, or `None` if it
+/// doesn't exist yet (no commits, or no upstream configured) — a missing rev
+/// is an expected, common case here, not a failure worth surfacing.
+fn rev_parse(root: &Path, rev: &str) -> Option<String> {
+    let output = run(root, &["rev-parse", rev]).ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Files that differ between `from` and `to` (two commit-ish revs), classified
+/// the same way `changed_files` classifies a *working-tree* diff — both
+/// produce the same [`ChangedFile`], so [`file_list_lines`] renders either the
+/// same way. `None` on any failure (e.g. `from` is a hash the local repo has
+/// since garbage-collected): best-effort, since this only feeds an
+/// informational file list, never something a push/pull's own success
+/// depends on.
+fn diff_name_status(root: &Path, from: &str, to: &str) -> Option<Vec<ChangedFile>> {
+    let output = run(root, &["diff", "--name-status", from, to]).ok()?;
+    let mut files: Vec<ChangedFile> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            let status = fields.next()?;
+            let kind = match status.as_bytes().first()? {
+                b'A' => FileChangeKind::Added,
+                b'D' => FileChangeKind::Deleted,
+                _ => FileChangeKind::Changed, // M, R, C, T, U, ...
+            };
+            // A rename/copy (`R100`/`C100`) has an extra "old path" field
+            // before the current one; taking the last field either way lands
+            // on the file's current location.
+            let path = fields.next_back()?;
+            Some(ChangedFile {
+                kind,
+                path: root.join(path),
+            })
+        })
+        .collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Some(files)
 }
 
 /// Every path under `root` with uncommitted changes — staged or not,
@@ -184,6 +250,12 @@ pub struct GitActivityEntry {
     pub at_unix: u64,
     pub message: String,
     pub outcome: GitActivityOutcome,
+    /// Files a push/pull actually sent or brought in — already relative-path
+    /// display lines (see `file_list_lines`), same "pre-formatted for
+    /// display" convention as `ui::version_activity_panel::VersionActivityData::
+    /// dirty_files`. Empty for every other kind of activity (commits, "git
+    /// support enabled", a failure with nothing meaningful to list).
+    pub files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -324,18 +396,25 @@ fn classify_change(x: u8, y: u8) -> FileChangeKind {
 }
 
 /// Renders `files` as one `"<letter> <path relative to root>"` line each,
-/// sorted, for the `{{fileList}}` commit-message placeholder — empty when
-/// `files` is empty, so a template with `{{fileList}}` in its body doesn't
-/// leave a stray blank line behind.
-pub fn format_file_list(root: &Path, files: &[ChangedFile]) -> String {
+/// sorted — the shared formatting both `format_file_list` (one joined string,
+/// for the `{{fileList}}` commit-message placeholder) and
+/// `GitActivityEntry::files` (one `Vec` entry per line, for the Version
+/// Activity panel's per-push/pull file list) build on.
+pub fn file_list_lines(root: &Path, files: &[ChangedFile]) -> Vec<String> {
     files
         .iter()
         .map(|file| {
             let relative = file.path.strip_prefix(root).unwrap_or(&file.path);
             format!("{} {}", file.kind.letter(), relative.display())
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect()
+}
+
+/// `file_list_lines`, newline-joined — empty when `files` is empty, so a
+/// commit-message template with `{{fileList}}` in its body doesn't leave a
+/// stray blank line behind.
+pub fn format_file_list(root: &Path, files: &[ChangedFile]) -> String {
+    file_list_lines(root, files).join("\n")
 }
 
 /// Everything a commit-message template's placeholders resolve from — see
@@ -487,6 +566,148 @@ mod tests {
         let result = push(dir.path());
 
         assert!(matches!(result, Err(GitError::CommandFailed(_))));
+    }
+
+    /// A bare "remote" repository plus a clone of it — fully local, so push/pull
+    /// can be exercised end to end (including the upstream tracking a fresh
+    /// `git clone` sets up automatically) without any network access.
+    struct RemoteAndClone {
+        _remote_dir: tempfile::TempDir,
+        clone_dir: tempfile::TempDir,
+    }
+
+    fn remote_and_clone() -> RemoteAndClone {
+        let remote_dir = tempfile::tempdir().unwrap();
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote_dir.path())
+            .output()
+            .unwrap();
+
+        // Seed the remote with an initial commit from a throwaway working
+        // copy, so cloning it below lands on a real branch (cloning a bare
+        // repo with no commits yet leaves the clone on an unborn branch,
+        // which a plain `git push`/`git pull` can't exercise the same way).
+        let seed_dir = tempfile::tempdir().unwrap();
+        init_with_identity(seed_dir.path());
+        fs::write(seed_dir.path().join("README.md"), "seed").unwrap();
+        commit_all(seed_dir.path(), "seed commit").unwrap();
+        Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                remote_dir.path().to_str().unwrap(),
+            ])
+            .current_dir(seed_dir.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["push", "origin", "HEAD:main"])
+            .current_dir(seed_dir.path())
+            .output()
+            .unwrap();
+
+        let clone_dir = tempfile::tempdir().unwrap();
+        Command::new("git")
+            .args([
+                "clone",
+                remote_dir.path().to_str().unwrap(),
+                clone_dir.path().to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        init_with_identity(clone_dir.path());
+
+        RemoteAndClone {
+            _remote_dir: remote_dir,
+            clone_dir,
+        }
+    }
+
+    #[test]
+    fn push_reports_the_files_a_new_commit_sent() {
+        let setup = remote_and_clone();
+        fs::write(setup.clone_dir.path().join("new.md"), "brand new").unwrap();
+        commit_all(setup.clone_dir.path(), "add new.md").unwrap();
+
+        let files = push(setup.clone_dir.path()).unwrap();
+
+        assert_eq!(
+            files,
+            vec![ChangedFile {
+                kind: FileChangeKind::Added,
+                path: setup.clone_dir.path().join("new.md"),
+            }]
+        );
+    }
+
+    #[test]
+    fn push_with_nothing_new_reports_no_files() {
+        let setup = remote_and_clone();
+
+        let files = push(setup.clone_dir.path()).unwrap();
+
+        assert_eq!(files, Vec::new());
+    }
+
+    #[test]
+    fn pull_reports_the_files_it_brought_in() {
+        let setup = remote_and_clone();
+        // A second clone plays "someone else," pushing a new commit the first
+        // clone then pulls.
+        let other_dir = tempfile::tempdir().unwrap();
+        Command::new("git")
+            .args([
+                "clone",
+                setup._remote_dir.path().to_str().unwrap(),
+                other_dir.path().to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        init_with_identity(other_dir.path());
+        fs::write(other_dir.path().join("elsewhere.md"), "from someone else").unwrap();
+        commit_all(other_dir.path(), "add elsewhere.md").unwrap();
+        push(other_dir.path()).unwrap();
+
+        let files = pull(setup.clone_dir.path()).unwrap();
+
+        assert_eq!(
+            files,
+            vec![ChangedFile {
+                kind: FileChangeKind::Added,
+                path: setup.clone_dir.path().join("elsewhere.md"),
+            }]
+        );
+    }
+
+    #[test]
+    fn pull_with_nothing_new_reports_no_files() {
+        let setup = remote_and_clone();
+
+        let files = pull(setup.clone_dir.path()).unwrap();
+
+        assert_eq!(files, Vec::new());
+    }
+
+    #[test]
+    fn file_list_lines_renders_one_line_per_file_relative_to_root() {
+        let root = Path::new("/project");
+        let files = vec![
+            ChangedFile {
+                kind: FileChangeKind::Deleted,
+                path: root.join("old.md"),
+            },
+            ChangedFile {
+                kind: FileChangeKind::Added,
+                path: root.join("Chapters/new.md"),
+            },
+        ];
+
+        assert_eq!(
+            file_list_lines(root, &files),
+            vec!["D old.md".to_string(), "A Chapters/new.md".to_string()]
+        );
     }
 
     #[test]

@@ -12,6 +12,8 @@ this file.
   `File > Project Settings…` controls where files are saved (next to the
   document, or a specific project folder) and an optional clipboard-image
   size cap.
+- The **Version Activity** panel's push/pull entries now list the files
+  that were actually sent or brought in, under a collapsible "N files" row.
 
 ## v1.4.1 — 2026-10-01
 

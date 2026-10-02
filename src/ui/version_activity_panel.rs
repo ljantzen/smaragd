@@ -85,7 +85,7 @@ pub fn show(ui: &mut egui::Ui, data: &VersionActivityData) -> Option<VersionActi
         if data.activity.is_empty() {
             ui.weak("Nothing yet this session.");
         } else {
-            for entry in data.activity {
+            for (index, entry) in data.activity.iter().enumerate() {
                 let color = match entry.outcome {
                     GitActivityOutcome::Success => None,
                     GitActivityOutcome::Neutral => Some(ui.visuals().weak_text_color()),
@@ -105,6 +105,20 @@ pub fn show(ui: &mut egui::Ui, data: &VersionActivityData) -> Option<VersionActi
                         }
                     }
                 });
+                // Which files a push/pull actually sent/brought in — see
+                // `GitActivityEntry::files`. Collapsed by default: a pull that
+                // catches up on a long stretch of commits can list a lot of
+                // files, and the headline message/age is usually all that's
+                // needed at a glance.
+                if !entry.files.is_empty() {
+                    egui::CollapsingHeader::new(format!("{} files", entry.files.len()))
+                        .id_salt(("git_activity_files", index, entry.at_unix))
+                        .show(ui, |ui| {
+                            for file in &entry.files {
+                                ui.weak(file);
+                            }
+                        });
+                }
             }
         }
     });
@@ -135,11 +149,19 @@ mod tests {
             at_unix: 1_000_000,
             message: "Committed".to_string(),
             outcome: GitActivityOutcome::Success,
+            files: Vec::new(),
         });
         activity.push_front(GitActivityEntry {
             at_unix: 1_000_050,
             message: "Push failed: network unreachable".to_string(),
             outcome: GitActivityOutcome::Error,
+            files: Vec::new(),
+        });
+        activity.push_front(GitActivityEntry {
+            at_unix: 1_000_075,
+            message: "Pulled".to_string(),
+            outcome: GitActivityOutcome::Success,
+            files: vec!["M Chapter One.md".to_string(), "A new.md".to_string()],
         });
         (dirty, commits, activity)
     }

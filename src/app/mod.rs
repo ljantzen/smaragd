@@ -232,7 +232,7 @@ pub struct SmaragdApp {
     /// its result.
     pending_git: Option<(
         GitOperation,
-        std::sync::mpsc::Receiver<Result<(), crate::git::GitError>>,
+        std::sync::mpsc::Receiver<crate::git::PushOrPullResult>,
     )>,
     /// A real dictionary download (see `spellcheck::download_dictionary`)
     /// currently running on a background thread, if any — real network I/O, so

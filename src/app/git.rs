@@ -43,11 +43,23 @@ impl SmaragdApp {
         message: impl Into<String>,
         outcome: crate::git::GitActivityOutcome,
     ) {
+        self.record_git_activity_with_files(message, outcome, Vec::new());
+    }
+
+    /// [`Self::record_git_activity`], additionally attaching the files a
+    /// push/pull touched — see `GitActivityEntry::files`.
+    pub(super) fn record_git_activity_with_files(
+        &mut self,
+        message: impl Into<String>,
+        outcome: crate::git::GitActivityOutcome,
+        files: Vec<String>,
+    ) {
         self.git_activity_log
             .push_front(crate::git::GitActivityEntry {
                 at_unix: unix_now(),
                 message: message.into(),
                 outcome,
+                files,
             });
         self.git_activity_log.truncate(GIT_ACTIVITY_LOG_LIMIT);
     }
@@ -354,7 +366,7 @@ impl SmaragdApp {
         };
         let (operation, _) = self.pending_git.take().expect("checked above");
         match result {
-            Ok(()) => {
+            Ok(files) => {
                 if operation == GitOperation::Pull
                     && let Some(project) = &mut self.project
                 {
@@ -365,7 +377,16 @@ impl SmaragdApp {
                 self.refresh_git_log();
                 let message = format!("{}ed", operation.label());
                 self.set_status_message(message.clone());
-                self.record_git_activity(message, crate::git::GitActivityOutcome::Success);
+                let file_lines = self
+                    .project
+                    .as_ref()
+                    .map(|project| crate::git::file_list_lines(&project.root, &files))
+                    .unwrap_or_default();
+                self.record_git_activity_with_files(
+                    message,
+                    crate::git::GitActivityOutcome::Success,
+                    file_lines,
+                );
             }
             Err(err) => {
                 let message = format!("{} failed: {err}", operation.label());
