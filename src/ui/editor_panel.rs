@@ -42,6 +42,27 @@ impl EditorViewMode {
     }
 }
 
+/// Switches `*mode` to `new_mode`, carrying the caret across the transition.
+/// Reading mode renders `markdown_preview` instead of the `TextEdit` at
+/// `editor_text_edit_id()`, so the widget goes unrendered for a frame; egui's
+/// own focus "dead man's switch" (`Focus::end_pass`) then drops its focus and
+/// persisted cursor, and it comes back uncentered with no live caret once
+/// Edit mode is restored. `editor.cursor_byte` — refreshed every frame the
+/// `TextEdit` renders, so still holding its last Edit-mode value — is handed
+/// to `pending_cursor`, the same restore path document-history Back/Forward
+/// already uses, so the next `editor_panel::show` call re-focuses the widget
+/// and puts the caret back where the user left it.
+pub fn switch_view_mode(
+    editor: &mut EditorState,
+    mode: &mut EditorViewMode,
+    new_mode: EditorViewMode,
+) {
+    if *mode == EditorViewMode::Reading && new_mode == EditorViewMode::Edit {
+        editor.pending_cursor = Some(editor.cursor_byte);
+    }
+    *mode = new_mode;
+}
+
 /// An action from the Editor pane's ☰ menu that isn't already covered by an
 /// existing `BinderEvent` (Rename/Move/Delete reuse those directly — see
 /// `app::dock_tabs::handle_binder_event`) or by a direct field mutation
@@ -1296,9 +1317,9 @@ fn handle_attachment_input(
 #[cfg(test)]
 mod tests {
     use super::{
-        AttachmentSettings, BTreeSet, EditorEvent, HashSet, Key, SpellCheckLanguage,
-        build_editor_layout_job, editor_text_edit_id, is_flagged_word, misspelled_word_at,
-        paragraph_byte_range, show,
+        AttachmentSettings, BTreeSet, EditorEvent, EditorViewMode, HashSet, Key,
+        SpellCheckLanguage, build_editor_layout_job, editor_text_edit_id, is_flagged_word,
+        misspelled_word_at, paragraph_byte_range, show, switch_view_mode,
     };
     use crate::editor::EditorState;
     use crate::editor_font::EditorFont;
@@ -2120,6 +2141,47 @@ mod tests {
         });
 
         assert!(matches!(event, Some(EditorEvent::ToggleBookmark(3))));
+    }
+
+    /// Switching to Reading mode must leave `pending_cursor` untouched — only
+    /// the reverse direction (back to Source mode) needs it, and setting it
+    /// here as well would make the *next* Reading->Edit switch jump to
+    /// whatever `cursor_byte` happened to be when first leaving Edit mode,
+    /// rather than wherever the caret was just before returning.
+    #[test]
+    fn switching_to_reading_mode_does_not_touch_pending_cursor() {
+        let mut editor = EditorState {
+            cursor_byte: 7,
+            ..Default::default()
+        };
+        let mut mode = EditorViewMode::Edit;
+
+        switch_view_mode(&mut editor, &mut mode, EditorViewMode::Reading);
+
+        assert_eq!(mode, EditorViewMode::Reading);
+        assert_eq!(editor.pending_cursor, None);
+    }
+
+    /// The bug this guards against: `TextEdit` isn't rendered at all while in
+    /// Reading mode, so egui's focus dead-man's-switch (`Focus::end_pass`)
+    /// drops its focus and persisted `CCursorRange` — coming back to Source
+    /// mode previously left the caret nowhere, forcing a click to regain
+    /// focus. Stashing `cursor_byte` (refreshed every Edit-mode frame, so
+    /// still holding its last live value) into `pending_cursor` on the way
+    /// back reuses the exact restore path document-history Back/Forward
+    /// already relies on.
+    #[test]
+    fn switching_back_to_source_mode_restores_the_cursor_via_pending_cursor() {
+        let mut editor = EditorState {
+            cursor_byte: 12,
+            ..Default::default()
+        };
+        let mut mode = EditorViewMode::Reading;
+
+        switch_view_mode(&mut editor, &mut mode, EditorViewMode::Edit);
+
+        assert_eq!(mode, EditorViewMode::Edit);
+        assert_eq!(editor.pending_cursor, Some(12));
     }
 
     /// The note column sits to the left of the bookmark column (see

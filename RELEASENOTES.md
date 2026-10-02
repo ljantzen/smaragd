@@ -22,7 +22,9 @@ this file.
   default app, Show in system explorer, Reveal file in navigation, and
   Delete file. The Source/Reading toggle (Ctrl+E, Obsidian's own default)
   and the inline-backlinks toggle (Ctrl+B) also have keyboard shortcuts,
-  remappable like any other in `Settings > Shortcuts`.
+  remappable like any other in `Settings > Shortcuts`. Switching back to
+  Source mode restores the cursor to where it was left, rather than losing
+  focus and forcing a click to place it again.
 - Fixed: the Binder's git-dirty marker could go stale after a commit/push —
   a plain edit saved via the usual focus-loss autosave (rather than an
   explicit Ctrl+S) didn't refresh it, so it stayed looking "clean" until

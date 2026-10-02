@@ -843,7 +843,7 @@ impl SmaragdApp {
             ShortcutAction::SyncNow => self.sync_now(),
             ShortcutAction::ToggleVersionActivity => self.toggle_dock_tab(DockTab::VersionActivity),
             ShortcutAction::ToggleEditorViewMode => {
-                self.editor_view_mode = match self.editor_view_mode {
+                let new_mode = match self.editor_view_mode {
                     ui::editor_panel::EditorViewMode::Edit => {
                         ui::editor_panel::EditorViewMode::Reading
                     }
@@ -851,6 +851,11 @@ impl SmaragdApp {
                         ui::editor_panel::EditorViewMode::Edit
                     }
                 };
+                ui::editor_panel::switch_view_mode(
+                    &mut self.editor,
+                    &mut self.editor_view_mode,
+                    new_mode,
+                );
             }
             ShortcutAction::ToggleInlineBacklinks => {
                 self.show_inline_backlinks = !self.show_inline_backlinks;

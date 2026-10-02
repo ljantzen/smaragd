@@ -518,7 +518,11 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                                     .selectable_label(*self.editor_view_mode == mode, mode.label())
                                     .clicked()
                                 {
-                                    *self.editor_view_mode = mode;
+                                    ui::editor_panel::switch_view_mode(
+                                        self.editor,
+                                        self.editor_view_mode,
+                                        mode,
+                                    );
                                     ui.close();
                                 }
                             }
