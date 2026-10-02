@@ -14,7 +14,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 
 - Dockable views that can be moved freely around
 - Binder tree view of the writing project
-- Markdown text editor, with an Obsidian-style ☰ menu for Source/Reading view toggling, inline backlinks, rename/move/delete, Find & Replace, and opening/revealing the file in the OS
+- Markdown text editor, with an Obsidian-style ☰ menu for Source/Reading view toggling (restoring your cursor position when you switch back), inline backlinks, rename/move/delete, Find & Replace, and opening/revealing the file in the OS
 - Paste or drag-drop images and other files straight into the editor, Obsidian-style (`![[attachment.png]]`), saved next to the document or in a configurable attachments folder
 - Optional line-number gutter in the editor
 - Bookmarks: mark a line with a shortcut or a gutter click, jump back from a dedicated dock or Alt+Up/Alt+Down navigation

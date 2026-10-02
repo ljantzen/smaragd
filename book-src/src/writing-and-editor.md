@@ -23,7 +23,7 @@ smaragd periodically notices files added, removed, or edited outside the app —
 A **☰** button sits in the Editor tab's top-right corner:
 
 - **Backlinks in document** — toggles a resizable panel below the editor's own content showing every document that links here (see [Backlinks](backlinks.md)), independent of the separate Backlinks dock tab. Also bound to **`Ctrl+B`**.
-- **Source mode** / **Reading view** — switches the Editor tab itself between the plain-text editor and a rendered markdown preview, without needing the separate Preview tab. Also bound to **`Ctrl+E`**.
+- **Source mode** / **Reading view** — switches the Editor tab itself between the plain-text editor and a rendered markdown preview, without needing the separate Preview tab. Also bound to **`Ctrl+E`**. Switching back to Source mode restores the cursor to where it was left.
 - **Rename…** / **Move file to…** / **Delete file** — the same actions as the Binder's own context menu, for whichever document is currently open. Move file to… opens an in-app, fuzzy-searchable folder picker rather than an OS file dialog.
 - **Find & Replace…** — opens [Find and Replace](find-and-replace.md) scoped to the current file.
 - **Open in default app** / **Show in system explorer** — hands the file to the OS's default application, or reveals it in the platform's file manager.
