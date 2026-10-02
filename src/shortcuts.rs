@@ -144,6 +144,17 @@ pub enum ShortcutAction {
     /// Run a sync pass right away instead of waiting for the next periodic one — see
     /// `SmaragdApp::sync_now`. Does nothing while sync isn't running for the project.
     SyncNow,
+    /// Switch the Editor pane between Source mode and Reading view — the
+    /// keyboard counterpart of its ☰ menu's own toggle (see
+    /// `ui::editor_panel::EditorViewMode`). Unlike `TogglePreview`, this never
+    /// opens or closes a dock tab; it only changes what the already-open
+    /// Editor tab renders.
+    ToggleEditorViewMode,
+    /// Show/hide backlinks inline at the bottom of the Editor pane's own
+    /// content — the keyboard counterpart of its ☰ menu's "Backlinks in
+    /// document" row. Distinct from `ToggleBacklinks`, which opens/closes the
+    /// separate Backlinks dock tab.
+    ToggleInlineBacklinks,
 }
 
 impl ShortcutAction {
@@ -207,6 +218,8 @@ impl ShortcutAction {
         Self::ToggleSyncPanel,
         Self::SyncNow,
         Self::ToggleVersionActivity,
+        Self::ToggleEditorViewMode,
+        Self::ToggleInlineBacklinks,
     ];
 
     /// Actions consumed inline inside `editor_panel::show` (see each variant's
@@ -285,6 +298,8 @@ impl ShortcutAction {
             Self::SearchEverywhere => "Search Everywhere",
             Self::ToggleSyncPanel => "Toggle Sync Panel",
             Self::SyncNow => "Sync Now",
+            Self::ToggleEditorViewMode => "Toggle Source/Reading View",
+            Self::ToggleInlineBacklinks => "Toggle Backlinks in Document",
             Self::ToggleVersionActivity => "Toggle Version Activity",
         }
     }
@@ -354,6 +369,8 @@ impl ShortcutAction {
             Self::SearchEverywhere => "search_everywhere",
             Self::ToggleSyncPanel => "toggle_sync_panel",
             Self::SyncNow => "sync_now",
+            Self::ToggleEditorViewMode => "toggle_editor_view_mode",
+            Self::ToggleInlineBacklinks => "toggle_inline_backlinks",
             Self::ToggleVersionActivity => "toggle_version_activity",
         }
     }
@@ -408,7 +425,9 @@ impl ShortcutAction {
             | Self::ToggleDocumentStats
             | Self::PreviewZoomIn
             | Self::PreviewZoomOut
-            | Self::PreviewZoomReset => ShortcutCategory::View,
+            | Self::PreviewZoomReset
+            | Self::ToggleEditorViewMode
+            | Self::ToggleInlineBacklinks => ShortcutCategory::View,
             Self::GitCommit
             | Self::GitPush
             | Self::GitPull
@@ -612,6 +631,15 @@ impl ShortcutAction {
             Self::ToggleVersionActivity => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::V)
             }
+            // Obsidian's own default for the same action — unused here, and
+            // `sorted_by_specificity` already protects `ToggleBeliefTimeline`'s
+            // Ctrl+Shift+E from being shadowed by this lower-specificity
+            // bare-Ctrl pattern on the same key.
+            Self::ToggleEditorViewMode => KeyboardShortcut::new(Modifiers::COMMAND, Key::E),
+            // `B` for Backlinks — unused bare-Ctrl; `ToggleBacklinks`'
+            // Ctrl+Shift+B and `ToggleBookmarksPanel`'s Ctrl+Alt+B are both
+            // more specific and so checked first, same reasoning as above.
+            Self::ToggleInlineBacklinks => KeyboardShortcut::new(Modifiers::COMMAND, Key::B),
         }
     }
 }

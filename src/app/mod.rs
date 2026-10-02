@@ -842,6 +842,19 @@ impl SmaragdApp {
             ShortcutAction::ToggleSyncPanel => self.show_sync_panel(),
             ShortcutAction::SyncNow => self.sync_now(),
             ShortcutAction::ToggleVersionActivity => self.toggle_dock_tab(DockTab::VersionActivity),
+            ShortcutAction::ToggleEditorViewMode => {
+                self.editor_view_mode = match self.editor_view_mode {
+                    ui::editor_panel::EditorViewMode::Edit => {
+                        ui::editor_panel::EditorViewMode::Reading
+                    }
+                    ui::editor_panel::EditorViewMode::Reading => {
+                        ui::editor_panel::EditorViewMode::Edit
+                    }
+                };
+            }
+            ShortcutAction::ToggleInlineBacklinks => {
+                self.show_inline_backlinks = !self.show_inline_backlinks;
+            }
             ShortcutAction::CycleBinderColorMode => self.cycle_binder_color_mode(),
             // Filtered out of the consumption pass above and handled inline in
             // `editor_panel::show` instead — never actually reached, but the match

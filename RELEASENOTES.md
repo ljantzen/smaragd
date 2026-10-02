@@ -20,7 +20,9 @@ this file.
   view (without leaving the Preview tab behind), Rename, Move file to…
   (an in-app folder picker, not an OS dialog), Find & Replace, Open in
   default app, Show in system explorer, Reveal file in navigation, and
-  Delete file.
+  Delete file. The Source/Reading toggle (Ctrl+E, Obsidian's own default)
+  and the inline-backlinks toggle (Ctrl+B) also have keyboard shortcuts,
+  remappable like any other in `Settings > Shortcuts`.
 
 ## v1.4.1 — 2026-10-01
 
