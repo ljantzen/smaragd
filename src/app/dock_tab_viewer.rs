@@ -76,6 +76,9 @@ pub(super) enum DockAction {
     /// The Version Activity tab's "Refresh" button was clicked — see
     /// `ui::version_activity_panel::VersionActivityEvent::Refresh`.
     RefreshVersionActivity,
+    /// An action from the Editor pane's ☰ menu not already covered by a
+    /// `BinderEvent` — see `ui::editor_panel::EditorMenuEvent`.
+    EditorMenu(ui::editor_panel::EditorMenuEvent),
 }
 
 /// A short-lived `egui_dock::TabViewer` impl, constructed fresh each frame right
@@ -155,6 +158,8 @@ pub(super) struct AppTabViewer<'a> {
     /// direct-mutation, not-persisted convention as `streak_sub_tab`/
     /// `belief_timeline_character`.
     pub(super) dashboard_activity_metric: &'a mut crate::dashboard::ActivityMetric,
+    /// See `SmaragdApp::editor_view_mode`.
+    pub(super) editor_view_mode: &'a mut crate::ui::editor_panel::EditorViewMode,
     pub(super) actions: Vec<DockAction>,
     /// See `SmaragdApp::focus_binder_requested`.
     pub(super) focus_binder_requested: bool,
@@ -165,6 +170,63 @@ pub(super) struct AppTabViewer<'a> {
     /// Whether a collaboration session is active — see `editor_panel::show`'s
     /// `collaborating` parameter.
     pub(super) collaborating: bool,
+    /// Whether the Backlinks dock tab is currently open — the Editor pane's ☰
+    /// menu's "Backlinks in document" row reflects this as a checkmark, the
+    /// same way it's computed for `ShortcutAction::ToggleBacklinks`.
+    pub(super) backlinks_tab_open: bool,
+}
+
+impl AppTabViewer<'_> {
+    /// Renders the rendered-markdown reading view — shared by the standalone
+    /// "Preview" dock tab and the Editor tab's own Reading view (see
+    /// `ui::editor_panel::EditorViewMode`), which both show exactly the same
+    /// thing for exactly the same open document.
+    fn show_markdown_preview(&mut self, ui: &mut egui::Ui) {
+        if self.editor.open_path.is_some() {
+            let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
+            let project_root = self.project.map(|project| project.root.as_path());
+            let note_titles = self
+                .project
+                .map(|project| project.tree.document_names())
+                .unwrap_or_default();
+            let document_title = self
+                .editor
+                .open_path
+                .as_deref()
+                .and_then(|path| path.file_stem())
+                .and_then(|stem| stem.to_str());
+            let outcome = ui::markdown_preview::show(
+                ui,
+                &self.editor.buffer,
+                base_dir,
+                project_root,
+                self.typeset_styles,
+                self.book_style_id,
+                self.custom_fonts,
+                self.settings.typewriter_quotes,
+                &note_titles,
+                document_title,
+                self.settings.resolve_preview_zoom(),
+            );
+            match outcome.click {
+                Some(ui::markdown_preview::PreviewClick::Wikilink(activation)) => {
+                    self.actions.push(DockAction::Wikilink(activation));
+                }
+                Some(ui::markdown_preview::PreviewClick::Tag(tag)) => {
+                    self.actions.push(DockAction::PreviewTagClicked(tag));
+                }
+                None => {}
+            }
+            if let Some(style_id) = outcome.style_changed {
+                self.actions.push(DockAction::SetBookStyle(style_id));
+            }
+            if let Some(zoom) = outcome.zoom_changed {
+                self.actions.push(DockAction::SetPreviewZoom(zoom));
+            }
+        } else {
+            ui.label("Select a file from the binder to preview.");
+        }
+    }
 }
 
 impl egui_dock::TabViewer for AppTabViewer<'_> {
@@ -435,136 +497,172 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                 }
             }
             DockTab::Editor => {
-                let note_titles = self
-                    .project
-                    .map(|project| project.tree.document_names())
-                    .unwrap_or_default();
-                let tag_names = self
-                    .project
-                    .map(|project| project.all_tags())
-                    .unwrap_or_default();
-                let activate_wikilink_shortcut = self
-                    .settings
-                    .shortcuts
-                    .get(ShortcutAction::ActivateWikilink);
-                let toggle_bookmark_shortcut =
-                    self.settings.shortcuts.get(ShortcutAction::ToggleBookmark);
-                let bookmarked_lines = self
-                    .editor
-                    .open_path
-                    .as_deref()
-                    .zip(self.project)
-                    .map(|(path, project)| project.bookmarked_lines_for(path))
-                    .unwrap_or_default();
-                let add_note_shortcut =
-                    self.settings.shortcuts.get(ShortcutAction::AddNoteAtCursor);
-                let noted_lines = self
-                    .editor
-                    .open_path
-                    .as_deref()
-                    .zip(self.project)
-                    .map(|(path, project)| project.noted_lines_for(path))
-                    .unwrap_or_default();
-                let editor_store: &dyn crate::project::store::ProjectStore = self
-                    .project
-                    .map(|p| p.store.as_ref())
-                    .unwrap_or(&crate::project::store::NativeStore);
-                let attachments_folder = self.project.and_then(|p| p.attachments_folder());
-                let attachment_settings =
-                    self.project
-                        .map(|project| ui::editor_panel::AttachmentSettings {
-                            destination: project.attachment_destination(),
-                            folder: attachments_folder.as_deref(),
-                            project_root: project.root.as_path(),
-                            size_limit_bytes: project.clipboard_image_size_limit_bytes(),
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.menu_button("☰", |ui| {
+                            use ui::editor_panel::{EditorMenuEvent, EditorViewMode};
+
+                            if ui
+                                .selectable_label(self.backlinks_tab_open, "Backlinks in document")
+                                .clicked()
+                            {
+                                self.actions
+                                    .push(DockAction::EditorMenu(EditorMenuEvent::ToggleBacklinks));
+                                ui.close();
+                            }
+                            for mode in [EditorViewMode::Edit, EditorViewMode::Reading] {
+                                if ui
+                                    .selectable_label(*self.editor_view_mode == mode, mode.label())
+                                    .clicked()
+                                {
+                                    *self.editor_view_mode = mode;
+                                    ui.close();
+                                }
+                            }
+
+                            if let Some(open_path) = self.editor.open_path.clone() {
+                                ui.separator();
+                                if ui.button("Rename…").clicked() {
+                                    self.actions.push(DockAction::Binder(BinderEvent::Rename {
+                                        path: open_path.clone(),
+                                    }));
+                                    ui.close();
+                                }
+                                if ui.button("Move file to…").clicked() {
+                                    self.actions.push(DockAction::EditorMenu(
+                                        EditorMenuEvent::MoveFileTo(open_path.clone()),
+                                    ));
+                                    ui.close();
+                                }
+
+                                ui.separator();
+                                if ui.button("Find & Replace…").clicked() {
+                                    self.actions
+                                        .push(DockAction::EditorMenu(EditorMenuEvent::FindReplace));
+                                    ui.close();
+                                }
+
+                                ui.separator();
+                                if ui.button("Open in default app").clicked() {
+                                    self.actions.push(DockAction::EditorMenu(
+                                        EditorMenuEvent::OpenInDefaultApp(open_path.clone()),
+                                    ));
+                                    ui.close();
+                                }
+                                if ui.button("Show in system explorer").clicked() {
+                                    self.actions.push(DockAction::EditorMenu(
+                                        EditorMenuEvent::RevealInFileManager(open_path.clone()),
+                                    ));
+                                    ui.close();
+                                }
+                                if ui.button("Reveal file in navigation").clicked() {
+                                    self.actions.push(DockAction::EditorMenu(
+                                        EditorMenuEvent::RevealInBinder(open_path.clone()),
+                                    ));
+                                    ui.close();
+                                }
+
+                                ui.separator();
+                                if ui.button("Delete file").clicked() {
+                                    self.actions.push(DockAction::Binder(BinderEvent::Delete {
+                                        path: open_path,
+                                    }));
+                                    ui.close();
+                                }
+                            }
                         });
-                match ui::editor_panel::show(
-                    ui,
-                    self.editor,
-                    editor_store,
-                    &note_titles,
-                    &tag_names,
-                    activate_wikilink_shortcut,
-                    false,
-                    self.settings.editor_font,
-                    crate::editor_font::resolve_size(self.settings.editor_font_size),
-                    self.collaborating,
-                    self.settings.spell_check_language,
-                    &self.settings.spell_check_custom_words,
-                    self.settings.show_editor_gutter,
-                    &bookmarked_lines,
-                    toggle_bookmark_shortcut,
-                    &noted_lines,
-                    add_note_shortcut,
-                    attachment_settings,
-                ) {
-                    Some(EditorEvent::SaveError(err)) => {
-                        self.actions.push(DockAction::EditorSaveError(err));
+                    });
+                });
+                match self.editor_view_mode {
+                    ui::editor_panel::EditorViewMode::Edit => {
+                        let note_titles = self
+                            .project
+                            .map(|project| project.tree.document_names())
+                            .unwrap_or_default();
+                        let tag_names = self
+                            .project
+                            .map(|project| project.all_tags())
+                            .unwrap_or_default();
+                        let activate_wikilink_shortcut = self
+                            .settings
+                            .shortcuts
+                            .get(ShortcutAction::ActivateWikilink);
+                        let toggle_bookmark_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::ToggleBookmark);
+                        let bookmarked_lines = self
+                            .editor
+                            .open_path
+                            .as_deref()
+                            .zip(self.project)
+                            .map(|(path, project)| project.bookmarked_lines_for(path))
+                            .unwrap_or_default();
+                        let add_note_shortcut =
+                            self.settings.shortcuts.get(ShortcutAction::AddNoteAtCursor);
+                        let noted_lines = self
+                            .editor
+                            .open_path
+                            .as_deref()
+                            .zip(self.project)
+                            .map(|(path, project)| project.noted_lines_for(path))
+                            .unwrap_or_default();
+                        let editor_store: &dyn crate::project::store::ProjectStore = self
+                            .project
+                            .map(|p| p.store.as_ref())
+                            .unwrap_or(&crate::project::store::NativeStore);
+                        let attachments_folder = self.project.and_then(|p| p.attachments_folder());
+                        let attachment_settings =
+                            self.project
+                                .map(|project| ui::editor_panel::AttachmentSettings {
+                                    destination: project.attachment_destination(),
+                                    folder: attachments_folder.as_deref(),
+                                    project_root: project.root.as_path(),
+                                    size_limit_bytes: project.clipboard_image_size_limit_bytes(),
+                                });
+                        match ui::editor_panel::show(
+                            ui,
+                            self.editor,
+                            editor_store,
+                            &note_titles,
+                            &tag_names,
+                            activate_wikilink_shortcut,
+                            false,
+                            self.settings.editor_font,
+                            crate::editor_font::resolve_size(self.settings.editor_font_size),
+                            self.collaborating,
+                            self.settings.spell_check_language,
+                            &self.settings.spell_check_custom_words,
+                            self.settings.show_editor_gutter,
+                            &bookmarked_lines,
+                            toggle_bookmark_shortcut,
+                            &noted_lines,
+                            add_note_shortcut,
+                            attachment_settings,
+                        ) {
+                            Some(EditorEvent::SaveError(err)) => {
+                                self.actions.push(DockAction::EditorSaveError(err));
+                            }
+                            Some(EditorEvent::Wikilink(activation)) => {
+                                self.actions.push(DockAction::Wikilink(activation));
+                            }
+                            Some(EditorEvent::ToggleBookmark(line)) => {
+                                self.actions.push(DockAction::ToggleBookmark(line));
+                            }
+                            Some(EditorEvent::EditNoteAt(line, column)) => {
+                                self.actions.push(DockAction::EditNote(line, column));
+                            }
+                            Some(EditorEvent::AddToDictionary(word)) => {
+                                self.actions.push(DockAction::SpellCheckAddWord(word));
+                            }
+                            Some(EditorEvent::AttachmentError(err)) => {
+                                self.actions.push(DockAction::EditorAttachmentError(err));
+                            }
+                            None => {}
+                        }
                     }
-                    Some(EditorEvent::Wikilink(activation)) => {
-                        self.actions.push(DockAction::Wikilink(activation));
-                    }
-                    Some(EditorEvent::ToggleBookmark(line)) => {
-                        self.actions.push(DockAction::ToggleBookmark(line));
-                    }
-                    Some(EditorEvent::EditNoteAt(line, column)) => {
-                        self.actions.push(DockAction::EditNote(line, column));
-                    }
-                    Some(EditorEvent::AddToDictionary(word)) => {
-                        self.actions.push(DockAction::SpellCheckAddWord(word));
-                    }
-                    Some(EditorEvent::AttachmentError(err)) => {
-                        self.actions.push(DockAction::EditorAttachmentError(err));
-                    }
-                    None => {}
+                    ui::editor_panel::EditorViewMode::Reading => self.show_markdown_preview(ui),
                 }
             }
-            DockTab::Preview => {
-                if self.editor.open_path.is_some() {
-                    let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
-                    let project_root = self.project.map(|project| project.root.as_path());
-                    let note_titles = self
-                        .project
-                        .map(|project| project.tree.document_names())
-                        .unwrap_or_default();
-                    let document_title = self
-                        .editor
-                        .open_path
-                        .as_deref()
-                        .and_then(|path| path.file_stem())
-                        .and_then(|stem| stem.to_str());
-                    let outcome = ui::markdown_preview::show(
-                        ui,
-                        &self.editor.buffer,
-                        base_dir,
-                        project_root,
-                        self.typeset_styles,
-                        self.book_style_id,
-                        self.custom_fonts,
-                        self.settings.typewriter_quotes,
-                        &note_titles,
-                        document_title,
-                        self.settings.resolve_preview_zoom(),
-                    );
-                    match outcome.click {
-                        Some(ui::markdown_preview::PreviewClick::Wikilink(activation)) => {
-                            self.actions.push(DockAction::Wikilink(activation));
-                        }
-                        Some(ui::markdown_preview::PreviewClick::Tag(tag)) => {
-                            self.actions.push(DockAction::PreviewTagClicked(tag));
-                        }
-                        None => {}
-                    }
-                    if let Some(style_id) = outcome.style_changed {
-                        self.actions.push(DockAction::SetBookStyle(style_id));
-                    }
-                    if let Some(zoom) = outcome.zoom_changed {
-                        self.actions.push(DockAction::SetPreviewZoom(zoom));
-                    }
-                } else {
-                    ui.label("Select a file from the binder to preview.");
-                }
-            }
+            DockTab::Preview => self.show_markdown_preview(ui),
             DockTab::Corkboard => match self.project {
                 Some(project) => {
                     if let Some(event) = ui::corkboard_panel::show(ui, project) {

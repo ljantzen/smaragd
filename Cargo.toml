@@ -41,6 +41,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 iroh = "1.0.3"
 notify-rust = { version = "4.18.0", default-features = false, features = ["d_vendored"] }
 nucleo-matcher = "0.3"
+# "Open in default app" / "Show in system explorer" in the editor's ☰ menu.
+opener = { version = "0.9", features = ["reveal"] }
 pdf-extract = "0.12.0"
 postcard = { version = "1.1.3", features = ["use-std"] }
 pulldown-cmark = "0.13"

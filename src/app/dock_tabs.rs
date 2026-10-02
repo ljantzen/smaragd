@@ -260,6 +260,72 @@ impl SmaragdApp {
         }
     }
 
+    /// An action from the Editor pane's ☰ menu not already covered by an
+    /// existing `BinderEvent` (Rename/Delete are pushed as `DockAction::Binder`
+    /// directly from the menu — see `dock_tab_viewer.rs`). All four operate on
+    /// whichever document was open when the menu item was clicked.
+    pub(super) fn handle_editor_menu_event(
+        &mut self,
+        ctx: &egui::Context,
+        event: ui::editor_panel::EditorMenuEvent,
+    ) {
+        use ui::editor_panel::EditorMenuEvent;
+        match event {
+            EditorMenuEvent::ToggleBacklinks => self.toggle_dock_tab(DockTab::Backlinks),
+            EditorMenuEvent::FindReplace => self.find_replace.request_open(),
+            EditorMenuEvent::OpenInDefaultApp(path) => {
+                if let Err(err) = opener::open(&path) {
+                    self.push_error_toast(format!("Couldn't open {}: {err}", path.display()));
+                }
+            }
+            EditorMenuEvent::RevealInFileManager(path) => {
+                if let Err(err) = opener::reveal(&path) {
+                    self.push_error_toast(format!("Couldn't reveal {}: {err}", path.display()));
+                }
+            }
+            EditorMenuEvent::RevealInBinder(path) => self.reveal_in_binder(ctx, &path),
+            EditorMenuEvent::MoveFileTo(path) => self.prompt_move_file(path),
+        }
+    }
+
+    /// "Reveal file in navigation": expand every ancestor folder of `path` (it
+    /// might be hidden inside a collapsed one), then do the same
+    /// bring-Binder-to-front + focus-request `ShortcutAction::ToggleBinderFocus`
+    /// already does — see `app/mod.rs`'s handling of that shortcut.
+    fn reveal_in_binder(&mut self, ctx: &egui::Context, path: &Path) {
+        let Some(root) = self.project.as_ref().map(|project| project.root.clone()) else {
+            return;
+        };
+        let mut ancestor = path.parent();
+        while let Some(dir) = ancestor {
+            if dir == root {
+                break;
+            }
+            ui::binder_panel::set_folder_open(ctx, dir, true);
+            ancestor = dir.parent();
+        }
+        if let Some(tab_path) = self.dock_state.find_tab(&DockTab::Binder) {
+            let _ = self.dock_state.set_active_tab(tab_path);
+        }
+        self.focus_binder_requested = true;
+    }
+
+    /// "Move file to...": the destination-folder picker, then reuses
+    /// `move_item`'s existing move + rebase-open-path logic as-is.
+    fn prompt_move_file(&mut self, path: PathBuf) {
+        let Some(root) = self.project.as_ref().map(|project| project.root.clone()) else {
+            return;
+        };
+        let Some(destination) = rfd::FileDialog::new().set_directory(&root).pick_folder() else {
+            return;
+        };
+        if destination.strip_prefix(&root).is_err() {
+            self.push_error_toast("Destination must be inside the project");
+            return;
+        }
+        self.move_item(&path, &destination);
+    }
+
     pub(super) fn handle_story_grid_event(&mut self, event: StoryGridEvent) {
         match event {
             StoryGridEvent::OpenLinkedDocument(path) => {

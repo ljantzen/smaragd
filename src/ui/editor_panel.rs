@@ -15,6 +15,57 @@ use crate::markdown::{wikilink_resolves, wikilink_spans, wikilink_target_at};
 use crate::spellcheck::SpellCheckLanguage;
 use crate::ui::WikilinkActivation;
 
+/// Which content the Editor dock tab currently shows — toggled from the ☰ menu
+/// in its top-right corner (`app::dock_tab_viewer`), Obsidian-style. Tab-local
+/// UI state, not persisted across sessions: same convention as
+/// `ui::streak_panel::StreakSubTab`/`SmaragdApp::dashboard_activity_metric`.
+/// Independent of the separate "Preview" dock tab, which keeps working
+/// exactly as before regardless of this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EditorViewMode {
+    #[default]
+    Edit,
+    /// The rendered markdown, read-only — reuses `ui::markdown_preview::show`,
+    /// the same renderer the Preview tab uses.
+    Reading,
+}
+
+impl EditorViewMode {
+    /// Obsidian's own wording for these two states, matched exactly so the ☰
+    /// menu reads the same way — smaragd has no WYSIWYG "Live Preview" mode,
+    /// so "Source mode" is just this editor's one and only editing state.
+    pub fn label(self) -> &'static str {
+        match self {
+            EditorViewMode::Edit => "Source mode",
+            EditorViewMode::Reading => "Reading view",
+        }
+    }
+}
+
+/// An action from the Editor pane's ☰ menu that isn't already covered by an
+/// existing `BinderEvent` (Rename/Move/Delete reuse those directly — see
+/// `app::dock_tabs::handle_binder_event`) — routed back to `SmaragdApp` as
+/// `DockAction::EditorMenu`, handled by `SmaragdApp::handle_editor_menu_event`.
+/// All four operate on whichever document is currently open in the editor.
+pub enum EditorMenuEvent {
+    /// "Backlinks in document" — opens/closes the Backlinks dock tab.
+    ToggleBacklinks,
+    /// "Find & Replace..." — opens the Find/Replace panel, scoped to the
+    /// current file.
+    FindReplace,
+    /// "Open in default app".
+    OpenInDefaultApp(std::path::PathBuf),
+    /// "Show in system explorer".
+    RevealInFileManager(std::path::PathBuf),
+    /// "Move file to..." — the handler shows the destination-folder picker
+    /// itself (needs the open project's root, which this pane's own view
+    /// doesn't have direct access to).
+    MoveFileTo(std::path::PathBuf),
+    /// "Reveal file in navigation" — expand the Binder to this path and focus
+    /// its row, even if some ancestor folder is currently collapsed.
+    RevealInBinder(std::path::PathBuf),
+}
+
 /// What happened this frame, for the caller to react to: a failed autosave, or the
 /// user asking (via Ctrl+Enter) to follow the `[[wikilink]]` the cursor is on.
 pub enum EditorEvent {

@@ -130,6 +130,11 @@ pub struct SmaragdApp {
     /// state, not persisted and not reset by `set_project`, same convention
     /// as `belief_timeline_character` below.
     dashboard_activity_metric: crate::dashboard::ActivityMetric,
+    /// Whether the Editor dock tab currently shows the raw markdown or a
+    /// rendered reading view — see `ui::editor_panel::EditorViewMode`. Same
+    /// not-persisted, not-reset-by-`set_project` convention as
+    /// `dashboard_activity_metric`.
+    editor_view_mode: ui::editor_panel::EditorViewMode,
     /// The Belief Timeline tab's currently selected POV character — starts blank
     /// (defaults to the first known character the panel finds, see
     /// `ui::belief_timeline_panel::show`) and isn't reset by `set_project`, unlike
@@ -371,6 +376,7 @@ impl SmaragdApp {
             sync: sync::SyncState::default(),
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
             dashboard_activity_metric: crate::dashboard::ActivityMetric::default(),
+            editor_view_mode: ui::editor_panel::EditorViewMode::default(),
             belief_timeline_character: String::new(),
             settings_path_override: None,
             is_test_fixture: false,
@@ -478,6 +484,7 @@ impl SmaragdApp {
             sync: sync::SyncState::default(),
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
             dashboard_activity_metric: crate::dashboard::ActivityMetric::default(),
+            editor_view_mode: ui::editor_panel::EditorViewMode::default(),
             belief_timeline_character: String::new(),
             // Always set, unconditionally — see this field's doc comment.
             // Any test built on `test_fixture` must never be able to reach
@@ -1848,6 +1855,8 @@ impl eframe::App for SmaragdApp {
                     today_words_so_far,
                     streak_sub_tab: &mut self.streak_sub_tab,
                     dashboard_activity_metric: &mut self.dashboard_activity_metric,
+                    editor_view_mode: &mut self.editor_view_mode,
+                    backlinks_tab_open: self.dock_state.find_tab(&DockTab::Backlinks).is_some(),
                     belief_timeline_character: &mut self.belief_timeline_character,
                     actions: Vec::new(),
                     focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
@@ -1905,6 +1914,9 @@ impl eframe::App for SmaragdApp {
                         DockAction::RefreshVersionActivity => {
                             self.refresh_git_dirty_paths();
                             self.refresh_git_log();
+                        }
+                        DockAction::EditorMenu(event) => {
+                            self.handle_editor_menu_event(ui.ctx(), event)
                         }
                         DockAction::ToggleBookmark(line) => {
                             if let Some(path) = self.editor.open_path.clone() {
