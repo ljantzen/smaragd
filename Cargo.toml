@@ -17,7 +17,7 @@ exclude = ["crates/smaragd-sync-server", "crates/smaragd-sync-e2e"]
 
 [dependencies]
 # Argon2id for the sync passphrase KDF (src/sync/crypto.rs).
-argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+argon2 = { version = "0.6", default-features = false, features = ["alloc"] }
 # OS clipboard image access for pasting images into the editor (src/attachments.rs).
 # `wayland-data-control`: without it, arboard only speaks X11 and can't see a
 # Wayland app's (e.g. a browser's) clipboard image on a native Wayland session.
