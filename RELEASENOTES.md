@@ -15,10 +15,12 @@ this file.
 - The **Version Activity** panel's push/pull entries now list the files
   that were actually sent or brought in, under a collapsible "N files" row.
 - Added an Obsidian-style **☰ menu** to the Editor pane's top-right corner:
-  toggle the Backlinks panel, switch between Source mode and Reading view
-  (without leaving the Preview tab behind), Rename, Move file to…, Find &
-  Replace, Open in default app, Show in system explorer, Reveal file in
-  navigation, and Delete file.
+  show backlinks inline below the editor's own content (separate from the
+  standalone Backlinks dock tab), switch between Source mode and Reading
+  view (without leaving the Preview tab behind), Rename, Move file to…
+  (an in-app folder picker, not an OS dialog), Find & Replace, Open in
+  default app, Show in system explorer, Reveal file in navigation, and
+  Delete file.
 
 ## v1.4.1 — 2026-10-01
 

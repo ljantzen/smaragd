@@ -170,10 +170,11 @@ pub(super) struct AppTabViewer<'a> {
     /// Whether a collaboration session is active — see `editor_panel::show`'s
     /// `collaborating` parameter.
     pub(super) collaborating: bool,
-    /// Whether the Backlinks dock tab is currently open — the Editor pane's ☰
-    /// menu's "Backlinks in document" row reflects this as a checkmark, the
-    /// same way it's computed for `ShortcutAction::ToggleBacklinks`.
-    pub(super) backlinks_tab_open: bool,
+    /// Whether the Editor pane shows backlinks inline, below its own content
+    /// — see `SmaragdApp::show_inline_backlinks`. Independent of (and, unlike
+    /// it, not a separate dock tab at all — see that field's doc comment) the
+    /// standalone Backlinks dock tab.
+    pub(super) show_inline_backlinks: &'a mut bool,
 }
 
 impl AppTabViewer<'_> {
@@ -333,8 +334,8 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     // include unsaved edits), every other document's from
                     // `document_status_cache` (a single disk read, reused across
                     // frames). Returns `None` entirely when the setting is off,
-                    // so `binder_panel::document_display_label` skips the
-                    // stats suffix rather than showing a hidden zeroed one.
+                    // so `binder_panel::document_row` skips the stats suffix
+                    // rather than showing a hidden zeroed one.
                     let document_stats = |path: &Path| -> Option<(usize, usize, usize)> {
                         if !self.settings.show_document_stats_in_binder {
                             return None;
@@ -503,11 +504,13 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             use ui::editor_panel::{EditorMenuEvent, EditorViewMode};
 
                             if ui
-                                .selectable_label(self.backlinks_tab_open, "Backlinks in document")
+                                .selectable_label(
+                                    *self.show_inline_backlinks,
+                                    "Backlinks in document",
+                                )
                                 .clicked()
                             {
-                                self.actions
-                                    .push(DockAction::EditorMenu(EditorMenuEvent::ToggleBacklinks));
+                                *self.show_inline_backlinks = !*self.show_inline_backlinks;
                                 ui.close();
                             }
                             for mode in [EditorViewMode::Edit, EditorViewMode::Reading] {
@@ -573,6 +576,35 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         });
                     });
                 });
+                // Backlinks shown inline, below the editor's own content —
+                // reserved (via `egui::Panel::bottom`) before that content
+                // renders, so the editor/reading view above it gets whatever
+                // space is left rather than this overflowing past the bottom.
+                // Independent of `editor_view_mode`: shows under both Source
+                // mode and Reading view alike, same as Obsidian's own toggle.
+                if *self.show_inline_backlinks && self.editor.open_path.is_some() {
+                    egui::Panel::bottom("editor_inline_backlinks")
+                        .resizable(true)
+                        .default_size(160.0)
+                        .min_size(60.0)
+                        .max_size(400.0)
+                        .show(ui, |ui| {
+                            if let Some(event) = ui::backlinks_panel::show(
+                                ui,
+                                self.editor.open_path.as_deref(),
+                                self.backlinks,
+                            ) {
+                                match event {
+                                    ui::backlinks_panel::BacklinksEvent::OpenDocument(path) => {
+                                        self.actions.push(DockAction::OpenDocument(path));
+                                    }
+                                    ui::backlinks_panel::BacklinksEvent::Refresh => {
+                                        self.actions.push(DockAction::RefreshBacklinks);
+                                    }
+                                }
+                            }
+                        });
+                }
                 match self.editor_view_mode {
                     ui::editor_panel::EditorViewMode::Edit => {
                         let note_titles = self

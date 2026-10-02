@@ -44,12 +44,13 @@ impl EditorViewMode {
 
 /// An action from the Editor pane's ☰ menu that isn't already covered by an
 /// existing `BinderEvent` (Rename/Move/Delete reuse those directly — see
-/// `app::dock_tabs::handle_binder_event`) — routed back to `SmaragdApp` as
-/// `DockAction::EditorMenu`, handled by `SmaragdApp::handle_editor_menu_event`.
-/// All four operate on whichever document is currently open in the editor.
+/// `app::dock_tabs::handle_binder_event`) or by a direct field mutation
+/// (toggling "Backlinks in document"/the view mode works the same way
+/// `EditorViewMode` already does, since both are pure tab-local UI state) —
+/// routed back to `SmaragdApp` as `DockAction::EditorMenu`, handled by
+/// `SmaragdApp::handle_editor_menu_event`. All variants operate on whichever
+/// document is currently open in the editor.
 pub enum EditorMenuEvent {
-    /// "Backlinks in document" — opens/closes the Backlinks dock tab.
-    ToggleBacklinks,
     /// "Find & Replace..." — opens the Find/Replace panel, scoped to the
     /// current file.
     FindReplace,

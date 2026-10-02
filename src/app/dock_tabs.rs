@@ -271,7 +271,6 @@ impl SmaragdApp {
     ) {
         use ui::editor_panel::EditorMenuEvent;
         match event {
-            EditorMenuEvent::ToggleBacklinks => self.toggle_dock_tab(DockTab::Backlinks),
             EditorMenuEvent::FindReplace => self.find_replace.request_open(),
             EditorMenuEvent::OpenInDefaultApp(path) => {
                 if let Err(err) = opener::open(&path) {

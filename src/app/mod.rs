@@ -135,6 +135,13 @@ pub struct SmaragdApp {
     /// not-persisted, not-reset-by-`set_project` convention as
     /// `dashboard_activity_metric`.
     editor_view_mode: ui::editor_panel::EditorViewMode,
+    /// Whether the Editor dock tab shows backlinks inline, below its own
+    /// content — the ☰ menu's "Backlinks in document" row toggles this.
+    /// Independent of the separate Backlinks dock tab (which keeps working
+    /// exactly as before regardless of this) and of `editor_view_mode` (shows
+    /// under both Source mode and Reading view). Same not-persisted
+    /// convention as `editor_view_mode`.
+    show_inline_backlinks: bool,
     /// The Belief Timeline tab's currently selected POV character — starts blank
     /// (defaults to the first known character the panel finds, see
     /// `ui::belief_timeline_panel::show`) and isn't reset by `set_project`, unlike
@@ -381,6 +388,7 @@ impl SmaragdApp {
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
             dashboard_activity_metric: crate::dashboard::ActivityMetric::default(),
             editor_view_mode: ui::editor_panel::EditorViewMode::default(),
+            show_inline_backlinks: false,
             belief_timeline_character: String::new(),
             settings_path_override: None,
             is_test_fixture: false,
@@ -490,6 +498,7 @@ impl SmaragdApp {
             streak_sub_tab: ui::streak_panel::StreakSubTab::Configure,
             dashboard_activity_metric: crate::dashboard::ActivityMetric::default(),
             editor_view_mode: ui::editor_panel::EditorViewMode::default(),
+            show_inline_backlinks: false,
             belief_timeline_character: String::new(),
             // Always set, unconditionally — see this field's doc comment.
             // Any test built on `test_fixture` must never be able to reach
@@ -1877,7 +1886,7 @@ impl eframe::App for SmaragdApp {
                     streak_sub_tab: &mut self.streak_sub_tab,
                     dashboard_activity_metric: &mut self.dashboard_activity_metric,
                     editor_view_mode: &mut self.editor_view_mode,
-                    backlinks_tab_open: self.dock_state.find_tab(&DockTab::Backlinks).is_some(),
+                    show_inline_backlinks: &mut self.show_inline_backlinks,
                     belief_timeline_character: &mut self.belief_timeline_character,
                     actions: Vec::new(),
                     focus_binder_requested: std::mem::take(&mut self.focus_binder_requested),
