@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.5.1 — 2026-10-03
+
 - New application icon (a sparkling emerald), replacing the old flat
   emerald-cut gem. Used for the window/taskbar icon, the Linux desktop icon
   (deb/rpm/AppImage/flatpak), the macOS `.icns`, and — new — the Windows
