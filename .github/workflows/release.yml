@@ -86,7 +86,11 @@ jobs:
             -C target/release smaragd
 
       - name: Render application icon
-        run: magick assets/smaragd-icon.png -filter Lanczos -resize 512x512 smaragd.png
+        # `magick` (no subcommand) is IM7-only syntax; ubuntu-22.04's apt
+        # `imagemagick` package is still IM6, which only has `convert`. Use
+        # `convert` everywhere instead — IM7 (macOS/Homebrew) keeps it as a
+        # working (if deprecated) compatibility shim, so it runs on both.
+        run: convert assets/smaragd-icon.png -filter Lanczos -resize 512x512 smaragd.png
 
       - name: Download packaging tools
         run: |
@@ -322,9 +326,9 @@ jobs:
           set -euo pipefail
           mkdir -p AppIcon.iconset
           for size in 16 32 128 256 512; do
-            magick assets/smaragd-icon.png -filter Lanczos -resize "${size}x${size}" "AppIcon.iconset/icon_${size}x${size}.png"
+            convert assets/smaragd-icon.png -filter Lanczos -resize "${size}x${size}" "AppIcon.iconset/icon_${size}x${size}.png"
             double=$((size * 2))
-            magick assets/smaragd-icon.png -filter Lanczos -resize "${double}x${double}" "AppIcon.iconset/icon_${size}x${size}@2x.png"
+            convert assets/smaragd-icon.png -filter Lanczos -resize "${double}x${double}" "AppIcon.iconset/icon_${size}x${size}@2x.png"
           done
           iconutil -c icns AppIcon.iconset -o AppIcon.icns
 
