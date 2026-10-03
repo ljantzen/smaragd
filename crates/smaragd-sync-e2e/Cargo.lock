@@ -6754,7 +6754,7 @@ dependencies = [
 
 [[package]]
 name = "smaragd"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "arboard",
  "argon2",
