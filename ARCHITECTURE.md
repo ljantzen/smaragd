@@ -8,7 +8,7 @@ Pure, unit-tested logic is kept separate from egui rendering code, which is veri
 src/
   main.rs                 entry point
   app.rs                  SmaragdApp: dock layout, menu bar, event routing
-  build.rs                (repo root) captures git commit/build date as compile-time env vars for Help > About, and rasterizes assets/smaragd-icon.svg into the compiled-in window icon
+  build.rs                (repo root) captures git commit/build date as compile-time env vars for Help > About, decodes assets/smaragd-icon.png into the compiled-in window icon, and (Windows only) embeds it as the .exe's resource icon — see README's "Application icon" section for the limits of what this actually reaches at runtime
   markdown.rs             markdown -> Block/Span parser (pulldown-cmark + wikilinks + inline #tag scanning)
   frontmatter.rs          YAML frontmatter parsing (DocumentMeta) + write-back + stripping for preview
   autocomplete.rs         wikilink-autocomplete query/filter/completion logic (plain prefix/substring match)

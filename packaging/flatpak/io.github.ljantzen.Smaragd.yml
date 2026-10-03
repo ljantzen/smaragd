@@ -36,7 +36,7 @@ modules:
       - install -Dm755 target/release/smaragd /app/bin/smaragd
       - sed 's/^Icon=smaragd$/Icon=io.github.ljantzen.Smaragd/' packaging/smaragd.desktop > io.github.ljantzen.Smaragd.desktop
       - install -Dm644 io.github.ljantzen.Smaragd.desktop /app/share/applications/io.github.ljantzen.Smaragd.desktop
-      - install -Dm644 assets/smaragd-icon.svg /app/share/icons/hicolor/scalable/apps/io.github.ljantzen.Smaragd.svg
+      - install -Dm644 assets/smaragd-icon.png /app/share/icons/hicolor/256x256/apps/io.github.ljantzen.Smaragd.png
       - install -Dm644 packaging/flatpak/io.github.ljantzen.Smaragd.metainfo.xml /app/share/metainfo/io.github.ljantzen.Smaragd.metainfo.xml
     sources:
       - type: dir

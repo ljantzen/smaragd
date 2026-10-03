@@ -60,7 +60,8 @@ jobs:
             libegl1 \
             libssl-dev \
             libspeechd-dev \
-            librsvg2-bin \
+            imagemagick \
+            appstream \
             flatpak \
             flatpak-builder
 
@@ -85,7 +86,7 @@ jobs:
             -C target/release smaragd
 
       - name: Render application icon
-        run: rsvg-convert -w 512 -h 512 assets/smaragd-icon.svg -o smaragd.png
+        run: magick assets/smaragd-icon.png -filter Lanczos -resize 512x512 smaragd.png
 
       - name: Download packaging tools
         run: |
@@ -128,6 +129,19 @@ jobs:
             -l "$XKBCOMMON_X11" \
             -l "$EGL" \
             -l "$GL"
+
+          # AppStream metadata so the AppImage catalog (appimage.github.io)
+          # can show our own summary/description/links instead of bare
+          # defaults. linuxdeploy doesn't have a flag for this, so it's
+          # copied in by hand before appimagetool packs the AppDir up.
+          mkdir -p AppDir/usr/share/metainfo
+          cp packaging/appimage/io.github.ljantzen.Smaragd.metainfo.xml \
+            AppDir/usr/share/metainfo/
+
+      - name: Validate AppStream metadata
+        run: |
+          appstreamcli validate --no-net \
+            AppDir/usr/share/metainfo/io.github.ljantzen.Smaragd.metainfo.xml
 
       - name: Build AppImage
         env:
@@ -301,16 +315,16 @@ jobs:
             -output target/universal-apple-darwin/release/smaragd
 
       - name: Install icon tooling
-        run: brew install librsvg
+        run: brew install imagemagick
 
       - name: Render app icon (.icns)
         run: |
           set -euo pipefail
           mkdir -p AppIcon.iconset
           for size in 16 32 128 256 512; do
-            rsvg-convert -w "$size" -h "$size" assets/smaragd-icon.svg -o "AppIcon.iconset/icon_${size}x${size}.png"
+            magick assets/smaragd-icon.png -filter Lanczos -resize "${size}x${size}" "AppIcon.iconset/icon_${size}x${size}.png"
             double=$((size * 2))
-            rsvg-convert -w "$double" -h "$double" assets/smaragd-icon.svg -o "AppIcon.iconset/icon_${size}x${size}@2x.png"
+            magick assets/smaragd-icon.png -filter Lanczos -resize "${double}x${double}" "AppIcon.iconset/icon_${size}x${size}@2x.png"
           done
           iconutil -c icns AppIcon.iconset -o AppIcon.icns
 

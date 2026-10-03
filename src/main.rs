@@ -1,4 +1,4 @@
-// Rasterized from assets/smaragd-icon.svg by build.rs; keep ICON_SIZE in sync with it.
+// Decoded from assets/smaragd-icon.png by build.rs; keep ICON_SIZE in sync with it.
 const ICON_SIZE: u32 = 256;
 const ICON_RGBA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon_rgba.bin"));
 

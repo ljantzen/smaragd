@@ -84,13 +84,32 @@ Version control uses [jj (Jujutsu)](https://github.com/jj-vcs/jj) with the git b
 
 Pushing a semantic-version tag (`v1.2.3` or `1.2.3`, prerelease suffixes like `-rc.1` allowed) triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds:
 
-- **Linux**: an x86_64 release binary and an AppImage (via `linuxdeploy`, using [`packaging/smaragd.desktop`](packaging/smaragd.desktop) and the app icon — see below). `libxkbcommon(-x11)`, `libEGL`, and `libGL` are bundled explicitly: winit and glutin load them via `dlopen` rather than linking them, so `linuxdeploy`'s automatic (ldd-based) dependency scan can't see them.
+- **Linux**: an x86_64 release binary and an AppImage (via `linuxdeploy`, using [`packaging/smaragd.desktop`](packaging/smaragd.desktop) and the [app icon](#application-icon)). `libxkbcommon(-x11)`, `libEGL`, and `libGL` are bundled explicitly: winit and glutin load them via `dlopen` rather than linking them, so `linuxdeploy`'s automatic (ldd-based) dependency scan can't see them.
 - **Windows**: an x86_64 build, packaged as a zip.
 - **macOS**: arm64 and x86_64 cross-compiled on a single arm64 runner, lipo'd into a universal binary, assembled into a `Smaragd.app` bundle (via [`packaging/macos/Info.plist.template`](packaging/macos/Info.plist.template)) and ad-hoc signed (required for arm64 under Gatekeeper).
 
 All three, plus a `SHA256SUMS` file per platform, are published to a GitHub release. See [RELEASENOTES.md](RELEASENOTES.md) for what's changed release to release.
 
 `just release <version>` (e.g. `just release 0.6.2`) automates cutting one — [`scripts/release.sh`](scripts/release.sh) bumps `Cargo.toml`/`Cargo.lock`, rolls RELEASENOTES.md's Unreleased section into a dated `## vX.Y.Z` header, runs the same checks CI does, then (after a confirmation prompt) commits, pushes `main`, tags, and pushes the tag. Requires a clean jj working copy. `--dry-run` stops right before the push/tag step; `--yes` skips the confirmation prompt.
+
+## Application icon
+
+The source of truth is a single raster image, [`assets/smaragd-icon.png`](assets/smaragd-icon.png) (256x256). `build.rs` embeds it into every build as the compiled-in window icon, and on Windows additionally bakes it into the `.exe` as its file icon (Explorer, taskbar pin, Alt-Tab). The release workflow resizes it (via ImageMagick) into the Linux package icon (deb/rpm/AppImage/flatpak, under `hicolor/256x256/apps/`) and the macOS `.icns`.
+
+**`cargo install`/`cargo run` don't get the full picture.** They only build and place the binary — no `.desktop` file, no icon-theme entry, no `.app` bundle. And the window icon itself goes through winit's `set_window_icon`, which [only works on Windows and X11](https://docs.rs/winit/latest/winit/window/struct.Window.html#method.set_window_icon) — it's a documented no-op on Wayland, macOS, iOS, Android, and Web. So depending on platform:
+
+| Platform | `cargo install`/`cargo run` | Packaged release build |
+|---|---|---|
+| Windows | icon shows (both the `.exe` file icon and the runtime title bar) | same |
+| Linux, X11 | icon shows in the title bar/taskbar via the live window hint; no launcher entry | icon shows everywhere (launcher, taskbar, Alt-Tab) via the installed `.desktop` file + icon-theme entry |
+| Linux, Wayland (e.g. GNOME) | no custom icon anywhere — Wayland compositors key the dock/taskbar/Alt-Tab icon off the app's `.desktop` file, which doesn't exist here | same as X11, since deb/rpm/flatpak all ship a `.desktop` file |
+| macOS | no custom icon — Dock integration comes from the `.app` bundle's `Info.plist`/`.icns`, which a bare binary doesn't have | icon shows in Dock/Finder via `Smaragd.app` |
+
+Ways to close that gap for `cargo install`/`cargo run` users, roughly in order of effort, none currently implemented:
+
+1. **Point people at the packaged builds instead.** The [Releases page](https://github.com/ljantzen/smaragd/releases/latest) already gets this right everywhere; `cargo install` is a build-from-source path, not the primary distribution channel.
+2. **A self-install subcommand** (e.g. `smaragd --install-desktop-file`) that writes a `.desktop` file and the icon PNG into `~/.local/share/applications` and `~/.local/share/icons/hicolor/256x256/apps/`, then refreshes the desktop/icon caches if the relevant tools are present. Both source files can be embedded in the binary via `include_bytes!`/`include_str!`, so no extra assets are needed at install time. This would fix X11 and Wayland alike, since both key off a real `.desktop` file — but only if the running window's app-id/WM class matches the installed file's name, which nothing currently sets explicitly on Linux (see the `ViewportBuilder` in `src/main.rs`); that would need checking too.
+3. **macOS has no `.desktop`-file equivalent fix** — Dock icon support fundamentally wants a real `.app` bundle. Either keep documenting that macOS users should use `Smaragd.app` from Releases rather than `cargo install`, or set the Dock icon programmatically at startup via `NSApplication.setApplicationIconImage` (e.g. through `objc2-app-kit`), which works for a bare binary without a bundle but is macOS-specific code for a cosmetic gap on an unsupported install path.
 
 ## Project layout
 

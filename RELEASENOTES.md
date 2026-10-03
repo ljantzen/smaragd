@@ -5,6 +5,14 @@ this file.
 
 ## Unreleased
 
+- New application icon (a sparkling emerald), replacing the old flat
+  emerald-cut gem. Used for the window/taskbar icon, the Linux desktop icon
+  (deb/rpm/AppImage/flatpak), the macOS `.icns`, and — new — the Windows
+  `.exe` icon, which previously had none.
+- The AppImage now carries AppStream metadata (`usr/share/metainfo/`), so its
+  listing on appimage.github.io shows our own summary, description, and
+  links instead of bare defaults.
+
 ## v1.5.0 — 2026-10-03
 
 - Added **paste/drop attachments** into the editor: paste a clipboard image

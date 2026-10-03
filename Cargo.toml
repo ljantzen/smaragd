@@ -70,9 +70,10 @@ zeroize = "1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
-resvg = "0.48"
-tiny-skia = "0.12"
-usvg = "0.48"
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
@@ -92,7 +93,7 @@ depends = "$auto"
 assets = [
     ["target/release/smaragd", "usr/bin/", "755"],
     ["packaging/smaragd.desktop", "usr/share/applications/smaragd.desktop", "644"],
-    ["assets/smaragd-icon.svg", "usr/share/icons/hicolor/scalable/apps/smaragd.svg", "644"],
+    ["assets/smaragd-icon.png", "usr/share/icons/hicolor/256x256/apps/smaragd.png", "644"],
 ]
 
 # RPM package metadata, consumed by `cargo generate-rpm` in the release workflow.
@@ -100,5 +101,5 @@ assets = [
 assets = [
     { source = "target/release/smaragd", dest = "/usr/bin/smaragd", mode = "755" },
     { source = "packaging/smaragd.desktop", dest = "/usr/share/applications/smaragd.desktop", mode = "644" },
-    { source = "assets/smaragd-icon.svg", dest = "/usr/share/icons/hicolor/scalable/apps/smaragd.svg", mode = "644" },
+    { source = "assets/smaragd-icon.png", dest = "/usr/share/icons/hicolor/256x256/apps/smaragd.png", mode = "644" },
 ]
