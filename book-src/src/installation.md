@@ -49,3 +49,16 @@ Four package formats are published on the [Releases page](https://github.com/lja
   ```bash
   flatpak install --user ./smaragd-*-x86_64.flatpak
   ```
+
+## Building from source
+
+Building it yourself with `cargo install` or `cargo run` (see the [README](https://github.com/ljantzen/smaragd#running)) only places the binary — none of the steps above that give the packaged builds their icon happen. What you get instead depends on the platform, because of a limitation in the windowing library Smaragd uses (winit), which only supports setting a window icon at runtime on **Windows and X11** — it's a no-op on Wayland and macOS:
+
+| Platform | `cargo install`/`cargo run` | Packaged build (above) |
+|---|---|---|
+| Windows | icon shows (both the `.exe` file icon and the title bar) | same |
+| Linux, X11 | icon shows in the title bar/taskbar; no entry in the application launcher | icon shows everywhere |
+| Linux, Wayland (e.g. GNOME) | no custom icon anywhere | icon shows everywhere |
+| macOS | no custom icon (the Dock icon needs a real `.app` bundle, which a bare binary doesn't have) | icon shows in Dock/Finder |
+
+If that matters to you, the simplest fix is to use one of the packaged builds above instead — they're unaffected.
