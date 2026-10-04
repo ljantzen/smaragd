@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::Path;
 
 use egui::{Color32, FontId, RichText, TextFormat, text::LayoutJob};
@@ -483,58 +484,200 @@ fn render_paragraph(
         let font = ps.body_font(ps.style.body.size_pt as f32);
         return render_spans_wrapped(ui, ps, spans, font, ps.text_color, base_dir);
     }
-    let drop_cap = drop_cap_here.then_some(ps.style.drop_cap).flatten();
-    let job = build_paragraph_job(ps, spans, drop_cap, ui.available_width());
+    if let Some(drop_cap) = drop_cap_here.then_some(ps.style.drop_cap).flatten() {
+        render_paragraph_with_drop_cap(ui, ps, spans, drop_cap, ui.available_width());
+        return None;
+    }
+    let job = build_paragraph_job(ps, spans, ui.available_width());
     ui.add(egui::Label::new(job).wrap());
     None
 }
 
 /// Builds a whole-paragraph `LayoutJob` with `wrap.max_width`/`justify` set from
-/// `style.body`, optionally rendering the first character oversized as a raised
-/// drop cap (matches `export::pdf`'s own "raised, not sunk" cap — see
-/// `DropCapStyle`'s doc comment — so Preview and PDF agree on what this looks
-/// like) when `drop_cap` is `Some` — only ever passed for a document's first
-/// paragraph, mirroring `export::pdf::blocks_to_typst`'s own
-/// `first_paragraph_seen` gating.
-fn build_paragraph_job(
-    ps: &PreviewStyle,
-    spans: &[Span],
-    drop_cap: Option<DropCapStyle>,
-    wrap_width: f32,
-) -> LayoutJob {
+/// `style.body` — no drop cap handling here; a drop-capped first paragraph routes
+/// through `render_paragraph_with_drop_cap` instead (see `render_paragraph`).
+fn build_paragraph_job(ps: &PreviewStyle, spans: &[Span], wrap_width: f32) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap_width.max(1.0);
     job.justify = ps.style.body.justify;
-    let base_size = ps.style.body.size_pt as f32;
-    let base_font = ps.body_font(base_size);
-
-    let mut start = 0;
-    if let Some(DropCapStyle { scale }) = drop_cap
-        && let Some(first) = spans.first()
-        && let Some(ch) = first.text.chars().next()
-    {
-        let cap_font = FontId::new(base_size * scale * ps.zoom, ps.body_family.clone());
-        job.append(
-            &ch.to_string(),
-            0.0,
-            TextFormat {
-                font_id: cap_font,
-                color: ps.text_color,
-                ..Default::default()
-            },
-        );
-        let rest_byte = ch.len_utf8();
-        if rest_byte < first.text.len() {
-            let mut remainder = first.clone();
-            remainder.text = first.text[rest_byte..].to_string();
-            append_span(&mut job, ps, &remainder, base_font.clone(), ps.text_color);
-        }
-        start = 1;
-    }
-    for span in &spans[start..] {
+    let base_font = ps.body_font(ps.style.body.size_pt as f32);
+    for span in spans {
         append_span(&mut job, ps, span, base_font.clone(), ps.text_color);
     }
     job
+}
+
+/// Renders `spans` as a document's opening paragraph with a true *sunk* drop
+/// cap — the enlarged first letter placed over the paragraph's top-left
+/// corner, with the first few body-text lines greedily wrapped narrower
+/// beside it, then the rest of the paragraph flowing at the normal width.
+/// Mirrors `export::pdf::append_paragraph_with_drop_cap`'s own greedy
+/// word-fill (`SUNK_DROP_CAP_HELPER`) and `DropCapStyle`'s documented
+/// `lines = round(scale / line_height)` heuristic, so Preview and PDF/EPUB
+/// agree on roughly what a drop-capped chapter opening looks like — unlike
+/// the single oversized inline glyph this used to render (a leftover from
+/// before PDF export itself grew a true sunk cap in #54), which badly
+/// overstated the cap's visual weight since it had no narrowed lines to sit
+/// beside, just one line of body text dwarfed by a 2.5-3.5x-size letter.
+///
+/// Like the PDF/EPUB renderers, the narrowed lines are always ragged-right
+/// even when `style.body.justify` is set — manually justifying custom-wrapped
+/// lines is out of scope here too (see `DropCapStyle`'s doc comment).
+fn render_paragraph_with_drop_cap(
+    ui: &mut egui::Ui,
+    ps: &PreviewStyle,
+    spans: &[Span],
+    drop_cap: DropCapStyle,
+    wrap_width: f32,
+) {
+    let base_size = ps.style.body.size_pt as f32;
+    let base_font = ps.body_font(base_size);
+
+    let Some(first_idx) = spans.iter().position(|s| !s.text.is_empty()) else {
+        let job = build_paragraph_job(ps, spans, wrap_width);
+        ui.add(egui::Label::new(job).wrap());
+        return;
+    };
+    let mut chars = spans[first_idx].text.chars();
+    let Some(cap_char) = chars.next() else {
+        let job = build_paragraph_job(ps, spans, wrap_width);
+        ui.add(egui::Label::new(job).wrap());
+        return;
+    };
+    let rest_of_first = Span {
+        text: chars.as_str().to_string(),
+        ..spans[first_idx].clone()
+    };
+
+    let mut words = span_words(ps, &rest_of_first, base_font.clone(), ps.text_color);
+    for span in &spans[first_idx + 1..] {
+        words.extend(span_words(ps, span, base_font.clone(), ps.text_color));
+    }
+
+    let cap_font = FontId::new(base_size * drop_cap.scale * ps.zoom, ps.body_family.clone());
+    let cap_galley =
+        ui.fonts_mut(|f| f.layout_no_wrap(cap_char.to_string(), cap_font, ps.text_color));
+    let cap_size = cap_galley.size();
+    // Mirrors `append_paragraph_with_drop_cap`'s `gutter_pt`, scaled by `zoom`
+    // like every other length derived from `style.body` in this preview.
+    let gutter = base_size * 0.15 * ps.zoom;
+    let narrow_width = (wrap_width - cap_size.x - gutter).max(20.0);
+    let cap_lines = drop_cap_line_span(drop_cap.scale, ps.style.body.line_height);
+
+    let (wrapped_lines, remaining) =
+        pack_greedy_lines(words.into(), cap_lines, narrow_width, |candidate| {
+            ui.fonts_mut(|f| f.layout_job(words_job(candidate, f32::INFINITY, false)))
+                .size()
+                .x
+        });
+
+    ui.vertical(|ui| {
+        let origin = ui.cursor().min;
+        let mut rows_height = 0.0;
+        for line in &wrapped_lines {
+            let row = ui.horizontal(|ui| {
+                ui.add_space(cap_size.x + gutter);
+                ui.add(egui::Label::new(words_job(line, f32::INFINITY, false)));
+            });
+            rows_height += row.response.rect.height();
+        }
+        ui.painter().galley(origin, cap_galley, ps.text_color);
+        // The `cap_lines` heuristic is approximate (see `DropCapStyle`'s doc
+        // comment) and can under-shoot the cap's actual rendered height; pad
+        // out any leftover so the cap doesn't visually bleed into whatever
+        // comes next.
+        if rows_height < cap_size.y {
+            ui.add_space(cap_size.y - rows_height);
+        }
+        if !remaining.is_empty() {
+            let remaining_words: Vec<_> = remaining.into_iter().collect();
+            let job = words_job(&remaining_words, wrap_width, ps.style.body.justify);
+            ui.add(egui::Label::new(job).wrap());
+        }
+    });
+}
+
+/// Splits `span`'s text on whitespace into individually-formatted words — the
+/// granularity `render_paragraph_with_drop_cap`'s greedy narrow-line-fill
+/// needs to measure and wrap one word at a time, mirroring
+/// `export::pdf::append_span_words`'s identical split (and its same
+/// documented limitation: formatting that changes mid-word, e.g. `wonder*ful*`,
+/// loses its original lack of a space at that boundary once rejoined by
+/// `words_job`).
+fn span_words(ps: &PreviewStyle, span: &Span, font: FontId, color: Color32) -> Vec<Word> {
+    let mut probe = LayoutJob::default();
+    append_span(&mut probe, ps, span, font, color);
+    let format = probe
+        .sections
+        .first()
+        .map(|s| s.format.clone())
+        .unwrap_or_default();
+    span.text
+        .split_whitespace()
+        .map(|word| (word.to_string(), format.clone()))
+        .collect()
+}
+
+/// Joins `words` with single spaces into one `LayoutJob`, each word keeping
+/// its own `TextFormat` — used both to measure a candidate line's natural
+/// width (`wrap_width: f32::INFINITY`) and to render a finished line.
+fn words_job(words: &[Word], wrap_width: f32, justify: bool) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    job.wrap.max_width = wrap_width;
+    job.justify = justify;
+    for (i, (word, format)) in words.iter().enumerate() {
+        if i > 0 {
+            job.append(" ", 0.0, format.clone());
+        }
+        job.append(word, 0.0, format.clone());
+    }
+    job
+}
+
+/// One word plus the `TextFormat` it should render in — the granularity
+/// `render_paragraph_with_drop_cap`'s greedy narrow-wrap packs lines from.
+type Word = (String, TextFormat);
+
+/// How many body-text lines a drop cap of `scale` spans, at `line_height` —
+/// the same `scale / line_height` heuristic `export::pdf`'s
+/// `append_paragraph_with_drop_cap` uses (not derived from the font's real
+/// cap-height metric; see `DropCapStyle`'s doc comment and GitHub issue #76).
+/// `.max(2)` keeps a degenerately small scale/line-height ratio from
+/// producing a single-line "sunk" cap, which would look identical to no cap
+/// at all.
+fn drop_cap_line_span(scale: f32, line_height: f32) -> u32 {
+    ((scale / line_height).round() as u32).max(2)
+}
+
+/// Greedily fills up to `max_lines` lines from the front of `words`, each
+/// line taking as many words as fit within `narrow_width` per `measure_width`
+/// (always at least one word per line, even if it alone overflows), then
+/// stops — leaving whatever's left in the returned queue. Mirrors
+/// `SUNK_DROP_CAP_HELPER`'s identical greedy fill in `export::pdf`, just
+/// expressed in Rust against egui's own text measurement instead of Typst's.
+fn pack_greedy_lines(
+    mut remaining: VecDeque<Word>,
+    max_lines: u32,
+    narrow_width: f32,
+    mut measure_width: impl FnMut(&[Word]) -> f32,
+) -> (Vec<Vec<Word>>, VecDeque<Word>) {
+    let mut wrapped_lines = Vec::new();
+    for _ in 0..max_lines {
+        if remaining.is_empty() {
+            break;
+        }
+        let mut line: Vec<Word> = Vec::new();
+        while let Some((word, format)) = remaining.front() {
+            let mut candidate = line.clone();
+            candidate.push((word.clone(), format.clone()));
+            if measure_width(&candidate) > narrow_width && !line.is_empty() {
+                break;
+            }
+            line.push(remaining.pop_front().expect("front() just returned Some"));
+        }
+        wrapped_lines.push(line);
+    }
+    (wrapped_lines, remaining)
 }
 
 fn render_code_block(ui: &mut egui::Ui, ps: &PreviewStyle, language: Option<&str>, spans: &[Span]) {
@@ -1145,6 +1288,20 @@ mod tests {
         }
     }
 
+    fn bold_span(text: &str) -> Span {
+        Span {
+            text: text.to_string(),
+            bold: true,
+            italic: false,
+            strikethrough: false,
+            code: false,
+            link: None,
+            wikilink: None,
+            tag: None,
+            image: None,
+        }
+    }
+
     fn wikilink_span(target: &str) -> Span {
         Span {
             text: target.to_string(),
@@ -1471,43 +1628,133 @@ mod tests {
         let trade = style::find(&styles, "trade_paperback").unwrap();
         let manuscript = style::find(&styles, "manuscript").unwrap();
 
-        let job = build_paragraph_job(&preview_style(trade), &[plain_span("Hello.")], None, 300.0);
+        let job = build_paragraph_job(&preview_style(trade), &[plain_span("Hello.")], 300.0);
         assert!(job.justify);
 
-        let job = build_paragraph_job(
-            &preview_style(manuscript),
-            &[plain_span("Hello.")],
-            None,
-            300.0,
-        );
+        let job = build_paragraph_job(&preview_style(manuscript), &[plain_span("Hello.")], 300.0);
         assert!(!job.justify);
     }
 
     #[test]
-    fn build_paragraph_job_splits_off_a_drop_cap_from_the_first_span() {
-        let styles = style::built_in_styles();
-        let trade = style::find(&styles, "trade_paperback").unwrap();
-        let ps = preview_style(trade);
-        let drop_cap = trade.drop_cap;
-        assert!(drop_cap.is_some());
-
-        let job = build_paragraph_job(&ps, &[plain_span("Hello there.")], drop_cap, 300.0);
-        assert_eq!(job.text, "Hello there.");
-        // The first section is just the split-off capital letter, at the
-        // enlarged size; the rest keeps the ordinary body size.
-        let cap_size = drop_cap.unwrap().scale * ps.style.body.size_pt as f32;
-        assert_eq!(job.sections[0].format.font_id.size, cap_size);
-        let range = job.sections[0].byte_range.start.0..job.sections[0].byte_range.end.0;
-        assert_eq!(&job.text[range], "H");
-    }
-
-    #[test]
-    fn build_paragraph_job_without_drop_cap_keeps_a_single_section() {
+    fn build_paragraph_job_keeps_a_single_section_per_plain_span() {
         let styles = style::built_in_styles();
         let manuscript = style::find(&styles, "manuscript").unwrap();
         let ps = preview_style(manuscript);
 
-        let job = build_paragraph_job(&ps, &[plain_span("Hello there.")], None, 300.0);
+        let job = build_paragraph_job(&ps, &[plain_span("Hello there.")], 300.0);
         assert_eq!(job.sections.len(), 1);
+    }
+
+    #[test]
+    fn drop_cap_line_span_matches_the_pdf_exporters_heuristic() {
+        // Same `scale / line_height`, rounded, floored at 2 — see
+        // `export::pdf::append_paragraph_with_drop_cap`'s identical formula.
+        assert_eq!(drop_cap_line_span(3.0, 1.3), 2);
+        assert_eq!(drop_cap_line_span(3.5, 1.3), 3);
+        // A scale/line-height ratio under 1 still spans at least 2 lines —
+        // a 1-line "sunk" cap wouldn't read as sunk at all.
+        assert_eq!(drop_cap_line_span(1.0, 1.5), 2);
+    }
+
+    #[test]
+    fn span_words_splits_on_whitespace_and_shares_one_format_per_span() {
+        let styles = style::built_in_styles();
+        let style = style::find(&styles, "manuscript").unwrap();
+        let ps = preview_style(style);
+        let span = bold_span("vorfor har jeg");
+
+        let words = span_words(&ps, &span, ps.body_font(12.0), ps.text_color);
+
+        assert_eq!(
+            words.iter().map(|(w, _)| w.as_str()).collect::<Vec<_>>(),
+            vec!["vorfor", "har", "jeg"]
+        );
+        // Bold is signalled by `append_span` pushing the color further from
+        // the background (egui has no real bold weight) — every word from
+        // the same bold span should carry that same emphasized color.
+        let emphasized = emphasize(ps.text_color, ps.dark_mode);
+        assert!(words.iter().all(|(_, format)| format.color == emphasized));
+    }
+
+    #[test]
+    fn pack_greedy_lines_fills_each_line_up_to_the_narrow_width_then_stops_at_max_lines() {
+        let format = TextFormat::default();
+        let words: VecDeque<_> = ["aa", "bb", "cc", "dd", "ee"]
+            .iter()
+            .map(|w| (w.to_string(), format.clone()))
+            .collect();
+        // A synthetic "width" that's just the word count in the candidate —
+        // real geometry isn't needed to exercise the packing logic itself.
+        let (lines, remaining) =
+            pack_greedy_lines(words, 2, 2.5, |candidate| candidate.len() as f32);
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines[0].iter().map(|(w, _)| w.clone()).collect::<Vec<_>>(),
+            vec!["aa", "bb"]
+        );
+        assert_eq!(
+            lines[1].iter().map(|(w, _)| w.clone()).collect::<Vec<_>>(),
+            vec!["cc", "dd"]
+        );
+        assert_eq!(
+            remaining.into_iter().map(|(w, _)| w).collect::<Vec<_>>(),
+            vec!["ee"]
+        );
+    }
+
+    /// End-to-end smoke test for the real rendering path (font measurement,
+    /// greedy narrow-wrap, and the painter overlay all exercised together via
+    /// a real `egui::Context`), not just the pure helpers above — regression
+    /// coverage for the screenshot that prompted this: the preview's drop cap
+    /// used to be a single oversized inline glyph (pre-dating PDF export's
+    /// own #54 sunk-cap rework), which looked badly disproportionate since it
+    /// had no narrowed lines to sit beside.
+    #[test]
+    fn render_paragraph_with_drop_cap_does_not_panic_on_a_long_paragraph() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let styles = style::built_in_styles();
+        let style = style::find(&styles, "trade_paperback").unwrap();
+        let drop_cap = style.drop_cap.unwrap();
+        let spans = [plain_span(
+            "Hvorfor har jeg fått for meg at å skrive denne boken er en god ide? \
+             Hvorfor er det jeg som må skrive akkurat denne boken?",
+        )];
+
+        crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
+            let ps = PreviewStyle::new(ui.visuals(), style, &[], &[], 1.0);
+            render_paragraph_with_drop_cap(ui, &ps, &spans, drop_cap, 300.0);
+        });
+    }
+
+    /// Same, but for a paragraph short enough that every word fits in the
+    /// narrowed lines — `remaining` ends up empty, a different code path than
+    /// the long-paragraph test above.
+    #[test]
+    fn render_paragraph_with_drop_cap_does_not_panic_on_a_short_paragraph() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let styles = style::built_in_styles();
+        let style = style::find(&styles, "trade_paperback").unwrap();
+        let drop_cap = style.drop_cap.unwrap();
+        let spans = [plain_span("Hi.")];
+
+        crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
+            let ps = PreviewStyle::new(ui.visuals(), style, &[], &[], 1.0);
+            render_paragraph_with_drop_cap(ui, &ps, &spans, drop_cap, 300.0);
+        });
+    }
+
+    #[test]
+    fn pack_greedy_lines_always_takes_at_least_one_word_even_if_it_overflows() {
+        let format = TextFormat::default();
+        let words: VecDeque<_> = [("huge".to_string(), format.clone())].into();
+        let (lines, remaining) =
+            pack_greedy_lines(words, 2, 0.0, |candidate| candidate.len() as f32);
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].len(), 1);
+        assert!(remaining.is_empty());
     }
 }

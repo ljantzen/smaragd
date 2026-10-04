@@ -5,6 +5,11 @@ this file.
 
 ## Unreleased
 
+- Fixed the Preview pane's drop cap: it now renders as a true sunk cap (the
+  enlarged letter spanning a few lines, with body text wrapped narrower
+  beside it), matching PDF/EPUB export instead of the old oversized inline
+  glyph that dwarfed a single line of text.
+
 ## v1.5.2 — 2026-10-03
 
 - New application icon (a sparkling emerald), replacing the old flat
