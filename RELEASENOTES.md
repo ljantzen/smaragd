@@ -23,6 +23,21 @@ this file.
   own tab with an independent, resident buffer — switching tabs never
   touches disk, and each is only saved on close, explicit Save, or app exit.
   Off by default; turn it on in `Settings > Editor > Tabs`.
+- Pressing Enter inside a list item now continues the list on the new line:
+  `- `/`*`/`+` bullets, numbered items (incrementing the number), and task
+  checkboxes (`- [ ]`, continued unchecked) all carry over, preserving
+  indentation. Pressing Enter on an empty item ends the list instead of
+  adding another blank bullet. Shift+Enter still inserts a plain line break
+  without continuing the list.
+- Added **Undo Last Rename/Move** (Ctrl+Alt+Z by default, remappable in
+  Settings > Shortcuts): reverses the most recent rename or drag-and-drop
+  move in the Binder. A single-level undo — triggering it again redoes the
+  original change rather than reaching further back — and doesn't share a
+  chord with the editor's own text undo/redo.
+- Document, project, and settings saves are now crash-safe: a save writes to
+  a temporary file and atomically swaps it into place, instead of writing
+  the target file directly. A crash, power loss, or full disk mid-save can
+  no longer leave a truncated or corrupted file on disk.
 - Fixed the Preview pane's drop cap: it now renders as a true sunk cap (the
   enlarged letter spanning a few lines, with body text wrapped narrower
   beside it), matching PDF/EPUB export instead of the old oversized inline

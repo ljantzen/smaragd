@@ -552,6 +552,7 @@ pub fn show(
     {
         return Some(event);
     }
+    handle_list_continuation_input(ui, editor, text_edit_id);
 
     let mut gutter_click: Option<GutterClick> = None;
     let output = egui::ScrollArea::vertical()
@@ -1402,16 +1403,230 @@ fn handle_attachment_input(
     None
 }
 
+/// A recognized list-item marker at the start of a line — detected directly
+/// from the raw line text, not through the full block parser in
+/// `crate::markdown` (which resolves nesting/numbering across the whole
+/// document — overkill for "what's on the one line Enter was just pressed
+/// on"). Matches a bullet (`-`, `*`, `+`) or an ordered marker (`N.`/`N)`),
+/// each followed by exactly one space, plus a GitHub-style task checkbox
+/// (`[ ]`/`[x]`/`[X]`) right after a bullet.
+struct ListMarker {
+    /// What to insert, right after a `\n`, to continue the list on the next
+    /// line — already includes the trailing space and, for an ordered list,
+    /// the incremented number. A continued task item is always unchecked.
+    continuation: String,
+    /// Byte length of the indent + marker (+ task checkbox, if any) at the
+    /// start of the line — `line[marker_byte_len..]` is the item's own text.
+    marker_byte_len: usize,
+}
+
+fn detect_list_marker(line: &str) -> Option<ListMarker> {
+    let indent_len = line.len() - line.trim_start_matches([' ', '\t']).len();
+    let indent = &line[..indent_len];
+    let rest = &line.as_bytes()[indent_len..];
+
+    if matches!(rest.first(), Some(b'-' | b'*' | b'+')) && rest.get(1) == Some(&b' ') {
+        let symbol = rest[0] as char;
+        let marker_byte_len = indent_len + 2;
+        let after_space = &line[marker_byte_len..];
+        if ["[ ] ", "[x] ", "[X] "]
+            .iter()
+            .any(|checkbox| after_space.starts_with(checkbox))
+        {
+            return Some(ListMarker {
+                continuation: format!("{indent}{symbol} [ ] "),
+                marker_byte_len: marker_byte_len + 4,
+            });
+        }
+        return Some(ListMarker {
+            continuation: format!("{indent}{symbol} "),
+            marker_byte_len,
+        });
+    }
+
+    let digit_len = rest.iter().take_while(|b| b.is_ascii_digit()).count();
+    if digit_len > 0
+        && matches!(rest.get(digit_len), Some(b'.' | b')'))
+        && rest.get(digit_len + 1) == Some(&b' ')
+    {
+        let delimiter = rest[digit_len] as char;
+        let number: u64 = line[indent_len..indent_len + digit_len].parse().ok()?;
+        return Some(ListMarker {
+            continuation: format!("{indent}{}{delimiter} ", number + 1),
+            marker_byte_len: indent_len + digit_len + 2,
+        });
+    }
+
+    None
+}
+
+/// What pressing Enter at `cursor_byte` inside `buffer` should produce, when
+/// its line is a recognized list item — pure text transformation (no egui
+/// involved), so it's unit-testable directly; `handle_list_continuation_input`
+/// is the thin egui-facing wrapper that detects the keypress and applies this.
+/// `None` means the line isn't a list item at all, so the caller should leave
+/// Enter to fall through to ordinary newline insertion.
+///
+/// An item with no text of its own (just the marker, e.g. a bare `- ` with
+/// nothing typed yet) ends the list instead of continuing it: the marker is
+/// dropped, leaving a plain blank line — otherwise there'd be no way to stop
+/// typing list items without manually deleting the next bullet.
+fn list_continuation_edit(buffer: &str, cursor_byte: usize) -> Option<(String, usize)> {
+    let cursor_byte = cursor_byte.min(buffer.len());
+    let line_start = buffer[..cursor_byte]
+        .rfind('\n')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let line_end = buffer[cursor_byte..]
+        .find('\n')
+        .map(|i| cursor_byte + i)
+        .unwrap_or(buffer.len());
+    let line = &buffer[line_start..line_end];
+    let marker = detect_list_marker(line)?;
+
+    let mut new_buffer = buffer.to_string();
+    let new_cursor_byte = if line[marker.marker_byte_len..].trim().is_empty() {
+        // Strip the marker in place rather than also inserting a new line —
+        // same line count as before, just blank now, matching Obsidian's own
+        // "empty item ends the list" behavior.
+        new_buffer.replace_range(line_start..line_end, "");
+        line_start
+    } else {
+        let insertion = format!("\n{}", marker.continuation);
+        let insertion_len = insertion.len();
+        new_buffer.insert_str(cursor_byte, &insertion);
+        cursor_byte + insertion_len
+    };
+    Some((new_buffer, new_cursor_byte))
+}
+
+fn is_plain_enter_press(event: &egui::Event) -> bool {
+    matches!(
+        event,
+        egui::Event::Key {
+            key: Key::Enter,
+            pressed: true,
+            modifiers,
+            ..
+        } if modifiers.is_none()
+    )
+}
+
+/// Continue (or end — see `list_continuation_edit`) a Markdown list when
+/// Enter creates a new line inside one. Run *before* `TextEdit::show`,
+/// mirroring `handle_attachment_input`'s own peek-then-consume shape: a
+/// plain Enter is only removed from this frame's events (so `TextEdit` never
+/// also inserts its own newline for it) once `list_continuation_edit` has
+/// confirmed the current line is actually a list item — a plain Enter
+/// anywhere else still falls through to ordinary newline insertion
+/// unchanged. Shift+Enter is deliberately left alone (only a modifier-free
+/// Enter press is matched), giving a soft-break escape hatch that skips
+/// continuation.
+fn handle_list_continuation_input(ui: &egui::Ui, editor: &mut EditorState, text_edit_id: Id) {
+    if !ui.ctx().memory(|m| m.has_focus(text_edit_id)) {
+        return;
+    }
+    let enter_pressed = ui
+        .ctx()
+        .input(|i| i.events.iter().any(is_plain_enter_press));
+    if !enter_pressed {
+        return;
+    }
+    let Some((new_buffer, new_cursor_byte)) =
+        list_continuation_edit(editor.buffer(), editor.cursor_byte())
+    else {
+        return;
+    };
+
+    ui.ctx()
+        .input_mut(|i| i.events.retain(|event| !is_plain_enter_press(event)));
+    *editor.buffer_mut() = new_buffer;
+    editor.mark_dirty();
+    move_cursor_to(ui.ctx(), text_edit_id, editor.buffer(), new_cursor_byte);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         AttachmentSettings, BTreeSet, EditorEvent, EditorViewMode, HashSet, Key,
         SpellCheckLanguage, build_editor_layout_job, document_text_edit_id, is_flagged_word,
-        misspelled_word_at, paragraph_byte_range, show, switch_view_mode,
+        list_continuation_edit, misspelled_word_at, paragraph_byte_range, show, switch_view_mode,
     };
     use crate::editor::EditorState;
     use crate::editor_font::EditorFont;
     use crate::project::AttachmentDestination;
+
+    #[test]
+    fn enter_at_the_end_of_a_bullet_item_continues_it() {
+        let (text, cursor) = list_continuation_edit("- Buy milk", 10).unwrap();
+        assert_eq!(text, "- Buy milk\n- ");
+        assert_eq!(cursor, 13);
+    }
+
+    #[test]
+    fn enter_preserves_the_bullet_symbol_and_indentation() {
+        let (text, cursor) = list_continuation_edit("  * Sub item", 12).unwrap();
+        assert_eq!(text, "  * Sub item\n  * ");
+        assert_eq!(cursor, 17);
+    }
+
+    #[test]
+    fn enter_in_an_ordered_list_increments_the_number() {
+        let (text, cursor) = list_continuation_edit("9. Ninth", 8).unwrap();
+        assert_eq!(text, "9. Ninth\n10. ");
+        assert_eq!(cursor, 13);
+    }
+
+    #[test]
+    fn enter_in_a_paren_delimited_ordered_list_keeps_the_delimiter() {
+        let (text, cursor) = list_continuation_edit("1) First", 8).unwrap();
+        assert_eq!(text, "1) First\n2) ");
+        assert_eq!(cursor, 12);
+    }
+
+    #[test]
+    fn enter_in_a_task_item_continues_it_unchecked_even_if_this_one_is_checked() {
+        let (text, cursor) = list_continuation_edit("- [x] Done", 10).unwrap();
+        assert_eq!(text, "- [x] Done\n- [ ] ");
+        assert_eq!(cursor, 17);
+    }
+
+    #[test]
+    fn enter_mid_line_splits_the_text_and_continues_the_list_on_both_sides() {
+        // Cursor right after the space following "milk" — the split keeps
+        // that trailing space on the first line and starts the second
+        // cleanly at "and", same as a plain Enter would split any sentence.
+        let (text, cursor) = list_continuation_edit("- Buy milk and eggs", 11).unwrap();
+        assert_eq!(text, "- Buy milk \n- and eggs");
+        assert_eq!(cursor, 14);
+    }
+
+    #[test]
+    fn enter_on_an_empty_bullet_item_ends_the_list_instead_of_continuing_it() {
+        // Same line count as before — the marker is just stripped in place,
+        // matching Obsidian's own "empty item ends the list" behavior,
+        // rather than also inserting a further blank line.
+        let (text, cursor) = list_continuation_edit("- ", 2).unwrap();
+        assert_eq!(text, "");
+        assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn enter_on_an_empty_item_in_the_middle_of_a_document_only_clears_that_line() {
+        let (text, cursor) = list_continuation_edit("- One\n- \n- Three", 8).unwrap();
+        assert_eq!(text, "- One\n\n- Three");
+        assert_eq!(cursor, 6);
+    }
+
+    #[test]
+    fn enter_on_a_plain_non_list_line_is_left_alone() {
+        assert_eq!(list_continuation_edit("Just a sentence.", 16), None);
+    }
+
+    #[test]
+    fn a_horizontal_rule_is_not_mistaken_for_a_bullet() {
+        assert_eq!(list_continuation_edit("---", 3), None);
+    }
 
     /// A synthetic drop for [`dropping_a_file_onto_the_editor_saves_it_and_inserts_a_link`]
     /// — real OS drag-and-drop can't be driven from a test, but egui's own
