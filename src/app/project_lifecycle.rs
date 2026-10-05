@@ -77,6 +77,7 @@ impl SmaragdApp {
         self.project = Some(project);
         self.editor = EditorState::default();
         self.selected_path = None;
+        self.last_structural_op = None;
         self.metadata.target = MetadataTarget::Document;
         self.metadata.folder_computed_for = None;
         self.document_status_cache.clear();
@@ -346,6 +347,7 @@ impl SmaragdApp {
         }
         self.project = None;
         self.selected_path = None;
+        self.last_structural_op = None;
         self.metadata = MetadataState::default();
         self.backlinks = BacklinksState::default();
         self.tags = TagsState::default();
@@ -578,6 +580,10 @@ impl SmaragdApp {
                     self.metadata.folder_computed_for = None;
                 }
                 self.document_status_cache.clear();
+                self.last_structural_op = Some(StructuralOp::Moved {
+                    from: path.to_path_buf(),
+                    to: new_path,
+                });
             }
             Err(err) => {
                 self.push_error_toast(format!("Couldn't move {}: {err}", path.display()));
@@ -608,6 +614,10 @@ impl SmaragdApp {
                     self.metadata.folder_computed_for = None;
                 }
                 self.document_status_cache.clear();
+                self.last_structural_op = Some(StructuralOp::Moved {
+                    from: path.to_path_buf(),
+                    to: new_path,
+                });
             }
             Err(err) => {
                 self.push_error_toast(format!("Couldn't move {}: {err}", path.display()));

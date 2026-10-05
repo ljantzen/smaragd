@@ -30,6 +30,7 @@ mod session;
 mod settings_persist;
 mod spell_check;
 mod streak_events;
+mod structural_undo;
 mod sync;
 mod toast;
 mod word_count_events;
@@ -45,6 +46,7 @@ use prompt::{PendingPrompt, PromptAction};
 use refresh::{
     BacklinksState, DocumentStatusCache, MetadataState, MetadataTarget, TagsState, WordCountState,
 };
+use structural_undo::StructuralOp;
 use toast::Toast;
 
 /// Cap on how many candidates the Recent Files switcher (`ShortcutAction::RecentFiles`)
@@ -80,6 +82,13 @@ pub struct SmaragdApp {
     project: Option<Project>,
     editor: EditorState,
     selected_path: Option<PathBuf>,
+    /// The most recent binder rename or move, if any — see
+    /// `undo_last_structural_op` (`ShortcutAction::UndoLastMove`). A
+    /// single-level undo, not a stack: reversing the op overwrites this with
+    /// its own (opposite) op, so triggering it again redoes the original
+    /// change rather than reaching further back. Reset whenever a project
+    /// opens or closes, same reasoning as the editor's own `history` field.
+    last_structural_op: Option<StructuralOp>,
     /// A quiet, routine status-bar confirmation — "Committed", "Exported to
     /// ...", and the like. Overwritten freely by dozens of call sites, and
     /// replaced (not queued) by whichever ran most recently, since these are
@@ -372,6 +381,7 @@ impl SmaragdApp {
             project: None,
             editor: EditorState::default(),
             selected_path: None,
+            last_structural_op: None,
             status_message: None,
             status_message_set_at: None,
             toasts: Vec::new(),
@@ -489,6 +499,7 @@ impl SmaragdApp {
             project: None,
             editor: EditorState::default(),
             selected_path: None,
+            last_structural_op: None,
             status_message: None,
             status_message_set_at: None,
             toasts: Vec::new(),
@@ -750,6 +761,7 @@ impl SmaragdApp {
                     self.restore_node(&path);
                 }
             }
+            ShortcutAction::UndoLastMove => self.undo_last_structural_op(),
             ShortcutAction::ToggleDarkMode => {
                 let is_dark = match self.settings.theme_preference {
                     egui::ThemePreference::Dark => true,

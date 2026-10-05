@@ -29,6 +29,13 @@ pub enum ShortcutAction {
     Rename,
     Delete,
     Restore,
+    /// Reverse the most recent binder rename or move — see
+    /// `SmaragdApp::undo_last_structural_op`. A single-level undo, not a
+    /// stack: it doesn't share a chord with text-editing undo/redo
+    /// (`Ctrl+Z`/`Ctrl+Y`), which egui's own `TextEdit` already owns and
+    /// which every shortcut here would otherwise swallow regardless of
+    /// focus — see `default_shortcut`'s doc comment.
+    UndoLastMove,
     ToggleDarkMode,
     ToggleFullscreen,
     FindReplace,
@@ -172,6 +179,7 @@ impl ShortcutAction {
         Self::Rename,
         Self::Delete,
         Self::Restore,
+        Self::UndoLastMove,
         Self::ToggleDarkMode,
         Self::ToggleFullscreen,
         Self::FindReplace,
@@ -253,6 +261,7 @@ impl ShortcutAction {
             Self::Rename => "Rename",
             Self::Delete => "Delete",
             Self::Restore => "Restore",
+            Self::UndoLastMove => "Undo Last Rename/Move",
             Self::ToggleDarkMode => "Toggle Dark/Light Mode",
             Self::ToggleFullscreen => "Toggle Full Screen",
             Self::FindReplace => "Find and Replace",
@@ -324,6 +333,7 @@ impl ShortcutAction {
             Self::Rename => "rename",
             Self::Delete => "delete",
             Self::Restore => "restore",
+            Self::UndoLastMove => "undo_last_move",
             Self::ToggleDarkMode => "toggle_dark_mode",
             Self::ToggleFullscreen => "toggle_fullscreen",
             Self::FindReplace => "find_replace",
@@ -394,6 +404,7 @@ impl ShortcutAction {
             | Self::Rename
             | Self::Delete
             | Self::Restore
+            | Self::UndoLastMove
             | Self::OpenDocument
             | Self::CloseDocument
             | Self::RecentFiles
@@ -479,6 +490,15 @@ impl ShortcutAction {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Backspace)
             }
             Self::Restore => KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::R),
+            // Ctrl+Alt+Z, not bare Ctrl+Z/Ctrl+Shift+Z: those are the
+            // conventional text-editing undo/redo chords, and every shortcut
+            // here is consumed unconditionally regardless of focus (see this
+            // method's own doc comment above), so binding either would steal
+            // it from egui's own `TextEdit` undo/redo the instant the editor
+            // has focus. `Z` for undo, Ctrl+Alt otherwise unused.
+            Self::UndoLastMove => {
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::Z)
+            }
             Self::ToggleDarkMode => {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::D)
             }

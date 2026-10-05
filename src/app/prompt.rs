@@ -296,6 +296,10 @@ impl SmaragdApp {
                 }
                 self.document_status_cache.clear();
                 self.editor.rename_path_everywhere(path, &new_path);
+                self.last_structural_op = Some(StructuralOp::Renamed {
+                    from: path.to_path_buf(),
+                    to: new_path.clone(),
+                });
                 if self.selected_path.as_deref() == Some(path) {
                     self.selected_path = Some(new_path.clone());
                     self.metadata.target = MetadataTarget::Document;
