@@ -84,6 +84,47 @@ pub trait ProjectStore: std::fmt::Debug + Send + Sync {
     }
 }
 
+/// Writes `contents` to `path` by creating a same-directory temp file,
+/// flushing it, and renaming it over `path` — a rename replaces the target
+/// atomically on the same filesystem, so a crash or power loss mid-write
+/// leaves the previous file intact instead of a truncated one. `mode` sets
+/// the temp file's Unix permissions before any data is written (so a secret
+/// file is never briefly wider than intended); ignored on other platforms.
+fn write_atomic(path: &Path, contents: &[u8], mode: Option<u32>) -> io::Result<()> {
+    use std::io::Write as _;
+    let _ = mode; // only read under #[cfg(unix)] below
+
+    let dir = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "path has no parent directory")
+    })?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?
+        .to_string_lossy();
+    let tmp_path = dir.join(format!(".{file_name}.tmp{:x}", rand::random::<u64>()));
+
+    let result = (|| -> io::Result<()> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        if let Some(mode) = mode {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(mode);
+        }
+        let mut file = options.open(&tmp_path)?;
+        file.write_all(contents)?;
+        file.sync_all()
+    })();
+
+    match result {
+        Ok(()) => std::fs::rename(&tmp_path, path),
+        Err(err) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(err)
+        }
+    }
+}
+
 /// The only implementation today: a thin wrapper over `std::fs`, behaving
 /// exactly as `project/`'s code did before this trait existed.
 #[derive(Debug, Clone, Copy, Default)]
@@ -94,21 +135,14 @@ impl ProjectStore for NativeStore {
         std::fs::read_to_string(path)
     }
 
-    /// Created `0600` on Unix; an existing file is narrowed to `0600` before it's
-    /// written, so the secret never sits in a wider file. Elsewhere a plain write: on
-    /// Windows the user's profile directories are already private to them.
+    /// Written via a same-directory temp file created at mode `0600` and then
+    /// renamed into place (see [`write_atomic`]), so the secret is never
+    /// briefly readable at a wider permission and a crash mid-write can't
+    /// leave a truncated secret on disk. Elsewhere a plain write: on Windows
+    /// the user's profile directories are already private to them.
     #[cfg(unix)]
     fn write_private(&self, path: &Path, contents: &[u8]) -> io::Result<()> {
-        use std::io::Write as _;
-        use std::os::unix::fs::OpenOptionsExt as _;
-        self.make_private(path)?;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)?;
-        file.write_all(contents)
+        write_atomic(path, contents, Some(0o600))
     }
 
     #[cfg(unix)]
@@ -121,7 +155,7 @@ impl ProjectStore for NativeStore {
     }
 
     fn write(&self, path: &Path, contents: &[u8]) -> io::Result<()> {
-        std::fs::write(path, contents)
+        write_atomic(path, contents, None)
     }
 
     fn create_dir_all(&self, path: &Path) -> io::Result<()> {
