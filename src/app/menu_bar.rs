@@ -104,7 +104,7 @@ impl SmaragdApp {
                             let ctx = ui.ctx().clone();
                             self.close_document(&ctx);
                         }
-                        ui.add_enabled_ui(self.document_history.can_go_back(), |ui| {
+                        ui.add_enabled_ui(self.editor.can_go_back(), |ui| {
                             if nav
                                 .shortcut_button(ui, "Go Back", go_back_shortcut)
                                 .clicked()
@@ -112,7 +112,7 @@ impl SmaragdApp {
                                 self.go_back_document();
                             }
                         });
-                        ui.add_enabled_ui(self.document_history.can_go_forward(), |ui| {
+                        ui.add_enabled_ui(self.editor.can_go_forward(), |ui| {
                             if nav
                                 .shortcut_button(ui, "Go Forward", go_forward_shortcut)
                                 .clicked()
@@ -594,7 +594,7 @@ impl SmaragdApp {
                         // graying those out after a disconnect would just add an
                         // extra, unnecessary "End Session" click before starting over.
                         let collab_live = self.collab.as_ref().is_some_and(|s| !s.session_ended);
-                        let can_host = !collab_live && self.editor.open_path.is_some();
+                        let can_host = !collab_live && self.editor.open_path().is_some();
                         ui.add_enabled_ui(can_host, |ui| {
                             if nav.button(ui, "Host Session").clicked() {
                                 self.start_collab_host(ui.ctx());

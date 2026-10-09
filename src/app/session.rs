@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::project::model::{BinderNode, BinderNodeKind};
-use crate::session::{SessionState, WindowGeometry};
+use crate::session::{OpenTabState, SessionState, WindowGeometry};
 
 impl SmaragdApp {
     /// Everything `restore_session` can bring back, as of right now. Window
@@ -21,20 +21,30 @@ impl SmaragdApp {
         let Some(project) = &self.project else {
             return session;
         };
-        let mut history = self.document_history.clone();
-        if let Some(open) = &self.editor.open_path {
-            history.record_cursor(open, self.editor.cursor_byte);
-        }
-        let (entries, position, cursor_positions) = history.snapshot();
         let mut collapsed_folders = Vec::new();
         collect_collapsed_folders(ctx, &project.tree.root, &mut collapsed_folders);
         session.project_path = Some(project.root.clone());
-        session.open_document = self.editor.open_path.clone();
-        session.cursor_byte = self.editor.cursor_byte;
+        // The collab-joiner's path-less tab (if any) is skipped: there's
+        // nothing on disk to reopen it as.
+        let active_path = self.editor.active_tab().and_then(|tab| tab.path.clone());
+        session.open_tabs = self
+            .editor
+            .iter_tabs()
+            .filter_map(|tab| {
+                Some(OpenTabState {
+                    path: tab.path.clone()?,
+                    cursor_byte: tab.cursor_byte,
+                    unsaved_buffer: tab.dirty.then(|| tab.buffer.clone()),
+                })
+            })
+            .collect();
+        session.active_tab = active_path.and_then(|path| {
+            session
+                .open_tabs
+                .iter()
+                .position(|tab| tab.path == path)
+        });
         session.selected_path = self.selected_path.clone();
-        session.history_entries = entries;
-        session.history_position = position;
-        session.cursor_positions = cursor_positions;
         session.collapsed_folders = collapsed_folders;
         session.focus_mode = self.focus_mode;
         session
@@ -73,26 +83,34 @@ impl SmaragdApp {
             }
         }
 
-        self.document_history = DocumentHistory::from_snapshot(
-            session.history_entries,
-            session.history_position,
-            session.cursor_positions,
-        );
-        for path in self.document_history.known_paths() {
-            if !store.exists(&path) {
-                self.document_history.remove_subtree(&path);
+        for tab in session.open_tabs {
+            if !store.exists(&tab.path) {
+                continue;
+            }
+            if let Some(buffer) = tab.unsaved_buffer {
+                self.editor.open_unsaved_tab(tab.path, buffer, tab.cursor_byte);
+            } else {
+                let editor_store = self.editor_store();
+                if self.editor.open_with_store(&tab.path, editor_store.as_ref()).is_ok() {
+                    self.editor.set_cursor_byte(tab.cursor_byte);
+                    if let Some(active) = self.editor.active_tab_mut() {
+                        active.pending_cursor = Some(tab.cursor_byte);
+                    }
+                }
             }
         }
-
-        if let Some(document) = session.open_document.filter(|path| store.exists(path)) {
-            self.document_history
-                .record_cursor(&document, session.cursor_byte);
-            self.load_document(&document);
+        if let Some(index) = session.active_tab
+            && self.editor.tab_count() > 0
+        {
+            self.editor.active = Some(index.min(self.editor.tab_count() - 1));
         }
+        // A session saved with multiple tabs while the setting was on
+        // shouldn't restore them all now that it's off.
+        self.enforce_single_tab_setting();
         if let Some(selected) = session.selected_path.filter(|path| store.exists(path)) {
             self.selected_path = Some(selected);
         }
-        if session.focus_mode && self.editor.open_path.is_some() {
+        if session.focus_mode && self.editor.open_path().is_some() {
             self.set_focus_mode(ctx, true);
         }
     }
@@ -154,12 +172,12 @@ mod tests {
     }
 
     #[test]
-    fn a_captured_session_restores_the_open_document_cursor_history_and_selection() {
+    fn a_captured_session_restores_every_open_tab_the_active_one_and_the_selection() {
         let (dir, mut app) = app_with_project();
         let ctx = egui::Context::default();
         app.open_document(&doc(&dir, "two"));
         app.open_document(&doc(&dir, "one"));
-        app.editor.cursor_byte = 3;
+        app.editor.set_cursor_byte(3);
         app.selected_path = Some(dir.path().join("Chapter"));
         ui::binder_panel::set_folder_open(&ctx, &dir.path().join("Chapter"), false);
 
@@ -170,17 +188,39 @@ mod tests {
         let fresh_ctx = egui::Context::default();
         reopened.restore_session(&fresh_ctx, session);
 
-        assert_eq!(reopened.editor.open_path, Some(doc(&dir, "one")));
-        assert_eq!(reopened.editor.pending_cursor, Some(3));
+        assert_eq!(reopened.editor.tab_count(), 2);
+        assert_eq!(reopened.editor.open_path(), Some(doc(&dir, "one").as_path()));
+        assert_eq!(reopened.editor.pending_cursor(), Some(3));
         assert_eq!(reopened.selected_path, Some(dir.path().join("Chapter")));
-        assert_eq!(
-            reopened.document_history.previous(),
-            Some(doc(&dir, "two").as_path())
+        assert!(
+            reopened
+                .editor
+                .iter_tabs()
+                .any(|tab| tab.path.as_deref() == Some(doc(&dir, "two").as_path())),
+            "the other open tab should have come back too, not just the active one"
         );
         assert!(!ui::binder_panel::is_folder_open(
             &fresh_ctx,
             &dir.path().join("Chapter")
         ));
+    }
+
+    #[test]
+    fn restoring_a_multi_tab_session_with_the_setting_off_only_restores_the_active_tab() {
+        let (dir, mut app) = app_with_project();
+        let ctx = egui::Context::default();
+        app.open_document(&doc(&dir, "two"));
+        app.open_document(&doc(&dir, "one"));
+
+        let session = app.capture_session(&ctx, None);
+
+        let mut reopened = SmaragdApp::test_fixture();
+        reopened.settings.multi_tab_editor = false;
+        reopened.project = Some(Project::load_from_folder(dir.path()).unwrap());
+        reopened.restore_session(&egui::Context::default(), session);
+
+        assert_eq!(reopened.editor.tab_count(), 1);
+        assert_eq!(reopened.editor.open_path(), Some(doc(&dir, "one").as_path()));
     }
 
     #[test]
@@ -195,7 +235,7 @@ mod tests {
         reopened.project = Some(Project::load_from_folder(dir.path()).unwrap());
         reopened.restore_session(&ctx, session);
 
-        assert_eq!(reopened.editor.open_path, None);
+        assert_eq!(reopened.editor.open_path(), None);
     }
 
     #[test]
@@ -212,9 +252,8 @@ mod tests {
         reopened.project = Some(Project::load_from_folder(dir.path()).unwrap());
         reopened.restore_session(&ctx, session);
 
-        assert_eq!(reopened.editor.open_path, None);
-        assert_eq!(reopened.document_history.previous(), None);
-        assert!(reopened.document_history.known_paths().is_empty());
+        assert_eq!(reopened.editor.open_path(), None);
+        assert_eq!(reopened.editor.tab_count(), 0);
     }
 
     #[test]

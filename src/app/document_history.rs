@@ -1,12 +1,11 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Chronological history of documents opened in the editor, with independent
-/// Back/Forward navigation like a browser's history stack, plus the last known
-/// cursor position within every document ever visited — restored automatically
-/// whenever that document is loaded again (see `SmaragdApp::load_document`).
+/// One tab's own Back/Forward lineage — independent browser-style navigation
+/// per open tab (see `editor::OpenDocument::history` and issue #40), seeded
+/// by cloning whichever tab was active when this one was opened as a fresh
+/// navigation, then extended with its own path (see `EditorState::open`).
 #[derive(Debug, Default, Clone)]
-pub(super) struct DocumentHistory {
+pub(crate) struct DocumentHistory {
     /// Visited documents in order. A document can appear more than once if
     /// revisited independently of Back/Forward (e.g. clicking it again in the
     /// Binder) — this deliberately mirrors a browser's history stack rather
@@ -15,9 +14,6 @@ pub(super) struct DocumentHistory {
     /// Index into `entries` for the document currently considered "here".
     /// `None` exactly when `entries` is empty.
     position: Option<usize>,
-    /// The last known cursor byte offset for every document ever visited,
-    /// updated by `record_cursor` right before navigating away from it.
-    cursor_positions: HashMap<PathBuf, usize>,
 }
 
 impl DocumentHistory {
@@ -31,7 +27,7 @@ impl DocumentHistory {
     /// after going back. A no-op if `path` is already the current entry, so
     /// re-clicking the same document (e.g. in the Binder) doesn't grow the
     /// stack.
-    pub(super) fn visit(&mut self, path: &Path) {
+    pub(crate) fn visit(&mut self, path: &Path) {
         if self.current() == Some(path) {
             return;
         }
@@ -48,15 +44,15 @@ impl DocumentHistory {
 
     /// The document Back would move to, without moving there — used both to
     /// gate whether the Back menu item/shortcut is enabled, and by
-    /// `go_back_document` to know the target before committing to the move
-    /// (e.g. to ask for collaboration-session confirmation first).
-    pub(super) fn previous(&self) -> Option<&Path> {
+    /// `EditorState::go_back` to know the target before committing to the
+    /// move.
+    pub(crate) fn previous(&self) -> Option<&Path> {
         let index = self.position?;
         (index > 0).then(|| self.entries[index - 1].as_path())
     }
 
     /// The document Forward would move to — see `previous`.
-    pub(super) fn next(&self) -> Option<&Path> {
+    pub(crate) fn next(&self) -> Option<&Path> {
         let index = self.position?;
         self.entries.get(index + 1).map(PathBuf::as_path)
     }
@@ -65,7 +61,7 @@ impl DocumentHistory {
     /// revisited later moves to the front rather than appearing twice) — the
     /// "Opened" mode data source for the Recent Files switcher
     /// (`ShortcutAction::RecentFiles`). Capped at `limit`.
-    pub(super) fn recent_documents(&self, limit: usize) -> Vec<&Path> {
+    pub(crate) fn recent_documents(&self, limit: usize) -> Vec<&Path> {
         let mut seen = std::collections::HashSet::new();
         let mut result = Vec::new();
         for entry in self.entries.iter().rev() {
@@ -79,16 +75,16 @@ impl DocumentHistory {
         result
     }
 
-    pub(super) fn can_go_back(&self) -> bool {
+    pub(crate) fn can_go_back(&self) -> bool {
         self.previous().is_some()
     }
 
-    pub(super) fn can_go_forward(&self) -> bool {
+    pub(crate) fn can_go_forward(&self) -> bool {
         self.next().is_some()
     }
 
     /// Move one step back. A no-op if `previous()` is `None`.
-    pub(super) fn go_back(&mut self) {
+    pub(crate) fn go_back(&mut self) {
         if let Some(index) = self.position
             && index > 0
         {
@@ -97,7 +93,7 @@ impl DocumentHistory {
     }
 
     /// Move one step forward. A no-op if `next()` is `None`.
-    pub(super) fn go_forward(&mut self) {
+    pub(crate) fn go_forward(&mut self) {
         if let Some(index) = self.position
             && index + 1 < self.entries.len()
         {
@@ -105,130 +101,27 @@ impl DocumentHistory {
         }
     }
 
-    pub(super) fn record_cursor(&mut self, path: &Path, byte_offset: usize) {
-        self.cursor_positions
-            .insert(path.to_path_buf(), byte_offset);
-    }
-
-    pub(super) fn cursor_for(&self, path: &Path) -> Option<usize> {
-        self.cursor_positions.get(path).copied()
-    }
-
-    /// Entries, position and remembered cursors, for saving in
-    /// `session::SessionState` — see `from_snapshot`.
-    pub(super) fn snapshot(&self) -> (Vec<PathBuf>, Option<usize>, Vec<(PathBuf, usize)>) {
-        let mut cursors: Vec<(PathBuf, usize)> = self
-            .cursor_positions
-            .iter()
-            .map(|(path, offset)| (path.clone(), *offset))
-            .collect();
-        cursors.sort();
-        (self.entries.clone(), self.position, cursors)
-    }
-
-    /// Rebuild a history saved by `snapshot`. A `position` that doesn't fit
-    /// `entries` (a hand-edited or truncated file) falls back to the last
-    /// entry rather than being trusted.
-    pub(super) fn from_snapshot(
-        entries: Vec<PathBuf>,
-        position: Option<usize>,
-        cursor_positions: Vec<(PathBuf, usize)>,
-    ) -> Self {
-        let position = match position {
-            Some(index) if index < entries.len() => Some(index),
-            _ => entries.len().checked_sub(1),
-        };
-        Self {
-            entries,
-            position,
-            cursor_positions: cursor_positions.into_iter().collect(),
-        }
-    }
-
-    /// Every distinct path this history refers to — so a restored session can
-    /// drop the ones deleted since it was saved (see `remove_subtree`).
-    pub(super) fn known_paths(&self) -> Vec<PathBuf> {
-        let mut paths: Vec<PathBuf> = self
-            .entries
-            .iter()
-            .chain(self.cursor_positions.keys())
-            .cloned()
-            .collect();
-        paths.sort();
-        paths.dedup();
-        paths
-    }
-
-    /// Drop every entry (and remembered cursor) for `path` or anything inside
-    /// it — called when a document or folder is deleted, so Back/Forward
-    /// never lands on a file that no longer exists. Shifts `position` to stay
-    /// pointing at the same surviving entry it did before the removal (or the
-    /// nearest one, if the current entry itself was removed).
-    pub(super) fn remove_subtree(&mut self, path: &Path) {
-        let removed = |entry: &PathBuf| entry.as_path() == path || entry.starts_with(path);
-        self.cursor_positions.retain(|entry, _| !removed(entry));
-
-        let Some(old_position) = self.position else {
-            return;
-        };
-        let mut new_position = None;
-        let mut kept = Vec::with_capacity(self.entries.len());
-        for (index, entry) in self.entries.drain(..).enumerate() {
-            if removed(&entry) {
-                continue;
-            }
-            if index <= old_position {
-                new_position = Some(kept.len());
-            }
-            kept.push(entry);
-        }
-        self.entries = kept;
-        self.position = new_position.or(if self.entries.is_empty() {
-            None
-        } else {
-            Some(0)
-        });
-    }
-
     /// Replace every entry pointing at `old` with `new` — called when the
-    /// currently open document is renamed, so its history entry and
-    /// remembered cursor keep following it under the new path rather than
-    /// going stale.
-    pub(super) fn rename_path(&mut self, old: &Path, new: &Path) {
+    /// currently open document is renamed, so its history entry keeps
+    /// following it under the new path rather than going stale.
+    pub(crate) fn rename_path(&mut self, old: &Path, new: &Path) {
         for entry in &mut self.entries {
             if entry.as_path() == old {
                 *entry = new.to_path_buf();
             }
         }
-        if let Some(cursor) = self.cursor_positions.remove(old) {
-            self.cursor_positions.insert(new.to_path_buf(), cursor);
-        }
     }
 
-    /// Rewrite every entry (and remembered cursor) under `old_root` to sit
-    /// under `new_root` instead — called when a file or folder is moved (a
-    /// binder drag-and-drop), mirroring the same `strip_prefix`/`join` rebase
-    /// `SmaragdApp::move_item` already applies to `selected_path`/
-    /// `editor.open_path`.
-    pub(super) fn rebase_subtree(&mut self, old_root: &Path, new_root: &Path) {
-        let rebase = |p: &Path| -> Option<PathBuf> {
-            p.strip_prefix(old_root)
-                .ok()
-                .map(|rest| new_root.join(rest))
-        };
+    /// Rewrite every entry under `old_root` to sit under `new_root` instead —
+    /// called when a file or folder is moved (a binder drag-and-drop),
+    /// mirroring the same `strip_prefix`/`join` rebase `SmaragdApp::move_item`
+    /// already applies to `selected_path`.
+    pub(crate) fn rebase_subtree(&mut self, old_root: &Path, new_root: &Path) {
         for entry in &mut self.entries {
-            if let Some(rebased) = rebase(entry) {
-                *entry = rebased;
+            if let Some(rest) = entry.strip_prefix(old_root).ok().map(Path::to_path_buf) {
+                *entry = new_root.join(rest);
             }
         }
-        let rebased_cursors: Vec<(PathBuf, usize)> = self
-            .cursor_positions
-            .iter()
-            .filter_map(|(path, &cursor)| rebase(path).map(|rebased| (rebased, cursor)))
-            .collect();
-        self.cursor_positions
-            .retain(|path, _| rebase(path).is_none());
-        self.cursor_positions.extend(rebased_cursors);
     }
 }
 
@@ -323,49 +216,23 @@ mod tests {
     }
 
     #[test]
-    fn cursor_positions_round_trip_by_path() {
-        let mut history = DocumentHistory::default();
-        history.record_cursor(Path::new("a.md"), 42);
-
-        assert_eq!(history.cursor_for(Path::new("a.md")), Some(42));
-        assert_eq!(history.cursor_for(Path::new("b.md")), None);
-    }
-
-    #[test]
-    fn remove_subtree_drops_matching_entries_and_their_cursors() {
-        let mut history = DocumentHistory::default();
-        history.visit(Path::new("folder/a.md"));
-        history.visit(Path::new("b.md"));
-        history.record_cursor(Path::new("folder/a.md"), 5);
-
-        history.remove_subtree(Path::new("folder"));
-
-        assert_eq!(history.cursor_for(Path::new("folder/a.md")), None);
-        assert!(history.previous().is_none());
-        assert_eq!(history.current(), Some(Path::new("b.md")));
-    }
-
-    #[test]
-    fn remove_subtree_of_the_current_entry_falls_back_to_the_nearest_survivor() {
-        let mut history = DocumentHistory::default();
-        history.visit(Path::new("a.md"));
-        history.visit(Path::new("b.md"));
-
-        history.remove_subtree(Path::new("b.md"));
-
-        assert_eq!(history.current(), Some(Path::new("a.md")));
-    }
-
-    #[test]
-    fn rename_path_updates_entries_and_cursor_key() {
+    fn rename_path_updates_matching_entries() {
         let mut history = DocumentHistory::default();
         history.visit(Path::new("old.md"));
-        history.record_cursor(Path::new("old.md"), 7);
 
         history.rename_path(Path::new("old.md"), Path::new("new.md"));
 
         assert_eq!(history.current(), Some(Path::new("new.md")));
-        assert_eq!(history.cursor_for(Path::new("new.md")), Some(7));
-        assert_eq!(history.cursor_for(Path::new("old.md")), None);
+    }
+
+    #[test]
+    fn rebase_subtree_rewrites_entries_under_the_moved_root() {
+        let mut history = DocumentHistory::default();
+        history.visit(Path::new("folder/a.md"));
+        history.visit(Path::new("other.md"));
+
+        history.rebase_subtree(Path::new("folder"), Path::new("moved"));
+
+        assert_eq!(history.previous(), Some(Path::new("moved/a.md")));
     }
 }

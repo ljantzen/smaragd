@@ -58,7 +58,10 @@ pub fn switch_view_mode(
     new_mode: EditorViewMode,
 ) {
     if *mode == EditorViewMode::Reading && new_mode == EditorViewMode::Edit {
-        editor.pending_cursor = Some(editor.cursor_byte);
+        let cursor_byte = editor.cursor_byte();
+        if let Some(tab) = editor.active_tab_mut() {
+            tab.pending_cursor = Some(cursor_byte);
+        }
     }
     *mode = new_mode;
 }
@@ -93,6 +96,15 @@ pub enum EditorMenuEvent {
 pub enum EditorEvent {
     SaveError(String),
     Wikilink(WikilinkActivation),
+    /// A tab in the tab strip (see `show`'s own rendering of it) was clicked
+    /// — the caller focuses that tab index and updates whatever app-level
+    /// state follows the active document (`selected_path`, the Metadata
+    /// dock's target, ...), which this module has no access to. See issue
+    /// #40.
+    SwitchTab(usize),
+    /// A tab's close (×) button was clicked — the caller saves it if dirty
+    /// and removes it. See issue #40.
+    CloseTab(usize),
     /// A gutter click on a line's bookmark icon slot, or
     /// `ShortcutAction::ToggleBookmark`, fired — the caller adds/removes a
     /// bookmark at this 1-based logical line in whichever document is
@@ -261,11 +273,67 @@ fn misspelled_word_at(
         .map(|range| (range.clone(), text[range.clone()].to_string()))
 }
 
-/// Stable id for the document `TextEdit`, independent of whatever panel happens to
-/// host it this frame — lets `app.rs` move its cursor (e.g. jumping to a
-/// find-and-replace result) without needing a `Ui` of its own to derive an id from.
-pub fn editor_text_edit_id() -> Id {
-    Id::new("smaragd_editor_text_edit")
+/// Stable id for a document's `TextEdit`, independent of whatever panel happens
+/// to host it this frame — lets `app.rs` move its cursor (e.g. jumping to a
+/// find-and-replace result) without needing a `Ui` of its own to derive an id
+/// from. Keyed by `path` (`None` for a joined collaboration session's
+/// path-less shared buffer — see `EditorState::open_collab_tab`) rather than a
+/// single fixed id: since each open tab keeps its own resident buffer (see
+/// issue #40), `egui::TextEdit`'s own per-widget undo/cursor state (keyed by
+/// this id) would otherwise be shared — and corrupted — across two
+/// simultaneously-open tabs.
+pub fn document_text_edit_id(path: Option<&Path>) -> Id {
+    match path {
+        Some(path) => Id::new("smaragd_editor_text_edit").with(path),
+        None => Id::new("smaragd_editor_text_edit_collab"),
+    }
+}
+
+/// Renders the tab strip across the top of the Editor pane — one entry per
+/// open tab (filename, a dirty dot, a close button), click to switch, × to
+/// close. Lives *inside* the single `DockTab::Editor` panel rather than as
+/// separate dock-able tabs of their own (see issue #40's scoping): tabs here
+/// are a within-panel concept, like a browser's or VS Code's, not another
+/// layer of `egui_dock` splitting.
+///
+/// Returns `Some` the moment a click needs the caller to act (switching or
+/// closing a tab needs `&mut SmaragdApp`, which this module never has) —
+/// short-circuits the rest of `show` for this frame, same convention as
+/// every other early-return in it.
+fn show_tab_strip(ui: &mut egui::Ui, editor: &EditorState) -> Option<EditorEvent> {
+    if editor.tab_count() == 0 {
+        return None;
+    }
+    let active_index = editor.active;
+    let mut clicked = None;
+    ui.horizontal_wrapped(|ui| {
+        for (index, tab) in editor.iter_tabs().enumerate() {
+            let label = tab
+                .path
+                .as_deref()
+                .and_then(|path| path.file_stem())
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("Shared Session");
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    if tab.dirty {
+                        ui.label("●");
+                    }
+                    if ui
+                        .selectable_label(Some(index) == active_index, label)
+                        .clicked()
+                    {
+                        clicked = Some(EditorEvent::SwitchTab(index));
+                    }
+                    if ui.small_button("×").clicked() {
+                        clicked = Some(EditorEvent::CloseTab(index));
+                    }
+                });
+            });
+        }
+    });
+    clicked
 }
 
 /// Renders the document editor, including a `[[wikilink]]`/`#tag` autocomplete
@@ -298,6 +366,7 @@ pub fn show(
     font: EditorFont,
     font_size: f32,
     collaborating: bool,
+    multi_tab_enabled: bool,
     spell_check_language: SpellCheckLanguage,
     custom_words: &BTreeSet<String>,
     show_gutter: bool,
@@ -317,9 +386,20 @@ pub fn show(
     // `EditorState::save` already no-ops safely with no `open_path`, so
     // rendering here doesn't risk trying to save collaboratively-received
     // content to a file that doesn't exist.
-    if editor.open_path.is_none() && !collaborating {
+    if editor.open_path().is_none() && !collaborating {
         ui.label("Select a file from the binder to start editing.");
         return None;
+    }
+
+    // Suppressed in Focus Mode: it exists specifically to hide everything
+    // but the text itself (see `SmaragdApp::set_focus_mode`), and switching
+    // or closing other tabs from there would reach outside the one document
+    // it's showing anyway. Also suppressed with `Settings::multi_tab_editor`
+    // off: there's never more than one tab in that case (see
+    // `SmaragdApp::enforce_single_tab_setting`), so the strip would only
+    // ever show a single, un-switchable chip.
+    if !focus_mode && multi_tab_enabled && let Some(event) = show_tab_strip(ui, editor) {
+        return Some(event);
     }
 
     // Obsidian-style document title at the top of the pane, above the text itself —
@@ -329,8 +409,7 @@ pub fn show(
     // (binder rows, `Project::tree.document_names`, wikilink targets). Skipped for a
     // joined collaboration session, which has no `open_path` of its own to name.
     if let Some(title) = editor
-        .open_path
-        .as_deref()
+        .open_path()
         .and_then(|path| path.file_stem())
         .and_then(|stem| stem.to_str())
     {
@@ -338,7 +417,7 @@ pub fn show(
         ui.add_space(4.0);
     }
 
-    let text_edit_id = editor_text_edit_id();
+    let text_edit_id = document_text_edit_id(editor.open_path());
 
     // A document switch (`SmaragdApp::load_document`) leaves a byte offset here
     // for the cursor to jump to on the document's first render — restoring
@@ -347,9 +426,9 @@ pub fn show(
     // whichever document was open before. Consumed (and cleared) unconditionally
     // so it never re-fires on a later frame once the `TextEdit` below has
     // already picked it up.
-    let jumped_to_byte = editor.pending_cursor.take();
+    let jumped_to_byte = editor.take_pending_cursor();
     if let Some(byte_offset) = jumped_to_byte {
-        move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, byte_offset);
+        move_cursor_to(ui.ctx(), text_edit_id, editor.buffer(), byte_offset);
     }
 
     let state_id = text_edit_id.with("wikilink_autocomplete");
@@ -380,7 +459,7 @@ pub fn show(
         .then(|| {
             egui::TextEdit::load_state(ui.ctx(), text_edit_id)
                 .and_then(|state| state.cursor.char_range())
-                .map(|range| char_offset_to_byte(&editor.buffer, range.primary.index.0))
+                .map(|range| char_offset_to_byte(editor.buffer(), range.primary.index.0))
         })
         .flatten();
     let misspelled_cache_id = text_edit_id.with("misspelled_cache");
@@ -458,7 +537,7 @@ pub fn show(
     // Numbers right-align, so the column only needs to be as wide as the
     // document's own line count actually requires, not a fixed guess.
     let icon_width = row_height;
-    let line_count = editor.buffer.matches('\n').count() + 1;
+    let line_count = editor.buffer().matches('\n').count() + 1;
     let digit_count = line_count.to_string().len().max(2);
     let digit_width = ui.fonts_mut(|f| f.glyph_width(&font.font_id(font_size), '0'));
     let number_width = digit_width * digit_count as f32;
@@ -488,7 +567,7 @@ pub fn show(
                 // hardcodes the Monospace font — not wanted now that the font is
                 // configurable) keeps Tab inserting a tab character instead of
                 // leaving the field, still desirable for a plain-text editor.
-                let text_edit = egui::TextEdit::multiline(&mut editor.buffer)
+                let text_edit = egui::TextEdit::multiline(editor.buffer_mut())
                     .desired_width(f32::INFINITY)
                     .desired_rows(desired_rows)
                     .font(font.font_id(font_size))
@@ -502,7 +581,7 @@ pub fn show(
                 // scrolls to follow it the way typing or clicking does —
                 // bring a jumped-to position into view explicitly, centered.
                 if let Some(byte_offset) = jumped_to_byte {
-                    let char_offset = byte_offset_to_char(&editor.buffer, byte_offset);
+                    let char_offset = byte_offset_to_char(editor.buffer(), byte_offset);
                     let cursor_rect = text_output
                         .galley
                         .pos_from_cursor(CCursor::new(char_offset))
@@ -535,12 +614,12 @@ pub fn show(
         editor.mark_dirty();
     }
 
-    // Kept fresh every frame the editor renders, regardless of whether the
-    // cursor actually moved this frame — `document_history` reads this
-    // whenever the user navigates to a *different* document, to remember
-    // where they were leaving this one.
+    // Kept fresh every frame the editor renders, so it's always ready for
+    // anything that reads "where's the cursor in this tab right now" (e.g.
+    // jumping to a bookmark/note target).
     if let Some(range) = output.cursor_range {
-        editor.cursor_byte = char_offset_to_byte(&editor.buffer, range.primary.index.0);
+        let byte = char_offset_to_byte(editor.buffer(), range.primary.index.0);
+        editor.set_cursor_byte(byte);
     }
 
     if let Some(event) = handle_spell_check_context_menu(
@@ -572,10 +651,10 @@ pub fn show(
     {
         let local_pos = pointer_pos - output.galley_pos;
         let cursor_byte = char_offset_to_byte(
-            &editor.buffer,
+            editor.buffer(),
             output.galley.cursor_from_pos(local_pos).index.0,
         );
-        if let Some(target) = wikilink_target_at(&editor.buffer, cursor_byte) {
+        if let Some(target) = wikilink_target_at(editor.buffer(), cursor_byte) {
             return Some(EditorEvent::Wikilink(WikilinkActivation {
                 target,
                 force_create: true,
@@ -584,8 +663,8 @@ pub fn show(
     }
 
     if activate_wikilink_requested && let Some(range) = output.cursor_range {
-        let cursor_byte = char_offset_to_byte(&editor.buffer, range.primary.index.0);
-        if let Some(target) = wikilink_target_at(&editor.buffer, cursor_byte) {
+        let cursor_byte = char_offset_to_byte(editor.buffer(), range.primary.index.0);
+        if let Some(target) = wikilink_target_at(editor.buffer(), cursor_byte) {
             return Some(EditorEvent::Wikilink(WikilinkActivation {
                 target,
                 force_create: true,
@@ -606,25 +685,25 @@ pub fn show(
         None => {}
     }
     if toggle_bookmark_requested && let Some(range) = output.cursor_range {
-        let cursor_byte = char_offset_to_byte(&editor.buffer, range.primary.index.0);
-        let line = editor.buffer[..cursor_byte].matches('\n').count() + 1;
+        let cursor_byte = char_offset_to_byte(editor.buffer(), range.primary.index.0);
+        let line = editor.buffer()[..cursor_byte].matches('\n').count() + 1;
         return Some(EditorEvent::ToggleBookmark(line));
     }
     if add_note_requested && let Some(range) = output.cursor_range {
-        let cursor_byte = char_offset_to_byte(&editor.buffer, range.primary.index.0);
-        let line_start = editor.buffer[..cursor_byte]
+        let cursor_byte = char_offset_to_byte(editor.buffer(), range.primary.index.0);
+        let line_start = editor.buffer()[..cursor_byte]
             .rfind('\n')
             .map(|i| i + 1)
             .unwrap_or(0);
-        let line = editor.buffer[..cursor_byte].matches('\n').count() + 1;
+        let line = editor.buffer()[..cursor_byte].matches('\n').count() + 1;
         let column = cursor_byte - line_start;
         return Some(EditorEvent::EditNoteAt(line, Some(column)));
     }
 
     let active = output.cursor_range.and_then(|range| {
         let cursor_char = range.primary.index.0;
-        let cursor_byte = char_offset_to_byte(&editor.buffer, cursor_char);
-        active_query(&editor.buffer, cursor_byte).map(|query| (cursor_char, cursor_byte, query))
+        let cursor_byte = char_offset_to_byte(editor.buffer(), cursor_char);
+        active_query(editor.buffer(), cursor_byte).map(|query| (cursor_char, cursor_byte, query))
     });
 
     let mut completion: Option<(usize, usize, QueryKind, String)> = None; // (query_start, cursor_byte, kind, chosen)
@@ -697,15 +776,15 @@ pub fn show(
     if let Some((query_start, cursor_byte, kind, chosen)) = completion {
         let (new_text, new_cursor_byte) = match kind {
             QueryKind::Wikilink => {
-                apply_wikilink_completion(&editor.buffer, query_start, cursor_byte, &chosen)
+                apply_wikilink_completion(editor.buffer(), query_start, cursor_byte, &chosen)
             }
             QueryKind::Tag => {
-                apply_tag_completion(&editor.buffer, query_start, cursor_byte, &chosen)
+                apply_tag_completion(editor.buffer(), query_start, cursor_byte, &chosen)
             }
         };
-        editor.buffer = new_text;
+        *editor.buffer_mut() = new_text;
         editor.mark_dirty();
-        move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, new_cursor_byte);
+        move_cursor_to(ui.ctx(), text_edit_id, editor.buffer(), new_cursor_byte);
     }
 
     if output.response.lost_focus()
@@ -759,14 +838,14 @@ fn handle_spell_check_context_menu(
         let clicked = output.response.interact_pointer_pos().and_then(|pos| {
             let local = pos - output.galley_pos;
             let click_byte = char_offset_to_byte(
-                &editor.buffer,
+                editor.buffer(),
                 output.galley.cursor_from_pos(local).index.into(),
             );
             let cache: MisspelledCache = ui
                 .ctx()
                 .data_mut(|d| d.get_temp(misspelled_cache_id))
                 .unwrap_or_default();
-            misspelled_word_at(&cache.spans, &editor.buffer, click_byte)
+            misspelled_word_at(&cache.spans, editor.buffer(), click_byte)
         });
         ui.ctx()
             .data_mut(|d| d.insert_temp(spell_menu_word_id, clicked));
@@ -819,9 +898,9 @@ fn handle_spell_check_context_menu(
     match action? {
         SpellMenuAction::Replace(range, replacement) => {
             let new_cursor_byte = range.start + replacement.len();
-            editor.buffer.replace_range(range, &replacement);
+            editor.buffer_mut().replace_range(range, &replacement);
             editor.mark_dirty();
-            move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, new_cursor_byte);
+            move_cursor_to(ui.ctx(), text_edit_id, editor.buffer(), new_cursor_byte);
             None
         }
         SpellMenuAction::AddToDictionary(word) => Some(EditorEvent::AddToDictionary(word)),
@@ -1178,13 +1257,13 @@ fn insert_attachment(
     suggested_name: &str,
     bytes: &[u8],
 ) -> Result<usize, String> {
-    let document_dir = editor.open_path.as_deref().and_then(Path::parent);
+    let document_dir = editor.open_path().and_then(Path::parent);
     let dest_dir = resolve_attachment_dest_dir(settings, document_dir);
     let document_dir = document_dir.unwrap_or(settings.project_root);
     let saved =
         crate::attachments::save_attachment(store, &dest_dir, document_dir, suggested_name, bytes)
             .map_err(|err| err.to_string())?;
-    editor.buffer.insert_str(at, &saved.snippet);
+    editor.buffer_mut().insert_str(at, &saved.snippet);
     editor.mark_dirty();
     Ok(at + saved.snippet.len())
 }
@@ -1230,10 +1309,10 @@ fn handle_attachment_input(
             ui.ctx()
                 .input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Paste(_))));
             let name = crate::attachments::suggested_clipboard_image_name(chrono::Local::now());
-            let at = editor.cursor_byte.min(editor.buffer.len());
+            let at = editor.cursor_byte().min(editor.buffer().len());
             match insert_attachment(editor, store, settings, at, &name, &png_bytes) {
                 Ok(new_cursor) => {
-                    move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, new_cursor)
+                    move_cursor_to(ui.ctx(), text_edit_id, editor.buffer(), new_cursor)
                 }
                 Err(err) => {
                     return Some(EditorEvent::AttachmentError(format!(
@@ -1264,10 +1343,10 @@ fn handle_attachment_input(
                 ui.ctx().input_mut(|i| {
                     i.events.retain(|e| !matches!(e, egui::Event::Paste(_)));
                 });
-                let at = editor.cursor_byte.min(editor.buffer.len());
+                let at = editor.cursor_byte().min(editor.buffer().len());
                 match insert_attachment(editor, store, settings, at, &name, &bytes) {
                     Ok(new_cursor) => {
-                        move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, new_cursor);
+                        move_cursor_to(ui.ctx(), text_edit_id, editor.buffer(), new_cursor);
                     }
                     Err(err) => {
                         return Some(EditorEvent::AttachmentError(format!(
@@ -1279,7 +1358,7 @@ fn handle_attachment_input(
         }
     }
 
-    if editor.open_path.is_some() {
+    if editor.open_path().is_some() {
         let dropped = ui.ctx().input(|i| i.raw.dropped_files.clone());
         let dropped_here = !dropped.is_empty()
             && ui
@@ -1287,7 +1366,7 @@ fn handle_attachment_input(
                 .pointer_latest_pos()
                 .is_some_and(|pos| ui.max_rect().contains(pos));
         if dropped_here {
-            let mut at = editor.cursor_byte.min(editor.buffer.len());
+            let mut at = editor.cursor_byte().min(editor.buffer().len());
             for file in &dropped {
                 let Ok(bytes) = file.bytes() else { continue };
                 let name = file
@@ -1297,7 +1376,7 @@ fn handle_attachment_input(
                     .unwrap_or_else(|| "attachment".to_string());
                 match insert_attachment(editor, store, settings, at, &name, &bytes) {
                     Ok(new_cursor) => {
-                        editor.buffer.insert(new_cursor, '\n');
+                        editor.buffer_mut().insert(new_cursor, '\n');
                         at = new_cursor + 1;
                     }
                     Err(err) => {
@@ -1307,7 +1386,7 @@ fn handle_attachment_input(
                     }
                 }
             }
-            move_cursor_to(ui.ctx(), text_edit_id, &editor.buffer, at);
+            move_cursor_to(ui.ctx(), text_edit_id, editor.buffer(), at);
         }
     }
 
@@ -1318,7 +1397,7 @@ fn handle_attachment_input(
 mod tests {
     use super::{
         AttachmentSettings, BTreeSet, EditorEvent, EditorViewMode, HashSet, Key,
-        SpellCheckLanguage, build_editor_layout_job, editor_text_edit_id, is_flagged_word,
+        SpellCheckLanguage, build_editor_layout_job, document_text_edit_id, is_flagged_word,
         misspelled_word_at, paragraph_byte_range, show, switch_view_mode,
     };
     use crate::editor::EditorState;
@@ -1353,12 +1432,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let doc_path = dir.path().join("Chapter One.md");
         std::fs::write(&doc_path, "Existing text.").unwrap();
-        let mut editor = EditorState {
-            open_path: Some(doc_path),
-            buffer: "Existing text.".to_string(),
-            cursor_byte: "Existing text.".len(),
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(Some(doc_path), "Existing text.");
+        editor.set_cursor_byte("Existing text.".len());
         let dropped: egui::DroppedFileHandle = std::sync::Arc::new(FakeDroppedFile {
             path: std::path::PathBuf::from("photo.png"),
             bytes: b"fake png bytes".to_vec(),
@@ -1391,6 +1466,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 false,
@@ -1403,9 +1479,9 @@ mod tests {
         });
 
         assert!(
-            editor.buffer.contains("![[photo.png]]"),
+            editor.buffer().contains("![[photo.png]]"),
             "expected an image embed in: {}",
-            editor.buffer
+            editor.buffer()
         );
         let saved_path = dir.path().join("photo.png");
         assert_eq!(std::fs::read(saved_path).unwrap(), b"fake png bytes");
@@ -1433,11 +1509,7 @@ mod tests {
     fn the_open_document_s_title_is_shown_as_a_heading_above_the_editor() {
         let ctx = egui::Context::default();
         crate::editor_font::install(&ctx);
-        let mut editor = EditorState {
-            open_path: Some(std::path::PathBuf::from("Chapter One.md")),
-            buffer: "Some text.".to_string(),
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("Chapter One.md")), "Some text.".to_string());
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -1458,60 +1530,6 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
-                SpellCheckLanguage::Off,
-                &BTreeSet::new(),
-                false,
-                &HashSet::new(),
-                None,
-                &HashSet::new(),
-                None,
-                None,
-            );
-        });
-
-        let top = ctx
-            .read_response(editor_text_edit_id())
-            .expect("TextEdit renders once a document is open")
-            .rect
-            .top();
-        assert!(
-            top > 15.0,
-            "expected the TextEdit to sit below a document-title heading, but it starts at y={top}"
-        );
-    }
-
-    /// A joined collaboration session has no `open_path` of its own to name (see
-    /// `collaborating_with_no_open_path_still_renders_the_editor`), so no title
-    /// heading should be shown — the `TextEdit` should sit right at the top of the
-    /// pane, the same as before this heading existed.
-    #[test]
-    fn no_title_heading_is_shown_while_collaborating_with_no_open_document() {
-        let ctx = egui::Context::default();
-        crate::editor_font::install(&ctx);
-        let mut editor = EditorState {
-            open_path: None,
-            buffer: "Shared content from a peer".to_string(),
-            ..Default::default()
-        };
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(800.0, 600.0),
-            )),
-            ..Default::default()
-        };
-
-        crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
-            show(
-                ui,
-                &mut editor,
-                &crate::project::store::NativeStore,
-                &[],
-                &[],
-                None,
-                false,
-                EditorFont::Monospace,
-                14.0,
                 true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
@@ -1525,25 +1543,90 @@ mod tests {
         });
 
         let top = ctx
-            .read_response(editor_text_edit_id())
-            .expect("TextEdit renders while collaborating even with no open_path")
+            .read_response(document_text_edit_id(Some(std::path::Path::new("Chapter One.md"))))
+            .expect("TextEdit renders once a document is open")
             .rect
             .top();
         assert!(
-            top < 15.0,
-            "expected no title heading (no open_path to name) so the TextEdit sits at the \
-             top of the pane, but it starts at y={top}"
+            top > 15.0,
+            "expected the TextEdit to sit below a document-title heading, but it starts at y={top}"
+        );
+    }
+
+    /// A joined collaboration session has no `open_path` of its own to name (see
+    /// `collaborating_with_no_open_path_still_renders_the_editor`), so no title
+    /// heading should be shown — unlike the tab strip (now always present once
+    /// any tab is open — see issue #40), which renders either way, so the
+    /// comparison has to isolate the heading specifically rather than check
+    /// for the `TextEdit` sitting at an absolute y position.
+    #[test]
+    fn no_title_heading_is_shown_while_collaborating_with_no_open_document() {
+        fn render_and_measure_top(
+            editor_id: egui::Id,
+            mut editor: EditorState,
+            collaborating: bool,
+        ) -> f32 {
+            let ctx = egui::Context::default();
+            crate::editor_font::install(&ctx);
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                ..Default::default()
+            };
+            crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
+                show(
+                    ui,
+                    &mut editor,
+                    &crate::project::store::NativeStore,
+                    &[],
+                    &[],
+                    None,
+                    false,
+                    EditorFont::Monospace,
+                    14.0,
+                    collaborating,
+                    true,
+                    SpellCheckLanguage::Off,
+                    &BTreeSet::new(),
+                    false,
+                    &HashSet::new(),
+                    None,
+                    &HashSet::new(),
+                    None,
+                    None,
+                );
+            });
+            ctx.read_response(editor_id).unwrap().rect.top()
+        }
+
+        let top_with_heading = render_and_measure_top(
+            document_text_edit_id(Some(std::path::Path::new("scene.md"))),
+            EditorState::test_with_tab(
+                Some(std::path::PathBuf::from("scene.md")),
+                "Some text.".to_string(),
+            ),
+            false,
+        );
+        let top_collaborating = render_and_measure_top(
+            document_text_edit_id(None),
+            EditorState::test_with_tab(None, "Shared content from a peer".to_string()),
+            true,
+        );
+
+        assert!(
+            top_collaborating < top_with_heading,
+            "expected skipping the title heading while collaborating to leave the TextEdit \
+             starting higher than it does below a real heading (with heading: \
+             {top_with_heading}, collaborating: {top_collaborating})"
         );
     }
 
     #[test]
     fn a_short_document_s_editable_area_fills_the_available_height() {
         let ctx = egui::Context::default();
-        let mut editor = EditorState {
-            open_path: Some(std::path::PathBuf::from("scene.md")),
-            buffer: "One short line.".to_string(),
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "One short line.".to_string());
         let viewport_height = 600.0;
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -1565,6 +1648,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 false,
@@ -1577,7 +1661,7 @@ mod tests {
         });
 
         let response = ctx
-            .read_response(editor_text_edit_id())
+            .read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))))
             .expect("TextEdit renders once a document is open");
         assert!(
             response.rect.height() > viewport_height * 0.8,
@@ -1605,11 +1689,7 @@ mod tests {
 
         let left_without_gutter = {
             let ctx = egui::Context::default();
-            let mut editor = EditorState {
-                open_path: Some(std::path::PathBuf::from("scene.md")),
-                buffer: "One short line.".to_string(),
-                ..Default::default()
-            };
+            let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "One short line.".to_string());
             crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
                 show(
                     ui,
@@ -1622,6 +1702,7 @@ mod tests {
                     EditorFont::Monospace,
                     14.0,
                     false,
+                    true,
                     SpellCheckLanguage::Off,
                     &BTreeSet::new(),
                     false,
@@ -1632,7 +1713,7 @@ mod tests {
                     None,
                 );
             });
-            ctx.read_response(editor_text_edit_id())
+            ctx.read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))))
                 .unwrap()
                 .rect
                 .left()
@@ -1640,11 +1721,7 @@ mod tests {
 
         let left_with_gutter = {
             let ctx = egui::Context::default();
-            let mut editor = EditorState {
-                open_path: Some(std::path::PathBuf::from("scene.md")),
-                buffer: "One short line.".to_string(),
-                ..Default::default()
-            };
+            let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "One short line.".to_string());
             crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
                 show(
                     ui,
@@ -1657,6 +1734,7 @@ mod tests {
                     EditorFont::Monospace,
                     14.0,
                     false,
+                    true,
                     SpellCheckLanguage::Off,
                     &BTreeSet::new(),
                     true,
@@ -1667,7 +1745,7 @@ mod tests {
                     None,
                 );
             });
-            ctx.read_response(editor_text_edit_id())
+            ctx.read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))))
                 .unwrap()
                 .rect
                 .left()
@@ -1725,11 +1803,7 @@ mod tests {
     fn clicking_the_gutter_icon_area_toggles_a_bookmark_at_that_line() {
         let ctx = egui::Context::default();
         crate::editor_font::install(&ctx);
-        let mut editor = EditorState {
-            open_path: Some(std::path::PathBuf::from("scene.md")),
-            buffer: "one\ntwo\nthree".to_string(),
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "one\ntwo\nthree".to_string());
         let input = fixed_viewport_input();
 
         crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
@@ -1744,6 +1818,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 true,
@@ -1756,7 +1831,7 @@ mod tests {
         });
 
         let icon_rect = ctx
-            .read_response(editor_text_edit_id().with(("bookmark_icon", 2usize)))
+            .read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))).with(("bookmark_icon", 2usize)))
             .expect("line 2's gutter icon area registers a clickable response")
             .rect;
 
@@ -1777,6 +1852,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 true,
@@ -1800,11 +1876,7 @@ mod tests {
     fn ctrl_clicking_a_wikilink_in_the_editor_navigates_to_it() {
         let ctx = egui::Context::default();
         crate::editor_font::install(&ctx);
-        let mut editor = EditorState {
-            open_path: Some(std::path::PathBuf::from("scene.md")),
-            buffer: "[[Other Scene]] and more text".to_string(),
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "[[Other Scene]] and more text".to_string());
         let input = fixed_viewport_input();
 
         crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
@@ -1819,6 +1891,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 false,
@@ -1831,7 +1904,7 @@ mod tests {
         });
 
         let text_rect = ctx
-            .read_response(editor_text_edit_id())
+            .read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))))
             .expect("the text edit registers a response")
             .rect;
         // Just inside the top-left corner, over the wikilink's opening `[[`.
@@ -1872,6 +1945,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 false,
@@ -1895,11 +1969,7 @@ mod tests {
     fn a_plain_click_on_a_wikilink_does_not_navigate() {
         let ctx = egui::Context::default();
         crate::editor_font::install(&ctx);
-        let mut editor = EditorState {
-            open_path: Some(std::path::PathBuf::from("scene.md")),
-            buffer: "[[Other Scene]] and more text".to_string(),
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "[[Other Scene]] and more text".to_string());
         let input = fixed_viewport_input();
 
         crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
@@ -1914,6 +1984,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 false,
@@ -1926,7 +1997,7 @@ mod tests {
         });
 
         let text_rect = ctx
-            .read_response(editor_text_edit_id())
+            .read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))))
             .expect("the text edit registers a response")
             .rect;
         let click_pos = text_rect.min + egui::vec2(1.0, 2.0);
@@ -1947,6 +2018,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 false,
@@ -1973,11 +2045,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::editor_font::install(&ctx);
         let long_paragraph = "wrap ".repeat(80); // forces several visual rows at 260px wide
-        let mut editor = EditorState {
-            open_path: Some(std::path::PathBuf::from("scene.md")),
-            buffer: format!("first\n{long_paragraph}\nlast"),
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), format!("first\n{long_paragraph}\nlast"));
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -1998,6 +2066,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 true,
@@ -2010,7 +2079,7 @@ mod tests {
         });
 
         let icon_rect = ctx
-            .read_response(editor_text_edit_id().with(("bookmark_icon", 2usize)))
+            .read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))).with(("bookmark_icon", 2usize)))
             .expect("line 2's gutter icon area registers a clickable response")
             .rect;
         assert!(
@@ -2038,6 +2107,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 true,
@@ -2068,11 +2138,7 @@ mod tests {
         crate::editor_font::install(&ctx);
         let buffer = "one\ntwo\nthree\nfour".to_string();
         let cursor_on_line_3 = "one\ntwo\n".len(); // start of "three"
-        let mut editor = EditorState {
-            open_path: Some(std::path::PathBuf::from("scene.md")),
-            buffer,
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), buffer);
         let shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, Key::F2);
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -2094,6 +2160,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 false,
@@ -2105,7 +2172,7 @@ mod tests {
             );
         });
 
-        editor.pending_cursor = Some(cursor_on_line_3);
+        if let Some(tab) = editor.active_tab_mut() { tab.pending_cursor = Some(cursor_on_line_3); }
         let shortcut_input = egui::RawInput {
             events: vec![egui::Event::Key {
                 key: Key::F2,
@@ -2129,6 +2196,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 false,
@@ -2150,16 +2218,14 @@ mod tests {
     /// rather than wherever the caret was just before returning.
     #[test]
     fn switching_to_reading_mode_does_not_touch_pending_cursor() {
-        let mut editor = EditorState {
-            cursor_byte: 7,
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(None, "");
+        editor.set_cursor_byte(7);
         let mut mode = EditorViewMode::Edit;
 
         switch_view_mode(&mut editor, &mut mode, EditorViewMode::Reading);
 
         assert_eq!(mode, EditorViewMode::Reading);
-        assert_eq!(editor.pending_cursor, None);
+        assert_eq!(editor.pending_cursor(), None);
     }
 
     /// The bug this guards against: `TextEdit` isn't rendered at all while in
@@ -2172,16 +2238,14 @@ mod tests {
     /// already relies on.
     #[test]
     fn switching_back_to_source_mode_restores_the_cursor_via_pending_cursor() {
-        let mut editor = EditorState {
-            cursor_byte: 12,
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(None, "");
+        editor.set_cursor_byte(12);
         let mut mode = EditorViewMode::Reading;
 
         switch_view_mode(&mut editor, &mut mode, EditorViewMode::Edit);
 
         assert_eq!(mode, EditorViewMode::Edit);
-        assert_eq!(editor.pending_cursor, Some(12));
+        assert_eq!(editor.pending_cursor(), Some(12));
     }
 
     /// The note column sits to the left of the bookmark column (see
@@ -2193,11 +2257,7 @@ mod tests {
     fn clicking_the_note_icon_area_edits_a_note_at_that_line() {
         let ctx = egui::Context::default();
         crate::editor_font::install(&ctx);
-        let mut editor = EditorState {
-            open_path: Some(std::path::PathBuf::from("scene.md")),
-            buffer: "one\ntwo\nthree".to_string(),
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "one\ntwo\nthree".to_string());
         let input = fixed_viewport_input();
 
         crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
@@ -2212,6 +2272,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 true,
@@ -2224,7 +2285,7 @@ mod tests {
         });
 
         let icon_rect = ctx
-            .read_response(editor_text_edit_id().with(("note_icon", 2usize)))
+            .read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))).with(("note_icon", 2usize)))
             .expect("line 2's note gutter icon area registers a clickable response")
             .rect;
 
@@ -2245,6 +2306,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 true,
@@ -2270,11 +2332,7 @@ mod tests {
         crate::editor_font::install(&ctx);
         let buffer = "one\ntwo\nthree\nfour".to_string();
         let cursor_mid_line_3 = "one\ntwo\nthr".len(); // 3 chars into "three"
-        let mut editor = EditorState {
-            open_path: Some(std::path::PathBuf::from("scene.md")),
-            buffer,
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), buffer);
         let shortcut =
             egui::KeyboardShortcut::new(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::J);
         let input = egui::RawInput {
@@ -2297,6 +2355,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 false,
@@ -2308,7 +2367,7 @@ mod tests {
             );
         });
 
-        editor.pending_cursor = Some(cursor_mid_line_3);
+        if let Some(tab) = editor.active_tab_mut() { tab.pending_cursor = Some(cursor_mid_line_3); }
         let shortcut_input = egui::RawInput {
             events: vec![egui::Event::Key {
                 key: Key::J,
@@ -2332,6 +2391,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 false,
@@ -2356,11 +2416,7 @@ mod tests {
     #[test]
     fn collaborating_with_no_open_path_still_renders_the_editor() {
         let ctx = egui::Context::default();
-        let mut editor = EditorState {
-            open_path: None,
-            buffer: "Shared content from a peer".to_string(),
-            ..Default::default()
-        };
+        let mut editor = EditorState::test_with_tab(None, "Shared content from a peer".to_string());
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -2381,6 +2437,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 true,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 false,
@@ -2393,7 +2450,7 @@ mod tests {
         });
 
         assert!(
-            ctx.read_response(editor_text_edit_id()).is_some(),
+            ctx.read_response(document_text_edit_id(None)).is_some(),
             "expected the TextEdit to render while collaborating, even with no open_path"
         );
     }
@@ -2422,6 +2479,7 @@ mod tests {
                 EditorFont::Monospace,
                 14.0,
                 false,
+                true,
                 SpellCheckLanguage::Off,
                 &BTreeSet::new(),
                 false,
@@ -2434,7 +2492,7 @@ mod tests {
         });
 
         assert!(
-            ctx.read_response(editor_text_edit_id()).is_none(),
+            ctx.read_response(document_text_edit_id(None)).is_none(),
             "expected no TextEdit to render with nothing open and no collaboration session"
         );
     }

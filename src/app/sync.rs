@@ -553,14 +553,20 @@ impl SmaragdApp {
         }
     }
 
-    /// Tells the engine which file (if any) has unsaved edits, so it isn't overwritten.
+    /// Tells the engine which open files (if any) have unsaved edits, so none of
+    /// them are overwritten — every dirty tab, not just the active one, since
+    /// each keeps its own resident, unsaved buffer until it's closed or saved.
     fn sync_update_held(&mut self) {
         let mut held = BTreeSet::new();
-        if self.editor.dirty
-            && let (Some(project), Some(path)) = (&self.project, &self.editor.open_path)
-            && let Some(key) = relative_key(&project.root, path)
-        {
-            held.insert(key);
+        if let Some(project) = &self.project {
+            for tab in self.editor.iter_tabs() {
+                if tab.dirty
+                    && let Some(path) = &tab.path
+                    && let Some(key) = relative_key(&project.root, path)
+                {
+                    held.insert(key);
+                }
+            }
         }
         if held != self.sync.held_sent {
             if let Some(runner) = &self.sync.runner {
@@ -1223,8 +1229,8 @@ mod tests {
         });
 
         // The user starts editing it here, without saving...
-        app.editor.open_path = Some(scene.clone());
-        app.editor.dirty = true;
+        app.editor.open(&scene).unwrap();
+        app.editor.active_tab_mut().unwrap().dirty = true;
         poll_until(&mut app, "the held set to reach the runner", |app| {
             app.sync.held_sent.contains("Scene.md")
         });
@@ -1251,7 +1257,7 @@ mod tests {
 
         // Saving writes the user's version; sync then merges both edits.
         std::fs::write(&scene, "From the desktop.\nLine one.\n").unwrap();
-        app.editor.dirty = false;
+        app.editor.active_tab_mut().unwrap().dirty = false;
         app.sync_after_save();
         poll_until(&mut app, "the merged scene", |_| {
             let text = read(&scene);

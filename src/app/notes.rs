@@ -33,10 +33,10 @@ impl SmaragdApp {
         if resolved.is_empty() {
             return;
         }
-        let current = self.editor.open_path.as_deref().map(|path| {
-            let line = line_at_byte(&self.editor.buffer, self.editor.cursor_byte);
-            let column =
-                self.editor.cursor_byte - line_start_byte_offset(&self.editor.buffer, line);
+        let current = self.editor.open_path().map(|path| {
+            let line = line_at_byte(self.editor.buffer(), self.editor.cursor_byte());
+            let column = self.editor.cursor_byte()
+                - line_start_byte_offset(self.editor.buffer(), line);
             (path, line, column)
         });
         let index = step_note_index(&resolved, current, forward);
@@ -54,7 +54,7 @@ impl SmaragdApp {
     /// blank one at column 0. A silent no-op with no open document —
     /// unreachable from the UI in that state anyway.
     pub(super) fn open_note_prompt(&mut self, line: usize, column: Option<usize>) {
-        let Some(path) = self.editor.open_path.clone() else {
+        let Some(path) = self.editor.open_path().map(Path::to_path_buf) else {
             return;
         };
         let Some(project) = &self.project else {
@@ -125,17 +125,20 @@ impl SmaragdApp {
     /// `path` — see `goto_bookmark`'s identical reasoning.
     fn goto_note(&mut self, path: PathBuf, line: usize, column: usize) {
         self.open_document(&path);
-        if self.editor.open_path.as_deref() == Some(path.as_path()) {
-            let start = line_start_byte_offset(&self.editor.buffer, line);
+        if self.editor.open_path() == Some(path.as_path()) {
+            let start = line_start_byte_offset(self.editor.buffer(), line);
             // Clamped to *this line's* own end, not the whole buffer's —
             // unlike a bookmark's line-start jump, landing past the line
             // (into the next one) if it shrank since the note was made would
             // be visibly wrong, not just imprecise.
-            let line_end = self.editor.buffer[start..]
+            let line_end = self.editor.buffer()[start..]
                 .find('\n')
                 .map(|offset| start + offset)
-                .unwrap_or(self.editor.buffer.len());
-            self.editor.pending_cursor = Some((start + column).min(line_end));
+                .unwrap_or(self.editor.buffer().len());
+            let target = (start + column).min(line_end);
+            if let Some(tab) = self.editor.active_tab_mut() {
+                tab.pending_cursor = Some(target);
+            }
         }
     }
 

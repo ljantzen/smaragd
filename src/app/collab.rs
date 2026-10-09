@@ -30,7 +30,7 @@ impl SmaragdApp {
             self.push_error_toast("A collaboration session is already active");
             return;
         }
-        if self.editor.open_path.is_none() {
+        if self.editor.open_path().is_none() {
             self.push_error_toast("Open a document before hosting a collaboration session");
             return;
         }
@@ -38,21 +38,21 @@ impl SmaragdApp {
         self.set_status_message("Hosting collaboration session…");
     }
 
-    /// Joins a collaboration session using a pasted connection code. Refuses
-    /// while a document is already open, sidestepping any question of what
-    /// should happen to it: the shared document a join receives isn't tied
-    /// to any of the joiner's own files (see `CollabSession`'s module doc).
+    /// Joins a collaboration session using a pasted connection code, opening
+    /// a dedicated path-less tab for the shared document (see
+    /// `EditorState::open_collab_tab`): it isn't tied to any of the
+    /// joiner's own files (see `CollabSession`'s module doc). With
+    /// `Settings::multi_tab_editor` on, it no longer needs to evict whatever
+    /// else was open to make room for it, unlike the single-document model
+    /// this app used to have — though with it off, `enforce_single_tab_setting`
+    /// still closes everything else right after, same as that old behavior.
     pub(super) fn start_collab_join(&mut self, ctx: &egui::Context, code: &str) {
         if self.collab_is_live() {
             self.push_error_toast("A collaboration session is already active");
             return;
         }
-        if self.editor.open_path.is_some() {
-            self.push_error_toast(
-                "Close the current document before joining a collaboration session",
-            );
-            return;
-        }
+        self.editor.open_collab_tab();
+        self.enforce_single_tab_setting();
         self.collab = Some(CollabSession::join(code.to_string(), ctx.clone()));
         self.set_status_message("Joining collaboration session…");
     }
@@ -62,6 +62,16 @@ impl SmaragdApp {
     /// hook in `open_document`/`close_document`.
     pub(super) fn end_collab_session(&mut self, reason: impl Into<String>) {
         if let Some(session) = self.collab.take() {
+            // A joiner's shared buffer lives in a dedicated path-less tab
+            // (see `start_collab_join`) that has no file of its own to keep
+            // around once the session ends — close it rather than leaving
+            // an empty orphaned tab. A host's tab is a real document and
+            // stays open exactly as it was before hosting started.
+            if matches!(session.role, CollabRole::Joiner)
+                && let Some(index) = self.editor.active.filter(|&i| self.editor.tabs[i].path.is_none())
+            {
+                let _ = self.editor.close_tab(index, &crate::project::store::NativeStore);
+            }
             session.end();
             self.set_status_message(reason);
         }
@@ -98,17 +108,17 @@ impl SmaragdApp {
         for update in session.poll() {
             match update {
                 SessionUpdate::TextChanged { new_text, change } => {
-                    let editor_id = ui::editor_panel::editor_text_edit_id();
+                    let editor_id = ui::editor_panel::document_text_edit_id(self.editor.open_path());
                     let cursor_byte = egui::TextEdit::load_state(ctx, editor_id)
                         .and_then(|state| state.cursor.char_range())
                         .map(|range| {
                             crate::autocomplete::char_offset_to_byte(
-                                &self.editor.buffer,
+                                self.editor.buffer(),
                                 range.primary.index.0,
                             )
                         });
-                    let old_len = self.editor.buffer.len();
-                    self.editor.buffer = new_text;
+                    let old_len = self.editor.buffer().len();
+                    *self.editor.buffer_mut() = new_text;
                     self.editor.mark_dirty();
                     // Heuristic, not a protocol-level signal (no wire
                     // changes needed for this): a `TextChange` that deletes
@@ -128,7 +138,7 @@ impl SmaragdApp {
                         ui::editor_panel::move_cursor_to(
                             ctx,
                             editor_id,
-                            &self.editor.buffer,
+                            self.editor.buffer(),
                             adjusted,
                         );
                     }
@@ -157,7 +167,7 @@ impl SmaragdApp {
     /// its buffer.
     pub(super) fn sync_local_collab_edit(&mut self) {
         if let Some(session) = &mut self.collab {
-            session.sync_local_edit(&self.editor.buffer);
+            session.sync_local_edit(self.editor.buffer());
         }
     }
 }

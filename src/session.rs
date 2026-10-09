@@ -26,22 +26,37 @@ pub struct SessionState {
     /// it's the one that actually reopened. `None` when the app closed with
     /// no project open (the window geometry is still worth keeping).
     pub project_path: Option<PathBuf>,
-    pub open_document: Option<PathBuf>,
-    /// Byte offset of the cursor in `open_document`.
-    pub cursor_byte: usize,
-    /// The binder selection, which can differ from `open_document` (a folder
+    /// Every tab that was open, in tab order — see issue #40. A session
+    /// saved by a build before tabs existed has no `open_tabs` and
+    /// `#[serde(default)]` restores it as empty, so an old `session.json`
+    /// just loses its restore state rather than failing to load.
+    pub open_tabs: Vec<OpenTabState>,
+    /// Index into `open_tabs` of whichever tab was active.
+    pub active_tab: Option<usize>,
+    /// The binder selection, which can differ from every open tab (a folder
     /// whose metadata was showing, say).
     pub selected_path: Option<PathBuf>,
-    /// `DocumentHistory`'s entries, current position and per-document cursor
-    /// offsets — what Back/Forward and "Recent Files > Opened" work from.
-    pub history_entries: Vec<PathBuf>,
-    pub history_position: Option<usize>,
-    pub cursor_positions: Vec<(PathBuf, usize)>,
     /// Folders collapsed in the binder. Only the collapsed ones are listed,
     /// since expanded is the binder's default.
     pub collapsed_folders: Vec<PathBuf>,
     pub focus_mode: bool,
     pub window: Option<WindowGeometry>,
+}
+
+/// One open tab, as `SmaragdApp::capture_session`/`restore_session` persist
+/// and restore it — see `editor::OpenDocument`, which this mirrors.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OpenTabState {
+    pub path: PathBuf,
+    pub cursor_byte: usize,
+    /// The tab's buffer, only when it had unsaved edits at save time —
+    /// restored verbatim (marked dirty) instead of re-reading from disk, so
+    /// quitting with a tab still dirty doesn't silently lose its edits. Each
+    /// tab keeps its own resident buffer indefinitely now (see issue #40),
+    /// so unlike the old single-document model this is the only remaining
+    /// moment unsaved content could otherwise be lost.
+    pub unsaved_buffer: Option<String>,
 }
 
 /// The window's size and position in logical points, as `egui::ViewportInfo`
@@ -126,15 +141,20 @@ mod tests {
         let path = dir.path().join("session.json");
         let session = SessionState {
             project_path: Some(PathBuf::from("/home/author/novel")),
-            open_document: Some(PathBuf::from("/home/author/novel/Manuscript/one.md")),
-            cursor_byte: 42,
-            selected_path: Some(PathBuf::from("/home/author/novel/Manuscript")),
-            history_entries: vec![
-                PathBuf::from("/home/author/novel/Manuscript/two.md"),
-                PathBuf::from("/home/author/novel/Manuscript/one.md"),
+            open_tabs: vec![
+                OpenTabState {
+                    path: PathBuf::from("/home/author/novel/Manuscript/two.md"),
+                    cursor_byte: 7,
+                    unsaved_buffer: None,
+                },
+                OpenTabState {
+                    path: PathBuf::from("/home/author/novel/Manuscript/one.md"),
+                    cursor_byte: 42,
+                    unsaved_buffer: Some("unsaved edit".to_string()),
+                },
             ],
-            history_position: Some(1),
-            cursor_positions: vec![(PathBuf::from("/home/author/novel/Manuscript/two.md"), 7)],
+            active_tab: Some(1),
+            selected_path: Some(PathBuf::from("/home/author/novel/Manuscript")),
             collapsed_folders: vec![PathBuf::from("/home/author/novel/Research")],
             focus_mode: true,
             window: Some(WindowGeometry {

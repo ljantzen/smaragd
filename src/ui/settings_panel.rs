@@ -528,6 +528,21 @@ fn show_editor_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
              paragraph's wrapped continuation isn't numbered again.",
         )
         .changed();
+    ui.add_space(12.0);
+    ui.heading("Tabs");
+    ui.add_space(12.0);
+    changed |= ui
+        .checkbox(
+            &mut settings.multi_tab_editor,
+            "Allow multiple documents open at once",
+        )
+        .on_hover_text(
+            "Open several documents in their own tabs, each with its own \
+             unsaved buffer — switching tabs never touches disk. Off keeps \
+             the simpler one-document-at-a-time behavior: opening a \
+             document always replaces whatever was open.",
+        )
+        .changed();
     changed
 }
 

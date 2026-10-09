@@ -11,7 +11,7 @@ mod dictionary_download;
 mod dock;
 mod dock_tab_viewer;
 mod dock_tabs;
-mod document_history;
+pub(crate) mod document_history;
 mod export;
 mod external_watch;
 mod find_replace;
@@ -38,7 +38,6 @@ use dock::{
     DockTab, capture_floating_window_positions, default_dock_state, ensure_editor_tab_present,
 };
 use dock_tab_viewer::{AppTabViewer, DockAction};
-use document_history::DocumentHistory;
 use export::ExportState;
 use git::GitOperation;
 use menu_nav::{nav_submenu, top_menu_button};
@@ -81,13 +80,6 @@ pub struct SmaragdApp {
     project: Option<Project>,
     editor: EditorState,
     selected_path: Option<PathBuf>,
-    /// Which documents have been opened this project session, in order, plus
-    /// the last known cursor position in each — backs `open_document`'s
-    /// history tracking and the Go Back/Go Forward navigation
-    /// (`go_back_document`/`go_forward_document`). Reset whenever a project
-    /// is opened or closed (`set_project`/`close_project`): paths from one
-    /// project are meaningless once a different one is open.
-    document_history: DocumentHistory,
     /// A quiet, routine status-bar confirmation — "Committed", "Exported to
     /// ...", and the like. Overwritten freely by dozens of call sites, and
     /// replaced (not queued) by whichever ran most recently, since these are
@@ -371,7 +363,6 @@ impl SmaragdApp {
             project: None,
             editor: EditorState::default(),
             selected_path: None,
-            document_history: DocumentHistory::default(),
             status_message: None,
             status_message_set_at: None,
             toasts: Vec::new(),
@@ -475,13 +466,19 @@ impl SmaragdApp {
     /// value `new()` gives it before those disk/context-dependent steps run.
     #[cfg(test)]
     fn test_fixture() -> Self {
-        let settings = Settings::default();
+        // Most of this codebase's tests exercise the multi-tab behavior
+        // `Settings::multi_tab_editor` gates (on by default here, unlike
+        // the real app's off-by-default convention) — a test that wants the
+        // setting's *off* behavior instead sets this back to `false` itself.
+        let settings = Settings {
+            multi_tab_editor: true,
+            ..Settings::default()
+        };
         let pomodoro_durations = crate::pomodoro::resolve_durations(&settings);
         Self {
             project: None,
             editor: EditorState::default(),
             selected_path: None,
-            document_history: DocumentHistory::default(),
             status_message: None,
             status_message_set_at: None,
             toasts: Vec::new(),
@@ -809,7 +806,7 @@ impl SmaragdApp {
             ShortcutAction::ToggleTags => self.toggle_dock_tab(DockTab::Tags),
             ShortcutAction::EditMetadata => self.toggle_dock_tab(DockTab::Metadata),
             ShortcutAction::ToggleBinderFocus => {
-                let editor_id = ui::editor_panel::editor_text_edit_id();
+                let editor_id = ui::editor_panel::document_text_edit_id(self.editor.open_path());
                 if ctx.memory(|m| m.focused()) == Some(editor_id) {
                     // Bring the Binder tab to the front in case it's currently
                     // buried behind Backlinks/Metadata in the same dock node —
@@ -901,12 +898,12 @@ impl SmaragdApp {
         }
     }
 
-    /// Whether exiting right now would silently lose something: the open document
-    /// has unsaved edits, or a card editor modal is open with a draft that hasn't
-    /// been saved (or explicitly discarded) yet — see the `close_requested()`
-    /// handling in `ui()`, the only caller.
+    /// Whether exiting right now would silently lose something: any open tab
+    /// has unsaved edits, or a card editor modal is open with a draft that
+    /// hasn't been saved (or explicitly discarded) yet — see the
+    /// `close_requested()` handling in `ui()`, the only caller.
     fn has_unsaved_changes(&self) -> bool {
-        self.editor.dirty || self.card_draft.is_some()
+        self.editor.iter_tabs().any(|tab| tab.dirty) || self.card_draft.is_some()
     }
 
     /// Save the open document, first running every loaded plugin's `on_save` hook
@@ -921,12 +918,12 @@ impl SmaragdApp {
     /// after the save — catches a hand-edit that just broke it, complementing
     /// `refresh_metadata_if_needed`'s equivalent check on opening a document.
     fn save_editor(&mut self) -> std::io::Result<()> {
-        let (transformed, errors) = self.plugin_engine.run_on_save(&self.editor.buffer);
+        let (transformed, errors) = self.plugin_engine.run_on_save(self.editor.buffer());
         if !errors.is_empty() {
             self.push_error_toast(errors.join("; "));
         }
-        if transformed != self.editor.buffer {
-            self.editor.buffer = transformed;
+        if transformed != self.editor.buffer() {
+            *self.editor.buffer_mut() = transformed;
             self.editor.mark_dirty();
         }
         let store = self.editor_store();
@@ -937,7 +934,7 @@ impl SmaragdApp {
         // at the cost of hiding a more pressing failure.
         if errors.is_empty()
             && result.is_ok()
-            && let Some(err) = crate::frontmatter::validate(&self.editor.buffer)
+            && let Some(err) = crate::frontmatter::validate(self.editor.buffer())
         {
             self.push_error_toast(err.to_string());
         }
@@ -1057,15 +1054,14 @@ impl SmaragdApp {
     /// state. Never saves — like any other edit, the user's own save action does
     /// that.
     fn run_plugin_command(&mut self, name: &str, arg: &str) {
-        let document_open = self.editor.open_path.is_some();
-        let document_text = document_open.then_some(self.editor.buffer.as_str());
+        let document_open = self.editor.open_path().is_some();
+        let document_text = document_open.then_some(self.editor.buffer());
         let document_basename = self
             .editor
-            .open_path
-            .as_deref()
+            .open_path()
             .and_then(Path::file_stem)
             .and_then(|s| s.to_str());
-        let document_filename = self.editor.open_path.as_deref().and_then(|path| {
+        let document_filename = self.editor.open_path().and_then(|path| {
             let relative: &Path = self
                 .project
                 .as_ref()
@@ -1086,7 +1082,7 @@ impl SmaragdApp {
         }
         // Only meaningful with a document open — a plugin can't fabricate one.
         if document_open && let Some(text) = effects.set_document_text {
-            self.editor.buffer = text;
+            *self.editor.buffer_mut() = text;
             self.editor.mark_dirty();
         }
         if let Some(message) = effects.status_message {
@@ -1143,6 +1139,7 @@ impl SmaragdApp {
 
         let previous_ui_font = self.settings.ui_font;
         let previous_spell_check_language = self.settings.spell_check_language;
+        let previous_multi_tab_editor = self.settings.multi_tab_editor;
         let dictionary_downloading = self
             .pending_dictionary_download
             .as_ref()
@@ -1166,6 +1163,9 @@ impl SmaragdApp {
                 // An explicit pick wins over whatever Focus Mode was forcing.
                 self.focus_mode_spell_check_override = None;
                 self.remember_spell_check_language(self.settings.spell_check_language);
+            }
+            if previous_multi_tab_editor && !self.settings.multi_tab_editor {
+                self.enforce_single_tab_setting();
             }
             self.persist_settings();
             self.plugin_shortcuts = self.compute_effective_plugin_shortcuts();
@@ -1241,9 +1241,19 @@ impl SmaragdApp {
             match outcome {
                 ui::exit_confirm_prompt::ExitConfirmOutcome::Save => {
                     let mut ok = true;
-                    if self.editor.dirty
+                    // The active tab goes through `save_editor` for its
+                    // plugin on-save hook and frontmatter check; every other
+                    // dirty tab (resident, independent buffers — any of them
+                    // may hold unsaved edits) gets a plain save, same as
+                    // closing a background tab would.
+                    if self.editor.dirty()
                         && let Err(err) = self.save_editor()
                     {
+                        self.push_error_toast(format!("Save failed: {err}"));
+                        ok = false;
+                    }
+                    let store = self.editor_store();
+                    if let Err(err) = self.editor.close_all_with_store(store.as_ref()) {
                         self.push_error_toast(format!("Save failed: {err}"));
                         ok = false;
                     }
@@ -1255,7 +1265,9 @@ impl SmaragdApp {
                     }
                 }
                 ui::exit_confirm_prompt::ExitConfirmOutcome::Discard => {
-                    self.editor.dirty = false;
+                    for tab in &mut self.editor.tabs {
+                        tab.dirty = false;
+                    }
                     self.finish_card_editor(CardEditorOutcome::Cancel);
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -1347,7 +1359,7 @@ impl SmaragdApp {
                             .map(Path::to_path_buf)
                             .collect(),
                         ui::recent_files_prompt::RecentFilesMode::Opened => self
-                            .document_history
+                            .editor
                             .recent_documents(RECENT_FILES_LIMIT)
                             .into_iter()
                             .map(Path::to_path_buf)
@@ -1401,9 +1413,9 @@ impl SmaragdApp {
             let mut color_mode_clicked = false;
             egui::Panel::bottom("status_bar").show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if let Some(path) = &self.editor.open_path {
+                    if let Some(path) = self.editor.open_path() {
                         ui.label(path.display().to_string());
-                        if self.editor.dirty {
+                        if self.editor.dirty() {
                             ui.label("*");
                         }
                     }
@@ -1777,8 +1789,7 @@ impl eframe::App for SmaragdApp {
                     self.settings.shortcuts.get(ShortcutAction::ToggleBookmark);
                 let bookmarked_lines = self
                     .editor
-                    .open_path
-                    .as_deref()
+                    .open_path()
                     .zip(self.project.as_ref())
                     .map(|(path, project)| project.bookmarked_lines_for(path))
                     .unwrap_or_default();
@@ -1786,8 +1797,7 @@ impl eframe::App for SmaragdApp {
                     self.settings.shortcuts.get(ShortcutAction::AddNoteAtCursor);
                 let noted_lines = self
                     .editor
-                    .open_path
-                    .as_deref()
+                    .open_path()
                     .zip(self.project.as_ref())
                     .map(|(path, project)| project.noted_lines_for(path))
                     .unwrap_or_default();
@@ -1814,6 +1824,7 @@ impl eframe::App for SmaragdApp {
                     self.settings.editor_font,
                     crate::editor_font::resolve_size(self.settings.editor_font_size),
                     self.collab.is_some(),
+                    self.settings.multi_tab_editor,
                     spell_check_language,
                     &self.settings.spell_check_custom_words,
                     self.settings.show_editor_gutter,
@@ -1826,7 +1837,7 @@ impl eframe::App for SmaragdApp {
                     Some(EditorEvent::SaveError(err)) => self.push_error_toast(err),
                     Some(EditorEvent::Wikilink(activation)) => self.activate_wikilink(activation),
                     Some(EditorEvent::ToggleBookmark(line)) => {
-                        if let Some(path) = self.editor.open_path.clone() {
+                        if let Some(path) = self.editor.open_path().map(Path::to_path_buf) {
                             self.toggle_bookmark(&path, line);
                         }
                     }
@@ -1838,6 +1849,9 @@ impl eframe::App for SmaragdApp {
                         self.persist_settings();
                     }
                     Some(EditorEvent::AttachmentError(err)) => self.push_error_toast(err),
+                    // Never raised here: the tab strip itself is suppressed
+                    // in Focus Mode (see `editor_panel::show`'s own guard).
+                    Some(EditorEvent::SwitchTab(_)) | Some(EditorEvent::CloseTab(_)) => {}
                     None => {}
                 }
             });
@@ -1878,7 +1892,7 @@ impl eframe::App for SmaragdApp {
                 let mut viewer = AppTabViewer {
                     project: self.project.as_ref(),
                     selected_path: self.selected_path.as_deref(),
-                    open_path: self.editor.open_path.clone(),
+                    open_path: self.editor.open_path().map(Path::to_path_buf),
                     backlinks: &self.backlinks.entries,
                     tags: &self.tags.entries,
                     tags_search_text: &mut self.tags.search_text,
@@ -1967,7 +1981,7 @@ impl eframe::App for SmaragdApp {
                             self.handle_editor_menu_event(ui.ctx(), event)
                         }
                         DockAction::ToggleBookmark(line) => {
-                            if let Some(path) = self.editor.open_path.clone() {
+                            if let Some(path) = self.editor.open_path().map(Path::to_path_buf) {
                                 self.toggle_bookmark(&path, line);
                             }
                         }
@@ -1976,6 +1990,8 @@ impl eframe::App for SmaragdApp {
                             self.open_note_prompt(line, column);
                         }
                         DockAction::Notes(event) => self.handle_notes_event(event),
+                        DockAction::SwitchTab(index) => self.switch_editor_tab(index),
+                        DockAction::CloseTab(index) => self.close_editor_tab(index),
                     }
                 }
             });
@@ -2224,8 +2240,8 @@ mod save_editor_tests {
         app.open_project(&ctx, dir.path());
         let doc_path = dir.path().join("doc.md");
         std::fs::write(&doc_path, "original").unwrap();
-        app.open_document_internal(&doc_path);
-        app.editor.buffer = "edited".to_string();
+        app.load_document(&doc_path);
+        *app.editor.buffer_mut() = "edited".to_string();
         app.editor.mark_dirty();
         app.settings.backup_enabled = true;
         app.settings.backup_on_manual_save = true;
@@ -2246,8 +2262,8 @@ mod save_editor_tests {
         app.open_project(&ctx, dir.path());
         let doc_path = dir.path().join("doc.md");
         std::fs::write(&doc_path, "original").unwrap();
-        app.open_document_internal(&doc_path);
-        app.editor.buffer = "edited".to_string();
+        app.load_document(&doc_path);
+        *app.editor.buffer_mut() = "edited".to_string();
         app.editor.mark_dirty();
         app.settings.backup_enabled = true;
         app.settings.backup_on_manual_save = false;
@@ -2272,7 +2288,8 @@ mod unsaved_changes_tests {
     #[test]
     fn has_unsaved_changes_is_true_when_the_editor_is_dirty() {
         let mut app = SmaragdApp::test_fixture();
-        app.editor.dirty = true;
+        app.editor.open_collab_tab(); // a pathless tab, just to have something to mark dirty
+        app.editor.active_tab_mut().unwrap().dirty = true;
         assert!(app.has_unsaved_changes());
     }
 

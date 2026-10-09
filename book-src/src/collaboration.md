@@ -11,7 +11,7 @@ The **`Collaborate`** menu (and its dockable **Collaboration Panel**, `Ctrl+Shif
 
 ## Joining a session
 
-1. **`Collaborate > Join Session…`** (or **Join Session…** in the panel itself) — needs *no* document currently open, since the shared document a join receives replaces whatever was there, not merges with one of your own files. Close your current document first if one's open.
+1. **`Collaborate > Join Session…`** (or **Join Session…** in the panel itself) opens the shared document in its own tab — with [multi-tab editing](writing-and-editor.md#multi-tab-editing) on, whatever else you had open stays open alongside it; with it off (the default), it replaces whatever was open, same as opening any other document.
 2. Paste the code your collaborator sent you and confirm.
 3. Once paired, the host's document appears in your editor and either side can type — edits from both sides merge automatically.
 
@@ -21,7 +21,7 @@ Both sides just type normally in the Editor tab; there's no separate "collaborat
 
 The panel shows **Connected to peer `<fingerprint>`** once pairing completes — a short id derived from the peer's network identity, useful for confirming you're connected to who you think you are, not a name either side chooses. **End Session** stops collaborating; the document itself is unaffected and stays open normally afterward.
 
-What opening a different document does depends on which side you're on. If you're **hosting**, switching to another document keeps the session running — your collaborator's view follows along to the new document automatically, with a status message ("Your collaborator switched documents") to explain why their editor content just changed. If you're the one who **joined**, opening one of your own documents has nowhere to put the shared one, so you're asked to confirm first: decline and the shared document keeps showing with the session still live, confirm and the session ends before your document opens. Either side **closing** the current document still ends the session immediately.
+What opening a different document does depends on which side you're on, regardless of whether multi-tab editing is on. If you're **hosting**, switching to another document keeps the session running — your collaborator's view follows along to the new document automatically, with a status message ("Your collaborator switched documents") to explain why their editor content just changed. If you're the one who **joined**, opening one of your own documents has nowhere to put the shared one, so you're asked to confirm first: decline and the shared document keeps showing with the session still live, confirm and the session ends before your document opens. Either side **closing** the tab the session is in still ends the session immediately; closing some other tab doesn't.
 
 ## Reconnecting after a dropped connection
 

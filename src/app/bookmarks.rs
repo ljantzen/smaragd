@@ -31,10 +31,10 @@ impl SmaragdApp {
         if resolved.is_empty() {
             return;
         }
-        let current = self.editor.open_path.as_deref().map(|path| {
+        let current = self.editor.open_path().map(|path| {
             (
                 path,
-                line_at_byte(&self.editor.buffer, self.editor.cursor_byte),
+                line_at_byte(self.editor.buffer(), self.editor.cursor_byte()),
             )
         });
         let index = step_bookmark_index(&resolved, current, forward);
@@ -76,8 +76,11 @@ impl SmaragdApp {
     /// would land in the wrong document.
     fn goto_bookmark(&mut self, path: PathBuf, line: usize) {
         self.open_document(&path);
-        if self.editor.open_path.as_deref() == Some(path.as_path()) {
-            self.editor.pending_cursor = Some(line_start_byte_offset(&self.editor.buffer, line));
+        if self.editor.open_path() == Some(path.as_path()) {
+            let byte = line_start_byte_offset(self.editor.buffer(), line);
+            if let Some(tab) = self.editor.active_tab_mut() {
+                tab.pending_cursor = Some(byte);
+            }
         }
     }
 

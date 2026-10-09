@@ -79,6 +79,12 @@ pub(super) enum DockAction {
     /// An action from the Editor pane's ☰ menu not already covered by a
     /// `BinderEvent` — see `ui::editor_panel::EditorMenuEvent`.
     EditorMenu(ui::editor_panel::EditorMenuEvent),
+    /// A tab in the Editor pane's tab strip was clicked — see
+    /// `ui::editor_panel::EditorEvent::SwitchTab`.
+    SwitchTab(usize),
+    /// A tab's close (×) button was clicked — see
+    /// `ui::editor_panel::EditorEvent::CloseTab`.
+    CloseTab(usize),
 }
 
 /// A short-lived `egui_dock::TabViewer` impl, constructed fresh each frame right
@@ -183,8 +189,8 @@ impl AppTabViewer<'_> {
     /// `ui::editor_panel::EditorViewMode`), which both show exactly the same
     /// thing for exactly the same open document.
     fn show_markdown_preview(&mut self, ui: &mut egui::Ui) {
-        if self.editor.open_path.is_some() {
-            let base_dir = self.editor.open_path.as_deref().and_then(Path::parent);
+        if self.editor.open_path().is_some() {
+            let base_dir = self.editor.open_path().and_then(Path::parent);
             let project_root = self.project.map(|project| project.root.as_path());
             let note_titles = self
                 .project
@@ -192,13 +198,12 @@ impl AppTabViewer<'_> {
                 .unwrap_or_default();
             let document_title = self
                 .editor
-                .open_path
-                .as_deref()
+                .open_path()
                 .and_then(|path| path.file_stem())
                 .and_then(|stem| stem.to_str());
             let outcome = ui::markdown_preview::show(
                 ui,
-                &self.editor.buffer,
+                self.editor.buffer(),
                 base_dir,
                 project_root,
                 self.typeset_styles,
@@ -311,7 +316,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             BinderColorMode::WordCountProgress => {
                                 let (word_count, target) = if is_open {
                                     (
-                                        crate::frontmatter::count_words(&self.editor.buffer),
+                                        crate::frontmatter::count_words(self.editor.buffer()),
                                         self.metadata_draft
                                             .word_count_target_text
                                             .trim()
@@ -343,9 +348,9 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         let is_open = Some(path) == self.open_path.as_deref();
                         Some(if is_open {
                             (
-                                crate::frontmatter::count_lines(&self.editor.buffer),
-                                crate::frontmatter::count_words(&self.editor.buffer),
-                                crate::frontmatter::count_chars(&self.editor.buffer),
+                                crate::frontmatter::count_lines(self.editor.buffer()),
+                                crate::frontmatter::count_words(self.editor.buffer()),
+                                crate::frontmatter::count_chars(self.editor.buffer()),
                             )
                         } else {
                             self.document_status_cache.document_stats(path)
@@ -475,7 +480,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         }
                     },
                     MetadataTarget::Document => {
-                        let word_count = crate::frontmatter::count_words(&self.editor.buffer);
+                        let word_count = crate::frontmatter::count_words(self.editor.buffer());
                         let status_color = project
                             .and_then(|p| p.status_color_hex(&self.metadata_draft.status))
                             .and_then(crate::color_theme::parse_hex_color);
@@ -527,7 +532,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                                 }
                             }
 
-                            if let Some(open_path) = self.editor.open_path.clone() {
+                            if let Some(open_path) = self.editor.open_path().map(Path::to_path_buf) {
                                 ui.separator();
                                 if ui.button("Rename…").clicked() {
                                     self.actions.push(DockAction::Binder(BinderEvent::Rename {
@@ -586,7 +591,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                 // space is left rather than this overflowing past the bottom.
                 // Independent of `editor_view_mode`: shows under both Source
                 // mode and Reading view alike, same as Obsidian's own toggle.
-                if *self.show_inline_backlinks && self.editor.open_path.is_some() {
+                if *self.show_inline_backlinks && self.editor.open_path().is_some() {
                     egui::Panel::bottom("editor_inline_backlinks")
                         .resizable(true)
                         .default_size(160.0)
@@ -595,7 +600,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         .show(ui, |ui| {
                             if let Some(event) = ui::backlinks_panel::show(
                                 ui,
-                                self.editor.open_path.as_deref(),
+                                self.editor.open_path(),
                                 self.backlinks,
                             ) {
                                 match event {
@@ -627,8 +632,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             self.settings.shortcuts.get(ShortcutAction::ToggleBookmark);
                         let bookmarked_lines = self
                             .editor
-                            .open_path
-                            .as_deref()
+                            .open_path()
                             .zip(self.project)
                             .map(|(path, project)| project.bookmarked_lines_for(path))
                             .unwrap_or_default();
@@ -636,8 +640,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             self.settings.shortcuts.get(ShortcutAction::AddNoteAtCursor);
                         let noted_lines = self
                             .editor
-                            .open_path
-                            .as_deref()
+                            .open_path()
                             .zip(self.project)
                             .map(|(path, project)| project.noted_lines_for(path))
                             .unwrap_or_default();
@@ -665,6 +668,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             self.settings.editor_font,
                             crate::editor_font::resolve_size(self.settings.editor_font_size),
                             self.collaborating,
+                            self.settings.multi_tab_editor,
                             self.settings.spell_check_language,
                             &self.settings.spell_check_custom_words,
                             self.settings.show_editor_gutter,
@@ -691,6 +695,12 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             }
                             Some(EditorEvent::AttachmentError(err)) => {
                                 self.actions.push(DockAction::EditorAttachmentError(err));
+                            }
+                            Some(EditorEvent::SwitchTab(index)) => {
+                                self.actions.push(DockAction::SwitchTab(index));
+                            }
+                            Some(EditorEvent::CloseTab(index)) => {
+                                self.actions.push(DockAction::CloseTab(index));
                             }
                             None => {}
                         }

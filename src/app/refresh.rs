@@ -248,22 +248,23 @@ impl SmaragdApp {
     /// has changed since the last computation — a no-op most frames. Called before
     /// the dock renders each frame, alongside `refresh_backlinks_if_needed`.
     pub(super) fn refresh_metadata_if_needed(&mut self) {
-        if self.editor.open_path == self.metadata.computed_for {
+        let open_path = self.editor.open_path().map(Path::to_path_buf);
+        if open_path == self.metadata.computed_for {
             return;
         }
-        let meta = match &self.editor.open_path {
-            Some(_) => crate::frontmatter::parse(&self.editor.buffer),
+        let meta = match &open_path {
+            Some(_) => crate::frontmatter::parse(self.editor.buffer()),
             None => DocumentMeta::default(),
         };
         self.metadata.draft = MetadataDraft::from_meta(&meta);
         self.metadata.last_applied = meta;
-        self.metadata.computed_for = self.editor.open_path.clone();
+        self.metadata.computed_for = open_path.clone();
         // Only set — never clear — the status message here: most document switches
         // have nothing wrong with their frontmatter, and blanking whatever the
         // status bar was already showing (e.g. a just-completed git operation) on
         // every single switch would be far noisier than useful.
-        if self.editor.open_path.is_some()
-            && let Some(err) = crate::frontmatter::validate(&self.editor.buffer)
+        if open_path.is_some()
+            && let Some(err) = crate::frontmatter::validate(self.editor.buffer())
         {
             self.push_error_toast(err.to_string());
         }
@@ -278,14 +279,15 @@ impl SmaragdApp {
     /// frame. A safe no-op when no document is open or nothing changed — the draft
     /// can only be mutated by the user typing into a visible Metadata tab.
     pub(super) fn apply_metadata_edits_if_changed(&mut self) {
-        if self.editor.open_path.is_none() {
+        if self.editor.open_path().is_none() {
             return;
         }
         let current = self.metadata.draft.to_meta();
         if current == self.metadata.last_applied {
             return;
         }
-        self.editor.buffer = crate::frontmatter::write_back(&self.editor.buffer, &current);
+        let rewritten = crate::frontmatter::write_back(self.editor.buffer(), &current);
+        *self.editor.buffer_mut() = rewritten;
         self.editor.mark_dirty();
         self.metadata.last_applied = current;
     }
@@ -337,36 +339,36 @@ impl SmaragdApp {
     /// be visible right now is simplest, since the scan itself is cheap (see
     /// `Project::backlinks`).
     pub(super) fn refresh_backlinks_if_needed(&mut self) {
-        if self.editor.open_path == self.backlinks.computed_for {
+        if self.editor.open_path() == self.backlinks.computed_for.as_deref() {
             return;
         }
         self.recompute_backlinks();
     }
 
     pub(super) fn recompute_backlinks(&mut self) {
-        self.backlinks.entries = match (&self.project, &self.editor.open_path) {
+        self.backlinks.entries = match (&self.project, self.editor.open_path()) {
             (Some(project), Some(path)) => project.backlinks(path),
             _ => Vec::new(),
         };
-        self.backlinks.computed_for = self.editor.open_path.clone();
+        self.backlinks.computed_for = self.editor.open_path().map(Path::to_path_buf);
     }
 
     /// Refresh `tags` from the project whenever the open document has changed
     /// since the last scan — a no-op most frames. Called before the dock
     /// renders each frame, alongside `refresh_backlinks_if_needed`.
     pub(super) fn refresh_tags_if_needed(&mut self) {
-        if self.editor.open_path == self.tags.computed_for {
+        if self.editor.open_path() == self.tags.computed_for.as_deref() {
             return;
         }
         self.recompute_tags();
     }
 
     pub(super) fn recompute_tags(&mut self) {
-        self.tags.entries = match (&self.project, &self.editor.open_path) {
+        self.tags.entries = match (&self.project, self.editor.open_path()) {
             (Some(project), Some(path)) => project.related_by_tag(path),
             _ => Vec::new(),
         };
-        self.tags.computed_for = self.editor.open_path.clone();
+        self.tags.computed_for = self.editor.open_path().map(Path::to_path_buf);
     }
 
     /// Refresh `tags.search_results` whenever `tags.search_text` has changed
@@ -401,8 +403,8 @@ impl SmaragdApp {
     /// `Project::rename_tag` (which also invalidates it itself). A no-op most
     /// frames.
     pub(super) fn refresh_word_count_if_needed(&mut self, ctx: &egui::Context) {
-        let just_saved = self.word_count.last_dirty && !self.editor.dirty;
-        self.word_count.last_dirty = self.editor.dirty;
+        let just_saved = self.word_count.last_dirty && !self.editor.dirty();
+        self.word_count.last_dirty = self.editor.dirty();
         if just_saved {
             self.spawn_word_count_recompute(ctx);
             if let Some(project) = &self.project {
@@ -420,7 +422,7 @@ impl SmaragdApp {
     /// frame. Called after the dock renders each frame, alongside
     /// `apply_metadata_edits_if_changed`.
     pub(super) fn track_char_activity(&mut self) {
-        let Some(open_path) = self.editor.open_path.clone() else {
+        let Some(open_path) = self.editor.open_path().map(Path::to_path_buf) else {
             self.word_count.char_activity_last_len = None;
             self.word_count.char_activity_tracked_path = None;
             return;
@@ -430,10 +432,10 @@ impl SmaragdApp {
             // length (if any) belonged to a different buffer, so there's
             // nothing meaningful to diff against yet.
             self.word_count.char_activity_tracked_path = Some(open_path.clone());
-            self.word_count.char_activity_last_len = Some(self.editor.buffer.chars().count());
+            self.word_count.char_activity_last_len = Some(self.editor.buffer().chars().count());
             return;
         }
-        let current_len = self.editor.buffer.chars().count();
+        let current_len = self.editor.buffer().chars().count();
         if let Some(previous_len) = self.word_count.char_activity_last_len {
             let is_tracked = self.project.as_ref().is_some_and(|project| {
                 project.is_path_tracked(&open_path, project.meta.word_count_scope)
@@ -539,7 +541,7 @@ mod char_activity_tests {
         let path = project.create_document(dir.path(), "Scene").unwrap();
         let mut app = SmaragdApp::test_fixture();
         app.project = Some(project);
-        app.editor.open_path = Some(path);
+        app.editor.open(&path).unwrap();
 
         // First frame with this document open: only establishes the baseline,
         // the initial (empty) length isn't itself counted as "typed."
@@ -547,13 +549,13 @@ mod char_activity_tests {
         assert_eq!(app.word_count.char_activity, 0);
 
         // "Type" 100 characters.
-        app.editor.buffer = "a".repeat(100);
+        *app.editor.buffer_mut() = "a".repeat(100);
         app.track_char_activity();
         assert_eq!(app.word_count.char_activity, 100);
 
         // "Delete" them all back to empty — the example from the bug report:
         // 100 typed + 100 deleted reads 200, not a net 0.
-        app.editor.buffer.clear();
+        app.editor.buffer_mut().clear();
         app.track_char_activity();
         assert_eq!(app.word_count.char_activity, 200);
     }
@@ -567,15 +569,15 @@ mod char_activity_tests {
         let mut app = SmaragdApp::test_fixture();
         app.project = Some(project);
 
-        app.editor.open_path = Some(first);
+        app.editor.open(&first).unwrap();
         app.track_char_activity(); // establishes the baseline (empty) length
-        app.editor.buffer = "a".repeat(50);
+        *app.editor.buffer_mut() = "a".repeat(50);
         app.track_char_activity();
         assert_eq!(app.word_count.char_activity, 50);
 
         // Switch to a different, much longer document.
-        app.editor.open_path = Some(second);
-        app.editor.buffer = "b".repeat(500);
+        app.editor.open(&second).unwrap();
+        *app.editor.buffer_mut() = "b".repeat(500);
         app.track_char_activity();
 
         // The 450-character jump between the two unrelated buffers must not
@@ -596,10 +598,10 @@ mod char_activity_tests {
         let outtake = project.create_document(dir.path(), "Outtake").unwrap();
         let mut app = SmaragdApp::test_fixture();
         app.project = Some(project);
-        app.editor.open_path = Some(outtake);
+        app.editor.open(&outtake).unwrap();
 
         app.track_char_activity();
-        app.editor.buffer = "a".repeat(100);
+        *app.editor.buffer_mut() = "a".repeat(100);
         app.track_char_activity();
 
         assert_eq!(app.word_count.char_activity, 0);
@@ -618,14 +620,15 @@ mod word_count_refresh_tests {
         app.project = Some(project);
         let ctx = egui::Context::default();
 
-        app.editor.dirty = true;
+        app.editor.open_collab_tab(); // a pathless tab, just to have something to mark dirty
+        app.editor.active_tab_mut().unwrap().dirty = true;
         app.refresh_word_count_if_needed(&ctx);
         assert!(
             app.word_count.pending.is_none(),
             "becoming dirty is not a save"
         );
 
-        app.editor.dirty = false;
+        app.editor.active_tab_mut().unwrap().dirty = false;
         app.refresh_word_count_if_needed(&ctx);
         assert!(
             app.word_count.pending.is_some(),
@@ -667,7 +670,8 @@ mod word_count_refresh_tests {
         // invalidation trigger, not the save mechanics already covered elsewhere).
         fs::write(&doc, "#changed").unwrap();
 
-        app.editor.dirty = true;
+        app.editor.open_collab_tab(); // a pathless tab, just to have something to mark dirty
+        app.editor.active_tab_mut().unwrap().dirty = true;
         app.refresh_word_count_if_needed(&ctx);
         assert_eq!(
             app.project.as_ref().unwrap().all_tags(),
@@ -675,7 +679,7 @@ mod word_count_refresh_tests {
             "becoming dirty alone should not invalidate the cache"
         );
 
-        app.editor.dirty = false;
+        app.editor.active_tab_mut().unwrap().dirty = false;
         app.refresh_word_count_if_needed(&ctx);
         assert_eq!(
             app.project.as_ref().unwrap().all_tags(),

@@ -271,18 +271,15 @@ impl SmaragdApp {
     }
 
     pub(super) fn rename_node(&mut self, path: &Path, new_name: &str) {
-        // If `path` is the open document and it's dirty, save it *before* the
-        // physical rename below — `project.rename` does an immediate `fs::rename`,
-        // and letting `EditorState::open`'s own save-if-dirty run afterward (from
-        // `open_document`, once the item's reopened under its new name) would try to
-        // save to `editor.open_path`, which is still the pre-rename path and no
-        // longer exists — silently resurrecting a stray file there with the unsaved
-        // content while the visible buffer quietly reverts to the pre-edit version.
-        // Saving first means the rename carries the up-to-date content along.
+        // If `path` is open in some tab (active or not) and dirty, save it
+        // *before* the physical rename below — `project.rename` does an
+        // immediate `fs::rename`, and the project-level effects of a rename
+        // (e.g. rewriting other documents' wikilinks to it) should see the
+        // up-to-date content, not a stale on-disk version.
         let store = self.editor_store();
-        if self.editor.open_path.as_deref() == Some(path)
-            && self.editor.dirty
-            && let Err(err) = self.editor.save_with_store(store.as_ref())
+        if let Err(err) = self
+            .editor
+            .save_if_open_and_dirty_with_store(path, store.as_ref())
         {
             self.push_error_toast(format!("Couldn't save before renaming: {err}"));
             return;
@@ -298,11 +295,13 @@ impl SmaragdApp {
                     self.metadata.folder_computed_for = None;
                 }
                 self.document_status_cache.clear();
-                self.document_history.rename_path(path, &new_path);
+                self.editor.rename_path_everywhere(path, &new_path);
                 if self.selected_path.as_deref() == Some(path) {
-                    self.open_document_internal(&new_path);
-                } else if !self.editor.dirty
-                    && let Some(open_path) = self.editor.open_path.clone()
+                    self.selected_path = Some(new_path.clone());
+                    self.metadata.target = MetadataTarget::Document;
+                    self.document_status_cache.invalidate(path);
+                } else if !self.editor.dirty()
+                    && let Some(open_path) = self.editor.open_path().map(Path::to_path_buf)
                 {
                     // The rename may have rewritten a `[[wikilink]]` to this document
                     // on disk; reload it so the editor reflects that. Skipped while
@@ -334,12 +333,8 @@ impl SmaragdApp {
             self.tags.search_text = new_tag.to_string();
         }
         self.recompute_tags();
-        if !self.editor.dirty
-            && let Some(open_path) = self.editor.open_path.clone()
-        {
-            let store = self.editor_store();
-            let _ = self.editor.open_with_store(&open_path, store.as_ref());
-        }
+        let store = self.editor_store();
+        self.editor.reload_all_clean_tabs_with_store(store.as_ref());
     }
 
     /// Ask for confirmation via a native dialog, then delete the file or folder at
@@ -378,13 +373,15 @@ impl SmaragdApp {
         };
         match project.delete(path) {
             Ok(()) => {
+                self.editor.close_subtree(path);
                 if self
                     .selected_path
                     .as_deref()
                     .is_some_and(|selected| selected == path || selected.starts_with(path))
                 {
-                    self.editor = EditorState::default();
-                    self.selected_path = None;
+                    // Falls back to whichever tab `close_subtree` leaves
+                    // active (possibly `None`, if that was the last one).
+                    self.selected_path = self.editor.open_path().map(Path::to_path_buf);
                 }
                 if let MetadataTarget::Folder(target) = &self.metadata.target
                     && (target.as_path() == path || target.starts_with(path))
@@ -392,7 +389,6 @@ impl SmaragdApp {
                     self.metadata.target = MetadataTarget::Document;
                     self.metadata.folder_computed_for = None;
                 }
-                self.document_history.remove_subtree(path);
                 self.document_status_cache.clear();
             }
             Err(err) => {

@@ -14,6 +14,30 @@ impl SmaragdApp {
             .unwrap_or_else(crate::project::store::native_store)
     }
 
+    /// Collapses the editor back down to just its active tab if
+    /// `Settings::multi_tab_editor` is off — called after anything that
+    /// could otherwise leave a second tab open (`after_document_switch`,
+    /// `start_collab_join`, `restore_session`) and right when the setting
+    /// itself is turned off, so the single-document behavior some users
+    /// prefer (see issue #40) is actually enforced, not just left as the
+    /// default nobody opts into. A no-op with the setting on, or nothing
+    /// open.
+    pub(super) fn enforce_single_tab_setting(&mut self) {
+        if self.settings.multi_tab_editor {
+            return;
+        }
+        let Some(active) = self.editor.active else {
+            return;
+        };
+        let store = self.editor_store();
+        if let Err(err) = self
+            .editor
+            .close_other_tabs_with_store(active, store.as_ref())
+        {
+            self.push_error_toast(format!("Couldn't save before closing: {err}"));
+        }
+    }
+
     /// Open `path` as a project. Used for the automatic "reopen last project" path at
     /// startup, where a missing `.smaragd` marker must just be reported (not
     /// interactively resolved) — the user didn't just explicitly ask to open this
@@ -53,7 +77,6 @@ impl SmaragdApp {
         self.project = Some(project);
         self.editor = EditorState::default();
         self.selected_path = None;
-        self.document_history = DocumentHistory::default();
         self.metadata.target = MetadataTarget::Document;
         self.metadata.folder_computed_for = None;
         self.document_status_cache.clear();
@@ -300,7 +323,7 @@ impl SmaragdApp {
             self.end_collab_session("Collaboration session ended: project closed");
         }
         let store = self.editor_store();
-        if let Err(err) = self.editor.close_with_store(store.as_ref()) {
+        if let Err(err) = self.editor.close_all_with_store(store.as_ref()) {
             self.push_error_toast(format!("Couldn't save before closing project: {err}"));
             return;
         }
@@ -322,7 +345,6 @@ impl SmaragdApp {
         }
         self.project = None;
         self.selected_path = None;
-        self.document_history = DocumentHistory::default();
         self.metadata = MetadataState::default();
         self.backlinks = BacklinksState::default();
         self.tags = TagsState::default();
@@ -335,57 +357,54 @@ impl SmaragdApp {
         self.reload_plugins();
     }
 
-    /// Open `path` as a genuine switch to a different document — recorded as a
-    /// fresh entry in `document_history` (see `load_document`). Every call
-    /// site *except* `rename_node`'s post-rename reopen goes through here: a
-    /// rename keeps the same logical document open (see
-    /// `open_document_internal`), so it must not touch a session scoped to
-    /// it.
+    /// Open `path` as a navigation action: focuses its tab if it's already
+    /// open, otherwise opens a fresh one — see `EditorState::open`. Every
+    /// call site *except* `rename_node`'s post-rename path update goes
+    /// through here: a rename keeps the same logical tab open (just
+    /// repoints its path, see `EditorState::rename_path_everywhere`), so it
+    /// must not touch a session scoped to it.
     pub(super) fn open_document(&mut self, path: &Path) {
         if !self.confirm_leave_collab_session() {
             return;
         }
-        self.open_document_internal(path);
+        self.load_document(path);
     }
 
-    /// The actual open, recorded in `document_history` — no collaboration-
-    /// session teardown. Only `open_document` and `rename_node` (reopening
-    /// the same document under its new name) should call this directly;
-    /// `go_back_document`/`go_forward_document` call `load_document` instead,
-    /// since a Back/Forward step must not itself count as a new visit.
-    pub(super) fn open_document_internal(&mut self, path: &Path) {
-        if self.load_document(path) {
-            self.document_history.visit(path);
-        }
-    }
-
-    /// Step to the previously visited document (File > Go Back /
-    /// `ShortcutAction::GoBack`), restoring its last known cursor position.
-    /// A no-op if there's nothing behind the current position, or (for an
-    /// active collaboration joiner) if the user declines to end the session
-    /// — see `confirm_leave_collab_session`.
+    /// Step to the document the active tab's own history would go back to
+    /// (File > Go Back / `ShortcutAction::GoBack`) — see
+    /// `EditorState::go_back`. A no-op if there's nothing behind the active
+    /// tab's current position, or (for an active collaboration joiner) if
+    /// the user declines to end the session — see
+    /// `confirm_leave_collab_session`.
     pub(super) fn go_back_document(&mut self) {
-        let Some(target) = self.document_history.previous().map(Path::to_path_buf) else {
+        if !self.editor.can_go_back() {
             return;
-        };
+        }
         if !self.confirm_leave_collab_session() {
             return;
         }
-        self.document_history.go_back();
-        self.load_document(&target);
+        let previous = self.editor.open_path().map(Path::to_path_buf);
+        let store = self.editor_store();
+        match self.editor.go_back(store.as_ref()) {
+            Ok(()) => self.after_document_switch(previous),
+            Err(err) => self.push_error_toast(format!("Couldn't go back: {err}")),
+        }
     }
 
-    /// Step to the next visited document (File > Go Forward /
-    /// `ShortcutAction::GoForward`) — see `go_back_document`.
+    /// [`Self::go_back_document`]'s forward counterpart.
     pub(super) fn go_forward_document(&mut self) {
-        let Some(target) = self.document_history.next().map(Path::to_path_buf) else {
+        if !self.editor.can_go_forward() {
             return;
-        };
+        }
         if !self.confirm_leave_collab_session() {
             return;
         }
-        self.document_history.go_forward();
-        self.load_document(&target);
+        let previous = self.editor.open_path().map(Path::to_path_buf);
+        let store = self.editor_store();
+        match self.editor.go_forward(store.as_ref()) {
+            Ok(()) => self.after_document_switch(previous),
+            Err(err) => self.push_error_toast(format!("Couldn't go forward: {err}")),
+        }
     }
 
     /// Ask (via a native Yes/No dialog) before switching away from an active
@@ -426,38 +445,16 @@ impl SmaragdApp {
         }
     }
 
-    /// Load `path` into the editor and update `selected_path`/metadata/status-
-    /// cache accordingly — the mechanics shared by every way of switching
-    /// documents. Records the outgoing document's cursor position (from
-    /// `EditorState::cursor_byte`, refreshed every frame by
-    /// `editor_panel::show`) and queues the incoming document's last known
-    /// position (`EditorState::pending_cursor`) to be restored on its next
-    /// render — `0` if `path` has never been visited before.
-    ///
-    /// Deliberately does *not* touch `document_history`'s entries itself:
-    /// callers decide whether this counts as a fresh visit
-    /// (`open_document_internal`, via `document_history.visit`) or a
-    /// Back/Forward step (`go_back_document`/`go_forward_document`, which
-    /// only move the existing position). Returns whether the open succeeded.
+    /// Open `path` (focusing its tab if already open) and update
+    /// `selected_path`/metadata/status-cache accordingly — the mechanics
+    /// shared by every way of switching documents. Returns whether the open
+    /// succeeded.
     pub(super) fn load_document(&mut self, path: &Path) -> bool {
-        // Captured before `editor.open` runs (which may autosave a dirty
-        // outgoing document first) — invalidated after, so its cached status
-        // reflects whatever it was just saved as, not what it was before.
-        let previous = self.editor.open_path.clone();
-        if let Some(previous) = &previous {
-            self.document_history
-                .record_cursor(previous, self.editor.cursor_byte);
-        }
+        let previous = self.editor.open_path().map(Path::to_path_buf);
         let store = self.editor_store();
         match self.editor.open_with_store(path, store.as_ref()) {
             Ok(()) => {
-                self.selected_path = Some(path.to_path_buf());
-                self.metadata.target = MetadataTarget::Document;
-                self.editor.pending_cursor =
-                    Some(self.document_history.cursor_for(path).unwrap_or(0));
-                if let Some(previous) = previous {
-                    self.document_status_cache.invalidate(&previous);
-                }
+                self.after_document_switch(previous);
                 true
             }
             Err(err) => {
@@ -467,19 +464,75 @@ impl SmaragdApp {
         }
     }
 
-    /// Close the currently open document (silently autosaving first if dirty — same
-    /// autosave convention as `open_document`/`rename_node`, no discard/cancel
-    /// prompt). Records its cursor position in `document_history` first, so a
-    /// later Back/Forward step or reopen picks up where the user left off.
+    /// `selected_path`/metadata/status-cache bookkeeping shared by every way
+    /// the active tab can change (`load_document`, Go Back/Forward) —
+    /// `previous` is whatever tab was active right before the switch, for
+    /// invalidating its now-possibly-stale cached status.
+    fn after_document_switch(&mut self, previous: Option<PathBuf>) {
+        self.enforce_single_tab_setting();
+        if let Some(path) = self.editor.open_path().map(Path::to_path_buf) {
+            self.selected_path = Some(path);
+            self.metadata.target = MetadataTarget::Document;
+        }
+        if let Some(previous) = previous {
+            self.document_status_cache.invalidate(&previous);
+        }
+    }
+
+    /// Focus a tab by index (the tab strip — see `ui::editor_panel::
+    /// show_tab_strip`) without touching any other tab's content, unlike
+    /// `open_document`. A no-op if `index` is out of range.
+    pub(super) fn switch_editor_tab(&mut self, index: usize) {
+        if index >= self.editor.tab_count() {
+            return;
+        }
+        let previous = self.editor.open_path().map(Path::to_path_buf);
+        self.editor.active = Some(index);
+        self.after_document_switch(previous);
+    }
+
+    /// Close a tab by index (the tab strip's × button) — saving it first if
+    /// dirty, same autosave convention as `close_document`. A no-op if
+    /// `index` is out of range.
+    pub(super) fn close_editor_tab(&mut self, index: usize) {
+        if index >= self.editor.tab_count() {
+            return;
+        }
+        let was_active = Some(index) == self.editor.active;
+        if was_active && self.collab.is_some() && self.editor.tabs[index].path.is_none() {
+            // A joined session's shared buffer lives in exactly this
+            // path-less tab — ending the session closes it already (see
+            // `end_collab_session`), so there's nothing left for us to close.
+            self.end_collab_session("Collaboration session ended: tab closed");
+            self.selected_path = self.editor.open_path().map(Path::to_path_buf);
+            return;
+        }
+        if was_active && self.collab.is_some() {
+            self.end_collab_session("Collaboration session ended: tab closed");
+        }
+        let closed_path = self.editor.tabs.get(index).and_then(|tab| tab.path.clone());
+        let store = self.editor_store();
+        if let Err(err) = self.editor.close_tab(index, store.as_ref()) {
+            self.push_error_toast(format!("Couldn't save before closing: {err}"));
+            return;
+        }
+        if let Some(path) = closed_path {
+            self.document_status_cache.invalidate(&path);
+        }
+        if was_active {
+            self.selected_path = self.editor.open_path().map(Path::to_path_buf);
+        }
+    }
+
+    /// Close the active tab (silently autosaving first if dirty — same
+    /// autosave convention as `open_document`/`rename_node`, no discard/
+    /// cancel prompt). `selected_path` follows whichever tab (if any)
+    /// `EditorState::close` leaves active.
     pub(super) fn close_document(&mut self, ctx: &egui::Context) {
         if self.collab.is_some() {
             self.end_collab_session("Collaboration session ended: document closed");
         }
-        let previous = self.editor.open_path.clone();
-        if let Some(previous) = &previous {
-            self.document_history
-                .record_cursor(previous, self.editor.cursor_byte);
-        }
+        let previous = self.editor.open_path().map(Path::to_path_buf);
         let store = self.editor_store();
         if let Err(err) = self.editor.close_with_store(store.as_ref()) {
             self.push_error_toast(format!("Couldn't save before closing: {err}"));
@@ -488,11 +541,12 @@ impl SmaragdApp {
         if let Some(previous) = previous {
             self.document_status_cache.invalidate(&previous);
         }
-        self.selected_path = None;
-        if self.focus_mode {
-            // Nothing left to show if the closed document was the one Focus Mode
-            // was displaying — same reasoning as `set_focus_mode`'s own "refuses to
-            // enter with no document open" guard, applied here on the way out.
+        self.selected_path = self.editor.open_path().map(Path::to_path_buf);
+        if self.focus_mode && self.editor.open_path().is_none() {
+            // Nothing left to show if that was the last open tab — same
+            // reasoning as `set_focus_mode`'s own "refuses to enter with no
+            // document open" guard, applied here on the way out. If another
+            // tab is still open, Focus Mode just keeps showing it instead.
             self.set_focus_mode(ctx, false);
         }
     }
@@ -515,16 +569,13 @@ impl SmaragdApp {
                 if let Some(rebased) = self.selected_path.as_deref().and_then(rebase) {
                     self.selected_path = Some(rebased);
                 }
-                if let Some(rebased) = self.editor.open_path.as_deref().and_then(rebase) {
-                    self.editor.open_path = Some(rebased);
-                }
+                self.editor.rebase_subtree(path, &new_path);
                 if let MetadataTarget::Folder(target) = &self.metadata.target
                     && let Some(rebased) = rebase(target)
                 {
                     self.metadata.target = MetadataTarget::Folder(rebased);
                     self.metadata.folder_computed_for = None;
                 }
-                self.document_history.rebase_subtree(path, &new_path);
                 self.document_status_cache.clear();
             }
             Err(err) => {
@@ -548,16 +599,13 @@ impl SmaragdApp {
                 if let Some(rebased) = self.selected_path.as_deref().and_then(rebase) {
                     self.selected_path = Some(rebased);
                 }
-                if let Some(rebased) = self.editor.open_path.as_deref().and_then(rebase) {
-                    self.editor.open_path = Some(rebased);
-                }
+                self.editor.rebase_subtree(path, &new_path);
                 if let MetadataTarget::Folder(target) = &self.metadata.target
                     && let Some(rebased) = rebase(target)
                 {
                     self.metadata.target = MetadataTarget::Folder(rebased);
                     self.metadata.folder_computed_for = None;
                 }
-                self.document_history.rebase_subtree(path, &new_path);
                 self.document_status_cache.clear();
             }
             Err(err) => {
@@ -701,8 +749,8 @@ mod tests {
         app.open_project(&ctx, dir.path());
         let doc_path = dir.path().join("doc.md");
         fs::write(&doc_path, "original").unwrap();
-        app.open_document_internal(&doc_path);
-        app.editor.buffer = "edited".to_string();
+        app.load_document(&doc_path);
+        *app.editor.buffer_mut() = "edited".to_string();
         app.editor.mark_dirty();
 
         app.close_project(&ctx);
@@ -760,12 +808,12 @@ mod tests {
         app.open_document(&doc_path);
 
         assert!(app.collab.is_some());
-        assert_eq!(app.editor.open_path.as_deref(), Some(doc_path.as_path()));
-        assert_eq!(app.editor.buffer, "hello");
+        assert_eq!(app.editor.open_path(), Some(doc_path.as_path()));
+        assert_eq!(app.editor.buffer(), "hello");
     }
 
     #[test]
-    fn go_back_and_go_forward_step_through_opened_documents() {
+    fn go_back_focuses_the_previously_active_tab_without_duplicating_it() {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a.md");
         let b = dir.path().join("b.md");
@@ -775,17 +823,46 @@ mod tests {
 
         app.open_document(&a);
         app.open_document(&b);
-        assert_eq!(app.editor.open_path.as_deref(), Some(b.as_path()));
+        assert_eq!(app.editor.open_path(), Some(b.as_path()));
+        assert_eq!(app.editor.tab_count(), 2);
 
         app.go_back_document();
-        assert_eq!(app.editor.open_path.as_deref(), Some(a.as_path()));
+
+        assert_eq!(app.editor.open_path(), Some(a.as_path()));
+        assert_eq!(
+            app.editor.tab_count(),
+            2,
+            "should focus the existing tab, not open a duplicate"
+        );
+    }
+
+    /// Per-tab Back/Forward (see issue #40) means Forward only walks the tab
+    /// you're currently *on*, not wherever Back came from: `a`'s own history
+    /// starts and ends at itself, since `b` was opened *from* it rather than
+    /// in place of it — so there's nothing forward of `a` to return to `b`
+    /// with. Switching tabs directly (clicking `b`'s tab, or `open_document`)
+    /// is how you get back to it instead.
+    #[test]
+    fn go_forward_is_a_no_op_on_a_tab_that_never_navigated_away_from_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        let b = dir.path().join("b.md");
+        fs::write(&a, "a").unwrap();
+        fs::write(&b, "b").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+
+        app.open_document(&a);
+        app.open_document(&b);
+        app.go_back_document();
+        assert_eq!(app.editor.open_path(), Some(a.as_path()));
 
         app.go_forward_document();
-        assert_eq!(app.editor.open_path.as_deref(), Some(b.as_path()));
+
+        assert_eq!(app.editor.open_path(), Some(a.as_path()));
     }
 
     #[test]
-    fn going_back_restores_the_cursor_position_last_left_in_that_document() {
+    fn switching_back_to_an_open_tab_finds_its_cursor_exactly_where_it_was_left() {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a.md");
         let b = dir.path().join("b.md");
@@ -794,14 +871,15 @@ mod tests {
         let mut app = SmaragdApp::test_fixture();
 
         app.open_document(&a);
-        app.editor.cursor_byte = 6; // simulates the cursor having moved in `a.md`
+        app.editor.set_cursor_byte(6); // simulates the cursor having moved in `a.md`
         app.open_document(&b);
-        assert_eq!(app.editor.pending_cursor, Some(0));
 
         app.go_back_document();
 
-        assert_eq!(app.editor.open_path.as_deref(), Some(a.as_path()));
-        assert_eq!(app.editor.pending_cursor, Some(6));
+        // No restore step needed: `a`'s tab stayed resident the whole time
+        // (see issue #40), so its cursor was never anywhere else to begin with.
+        assert_eq!(app.editor.open_path(), Some(a.as_path()));
+        assert_eq!(app.editor.cursor_byte(), 6);
     }
 
     #[test]
@@ -814,12 +892,12 @@ mod tests {
         app.open_document(&a);
         app.open_document(&a);
 
-        app.go_back_document();
-        assert_eq!(app.editor.open_path.as_deref(), Some(a.as_path()));
+        assert!(!app.editor.can_go_back());
+        assert_eq!(app.editor.tab_count(), 1);
     }
 
     #[test]
-    fn renaming_the_open_document_keeps_its_history_entry_and_cursor_following_it() {
+    fn renaming_an_open_tab_updates_its_path_and_keeps_its_cursor() {
         let dir = tempfile::tempdir().unwrap();
         Project::initialize(dir.path()).unwrap();
         let mut app = SmaragdApp::test_fixture();
@@ -834,16 +912,181 @@ mod tests {
 
         app.open_document(&a);
         app.open_document(&b);
-        app.editor.cursor_byte = 1;
+        app.editor.set_cursor_byte(1);
         app.rename_node(&b, "renamed");
         let renamed = project_root.join("renamed.md");
-        assert_eq!(app.editor.open_path.as_deref(), Some(renamed.as_path()));
+        assert_eq!(app.editor.open_path(), Some(renamed.as_path()));
+        assert_eq!(
+            app.editor.tab_count(),
+            2,
+            "the rename shouldn't have opened a duplicate tab"
+        );
 
         app.go_back_document();
-        assert_eq!(app.editor.open_path.as_deref(), Some(a.as_path()));
+        assert_eq!(app.editor.open_path(), Some(a.as_path()));
 
-        app.go_forward_document();
-        assert_eq!(app.editor.open_path.as_deref(), Some(renamed.as_path()));
-        assert_eq!(app.editor.pending_cursor, Some(1));
+        // Re-focusing the renamed tab (rather than Forward, which only walks
+        // the *active* tab's own history — see the no-op test above) proves
+        // the rename followed the same tab rather than a fresh reopen, so
+        // its cursor survived.
+        app.open_document(&renamed);
+        assert_eq!(app.editor.open_path(), Some(renamed.as_path()));
+        assert_eq!(app.editor.cursor_byte(), 1);
+    }
+
+    /// Covers the tab strip's "click a tab to switch to it" affordance (see
+    /// `ui::editor_panel::show_tab_strip`) at the level this module owns:
+    /// the index-based dispatch `DockAction::SwitchTab` resolves to. The
+    /// click itself — resolving a pointer position to a tab index inside
+    /// `show_tab_strip` — is egui widget plumbing exercised by hand, not a
+    /// synthetic click test, since egui's `Button`/`SelectableLabel` auto-id
+    /// scheme isn't something this codebase's tests reproduce elsewhere.
+    #[test]
+    fn switch_editor_tab_focuses_the_given_index_and_follows_selected_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        let b = dir.path().join("b.md");
+        fs::write(&a, "a").unwrap();
+        fs::write(&b, "b").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+
+        app.open_document(&a);
+        app.open_document(&b);
+        assert_eq!(app.editor.open_path(), Some(b.as_path()));
+
+        app.switch_editor_tab(0);
+
+        assert_eq!(app.editor.open_path(), Some(a.as_path()));
+        assert_eq!(app.selected_path.as_deref(), Some(a.as_path()));
+    }
+
+    #[test]
+    fn switch_editor_tab_with_an_out_of_range_index_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        fs::write(&a, "a").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.open_document(&a);
+
+        app.switch_editor_tab(5);
+
+        assert_eq!(app.editor.open_path(), Some(a.as_path()));
+    }
+
+    #[test]
+    fn close_editor_tab_saves_a_dirty_tab_and_leaves_the_other_tab_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        let b = dir.path().join("b.md");
+        fs::write(&a, "original").unwrap();
+        fs::write(&b, "b").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+
+        app.open_document(&a);
+        *app.editor.buffer_mut() = "edited".to_string();
+        app.editor.mark_dirty();
+        app.open_document(&b);
+        assert_eq!(app.editor.tab_count(), 2);
+
+        app.close_editor_tab(0); // closes `a`, which isn't the active tab
+
+        assert_eq!(fs::read_to_string(&a).unwrap(), "edited");
+        assert_eq!(app.editor.tab_count(), 1);
+        assert_eq!(
+            app.editor.open_path(),
+            Some(b.as_path()),
+            "closing a background tab shouldn't disturb the active one"
+        );
+        assert_eq!(app.selected_path.as_deref(), Some(b.as_path()));
+    }
+
+    #[test]
+    fn closing_the_active_tab_updates_selected_path_to_whatever_is_now_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        let b = dir.path().join("b.md");
+        fs::write(&a, "a").unwrap();
+        fs::write(&b, "b").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+
+        app.open_document(&a);
+        app.open_document(&b);
+
+        app.close_editor_tab(1); // closes `b`, the active tab
+
+        assert_eq!(app.editor.open_path(), Some(a.as_path()));
+        assert_eq!(app.selected_path.as_deref(), Some(a.as_path()));
+    }
+
+    #[test]
+    fn close_editor_tab_with_an_out_of_range_index_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        fs::write(&a, "a").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.open_document(&a);
+
+        app.close_editor_tab(5);
+
+        assert_eq!(app.editor.tab_count(), 1);
+    }
+
+    #[test]
+    fn with_multi_tab_editor_off_opening_a_second_document_replaces_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        let b = dir.path().join("b.md");
+        fs::write(&a, "original").unwrap();
+        fs::write(&b, "b").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.settings.multi_tab_editor = false;
+
+        app.open_document(&a);
+        *app.editor.buffer_mut() = "edited".to_string();
+        app.editor.mark_dirty();
+        app.open_document(&b);
+
+        assert_eq!(fs::read_to_string(&a).unwrap(), "edited");
+        assert_eq!(app.editor.tab_count(), 1);
+        assert_eq!(app.editor.open_path(), Some(b.as_path()));
+    }
+
+    #[test]
+    fn turning_multi_tab_editor_off_live_collapses_already_open_tabs() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        let b = dir.path().join("b.md");
+        fs::write(&a, "original").unwrap();
+        fs::write(&b, "b").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+
+        app.open_document(&a);
+        *app.editor.buffer_mut() = "edited".to_string();
+        app.editor.mark_dirty();
+        app.open_document(&b);
+        assert_eq!(app.editor.tab_count(), 2);
+
+        app.settings.multi_tab_editor = false;
+        app.enforce_single_tab_setting();
+
+        assert_eq!(fs::read_to_string(&a).unwrap(), "edited");
+        assert_eq!(app.editor.tab_count(), 1);
+        assert_eq!(app.editor.open_path(), Some(b.as_path()));
+    }
+
+    #[test]
+    fn enforce_single_tab_setting_is_a_no_op_with_the_setting_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        let b = dir.path().join("b.md");
+        fs::write(&a, "a").unwrap();
+        fs::write(&b, "b").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.open_document(&a);
+        app.open_document(&b);
+
+        app.enforce_single_tab_setting();
+
+        assert_eq!(app.editor.tab_count(), 2);
     }
 }

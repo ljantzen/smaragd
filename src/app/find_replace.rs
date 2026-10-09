@@ -8,9 +8,14 @@ impl SmaragdApp {
             return Vec::new();
         };
         match scope {
-            SearchScope::CurrentFile => self.editor.open_path.clone().into_iter().collect(),
+            SearchScope::CurrentFile => self
+                .editor
+                .open_path()
+                .map(Path::to_path_buf)
+                .into_iter()
+                .collect(),
             SearchScope::CurrentDirectory => {
-                let Some(dir) = self.editor.open_path.as_deref().and_then(Path::parent) else {
+                let Some(dir) = self.editor.open_path().and_then(Path::parent) else {
                     return Vec::new();
                 };
                 project
@@ -41,9 +46,8 @@ impl SmaragdApp {
         let paths = self.search_scope_paths(self.find_replace.scope);
         let live = self
             .editor
-            .open_path
-            .as_deref()
-            .map(|path| (path, self.editor.buffer.as_str()));
+            .open_path()
+            .map(|path| (path, self.editor.buffer()));
         self.find_replace.results = search::search_paths(
             &paths,
             &self.find_replace.query,
@@ -61,9 +65,9 @@ impl SmaragdApp {
         let paths = self.search_scope_paths(self.find_replace.scope);
         let mut total = 0usize;
         for path in paths {
-            let is_open = self.editor.open_path.as_deref() == Some(path.as_path());
+            let is_open = self.editor.open_path() == Some(path.as_path());
             let content = if is_open {
-                self.editor.buffer.clone()
+                self.editor.buffer().to_string()
             } else {
                 match fs::read_to_string(&path) {
                     Ok(content) => content,
@@ -83,7 +87,7 @@ impl SmaragdApp {
             total += count;
 
             if is_open {
-                self.editor.buffer = new_content;
+                *self.editor.buffer_mut() = new_content;
                 self.editor.mark_dirty();
             } else if let Err(err) = fs::write(&path, &new_content) {
                 self.push_error_toast(format!("Couldn't update {}: {err}", path.display()));
@@ -111,14 +115,14 @@ impl SmaragdApp {
         path: &Path,
         byte_offset: usize,
     ) {
-        if self.editor.open_path.as_deref() != Some(path) {
+        if self.editor.open_path() != Some(path) {
             self.open_document(path);
         }
-        if self.editor.open_path.as_deref() == Some(path) {
+        if self.editor.open_path() == Some(path) {
             ui::editor_panel::move_cursor_to(
                 ctx,
-                ui::editor_panel::editor_text_edit_id(),
-                &self.editor.buffer,
+                ui::editor_panel::document_text_edit_id(self.editor.open_path()),
+                self.editor.buffer(),
                 byte_offset,
             );
         }

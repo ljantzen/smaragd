@@ -49,7 +49,7 @@ impl SmaragdApp {
     /// bug, not something fixable from egui's side of the layout. `Maximized`
     /// is what a tiling compositor already handles constantly and reliably.
     pub(super) fn set_focus_mode(&mut self, ctx: &egui::Context, enabled: bool) {
-        if enabled && self.editor.open_path.is_none() {
+        if enabled && self.editor.open_path().is_none() {
             self.push_error_toast("Open a document before entering Focus Mode.");
             return;
         }
@@ -90,9 +90,8 @@ impl SmaragdApp {
     fn create_wikilink_target(&mut self, target: &str) {
         let Some(parent) = self
             .editor
-            .open_path
-            .as_ref()
-            .and_then(|p| p.parent())
+            .open_path()
+            .and_then(Path::parent)
             .map(Path::to_path_buf)
         else {
             self.push_error_toast(format!(

@@ -73,13 +73,13 @@ impl SmaragdApp {
         if !self.editor.changed_on_disk() {
             return;
         }
-        if self.editor.dirty {
+        if self.editor.dirty() {
             if self.external_conflict.is_none() {
-                self.external_conflict = self.editor.open_path.clone();
+                self.external_conflict = self.editor.open_path().map(Path::to_path_buf);
             }
             return;
         }
-        let Some(path) = self.editor.open_path.clone() else {
+        let Some(path) = self.editor.open_path().map(Path::to_path_buf) else {
             return;
         };
         let store = self.editor_store();
@@ -134,8 +134,8 @@ mod tests {
         fs::write(&doc, "changed elsewhere").unwrap();
         app.scan_for_external_changes();
 
-        assert_eq!(app.editor.buffer, "changed elsewhere");
-        assert!(!app.editor.dirty);
+        assert_eq!(app.editor.buffer(), "changed elsewhere");
+        assert!(!app.editor.dirty());
         assert!(app.external_conflict.is_none());
     }
 
@@ -148,15 +148,15 @@ mod tests {
         let mut app = SmaragdApp::test_fixture();
         app.project = Some(project);
         app.editor.open(&doc).unwrap();
-        app.editor.buffer = "my unsaved edit".to_string();
+        *app.editor.buffer_mut() = "my unsaved edit".to_string();
         app.editor.mark_dirty();
 
         std::thread::sleep(std::time::Duration::from_millis(10));
         fs::write(&doc, "changed elsewhere").unwrap();
         app.scan_for_external_changes();
 
-        assert_eq!(app.editor.buffer, "my unsaved edit");
-        assert!(app.editor.dirty);
+        assert_eq!(app.editor.buffer(), "my unsaved edit");
+        assert!(app.editor.dirty());
         assert_eq!(app.external_conflict.as_deref(), Some(doc.as_path()));
     }
 
@@ -169,7 +169,7 @@ mod tests {
         let mut app = SmaragdApp::test_fixture();
         app.project = Some(project);
         app.editor.open(&doc).unwrap();
-        app.editor.buffer = "my unsaved edit".to_string();
+        *app.editor.buffer_mut() = "my unsaved edit".to_string();
         app.editor.mark_dirty();
         std::thread::sleep(std::time::Duration::from_millis(10));
         fs::write(&doc, "changed elsewhere").unwrap();
@@ -179,8 +179,8 @@ mod tests {
         app.resolve_external_conflict(false);
 
         assert!(app.external_conflict.is_none());
-        assert_eq!(app.editor.buffer, "my unsaved edit");
-        assert!(app.editor.dirty);
+        assert_eq!(app.editor.buffer(), "my unsaved edit");
+        assert!(app.editor.dirty());
         // The write that triggered the conflict is now acknowledged, so an
         // unrelated later scan shouldn't immediately re-raise it.
         app.scan_for_external_changes();
@@ -196,7 +196,7 @@ mod tests {
         let mut app = SmaragdApp::test_fixture();
         app.project = Some(project);
         app.editor.open(&doc).unwrap();
-        app.editor.buffer = "my unsaved edit".to_string();
+        *app.editor.buffer_mut() = "my unsaved edit".to_string();
         app.editor.mark_dirty();
         std::thread::sleep(std::time::Duration::from_millis(10));
         fs::write(&doc, "changed elsewhere").unwrap();
@@ -205,8 +205,8 @@ mod tests {
         app.resolve_external_conflict(true);
 
         assert!(app.external_conflict.is_none());
-        assert_eq!(app.editor.buffer, "changed elsewhere");
-        assert!(!app.editor.dirty);
+        assert_eq!(app.editor.buffer(), "changed elsewhere");
+        assert!(!app.editor.dirty());
     }
 
     #[test]

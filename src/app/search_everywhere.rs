@@ -67,8 +67,8 @@ impl SmaragdApp {
     }
 
     /// Read every document's text once for Search Everywhere's text search —
-    /// the open document from its live (possibly unsaved) buffer instead of
-    /// disk, same as Find and Replace does.
+    /// any open tab's text from its live (possibly unsaved) buffer instead
+    /// of disk, same as Find and Replace does.
     fn search_text_cache(&self, documents: &[(String, PathBuf)]) -> Vec<TextDocument> {
         let Some(project) = &self.project else {
             return Vec::new();
@@ -76,8 +76,12 @@ impl SmaragdApp {
         documents
             .iter()
             .filter_map(|(display, path)| {
-                let content = if self.editor.open_path.as_deref() == Some(path.as_path()) {
-                    self.editor.buffer.clone()
+                let open_tab = self
+                    .editor
+                    .iter_tabs()
+                    .find(|tab| tab.path.as_deref() == Some(path.as_path()));
+                let content = if let Some(tab) = open_tab {
+                    tab.buffer.clone()
                 } else {
                     project.store.read_to_string(path).ok()?
                 };

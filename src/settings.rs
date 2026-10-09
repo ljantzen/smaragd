@@ -394,6 +394,14 @@ pub struct Settings {
     /// entirely: with the gutter off, bookmarks are still manageable from
     /// the Bookmarks dock, just not visible/clickable in the Editor itself.
     pub show_editor_gutter: bool,
+    /// Allow more than one document to be open in the Editor at once, each
+    /// in its own tab with its own resident, independently-unsaved buffer —
+    /// see `ui::editor_panel::show_tab_strip`. Off by default, same
+    /// opt-in convention as every other field here: with it off, opening a
+    /// document always replaces whatever was open (the pre-tabs behavior),
+    /// enforced by `SmaragdApp::enforce_single_tab_setting` after every
+    /// action that could otherwise leave a second tab open.
+    pub multi_tab_editor: bool,
     /// Which bundled Hunspell-compatible dictionary flags misspelled words with
     /// an inline underline in the Editor — see `spellcheck::misspelled_word_spans`.
     /// Off by default: right-clicking a flagged word offers Hunspell suggestions
@@ -1317,6 +1325,7 @@ mod tests {
             pomodoro_notifications_enabled: true,
             typewriter_quotes: true,
             show_editor_gutter: true,
+            multi_tab_editor: true,
             spell_check_language: SpellCheckLanguage::Off,
             spell_check_custom_words: BTreeSet::from(["Aslak".to_string(), "smaragd".to_string()]),
             focus_mode_spell_check: FocusModeSpellCheck::Off,

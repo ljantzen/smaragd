@@ -26,7 +26,7 @@ src/
   spellcheck.rs           Hunspell-compatible spell-check (spellbook): misspelled_word_spans (pure tokenizer) + dictionary lookup, memoized and invalidatable; real, individually license-reviewed dictionaries are hosted in the separate github.com/ljantzen/smaragd-dictionaries repo, <code>/ (own LICENSE+SOURCE per language; indexed by dictionaries/catalog.json here) and not compiled into the binary -- fetched at runtime via download_dictionary (app/dictionary_download.rs, ui/settings_panel.rs's Dictionaries list) with SHA-256 verification against the catalog; English/Norwegian additionally fall back to a tiny bundled placeholder before either is downloaded
   templates.rs            `${{name}}`/`${{date}}` substitution for New From Template
   project_template.rs     Scrivener-style New Project templates: built-in Blank/Novel/Nonfiction/Screenplay/World-Building + loaded-from-disk custom ones, apply()/save_from_project()
-  editor/mod.rs           EditorState: open/close document, dirty tracking, save
+  editor/mod.rs           EditorState: a collection of OpenDocument tabs (Settings::multi_tab_editor gates whether more than one stays open), open/close/save per tab, per-tab dirty tracking and Back/Forward history
   editor_font.rs          the curated Editor/Preview font set, and registering the three bundled ones with egui
   collab/
     mod.rs                 CollabSession: the SmaragdApp-facing surface tying crdt/diff to a running net session
@@ -73,7 +73,7 @@ src/
     backlinks_panel.rs      backlinks list rendering (dockable tab)
     tags_panel.rs           tags list + tag search rendering (dockable tab)
     binder_panel.rs        binder tree rendering + right-click context menu + drag-and-drop move/reorder (dockable tab)
-    editor_panel.rs         text editor + wikilink autocomplete popup + Focus Mode's paragraph-dimming layouter (dockable tab)
+    editor_panel.rs         text editor + wikilink autocomplete popup + Focus Mode's paragraph-dimming layouter + the tab strip when multi-tab editing is on (dockable tab)
     markdown_preview.rs     style-driven manuscript preview rendering — same `TypesetStyle` export uses (dockable tab)
     corkboard_panel.rs      story-card grid + tabbed card editor modal (Plot / Belief and Knowledge / Third Rail) (dockable tab)
     story_grid_panel.rs     read-only, manuscript-ordered table view of the same story cards, resolved against multiple linked documents per card (dockable tab)

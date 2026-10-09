@@ -5,6 +5,10 @@ this file.
 
 ## Unreleased
 
+- Added a **multi-tab editor**: open several documents at once, each in its
+  own tab with an independent, resident buffer — switching tabs never
+  touches disk, and each is only saved on close, explicit Save, or app exit.
+  Off by default; turn it on in `Settings > Editor > Tabs`.
 - Fixed the Preview pane's drop cap: it now renders as a true sunk cap (the
   enlarged letter spanning a few lines, with body text wrapped narrower
   beside it), matching PDF/EPUB export instead of the old oversized inline
