@@ -4,16 +4,26 @@ use super::*;
 /// Keyed by a `/`-separated path relative to the project root ("" for the root folder
 /// itself) rather than `PathBuf`, so the file stays portable across platforms and
 /// serializes to plain JSON without ambiguity.
+///
+/// Every map field here is a `BTreeMap`, not a `HashMap`, deliberately:
+/// `HashMap`'s iteration order is randomized per process, so `save_metadata`'s
+/// `serde_json::to_string_pretty` would otherwise write every key in a
+/// different order on every single save, even when nothing in the map
+/// actually changed. For a file meant to go into git/a project's own Sync
+/// feature, that's a problem — it inflates every commit's diff and makes an
+/// otherwise-clean three-way merge conflict on regions neither side actually
+/// touched. `BTreeMap`'s sorted iteration order is a pure function of the
+/// keys, so an unrelated edit serializes identically across saves.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ProjectMeta {
     pub version: u32,
-    pub node_order: HashMap<String, Vec<String>>,
+    pub node_order: BTreeMap<String, Vec<String>>,
     /// `#[serde(default)]` is required, not cosmetic: project.json files written
     /// before this field existed have no `folder_roles`/`trashed_origins` keys at
     /// all — without a default, deserializing them would fail outright and silently
     /// discard their real, already-persisted `node_order` data.
     #[serde(default)]
-    pub folder_roles: HashMap<String, FolderRole>,
+    pub folder_roles: BTreeMap<String, FolderRole>,
     /// A trashed item's *current* relative key (its path inside the Trash folder,
     /// post-move) → its *original* relative key (where it lived pre-delete).
     /// Disambiguates same-named items trashed from different folders and is what a
@@ -21,7 +31,7 @@ pub struct ProjectMeta {
     /// from — the on-disk name alone (deduplicated with a " (2)" suffix on collision)
     /// doesn't carry that.
     #[serde(default)]
-    pub trashed_origins: HashMap<String, String>,
+    pub trashed_origins: BTreeMap<String, String>,
     /// Full document-style metadata (type/status/pov/word_count_target/tags)
     /// assigned directly to a folder — unlike a document's, never parsed from
     /// YAML frontmatter (a folder has no file of its own to hold one), so this
@@ -33,7 +43,7 @@ pub struct ProjectMeta {
     /// the root folder itself). `#[serde(default)]` for the same reason as
     /// `folder_roles`: older `project.json` files predate this field.
     #[serde(default)]
-    pub folder_meta: HashMap<String, crate::frontmatter::DocumentMeta>,
+    pub folder_meta: BTreeMap<String, crate::frontmatter::DocumentMeta>,
     /// A user-assigned background color for each `status` value — matched
     /// against both a document's frontmatter `status` and a folder's
     /// `folder_meta`'s `status` — painted behind that row in the binder (see
@@ -45,7 +55,7 @@ pub struct ProjectMeta {
     /// tied to `status_picklist_folder`'s dropdown options, so a color can be
     /// assigned to a status that isn't (or is no longer) one of them.
     #[serde(default)]
-    pub status_colors: HashMap<String, String>,
+    pub status_colors: BTreeMap<String, String>,
     /// Which value currently drives a binder row's background color —
     /// applied uniformly to both document and folder rows, not a separate
     /// toggle per row kind (they're rendered as one shared list — see
@@ -60,7 +70,7 @@ pub struct ProjectMeta {
     /// matching convention), consulted only when `binder_color_mode` is
     /// `BinderColorMode::Pov`.
     #[serde(default)]
-    pub pov_colors: HashMap<String, String>,
+    pub pov_colors: BTreeMap<String, String>,
     /// Lisa Cron-style story/plotting cards, deliberately *not* tied to the binder
     /// tree or `node_order`: a card may exist with no linked document at all (a pure
     /// plotting artifact, drafted before any scene exists) and its position in this
@@ -303,7 +313,7 @@ pub struct ProjectMeta {
     /// document's on-disk mtime, unlike its creation time, is read live
     /// instead of persisted — see `Project::document_modified_times`).
     #[serde(default)]
-    pub document_created: HashMap<String, String>,
+    pub document_created: BTreeMap<String, String>,
     /// Whether smaragd should periodically commit this project's changes on its
     /// own, without the user triggering Commit manually — only takes effect when
     /// `git_enabled` is also true (and the global `Settings::git_integration_enabled`

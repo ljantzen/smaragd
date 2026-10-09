@@ -417,7 +417,7 @@ impl Project {
 /// Rewrite every key under `old_prefix` (matching it exactly, or starting with
 /// `"{old_prefix}/"`) in `map` to sit under `new_prefix` instead, preserving each
 /// key's value and its position relative to the prefix.
-fn rewrite_prefix_in<V>(map: &mut HashMap<String, V>, old_prefix: &str, new_prefix: &str) {
+fn rewrite_prefix_in<V>(map: &mut BTreeMap<String, V>, old_prefix: &str, new_prefix: &str) {
     let affected: Vec<String> = map
         .keys()
         .filter(|key| *key == old_prefix || key.starts_with(&format!("{old_prefix}/")))
@@ -515,7 +515,7 @@ fn relative_key(root: &Path, path: &Path) -> String {
 /// Reorder each folder's children to match any recorded order for that folder,
 /// appending children with no recorded position (e.g. newly discovered files never
 /// created through smaragd) at the end in their existing (alphabetical) order.
-fn apply_order(node: &mut BinderNode, root: &Path, order: &HashMap<String, Vec<String>>) {
+fn apply_order(node: &mut BinderNode, root: &Path, order: &BTreeMap<String, Vec<String>>) {
     if let BinderNodeKind::Folder { children } = &mut node.kind {
         if let Some(order_list) = order.get(&relative_key(root, &node.path)) {
             children.sort_by_key(|child| {
@@ -580,7 +580,7 @@ mod tests {
     #[test]
     fn metadata_round_trips_through_disk() {
         let dir = tempfile::tempdir().unwrap();
-        let mut node_order = HashMap::new();
+        let mut node_order = BTreeMap::new();
         node_order.insert(
             "Chapter 1".to_string(),
             vec!["01-opening.md".to_string(), "02-arrival.md".to_string()],
@@ -707,7 +707,7 @@ mod tests {
     #[test]
     fn initialize_does_not_clobber_existing_metadata() {
         let dir = tempfile::tempdir().unwrap();
-        let mut node_order = HashMap::new();
+        let mut node_order = BTreeMap::new();
         node_order.insert("".to_string(), vec!["custom.md".to_string()]);
         let meta = ProjectMeta {
             version: 7,
@@ -1044,7 +1044,7 @@ mod tests {
         fs::write(dir.path().join("b.md"), "").unwrap();
         fs::write(dir.path().join("a.md"), "").unwrap();
 
-        let mut node_order = HashMap::new();
+        let mut node_order = BTreeMap::new();
         node_order.insert("".to_string(), vec!["b.md".to_string()]);
         save_metadata(
             &store::NativeStore,

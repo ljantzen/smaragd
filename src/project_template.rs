@@ -428,7 +428,7 @@ pub fn save_from_project(
     let raw = RawCustomTemplate {
         label: label.to_string(),
         description: String::new(),
-        folder_roles: project.meta.folder_roles.clone(),
+        folder_roles: project.meta.folder_roles.iter().map(|(k, v)| (k.clone(), *v)).collect(),
     };
     let source = toml::to_string_pretty(&raw).map_err(io::Error::other)?;
     fs::write(dest.join("template.toml"), source)?;
