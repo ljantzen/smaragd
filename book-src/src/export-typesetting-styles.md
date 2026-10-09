@@ -72,15 +72,17 @@ right = "{chapter}"
 
 `[verse]` styles a ` ```verse ` fenced block (see [Verse](markdown-preview.md#verse)) — same shape as `[blockquote]`/`[code]`, but unlike either, it's optional: a style file predating verse support that omits it falls back to a built-in default rather than failing to load.
 
-`{title}`/`{subtitle}`/`{author}` are substituted with whatever's typed into the export dialog; `{chapter}` (supported as a whole side's content, not mixed with other text) shows the current chapter on the print PDF specifically — DOCX and EPUB don't have a per-page "current chapter" concept, so a `{chapter}` token is just left blank there.
+`{title}`/`{subtitle}`/`{author}` are substituted with whatever's typed into the export dialog; `{chapter}` (supported as a whole side's content, not mixed with other text) shows the current chapter on the print PDF and LaTeX exports specifically — DOCX and EPUB don't have a per-page "current chapter" concept, so a `{chapter}` token is just left blank there.
 
-**"Libertinus Serif", "DejaVu Sans Mono", and "Atkinson Hyperlegible"** (the built-in styles' fonts) aren't arbitrary choices — they're guaranteed available to the PDF renderer specifically, bundled with smaragd itself rather than depending on what's installed on your system. A custom style naming some other font still works for DOCX/EPUB (which just reference a font by name, the same way any other document does — Word/an e-reader substitutes if it's not installed), and for PDF too if that font happens to be installed locally; if not, the PDF falls back to *some* available font rather than failing the export.
+Heading font/size (the `[headings]` table) isn't used by the LaTeX exporter — it uses LaTeX's own standard sizing for chapters/sections instead of trying to override it per style. Every other table (`[body]`, `[blockquote]`, `[code]`, `[verse]`, `[drop_cap]`, `[running_header]`) applies to LaTeX output the same as the other three formats.
+
+**"Libertinus Serif", "DejaVu Sans Mono", and "Atkinson Hyperlegible"** (the built-in styles' fonts) aren't arbitrary choices — they're guaranteed available to the PDF renderer specifically, bundled with smaragd itself rather than depending on what's installed on your system. A custom style naming some other font still works for DOCX/EPUB (which just reference a font by name, the same way any other document does — Word/an e-reader substitutes if it's not installed), and for PDF too if that font happens to be installed locally; if not, the PDF falls back to *some* available font rather than failing the export. LaTeX export writes the font name into a `\setmainfont`/`\fontspec` call (needing XeLaTeX or LuaLaTeX to resolve it) — if your TeX distribution can't find a font by that name, compiling the generated `.tex` file will fail rather than silently substitute, unlike DOCX/EPUB/PDF.
 
 ## Using your own font file
 
 Naming a font that isn't one of those three works for DOCX/EPUB/PDF as above, but the **Preview** tab can't render it — it only knows the fonts actually installed with smaragd, so it falls back to a generic face on-screen even though the exported file uses the real font.
 
-To make Preview (and PDF, without needing the font separately installed as a system font) use your own font file too, add a `font_file` key alongside `font` in any of `[body]`/`[headings]`/`[blockquote]`/`[code]`/`[verse]`:
+To make Preview (and PDF, without needing the font separately installed as a system font) use your own font file too, add a `font_file` key alongside `font` in any of `[body]`/`[headings]`/`[blockquote]`/`[code]`/`[verse]`. LaTeX export doesn't read `font_file` at all — it only ever writes the plain `font` name into a `fontspec` call, so a font that isn't separately installed as a system font won't be found when you compile the generated `.tex` file, even though it renders correctly in Preview/PDF.
 
 ```toml
 [body]

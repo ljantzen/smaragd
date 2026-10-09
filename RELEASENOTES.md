@@ -5,6 +5,12 @@ this file.
 
 ## Unreleased
 
+- Added **LaTeX** as an export target: `File > Export…` can now generate
+  `.tex` source (plus an `images/` folder, if the manuscript has any) for
+  your own XeLaTeX/LuaLaTeX distribution to compile, alongside the existing
+  DOCX/EPUB/PDF formats. Unlike those three, it ships source rather than a
+  finished file — there's no embeddable pure-Rust LaTeX engine the way PDF
+  export has one for Typst.
 - Added a **multi-tab editor**: open several documents at once, each in its
   own tab with an independent, resident buffer — switching tabs never
   touches disk, and each is only saved on close, explicit Save, or app exit.

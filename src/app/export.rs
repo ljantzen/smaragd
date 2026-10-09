@@ -129,6 +129,15 @@ impl SmaragdApp {
                     self.run_export_pdf(&source, &meta, &style, &out_path);
                 }
             }
+            ui::export_panel::ExportAction::Latex => {
+                if let Some(out_path) = rfd::FileDialog::new()
+                    .set_file_name(format!("{}.tex", meta.filename_stem()))
+                    .add_filter("LaTeX", &["tex"])
+                    .save_file()
+                {
+                    self.run_export_latex(&source, &meta, &style, &out_path);
+                }
+            }
         }
     }
 
@@ -198,6 +207,36 @@ impl SmaragdApp {
             Ok(spine_width_in) => {
                 self.set_status_message(format!(
                     "Exported to {} — estimated spine width: {spine_width_in:.2}in",
+                    out_path.display()
+                ));
+            }
+            Err(err) => {
+                self.push_error_toast(format!("Export failed: {err}"));
+            }
+        }
+    }
+
+    fn run_export_latex(
+        &mut self,
+        source: &Path,
+        meta: &crate::export::BookMeta,
+        style: &crate::export::style::TypesetStyle,
+        out_path: &Path,
+    ) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let Some(folder) = project.tree.find_by_path(source) else {
+            return;
+        };
+        let docs = crate::export::gather(project, folder, self.settings.typewriter_quotes);
+        match crate::export::latex::export_latex(&docs, meta, style, &project.root, out_path) {
+            Ok(0) => {
+                self.set_status_message(format!("Exported to {}", out_path.display()));
+            }
+            Ok(image_count) => {
+                self.set_status_message(format!(
+                    "Exported to {} (plus {image_count} image(s) in images/)",
                     out_path.display()
                 ));
             }

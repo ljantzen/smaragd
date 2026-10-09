@@ -11,6 +11,7 @@
 
 pub mod docx;
 pub mod epub;
+pub mod latex;
 pub mod pdf;
 pub mod style;
 

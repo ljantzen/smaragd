@@ -7,6 +7,7 @@ pub enum ExportAction {
     Docx,
     Epub,
     Pdf,
+    Latex,
     ReloadStyles,
     Close,
 }
@@ -74,6 +75,17 @@ pub fn show(
             }
             if ui.button("Export as Print PDF…").clicked() {
                 action = Some(ExportAction::Pdf);
+            }
+            if ui
+                .button("Export as LaTeX…")
+                .on_hover_text(
+                    "Generates .tex source (plus an images/ folder, if the \
+                     manuscript has any) for your own XeLaTeX/LuaLaTeX \
+                     distribution to compile — not a finished PDF.",
+                )
+                .clicked()
+            {
+                action = Some(ExportAction::Latex);
             }
             if ui.button("Close").clicked() {
                 action = Some(ExportAction::Close);

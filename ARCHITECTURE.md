@@ -52,10 +52,11 @@ src/
     fake.rs                 (tests only) in-memory server for simulating several devices
   export/
     mod.rs                 gather() (binder walk, Trash/Templates-skipping) + shared ExportDoc/BookMeta/ExportError
-    style.rs                TypesetStyle: built-in + loaded-from-.toml typesetting styles shared by all 3 formats
+    style.rs                TypesetStyle: built-in + loaded-from-.toml typesetting styles shared by all 4 formats
     docx.rs                 DOCX rendering (docx_rs)
     epub.rs                 EPUB rendering (epub_builder)
     pdf.rs                  print-PDF rendering via the embedded Typst compiler (typst-as-lib)
+    latex.rs                LaTeX source generation (.tex + an images/ folder) for the user's own XeLaTeX/LuaLaTeX to compile -- no embeddable engine, so this ships source rather than a finished file (issue #126)
   project/
     store.rs               ProjectStore trait (read/write/list/rename/delete by path) + NativeStore (std::fs); the I/O boundary all of project/, settings.rs, backup.rs, plugins.rs, and spellcheck.rs go through instead of touching the filesystem directly
     model.rs              BinderTree/BinderNode data model
@@ -86,7 +87,7 @@ src/
     settings_panel.rs       settings dialog rendering: category nav + per-category content (incl. shortcut remapping)
     name_prompt.rs          new file/folder/new-from-template/rename/new-project name-prompt modal rendering
     new_project_template_prompt.rs  template-choice step shown before the New Project name prompt
-    export_panel.rs         export dialog: Title/Subtitle/Author/Style + DOCX/EPUB/Print PDF buttons
+    export_panel.rs         export dialog: Title/Subtitle/Author/Style + DOCX/EPUB/Print PDF/LaTeX buttons
     pomodoro_panel.rs       Pomodoro dock tab: countdown + Start/Pause/Skip/Reset
     word_count_panel.rs     Word Count dock tab: scope toggle, Draft/Session Target progress bars, characters-typed counter
     collab_panel.rs         Collaborate dock tab: connection code / peer fingerprint + Host/Join/End
