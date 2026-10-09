@@ -13,12 +13,24 @@ AtkinsonHyperlegible-Regular.ttf is *not* part of typst-kit's embedded set
 render identically in Preview and PDF, the same guarantee the other two
 fonts have.
 
-* LibertinusSerif-Regular.otf
+LibertinusSerif-Bold.otf, LibertinusSerif-Italic.otf,
+LibertinusSerif-BoldItalic.otf, DejaVuSansMono-Bold.ttf,
+DejaVuSansMono-Italic.ttf (typst-assets' "...-Oblique.ttf"), and
+DejaVuSansMono-BoldItalic.ttf (typst-assets' "...-BoldOblique.ttf") are the
+same typst-assets files as LibertinusSerif-Regular.otf/DejaVuSansMono.ttf
+above (same copyright/license each), copied here so `export::latex` can ship
+real bold/italic shapes alongside a `.tex` export's `fonts/` directory (via
+`fontspec`'s `Path`/`BoldFont`/`ItalicFont`/`BoldItalicFont`) instead of
+depending on the user's system having these families installed at all.
+
+* LibertinusSerif-Regular.otf, LibertinusSerif-Bold.otf,
+  LibertinusSerif-Italic.otf, LibertinusSerif-BoldItalic.otf
   Copyright (c) 2012-2024 The Libertinus Project Authors.
   Licensed under the SIL Open Font License, Version 1.1.
   https://openfontlicense.org
 
-* DejaVuSansMono.ttf
+* DejaVuSansMono.ttf, DejaVuSansMono-Bold.ttf, DejaVuSansMono-Italic.ttf,
+  DejaVuSansMono-BoldItalic.ttf
   Based on the Bitstream Vera fonts; DejaVu's changes are in the public
   domain. See https://dejavu-fonts.github.io/License.html
 

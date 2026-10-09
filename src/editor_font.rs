@@ -93,8 +93,15 @@ pub fn resolve_size(configured: f32) -> f32 {
     }
 }
 
-const LIBERTINUS_SERIF: &[u8] = include_bytes!("../assets/fonts/LibertinusSerif-Regular.otf");
-const DEJAVU_SANS_MONO: &[u8] = include_bytes!("../assets/fonts/DejaVuSansMono.ttf");
+/// `pub(crate)` (not just this module's own `install`) — `export::latex`
+/// reuses the exact same bytes as the `Regular` weight of its own bundled
+/// "Libertinus Serif" family (see `export::latex::bundled_font_family`).
+pub(crate) const LIBERTINUS_SERIF: &[u8] =
+    include_bytes!("../assets/fonts/LibertinusSerif-Regular.otf");
+/// `pub(crate)` for the same reason as `LIBERTINUS_SERIF` above —
+/// `export::latex` reuses these bytes as the `Regular` weight of its own
+/// bundled "DejaVu Sans Mono" family.
+pub(crate) const DEJAVU_SANS_MONO: &[u8] = include_bytes!("../assets/fonts/DejaVuSansMono.ttf");
 /// `pub(crate)` (not just this module's own `install`) — `export::pdf` reuses
 /// the exact same bytes to register this font with the Typst compiler too,
 /// since it (unlike the other two) isn't already part of `typst-kit`'s

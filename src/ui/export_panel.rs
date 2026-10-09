@@ -81,7 +81,12 @@ pub fn show(
                 .on_hover_text(
                     "Generates .tex source (plus an images/ folder, if the \
                      manuscript has any) for your own XeLaTeX/LuaLaTeX \
-                     distribution to compile — not a finished PDF.",
+                     distribution to compile — not a finished PDF. Bold/italic \
+                     render correctly out of the box for the built-in Libertinus \
+                     Serif-based styles (their font weights ship alongside the \
+                     .tex in a fonts/ folder); a custom style naming a different \
+                     font will fall back to synthesized bold/slant unless that \
+                     font's own bold/italic weights are installed on your system.",
                 )
                 .clicked()
             {

@@ -1,10 +1,11 @@
 //! LaTeX export (see issue #126): generates `.tex` source, plus a sibling
-//! `images/` directory for any referenced images, for the user's own
-//! XeLaTeX/LuaLaTeX distribution to compile — unlike `export::pdf`, there's
-//! no pure-Rust LaTeX engine to embed, so this ships source rather than a
-//! finished file. Structured the same way as `export::pdf`: `Block`/`Span`
-//! is walked into generated markup text, this time targeting LaTeX instead
-//! of Typst.
+//! `images/` directory for any referenced images and a sibling `fonts/`
+//! directory for any bundled font family the style names (see
+//! [`BundledFontFamily`]), for the user's own XeLaTeX/LuaLaTeX distribution
+//! to compile — unlike `export::pdf`, there's no pure-Rust LaTeX engine to
+//! embed, so this ships source rather than a finished file. Structured the
+//! same way as `export::pdf`: `Block`/`Span` is walked into generated markup
+//! text, this time targeting LaTeX instead of Typst.
 //!
 //! A few deliberate simplifications versus `export::pdf`, all because LaTeX
 //! gives cheaper/safer ways to get a reasonable result without fighting the
@@ -25,11 +26,19 @@
 //! - **Drop caps** use the near-universal `lettrine` package, which handles
 //!   the wrap-around-the-cap layout itself — much simpler than
 //!   `export::pdf`'s hand-rolled greedy word-measuring Typst code.
-//! - **The images directory is always named `images/`**, not derived from
-//!   the chosen output filename — keeps the generated source's
-//!   `\includegraphics` paths independent of the save-dialog's path, so
-//!   `export_latex_string` stays pure/filesystem-free, same split as
-//!   `export::pdf::export_pdf`/`export_pdf_bytes`.
+//! - **The images and fonts directories are always named `images/`/`fonts/`**,
+//!   not derived from the chosen output filename — keeps the generated
+//!   source's `\includegraphics`/`fontspec` paths independent of the
+//!   save-dialog's path, so `export_latex_string` stays pure/filesystem-free,
+//!   same split as `export::pdf::export_pdf`/`export_pdf_bytes`.
+//! - **Bold/italic shapes**: a style naming a [`BundledFontFamily`] (just
+//!   "Libertinus Serif" today) gets real bold/italic/bold-italic `.otf`
+//!   files shipped in `fonts/` and selected via `fontspec`'s `Path`/`*Font`
+//!   options — no dependency on the user's system having that family
+//!   installed. Any other font name (a system font, or a custom style) falls
+//!   back to `AutoFakeBold`/`AutoFakeSlant` synthesis instead of fontspec's
+//!   own default of silently rendering **bold**/*italic* spans as plain text
+//!   when it can't find a real bold/italic shape for that family.
 //!
 //! Out of scope entirely: footnotes. The markdown parser has no footnote
 //! concept at all (a gap shared by every export format, not new here).
@@ -43,6 +52,120 @@ use super::style::TypesetStyle;
 use super::{BookMeta, ExportDoc, ExportError};
 use crate::markdown::{Block, BlockKind, ColumnAlignment, Span};
 
+const LIBERTINUS_SERIF_BOLD: &[u8] = include_bytes!("../../assets/fonts/LibertinusSerif-Bold.otf");
+const LIBERTINUS_SERIF_ITALIC: &[u8] =
+    include_bytes!("../../assets/fonts/LibertinusSerif-Italic.otf");
+const LIBERTINUS_SERIF_BOLD_ITALIC: &[u8] =
+    include_bytes!("../../assets/fonts/LibertinusSerif-BoldItalic.otf");
+const DEJAVU_SANS_MONO_BOLD: &[u8] = include_bytes!("../../assets/fonts/DejaVuSansMono-Bold.ttf");
+const DEJAVU_SANS_MONO_ITALIC: &[u8] =
+    include_bytes!("../../assets/fonts/DejaVuSansMono-Italic.ttf");
+const DEJAVU_SANS_MONO_BOLD_ITALIC: &[u8] =
+    include_bytes!("../../assets/fonts/DejaVuSansMono-BoldItalic.ttf");
+
+/// A font family LaTeX export ships its own copy of (all four weights —
+/// see `assets/fonts/NOTICE`), so a `\setmainfont`/`\fontspec` naming it can
+/// select real bold/italic shapes via `fontspec`'s `Path`/`*Font` options
+/// instead of depending on the user's system having that family installed
+/// with those weights — the same self-containment guarantee
+/// `export::pdf::export_pdf_bytes` already has for its embedded fonts, just
+/// achieved differently since a `.tex` file can't embed font bytes inline:
+/// the four files are written into a sibling `fonts/` directory instead (see
+/// [`export_latex`]), the same way referenced images get a sibling `images/`.
+/// `DejaVu Sans Mono`'s code/verse spans never request bold/italic (see
+/// `append_span_latex`'s `span.code` branch and the `Verse` block, neither of
+/// which emits `\textbf`/`\textit`), but it's still routed through here —
+/// not just a plain by-name `\fontspec` — so a code block doesn't depend on
+/// the user's system having "DejaVu Sans Mono" installed at all, the same
+/// guarantee the main body font gets.
+#[derive(Clone, Copy)]
+pub struct BundledFontFamily {
+    /// The filename stem fontspec's `*` wildcard substitutes when resolving
+    /// `UprightFont`/`BoldFont`/etc — the four weights are always written
+    /// into `fonts/` as `<stem>-Regular.<extension>` etc by [`export_latex`],
+    /// regardless of what the source files under `assets/fonts/` are named.
+    stem: &'static str,
+    /// Including the leading dot, e.g. `".otf"`.
+    extension: &'static str,
+    regular: &'static [u8],
+    bold: &'static [u8],
+    italic: &'static [u8],
+    bold_italic: &'static [u8],
+}
+
+/// The bundled family `font_name` names, if any — the default body/
+/// blockquote/verse font ("Libertinus Serif") and code font ("DejaVu Sans
+/// Mono") of every built-in style.
+fn bundled_font_family(font_name: &str) -> Option<BundledFontFamily> {
+    match font_name {
+        "Libertinus Serif" => Some(BundledFontFamily {
+            stem: "LibertinusSerif",
+            extension: ".otf",
+            regular: crate::editor_font::LIBERTINUS_SERIF,
+            bold: LIBERTINUS_SERIF_BOLD,
+            italic: LIBERTINUS_SERIF_ITALIC,
+            bold_italic: LIBERTINUS_SERIF_BOLD_ITALIC,
+        }),
+        "DejaVu Sans Mono" => Some(BundledFontFamily {
+            stem: "DejaVuSansMono",
+            extension: ".ttf",
+            regular: crate::editor_font::DEJAVU_SANS_MONO,
+            bold: DEJAVU_SANS_MONO_BOLD,
+            italic: DEJAVU_SANS_MONO_ITALIC,
+            bold_italic: DEJAVU_SANS_MONO_BOLD_ITALIC,
+        }),
+        _ => None,
+    }
+}
+
+/// A `\setmainfont{...}[...]`/`\fontspec{...}[...]` declaration (`cmd` is
+/// `"setmainfont"`/`"fontspec"` without the backslash) for `font_name`: real
+/// bundled bold/italic shapes via `Path`/`*Font` options when `font_name`
+/// matches [`bundled_font_family`], otherwise a plain by-name declaration
+/// (relying on the user's own system font search, same as before this
+/// existed) with `AutoFakeBold`/`AutoFakeSlant` so a **bold**/*italic* span
+/// still renders as *something* instead of fontspec's own default of
+/// silently falling back to plain regular when no real bold/italic shape is
+/// found — matching the synthesis Typst itself applies by default for
+/// `export::pdf`.
+fn fontspec_decl(cmd: &str, font_name: &str) -> String {
+    match bundled_font_family(font_name) {
+        Some(family) => format!(
+            "\\{cmd}{{{}}}[Path=fonts/,Extension={},UprightFont=*-Regular,\
+             BoldFont=*-Bold,ItalicFont=*-Italic,BoldItalicFont=*-BoldItalic]",
+            family.stem, family.extension,
+        ),
+        None => format!(
+            "\\{cmd}{{{}}}[AutoFakeBold=2.5,AutoFakeSlant=0.2]",
+            escape_latex(font_name),
+        ),
+    }
+}
+
+/// Every distinct bundled family `style` actually names, across every slot
+/// [`fontspec_decl`] is called for (`body`/`blockquote`/`code`/`verse`) —
+/// what [`export_latex`] writes into the exported `fonts/` directory, so a
+/// style that never names a bundled family (an all-system-font custom style)
+/// gets no `fonts/` at all, same as an image-free manuscript getting no
+/// `images/`.
+fn bundled_fonts_used(style: &TypesetStyle) -> Vec<BundledFontFamily> {
+    let mut found = Vec::new();
+    let font_names = [
+        &style.body.font,
+        &style.blockquote.font,
+        &style.code.font,
+        &style.verse.font,
+    ];
+    for font_name in font_names {
+        if let Some(family) = bundled_font_family(font_name) {
+            if !found.iter().any(|f: &BundledFontFamily| f.stem == family.stem) {
+                found.push(family);
+            }
+        }
+    }
+    found
+}
+
 /// [`export_latex_string`], written to `out_path` plus a sibling `images/`
 /// directory holding a copy of every image the manuscript references
 /// (created only if there's at least one) — the native save-dialog path.
@@ -54,15 +177,25 @@ pub fn export_latex(
     project_root: &Path,
     out_path: &Path,
 ) -> Result<usize, ExportError> {
-    let (source, images) = export_latex_string(docs, meta, style, project_root);
+    let (source, images, fonts) = export_latex_string(docs, meta, style, project_root);
     fs::write(out_path, source)?;
+    let out_dir = out_path.parent().unwrap_or_else(|| Path::new("."));
+    if !fonts.is_empty() {
+        let fonts_dir = out_dir.join("fonts");
+        fs::create_dir_all(&fonts_dir)?;
+        for family in &fonts {
+            let ext = family.extension;
+            let stem = family.stem;
+            fs::write(fonts_dir.join(format!("{stem}-Regular{ext}")), family.regular)?;
+            fs::write(fonts_dir.join(format!("{stem}-Bold{ext}")), family.bold)?;
+            fs::write(fonts_dir.join(format!("{stem}-Italic{ext}")), family.italic)?;
+            fs::write(fonts_dir.join(format!("{stem}-BoldItalic{ext}")), family.bold_italic)?;
+        }
+    }
     if images.is_empty() {
         return Ok(0);
     }
-    let images_dir = out_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("images");
+    let images_dir = out_dir.join("images");
     fs::create_dir_all(&images_dir)?;
     for (source_path, dest_name) in &images {
         fs::copy(source_path, images_dir.join(dest_name))?;
@@ -80,9 +213,10 @@ pub fn export_latex_string(
     meta: &BookMeta,
     style: &TypesetStyle,
     project_root: &Path,
-) -> (String, Vec<(PathBuf, String)>) {
+) -> (String, Vec<(PathBuf, String)>, Vec<BundledFontFamily>) {
     let mut images = ImageCollector::default();
     let mut source = generate_preamble(meta, style);
+    let fonts = bundled_fonts_used(style);
     source.push_str("\\begin{document}\n");
     let leading = style.body.size_pt as f32 * style.body.line_height;
     source.push_str(&format!(
@@ -107,7 +241,7 @@ pub fn export_latex_string(
         ));
     }
     source.push_str("\\end{document}\n");
-    (source, images.copies)
+    (source, images.copies, fonts)
 }
 
 fn generate_preamble(meta: &BookMeta, style: &TypesetStyle) -> String {
@@ -122,10 +256,8 @@ fn generate_preamble(meta: &BookMeta, style: &TypesetStyle) -> String {
         style.page.width_mm, style.page.height_mm, style.page.margin_mm
     ));
     s.push_str("\\usepackage{fontspec}\n");
-    s.push_str(&format!(
-        "\\setmainfont{{{}}}\n",
-        escape_latex(&style.body.font)
-    ));
+    s.push_str(&fontspec_decl("setmainfont", &style.body.font));
+    s.push('\n');
     s.push_str("\\usepackage{graphicx}\n");
     s.push_str("\\usepackage{verse}\n");
     s.push_str("\\usepackage[normalem]{ulem}\n");
@@ -303,8 +435,8 @@ fn append_latex_block(
             // spirit as `export::pdf` guarding against a literal ` ``` `.
             let safe = text.replace("\\end{verbatim}", "\\end {verbatim}");
             out.push_str(&format!(
-                "{{\\fontspec{{{}}}\\fontsize{{{}pt}}{{{}pt}}\\selectfont\n\\begin{{verbatim}}\n{safe}\n\\end{{verbatim}}\n}}\n\n",
-                escape_latex(&style.code.font),
+                "{{{}\\fontsize{{{}pt}}{{{}pt}}\\selectfont\n\\begin{{verbatim}}\n{safe}\n\\end{{verbatim}}\n}}\n\n",
+                fontspec_decl("fontspec", &style.code.font),
                 style.code.size_pt,
                 style.code.size_pt as f32 * 1.2,
             ));
@@ -317,8 +449,8 @@ fn append_latex_block(
                 .map(escape_latex)
                 .collect();
             out.push_str(&format!(
-                "{{\\fontspec{{{}}}\\fontsize{{{}pt}}{{{}pt}}\\selectfont{}\n\\begin{{verse}}\n{}\n\\end{{verse}}\n}}\n\n",
-                escape_latex(&style.verse.font),
+                "{{{}\\fontsize{{{}pt}}{{{}pt}}\\selectfont{}\n\\begin{{verse}}\n{}\n\\end{{verse}}\n}}\n\n",
+                fontspec_decl("fontspec", &style.verse.font),
                 style.verse.size_pt,
                 style.verse.size_pt as f32 * 1.2,
                 if style.verse.italic { "\\itshape" } else { "" },
@@ -327,8 +459,8 @@ fn append_latex_block(
         }
         BlockKind::BlockQuote => {
             out.push_str(&format!(
-                "\\begin{{quote}}\n{{\\fontspec{{{}}}\\fontsize{{{}pt}}{{{}pt}}\\selectfont{}",
-                escape_latex(&style.blockquote.font),
+                "\\begin{{quote}}\n{{{}\\fontsize{{{}pt}}{{{}pt}}\\selectfont{}",
+                fontspec_decl("fontspec", &style.blockquote.font),
                 style.blockquote.size_pt,
                 style.blockquote.size_pt as f32 * 1.2,
                 if style.blockquote.italic { "\\itshape " } else { "" },
@@ -623,6 +755,60 @@ mod tests {
         let meta = BookMeta::default();
         assert!(generate_preamble(&meta, &trade_paperback_style()).contains("fancyhdr"));
         assert!(!generate_preamble(&meta, &manuscript_style()).contains("fancyhdr"));
+    }
+
+    #[test]
+    fn fontspec_decl_uses_the_bundled_path_for_libertinus_serif() {
+        let decl = fontspec_decl("setmainfont", "Libertinus Serif");
+        assert!(decl.starts_with("\\setmainfont{LibertinusSerif}["));
+        assert!(decl.contains("Path=fonts/"));
+        assert!(decl.contains("BoldFont=*-Bold"));
+        assert!(decl.contains("ItalicFont=*-Italic"));
+        assert!(decl.contains("BoldItalicFont=*-BoldItalic"));
+    }
+
+    #[test]
+    fn fontspec_decl_falls_back_to_autofakebold_for_an_unbundled_font() {
+        let decl = fontspec_decl("fontspec", "Comic Sans MS");
+        assert_eq!(decl, "\\fontspec{Comic Sans MS}[AutoFakeBold=2.5,AutoFakeSlant=0.2]");
+    }
+
+    #[test]
+    fn generate_preamble_setmainfont_line_matches_fontspec_decl() {
+        let meta = BookMeta::default();
+        let preamble = generate_preamble(&meta, &manuscript_style());
+        assert!(preamble.contains(&fontspec_decl("setmainfont", "Libertinus Serif")));
+    }
+
+    #[test]
+    fn bundled_fonts_used_dedupes_repeated_families_and_finds_both_bundled_families() {
+        // Every built-in style's body/blockquote/verse font is "Libertinus
+        // Serif" (one family despite three slots naming it) and its code
+        // font is "DejaVu Sans Mono" (a second, distinct family).
+        let fonts = bundled_fonts_used(&manuscript_style());
+        let mut stems: Vec<&str> = fonts.iter().map(|f| f.stem).collect();
+        stems.sort();
+        assert_eq!(stems, ["DejaVuSansMono", "LibertinusSerif"]);
+    }
+
+    #[test]
+    fn export_latex_writes_a_fonts_directory_with_all_four_bundled_weights() {
+        let dir = tempfile::tempdir().unwrap();
+        let docs = vec![ExportDoc {
+            title: "Chapter One".to_string(),
+            blocks: markdown::parse("Just text."),
+            source_path: dir.path().join("one.md"),
+        }];
+        let out = dir.path().join("out.tex");
+        export_latex(&docs, &BookMeta::default(), &manuscript_style(), dir.path(), &out).unwrap();
+        let fonts_dir = dir.path().join("fonts");
+        for weight in ["Regular", "Bold", "Italic", "BoldItalic"] {
+            for (stem, ext) in [("LibertinusSerif", "otf"), ("DejaVuSansMono", "ttf")] {
+                let file = fonts_dir.join(format!("{stem}-{weight}.{ext}"));
+                assert!(file.exists(), "expected {file:?} to exist");
+                assert!(!fs::read(&file).unwrap().is_empty());
+            }
+        }
     }
 
     #[test]
