@@ -157,13 +157,12 @@ fn bundled_fonts_used(style: &TypesetStyle) -> Vec<BundledFontFamily> {
         &style.verse.font,
     ];
     for font_name in font_names {
-        if let Some(family) = bundled_font_family(font_name) {
-            if !found
+        if let Some(family) = bundled_font_family(font_name)
+            && !found
                 .iter()
                 .any(|f: &BundledFontFamily| f.stem == family.stem)
-            {
-                found.push(family);
-            }
+        {
+            found.push(family);
         }
     }
     found
