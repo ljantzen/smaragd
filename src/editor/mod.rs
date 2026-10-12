@@ -127,7 +127,9 @@ impl EditorState {
     }
 
     pub fn tab_index_for(&self, path: &Path) -> Option<usize> {
-        self.tabs.iter().position(|tab| tab.path.as_deref() == Some(path))
+        self.tabs
+            .iter()
+            .position(|tab| tab.path.as_deref() == Some(path))
     }
 
     pub fn open_path(&self) -> Option<&Path> {
@@ -135,7 +137,9 @@ impl EditorState {
     }
 
     pub fn buffer(&self) -> &str {
-        self.active_tab().map(|tab| tab.buffer.as_str()).unwrap_or("")
+        self.active_tab()
+            .map(|tab| tab.buffer.as_str())
+            .unwrap_or("")
     }
 
     /// Panics if there's no active tab — only call where that's already
@@ -167,7 +171,8 @@ impl EditorState {
     }
 
     pub fn take_pending_cursor(&mut self) -> Option<usize> {
-        self.active_tab_mut().and_then(|tab| tab.pending_cursor.take())
+        self.active_tab_mut()
+            .and_then(|tab| tab.pending_cursor.take())
     }
 
     pub fn disk_mtime(&self) -> Option<SystemTime> {
@@ -429,7 +434,9 @@ impl EditorState {
     /// rather than a single renamed one.
     pub fn rebase_subtree(&mut self, old_root: &Path, new_root: &Path) {
         let rebase = |p: &Path| -> Option<PathBuf> {
-            p.strip_prefix(old_root).ok().map(|rest| new_root.join(rest))
+            p.strip_prefix(old_root)
+                .ok()
+                .map(|rest| new_root.join(rest))
         };
         for tab in &mut self.tabs {
             if let Some(rebased) = tab.path.as_deref().and_then(rebase) {
@@ -456,11 +463,13 @@ impl EditorState {
     }
 
     pub fn can_go_back(&self) -> bool {
-        self.active_tab().is_some_and(|tab| tab.history.can_go_back())
+        self.active_tab()
+            .is_some_and(|tab| tab.history.can_go_back())
     }
 
     pub fn can_go_forward(&self) -> bool {
-        self.active_tab().is_some_and(|tab| tab.history.can_go_forward())
+        self.active_tab()
+            .is_some_and(|tab| tab.history.can_go_forward())
     }
 
     /// Step to the document the active tab's own history would go back to —
@@ -878,7 +887,9 @@ mod tests {
         state.open(&first).unwrap();
         state.open(&second).unwrap();
         // Close `first`'s tab (index 0); `second` (now index 0) stays active.
-        state.close_tab(0, &crate::project::store::NativeStore).unwrap();
+        state
+            .close_tab(0, &crate::project::store::NativeStore)
+            .unwrap();
         assert_eq!(state.tab_count(), 1);
 
         state.go_back(&crate::project::store::NativeStore).unwrap();

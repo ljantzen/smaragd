@@ -68,9 +68,14 @@ impl SmaragdApp {
             // an empty orphaned tab. A host's tab is a real document and
             // stays open exactly as it was before hosting started.
             if matches!(session.role, CollabRole::Joiner)
-                && let Some(index) = self.editor.active.filter(|&i| self.editor.tabs[i].path.is_none())
+                && let Some(index) = self
+                    .editor
+                    .active
+                    .filter(|&i| self.editor.tabs[i].path.is_none())
             {
-                let _ = self.editor.close_tab(index, &crate::project::store::NativeStore);
+                let _ = self
+                    .editor
+                    .close_tab(index, &crate::project::store::NativeStore);
             }
             session.end();
             self.set_status_message(reason);
@@ -108,7 +113,8 @@ impl SmaragdApp {
         for update in session.poll() {
             match update {
                 SessionUpdate::TextChanged { new_text, change } => {
-                    let editor_id = ui::editor_panel::document_text_edit_id(self.editor.open_path());
+                    let editor_id =
+                        ui::editor_panel::document_text_edit_id(self.editor.open_path());
                     let cursor_byte = egui::TextEdit::load_state(ctx, editor_id)
                         .and_then(|state| state.cursor.char_range())
                         .map(|range| {
