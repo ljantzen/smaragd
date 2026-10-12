@@ -38,12 +38,8 @@ impl SmaragdApp {
                 })
             })
             .collect();
-        session.active_tab = active_path.and_then(|path| {
-            session
-                .open_tabs
-                .iter()
-                .position(|tab| tab.path == path)
-        });
+        session.active_tab =
+            active_path.and_then(|path| session.open_tabs.iter().position(|tab| tab.path == path));
         session.selected_path = self.selected_path.clone();
         session.collapsed_folders = collapsed_folders;
         session.focus_mode = self.focus_mode;
@@ -88,10 +84,15 @@ impl SmaragdApp {
                 continue;
             }
             if let Some(buffer) = tab.unsaved_buffer {
-                self.editor.open_unsaved_tab(tab.path, buffer, tab.cursor_byte);
+                self.editor
+                    .open_unsaved_tab(tab.path, buffer, tab.cursor_byte);
             } else {
                 let editor_store = self.editor_store();
-                if self.editor.open_with_store(&tab.path, editor_store.as_ref()).is_ok() {
+                if self
+                    .editor
+                    .open_with_store(&tab.path, editor_store.as_ref())
+                    .is_ok()
+                {
                     self.editor.set_cursor_byte(tab.cursor_byte);
                     if let Some(active) = self.editor.active_tab_mut() {
                         active.pending_cursor = Some(tab.cursor_byte);
@@ -189,7 +190,10 @@ mod tests {
         reopened.restore_session(&fresh_ctx, session);
 
         assert_eq!(reopened.editor.tab_count(), 2);
-        assert_eq!(reopened.editor.open_path(), Some(doc(&dir, "one").as_path()));
+        assert_eq!(
+            reopened.editor.open_path(),
+            Some(doc(&dir, "one").as_path())
+        );
         assert_eq!(reopened.editor.pending_cursor(), Some(3));
         assert_eq!(reopened.selected_path, Some(dir.path().join("Chapter")));
         assert!(
@@ -220,7 +224,10 @@ mod tests {
         reopened.restore_session(&egui::Context::default(), session);
 
         assert_eq!(reopened.editor.tab_count(), 1);
-        assert_eq!(reopened.editor.open_path(), Some(doc(&dir, "one").as_path()));
+        assert_eq!(
+            reopened.editor.open_path(),
+            Some(doc(&dir, "one").as_path())
+        );
     }
 
     #[test]

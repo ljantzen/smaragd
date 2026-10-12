@@ -35,8 +35,8 @@ impl SmaragdApp {
         }
         let current = self.editor.open_path().map(|path| {
             let line = line_at_byte(self.editor.buffer(), self.editor.cursor_byte());
-            let column = self.editor.cursor_byte()
-                - line_start_byte_offset(self.editor.buffer(), line);
+            let column =
+                self.editor.cursor_byte() - line_start_byte_offset(self.editor.buffer(), line);
             (path, line, column)
         });
         let index = step_note_index(&resolved, current, forward);

@@ -398,7 +398,10 @@ pub fn show(
     // off: there's never more than one tab in that case (see
     // `SmaragdApp::enforce_single_tab_setting`), so the strip would only
     // ever show a single, un-switchable chip.
-    if !focus_mode && multi_tab_enabled && let Some(event) = show_tab_strip(ui, editor) {
+    if !focus_mode
+        && multi_tab_enabled
+        && let Some(event) = show_tab_strip(ui, editor)
+    {
         return Some(event);
     }
 
@@ -1509,7 +1512,10 @@ mod tests {
     fn the_open_document_s_title_is_shown_as_a_heading_above_the_editor() {
         let ctx = egui::Context::default();
         crate::editor_font::install(&ctx);
-        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("Chapter One.md")), "Some text.".to_string());
+        let mut editor = EditorState::test_with_tab(
+            Some(std::path::PathBuf::from("Chapter One.md")),
+            "Some text.".to_string(),
+        );
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -1543,7 +1549,9 @@ mod tests {
         });
 
         let top = ctx
-            .read_response(document_text_edit_id(Some(std::path::Path::new("Chapter One.md"))))
+            .read_response(document_text_edit_id(Some(std::path::Path::new(
+                "Chapter One.md",
+            ))))
             .expect("TextEdit renders once a document is open")
             .rect
             .top();
@@ -1626,7 +1634,10 @@ mod tests {
     #[test]
     fn a_short_document_s_editable_area_fills_the_available_height() {
         let ctx = egui::Context::default();
-        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "One short line.".to_string());
+        let mut editor = EditorState::test_with_tab(
+            Some(std::path::PathBuf::from("scene.md")),
+            "One short line.".to_string(),
+        );
         let viewport_height = 600.0;
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -1661,7 +1672,9 @@ mod tests {
         });
 
         let response = ctx
-            .read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))))
+            .read_response(document_text_edit_id(Some(std::path::Path::new(
+                "scene.md",
+            ))))
             .expect("TextEdit renders once a document is open");
         assert!(
             response.rect.height() > viewport_height * 0.8,
@@ -1689,7 +1702,10 @@ mod tests {
 
         let left_without_gutter = {
             let ctx = egui::Context::default();
-            let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "One short line.".to_string());
+            let mut editor = EditorState::test_with_tab(
+                Some(std::path::PathBuf::from("scene.md")),
+                "One short line.".to_string(),
+            );
             crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
                 show(
                     ui,
@@ -1713,15 +1729,20 @@ mod tests {
                     None,
                 );
             });
-            ctx.read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))))
-                .unwrap()
-                .rect
-                .left()
+            ctx.read_response(document_text_edit_id(Some(std::path::Path::new(
+                "scene.md",
+            ))))
+            .unwrap()
+            .rect
+            .left()
         };
 
         let left_with_gutter = {
             let ctx = egui::Context::default();
-            let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "One short line.".to_string());
+            let mut editor = EditorState::test_with_tab(
+                Some(std::path::PathBuf::from("scene.md")),
+                "One short line.".to_string(),
+            );
             crate::egui_test_support::run_ui_and_discard(&ctx, input, |ui| {
                 show(
                     ui,
@@ -1745,10 +1766,12 @@ mod tests {
                     None,
                 );
             });
-            ctx.read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))))
-                .unwrap()
-                .rect
-                .left()
+            ctx.read_response(document_text_edit_id(Some(std::path::Path::new(
+                "scene.md",
+            ))))
+            .unwrap()
+            .rect
+            .left()
         };
 
         assert!(
@@ -1803,7 +1826,10 @@ mod tests {
     fn clicking_the_gutter_icon_area_toggles_a_bookmark_at_that_line() {
         let ctx = egui::Context::default();
         crate::editor_font::install(&ctx);
-        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "one\ntwo\nthree".to_string());
+        let mut editor = EditorState::test_with_tab(
+            Some(std::path::PathBuf::from("scene.md")),
+            "one\ntwo\nthree".to_string(),
+        );
         let input = fixed_viewport_input();
 
         crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
@@ -1831,7 +1857,10 @@ mod tests {
         });
 
         let icon_rect = ctx
-            .read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))).with(("bookmark_icon", 2usize)))
+            .read_response(
+                document_text_edit_id(Some(std::path::Path::new("scene.md")))
+                    .with(("bookmark_icon", 2usize)),
+            )
             .expect("line 2's gutter icon area registers a clickable response")
             .rect;
 
@@ -1876,7 +1905,10 @@ mod tests {
     fn ctrl_clicking_a_wikilink_in_the_editor_navigates_to_it() {
         let ctx = egui::Context::default();
         crate::editor_font::install(&ctx);
-        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "[[Other Scene]] and more text".to_string());
+        let mut editor = EditorState::test_with_tab(
+            Some(std::path::PathBuf::from("scene.md")),
+            "[[Other Scene]] and more text".to_string(),
+        );
         let input = fixed_viewport_input();
 
         crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
@@ -1904,7 +1936,9 @@ mod tests {
         });
 
         let text_rect = ctx
-            .read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))))
+            .read_response(document_text_edit_id(Some(std::path::Path::new(
+                "scene.md",
+            ))))
             .expect("the text edit registers a response")
             .rect;
         // Just inside the top-left corner, over the wikilink's opening `[[`.
@@ -1969,7 +2003,10 @@ mod tests {
     fn a_plain_click_on_a_wikilink_does_not_navigate() {
         let ctx = egui::Context::default();
         crate::editor_font::install(&ctx);
-        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "[[Other Scene]] and more text".to_string());
+        let mut editor = EditorState::test_with_tab(
+            Some(std::path::PathBuf::from("scene.md")),
+            "[[Other Scene]] and more text".to_string(),
+        );
         let input = fixed_viewport_input();
 
         crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
@@ -1997,7 +2034,9 @@ mod tests {
         });
 
         let text_rect = ctx
-            .read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))))
+            .read_response(document_text_edit_id(Some(std::path::Path::new(
+                "scene.md",
+            ))))
             .expect("the text edit registers a response")
             .rect;
         let click_pos = text_rect.min + egui::vec2(1.0, 2.0);
@@ -2045,7 +2084,10 @@ mod tests {
         let ctx = egui::Context::default();
         crate::editor_font::install(&ctx);
         let long_paragraph = "wrap ".repeat(80); // forces several visual rows at 260px wide
-        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), format!("first\n{long_paragraph}\nlast"));
+        let mut editor = EditorState::test_with_tab(
+            Some(std::path::PathBuf::from("scene.md")),
+            format!("first\n{long_paragraph}\nlast"),
+        );
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -2079,7 +2121,10 @@ mod tests {
         });
 
         let icon_rect = ctx
-            .read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))).with(("bookmark_icon", 2usize)))
+            .read_response(
+                document_text_edit_id(Some(std::path::Path::new("scene.md")))
+                    .with(("bookmark_icon", 2usize)),
+            )
             .expect("line 2's gutter icon area registers a clickable response")
             .rect;
         assert!(
@@ -2138,7 +2183,8 @@ mod tests {
         crate::editor_font::install(&ctx);
         let buffer = "one\ntwo\nthree\nfour".to_string();
         let cursor_on_line_3 = "one\ntwo\n".len(); // start of "three"
-        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), buffer);
+        let mut editor =
+            EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), buffer);
         let shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, Key::F2);
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -2172,7 +2218,9 @@ mod tests {
             );
         });
 
-        if let Some(tab) = editor.active_tab_mut() { tab.pending_cursor = Some(cursor_on_line_3); }
+        if let Some(tab) = editor.active_tab_mut() {
+            tab.pending_cursor = Some(cursor_on_line_3);
+        }
         let shortcut_input = egui::RawInput {
             events: vec![egui::Event::Key {
                 key: Key::F2,
@@ -2257,7 +2305,10 @@ mod tests {
     fn clicking_the_note_icon_area_edits_a_note_at_that_line() {
         let ctx = egui::Context::default();
         crate::editor_font::install(&ctx);
-        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), "one\ntwo\nthree".to_string());
+        let mut editor = EditorState::test_with_tab(
+            Some(std::path::PathBuf::from("scene.md")),
+            "one\ntwo\nthree".to_string(),
+        );
         let input = fixed_viewport_input();
 
         crate::egui_test_support::run_ui_and_discard(&ctx, input.clone(), |ui| {
@@ -2285,7 +2336,10 @@ mod tests {
         });
 
         let icon_rect = ctx
-            .read_response(document_text_edit_id(Some(std::path::Path::new("scene.md"))).with(("note_icon", 2usize)))
+            .read_response(
+                document_text_edit_id(Some(std::path::Path::new("scene.md")))
+                    .with(("note_icon", 2usize)),
+            )
             .expect("line 2's note gutter icon area registers a clickable response")
             .rect;
 
@@ -2332,7 +2386,8 @@ mod tests {
         crate::editor_font::install(&ctx);
         let buffer = "one\ntwo\nthree\nfour".to_string();
         let cursor_mid_line_3 = "one\ntwo\nthr".len(); // 3 chars into "three"
-        let mut editor = EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), buffer);
+        let mut editor =
+            EditorState::test_with_tab(Some(std::path::PathBuf::from("scene.md")), buffer);
         let shortcut =
             egui::KeyboardShortcut::new(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::J);
         let input = egui::RawInput {
@@ -2367,7 +2422,9 @@ mod tests {
             );
         });
 
-        if let Some(tab) = editor.active_tab_mut() { tab.pending_cursor = Some(cursor_mid_line_3); }
+        if let Some(tab) = editor.active_tab_mut() {
+            tab.pending_cursor = Some(cursor_mid_line_3);
+        }
         let shortcut_input = egui::RawInput {
             events: vec![egui::Event::Key {
                 key: Key::J,
