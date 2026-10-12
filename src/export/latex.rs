@@ -157,10 +157,12 @@ fn bundled_fonts_used(style: &TypesetStyle) -> Vec<BundledFontFamily> {
         &style.verse.font,
     ];
     for font_name in font_names {
-        if let Some(family) = bundled_font_family(font_name) {
-            if !found.iter().any(|f: &BundledFontFamily| f.stem == family.stem) {
-                found.push(family);
-            }
+        if let Some(family) = bundled_font_family(font_name)
+            && !found
+                .iter()
+                .any(|f: &BundledFontFamily| f.stem == family.stem)
+        {
+            found.push(family);
         }
     }
     found
@@ -186,10 +188,16 @@ pub fn export_latex(
         for family in &fonts {
             let ext = family.extension;
             let stem = family.stem;
-            fs::write(fonts_dir.join(format!("{stem}-Regular{ext}")), family.regular)?;
+            fs::write(
+                fonts_dir.join(format!("{stem}-Regular{ext}")),
+                family.regular,
+            )?;
             fs::write(fonts_dir.join(format!("{stem}-Bold{ext}")), family.bold)?;
             fs::write(fonts_dir.join(format!("{stem}-Italic{ext}")), family.italic)?;
-            fs::write(fonts_dir.join(format!("{stem}-BoldItalic{ext}")), family.bold_italic)?;
+            fs::write(
+                fonts_dir.join(format!("{stem}-BoldItalic{ext}")),
+                family.bold_italic,
+            )?;
         }
     }
     if images.is_empty() {
@@ -349,7 +357,9 @@ fn blocks_to_latex(
     // numbering either) doesn't trigger LaTeX's usual running-head mark —
     // only the unstarred form does — so the mark is set explicitly here
     // instead of relying on `\chaptermark`.
-    out.push_str(&format!("\\chapter*{{{title}}}\n\\markboth{{{title}}}{{{title}}}\n"));
+    out.push_str(&format!(
+        "\\chapter*{{{title}}}\n\\markboth{{{title}}}{{{title}}}\n"
+    ));
     let mut first_paragraph_seen = false;
     let mut list_stack: Vec<bool> = Vec::new();
     for block in &doc.blocks {
@@ -422,7 +432,14 @@ fn append_latex_block(
         }
         BlockKind::Paragraph => {
             if drop_cap_here && style.drop_cap.is_some() {
-                append_paragraph_with_drop_cap(out, &block.spans, style, doc_dir, project_root, images);
+                append_paragraph_with_drop_cap(
+                    out,
+                    &block.spans,
+                    style,
+                    doc_dir,
+                    project_root,
+                    images,
+                );
             } else {
                 spans_to_latex(out, &block.spans, doc_dir, project_root, images);
             }
@@ -463,7 +480,11 @@ fn append_latex_block(
                 fontspec_decl("fontspec", &style.blockquote.font),
                 style.blockquote.size_pt,
                 style.blockquote.size_pt as f32 * 1.2,
-                if style.blockquote.italic { "\\itshape " } else { "" },
+                if style.blockquote.italic {
+                    "\\itshape "
+                } else {
+                    ""
+                },
             ));
             spans_to_latex(out, &block.spans, doc_dir, project_root, images);
             out.push_str("}\n\\end{quote}\n\n");
@@ -472,15 +493,27 @@ fn append_latex_block(
             let depth = *depth as usize;
             while list_stack.len() > depth + 1 {
                 let o = list_stack.pop().unwrap();
-                out.push_str(if o { "\\end{enumerate}\n" } else { "\\end{itemize}\n" });
+                out.push_str(if o {
+                    "\\end{enumerate}\n"
+                } else {
+                    "\\end{itemize}\n"
+                });
             }
             if list_stack.len() == depth + 1 && list_stack[depth] != *ordered {
                 list_stack.pop();
-                out.push_str(if *ordered { "\\end{itemize}\n" } else { "\\end{enumerate}\n" });
+                out.push_str(if *ordered {
+                    "\\end{itemize}\n"
+                } else {
+                    "\\end{enumerate}\n"
+                });
             }
             while list_stack.len() <= depth {
                 list_stack.push(*ordered);
-                out.push_str(if *ordered { "\\begin{enumerate}\n" } else { "\\begin{itemize}\n" });
+                out.push_str(if *ordered {
+                    "\\begin{enumerate}\n"
+                } else {
+                    "\\begin{itemize}\n"
+                });
             }
             out.push_str("\\item ");
             spans_to_latex(out, &block.spans, doc_dir, project_root, images);
@@ -540,7 +573,10 @@ fn append_paragraph_with_drop_cap(
     let drop_cap = style
         .drop_cap
         .expect("caller only invokes this when style.drop_cap.is_some()");
-    let Some(first_span) = spans.iter().find(|s| s.image.is_none() && !s.text.is_empty()) else {
+    let Some(first_span) = spans
+        .iter()
+        .find(|s| s.image.is_none() && !s.text.is_empty())
+    else {
         spans_to_latex(out, spans, doc_dir, project_root, images);
         return;
     };
@@ -574,18 +610,32 @@ fn append_paragraph_with_drop_cap(
     }
 }
 
-fn spans_to_latex(out: &mut String, spans: &[Span], doc_dir: &Path, project_root: &Path, images: &mut ImageCollector) {
+fn spans_to_latex(
+    out: &mut String,
+    spans: &[Span],
+    doc_dir: &Path,
+    project_root: &Path,
+    images: &mut ImageCollector,
+) {
     for span in spans {
         append_span_latex(out, span, doc_dir, project_root, images);
     }
 }
 
-fn append_span_latex(out: &mut String, span: &Span, doc_dir: &Path, project_root: &Path, images: &mut ImageCollector) {
+fn append_span_latex(
+    out: &mut String,
+    span: &Span,
+    doc_dir: &Path,
+    project_root: &Path,
+    images: &mut ImageCollector,
+) {
     if let Some(image) = &span.image {
         match resolve_image_fs_path(&image.src, doc_dir, project_root) {
             Some(resolved) => {
                 let name = images.assign(resolved);
-                out.push_str(&format!("\\includegraphics[width=\\linewidth]{{images/{name}}}\n"));
+                out.push_str(&format!(
+                    "\\includegraphics[width=\\linewidth]{{images/{name}}}\n"
+                ));
             }
             None => {
                 out.push_str(&escape_latex(&span.text));
@@ -709,7 +759,10 @@ mod tests {
 
     #[test]
     fn title_page_latex_is_empty_for_a_default_book_meta() {
-        assert_eq!(title_page_latex(&BookMeta::default(), &manuscript_style()), "");
+        assert_eq!(
+            title_page_latex(&BookMeta::default(), &manuscript_style()),
+            ""
+        );
     }
 
     #[test]
@@ -732,7 +785,10 @@ mod tests {
             subtitle: "A Subtitle".to_string(),
             author: "Jane Doe".to_string(),
         };
-        assert_eq!(header_side_latex("{subtitle}", &meta, "\\leftmark"), "A Subtitle");
+        assert_eq!(
+            header_side_latex("{subtitle}", &meta, "\\leftmark"),
+            "A Subtitle"
+        );
     }
 
     #[test]
@@ -770,7 +826,10 @@ mod tests {
     #[test]
     fn fontspec_decl_falls_back_to_autofakebold_for_an_unbundled_font() {
         let decl = fontspec_decl("fontspec", "Comic Sans MS");
-        assert_eq!(decl, "\\fontspec{Comic Sans MS}[AutoFakeBold=2.5,AutoFakeSlant=0.2]");
+        assert_eq!(
+            decl,
+            "\\fontspec{Comic Sans MS}[AutoFakeBold=2.5,AutoFakeSlant=0.2]"
+        );
     }
 
     #[test]
@@ -800,7 +859,14 @@ mod tests {
             source_path: dir.path().join("one.md"),
         }];
         let out = dir.path().join("out.tex");
-        export_latex(&docs, &BookMeta::default(), &manuscript_style(), dir.path(), &out).unwrap();
+        export_latex(
+            &docs,
+            &BookMeta::default(),
+            &manuscript_style(),
+            dir.path(),
+            &out,
+        )
+        .unwrap();
         let fonts_dir = dir.path().join("fonts");
         for weight in ["Regular", "Bold", "Italic", "BoldItalic"] {
             for (stem, ext) in [("LibertinusSerif", "otf"), ("DejaVuSansMono", "ttf")] {
@@ -818,7 +884,16 @@ mod tests {
         let mut out = String::new();
         let mut images = ImageCollector::default();
         let mut stack = Vec::new();
-        append_latex_block(&mut out, &blocks[0], false, &style, Path::new("."), Path::new("."), &mut images, &mut stack);
+        append_latex_block(
+            &mut out,
+            &blocks[0],
+            false,
+            &style,
+            Path::new("."),
+            Path::new("."),
+            &mut images,
+            &mut stack,
+        );
         // Shifted one level deeper (level 1 is reserved for the synthetic
         // per-document `\chapter*`, emitted separately by `blocks_to_latex`).
         assert!(out.contains("\\subsection*{A Heading"));
@@ -831,7 +906,16 @@ mod tests {
         let mut out = String::new();
         let mut images = ImageCollector::default();
         let mut stack = Vec::new();
-        append_latex_block(&mut out, &blocks[0], false, &style, Path::new("."), Path::new("."), &mut images, &mut stack);
+        append_latex_block(
+            &mut out,
+            &blocks[0],
+            false,
+            &style,
+            Path::new("."),
+            Path::new("."),
+            &mut images,
+            &mut stack,
+        );
         assert!(out.contains("\\begin{verse}"));
         assert!(
             out.contains("line one \\\\\nline two"),
@@ -847,10 +931,22 @@ mod tests {
         let mut images = ImageCollector::default();
         let mut stack = Vec::new();
         for block in &blocks {
-            append_latex_block(&mut out, block, false, &style, Path::new("."), Path::new("."), &mut images, &mut stack);
+            append_latex_block(
+                &mut out,
+                block,
+                false,
+                &style,
+                Path::new("."),
+                Path::new("."),
+                &mut images,
+                &mut stack,
+            );
         }
         close_lists(&mut out, &mut stack);
-        assert_eq!(out.matches("\\begin{itemize}").count(), out.matches("\\end{itemize}").count());
+        assert_eq!(
+            out.matches("\\begin{itemize}").count(),
+            out.matches("\\end{itemize}").count()
+        );
         assert!(stack.is_empty());
     }
 
@@ -865,7 +961,16 @@ mod tests {
             if !matches!(block.kind, BlockKind::ListItem { .. }) {
                 close_lists(&mut out, &mut stack);
             }
-            append_latex_block(&mut out, block, false, &style, Path::new("."), Path::new("."), &mut images, &mut stack);
+            append_latex_block(
+                &mut out,
+                block,
+                false,
+                &style,
+                Path::new("."),
+                Path::new("."),
+                &mut images,
+                &mut stack,
+            );
         }
         close_lists(&mut out, &mut stack);
         assert!(out.contains("\\begin{itemize}"));
@@ -881,7 +986,16 @@ mod tests {
         let mut out = String::new();
         let mut images = ImageCollector::default();
         let mut stack = Vec::new();
-        append_latex_block(&mut out, &blocks[0], false, &style, Path::new("."), Path::new("."), &mut images, &mut stack);
+        append_latex_block(
+            &mut out,
+            &blocks[0],
+            false,
+            &style,
+            Path::new("."),
+            Path::new("."),
+            &mut images,
+            &mut stack,
+        );
         assert!(out.contains("\\begin{tabular}{lr}"));
         assert!(out.contains("\\textbf{a"));
     }
@@ -901,8 +1015,14 @@ mod tests {
         let name_a_again = images.assign(a);
         let name_b = images.assign(b);
 
-        assert_eq!(name_a, name_a_again, "the same path should get the same name twice");
-        assert_ne!(name_a, name_b, "two different paths with the same filename must not collide");
+        assert_eq!(
+            name_a, name_a_again,
+            "the same path should get the same name twice"
+        );
+        assert_ne!(
+            name_a, name_b,
+            "two different paths with the same filename must not collide"
+        );
         assert_eq!(images.copies.len(), 2);
     }
 
@@ -937,7 +1057,14 @@ mod tests {
             source_path: dir.path().join("chapter1.md"),
         }];
         let out = dir.path().join("out.tex");
-        let count = export_latex(&docs, &BookMeta::default(), &manuscript_style(), dir.path(), &out).unwrap();
+        let count = export_latex(
+            &docs,
+            &BookMeta::default(),
+            &manuscript_style(),
+            dir.path(),
+            &out,
+        )
+        .unwrap();
         assert_eq!(count, 1);
         assert!(dir.path().join("images").join("photo.png").exists());
         let source = fs::read_to_string(&out).unwrap();
@@ -1003,7 +1130,14 @@ mod tests {
             source_path: dir.path().join("solo.md"),
         }];
         let out = dir.path().join("solo.tex");
-        export_latex(&docs, &BookMeta::default(), &manuscript_style(), dir.path(), &out).unwrap();
+        export_latex(
+            &docs,
+            &BookMeta::default(),
+            &manuscript_style(),
+            dir.path(),
+            &out,
+        )
+        .unwrap();
         assert!(out.exists());
     }
 }

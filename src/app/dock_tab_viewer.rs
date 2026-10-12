@@ -532,7 +532,8 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                                 }
                             }
 
-                            if let Some(open_path) = self.editor.open_path().map(Path::to_path_buf) {
+                            if let Some(open_path) = self.editor.open_path().map(Path::to_path_buf)
+                            {
                                 ui.separator();
                                 if ui.button("Rename…").clicked() {
                                     self.actions.push(DockAction::Binder(BinderEvent::Rename {
