@@ -5,6 +5,7 @@ pub mod backup;
 pub mod collab;
 pub mod color_theme;
 pub mod dashboard;
+pub mod debug_flags;
 pub mod double_tap;
 pub mod editor;
 pub mod editor_font;

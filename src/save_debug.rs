@@ -20,6 +20,9 @@ use std::path::Path;
 /// dropped rather than surfaced, since a logging hiccup must never make a
 /// real save look like it failed.
 pub fn log_write_attempt(label: &str, path: &Path, result: &io::Result<()>) {
+    if !crate::debug_flags::save_enabled() {
+        return;
+    }
     use std::io::Write as _;
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
     let line = match result {
@@ -45,6 +48,7 @@ mod tests {
 
     #[test]
     fn log_write_attempt_appends_a_line_for_both_outcomes() {
+        crate::debug_flags::init(["--debug-save".to_string()].into_iter());
         let log_path = std::env::temp_dir().join("smaragd-save-debug.log");
         let before = fs::read_to_string(&log_path).unwrap_or_default();
 

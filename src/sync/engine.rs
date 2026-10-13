@@ -727,11 +727,11 @@ impl SyncEngine {
 
         let listing = transport.list_docs();
         match &listing {
-            Ok(l) => eprintln!(
+            Ok(l) => crate::sync_debug!(
                 "[sync-debug] transport.list_docs() OK: {} remote docs",
                 l.docs.len()
             ),
-            Err(e) => eprintln!("[sync-debug] transport.list_docs() FAILED: {:?}", e),
+            Err(e) => crate::sync_debug!("[sync-debug] transport.list_docs() FAILED: {:?}", e),
         }
         let remote: Option<HashMap<DocId, u64>> = listing.as_ref().ok().map(|listing| {
             listing
@@ -748,7 +748,7 @@ impl SyncEngine {
             self.resurrect_edited_tombstones(transport, remote, report)?;
         }
         self.reconcile(sync_files, report)?;
-        eprintln!(
+        crate::sync_debug!(
             "[sync-debug] after reconcile: manifest.dirty={} manifest.pending.len()={} remote_is_some={}",
             self.manifest.dirty,
             self.manifest.pending.len(),
@@ -760,7 +760,7 @@ impl SyncEngine {
         self.sync_meta(transport, remote.as_ref(), report)?;
         if let Some(remote) = &remote {
             self.push_all(transport, report)?;
-            eprintln!(
+            crate::sync_debug!(
                 "[sync-debug] after push_all: manifest.pending.len()={} report.pushed_updates={}",
                 self.manifest.pending.len(),
                 report.pushed_updates
@@ -772,7 +772,7 @@ impl SyncEngine {
             }
             self.compact_all(transport, report)?;
         } else {
-            eprintln!(
+            crate::sync_debug!(
                 "[sync-debug] remote is None (list_docs failed) -- push_all was SKIPPED, manifest update stays local-only"
             );
         }
@@ -936,12 +936,12 @@ impl SyncEngine {
         let root = &self.cfg.root;
         let mut scan = scan_docs(files, root);
         let entries = self.live_entries(report);
-        eprintln!(
+        crate::sync_debug!(
             "[sync-debug] scan_docs found {} doc paths: {:?}",
             scan.len(),
             scan
         );
-        eprintln!(
+        crate::sync_debug!(
             "[sync-debug] live manifest entries: {:?}",
             entries
                 .iter()
@@ -949,7 +949,7 @@ impl SyncEngine {
                 .collect::<Vec<_>>()
         );
         if !report.skipped_paths.is_empty() {
-            eprintln!(
+            crate::sync_debug!(
                 "[sync-debug] skipped_paths (rejected by is_safe_path): {:?}",
                 report.skipped_paths
             );
@@ -960,7 +960,7 @@ impl SyncEngine {
         // Remote renames: move our copy to where the manifest now says it lives.
         for entry in &entries {
             let Some(tracked) = self.docs.get_mut(&entry.doc_id) else {
-                eprintln!(
+                crate::sync_debug!(
                     "[sync-debug] entry {:?} path={:?} has no tracked doc on this device, skipping remote-rename check",
                     entry.doc_id, entry.path
                 );
@@ -969,7 +969,7 @@ impl SyncEngine {
             let Some(local) = tracked.local_path.clone() else {
                 continue;
             };
-            eprintln!(
+            crate::sync_debug!(
                 "[sync-debug] remote-rename check: doc={:?} local_path={:?} manifest_path={:?} scan_has_local={} scan_has_manifest_path={}",
                 entry.doc_id,
                 local,
@@ -978,7 +978,7 @@ impl SyncEngine {
                 scan.contains(&entry.path)
             );
             if local != entry.path && scan.contains(&local) && !scan.contains(&entry.path) {
-                eprintln!(
+                crate::sync_debug!(
                     "[sync-debug] applying remote rename: {:?} -> {:?}",
                     local, entry.path
                 );
@@ -1043,11 +1043,11 @@ impl SyncEngine {
                 (!scan.contains(&local)).then_some((entry.doc_id, local))
             })
             .collect();
-        eprintln!(
+        crate::sync_debug!(
             "[sync-debug] new_files (untracked, on disk): {:?}",
             new_files
         );
-        eprintln!(
+        crate::sync_debug!(
             "[sync-debug] missing (tracked local_path no longer on disk): {:?}",
             missing
         );
@@ -1057,7 +1057,7 @@ impl SyncEngine {
         for path in std::mem::take(&mut new_files) {
             match read_disk(files, root, &path) {
                 Disk::Text(text) => {
-                    eprintln!(
+                    crate::sync_debug!(
                         "[sync-debug] read new_file {:?}: {} bytes, {:?}...",
                         path,
                         text.len(),
@@ -1067,11 +1067,11 @@ impl SyncEngine {
                     new_files.push(path);
                 }
                 Disk::Unreadable => {
-                    eprintln!("[sync-debug] new_file {:?} is Unreadable", path);
+                    crate::sync_debug!("[sync-debug] new_file {:?} is Unreadable", path);
                     report.skipped_paths.push(path)
                 }
                 Disk::Missing => {
-                    eprintln!("[sync-debug] new_file {:?} is Missing (race?)", path);
+                    crate::sync_debug!("[sync-debug] new_file {:?} is Missing (race?)", path);
                 }
             }
         }
@@ -1081,7 +1081,7 @@ impl SyncEngine {
                 return true;
             };
             let rendered = tracked.doc.render();
-            eprintln!(
+            crate::sync_debug!(
                 "[sync-debug] missing doc {:?} old_path={:?}: rendered CRDT text = {} bytes, {:?}...",
                 id,
                 old_path,
@@ -1090,7 +1090,7 @@ impl SyncEngine {
             );
             match new_files.iter().position(|p| new_texts[p] == rendered) {
                 Some(position) => {
-                    eprintln!(
+                    crate::sync_debug!(
                         "[sync-debug] MATCH: {:?} renamed to {:?}",
                         old_path, new_files[position]
                     );
@@ -1098,7 +1098,7 @@ impl SyncEngine {
                     false
                 }
                 None => {
-                    eprintln!(
+                    crate::sync_debug!(
                         "[sync-debug] NO MATCH for missing {:?} among new_files {:?}",
                         old_path, new_files
                     );

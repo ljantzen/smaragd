@@ -3,6 +3,7 @@ const ICON_SIZE: u32 = 256;
 const ICON_RGBA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon_rgba.bin"));
 
 fn main() -> eframe::Result<()> {
+    smaragd::debug_flags::init(std::env::args().skip(1));
     let native_options = eframe::NativeOptions {
         viewport: smaragd::session::restored_viewport(egui::ViewportBuilder::default().with_icon(
             egui::IconData {
