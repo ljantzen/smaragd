@@ -17,7 +17,7 @@ impl Project {
 
     /// Capture `current_total` as the in-progress session's starting word
     /// count, the first time this runs after the session began. Called
-    /// alongside `maybe_roll_over_session` from the same word-count-
+    /// alongside `maybe_roll_over_today` from the same word-count-
     /// recompute call sites (`app::refresh`) — the earliest point after
     /// `start_session` a real total becomes available, since opening a
     /// project never synchronously scans every document (see `word_count`'s

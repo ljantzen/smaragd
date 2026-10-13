@@ -121,9 +121,10 @@ impl Project {
 
     /// Whether the document at `path` would count toward [`Project::word_count`]
     /// under `scope` — a cheap, no-disk-I/O predicate (just path/role
-    /// comparisons) used to gate the live "characters typed this session"
-    /// counter (`SmaragdApp::track_char_activity`) to keystrokes made in a
-    /// tracked document, without re-walking the whole project on every edit.
+    /// comparisons) used to gate the live "characters typed today" counters
+    /// (`SmaragdApp::track_char_activity`, which checks this once per scope)
+    /// to keystrokes made in a tracked document, without re-walking the whole
+    /// project on every edit.
     pub fn is_path_tracked(&self, path: &Path, scope: WordCountScope) -> bool {
         let excluded_by_role = path
             .ancestors()
@@ -155,21 +156,70 @@ impl Project {
         self.save_metadata()
     }
 
-    /// Set the Session Target — see [`ProjectMeta::session_target_words`].
-    pub fn set_session_target_words(&mut self, target: Option<u32>) -> io::Result<()> {
-        self.meta.session_target_words = target;
+    /// Set Today's Target — see [`ProjectMeta::today_target_words`].
+    pub fn set_today_target_words(&mut self, target: Option<u32>) -> io::Result<()> {
+        self.meta.today_target_words = target;
         self.save_metadata()
     }
 
     /// Switch which documents count toward the Draft Target's live total — see
-    /// [`WordCountScope`].
+    /// [`WordCountScope`]. Deliberately touches nothing else: each scope keeps
+    /// its own Today baseline (see
+    /// [`ProjectMeta::today_baseline_words_everything_except_trash`]), so
+    /// switching back and forth is purely a display toggle and never resets
+    /// or loses the day's progress.
     pub fn set_word_count_scope(&mut self, scope: WordCountScope) -> io::Result<()> {
         self.meta.word_count_scope = scope;
         self.save_metadata()
     }
 
-    /// Automatic daily rollover for the Session Target: re-baselines to
-    /// `current_total` only if `session_baseline_date` isn't already today. A
+    /// Today's baseline for `scope` — see
+    /// [`ProjectMeta::today_baseline_words_everything_except_trash`].
+    pub fn today_baseline_words(&self, scope: WordCountScope) -> u32 {
+        match scope {
+            WordCountScope::ManuscriptOnly => self.meta.today_baseline_words_manuscript_only,
+            WordCountScope::EverythingExceptTrash => {
+                self.meta.today_baseline_words_everything_except_trash
+            }
+        }
+    }
+
+    fn set_today_baseline_words(&mut self, scope: WordCountScope, total: u32) {
+        match scope {
+            WordCountScope::ManuscriptOnly => {
+                self.meta.today_baseline_words_manuscript_only = total
+            }
+            WordCountScope::EverythingExceptTrash => {
+                self.meta.today_baseline_words_everything_except_trash = total
+            }
+        }
+    }
+
+    /// Re-baselines *both* scopes' Today totals together, from a total
+    /// computed under each — `active_scope`/`active_total` are the scope and
+    /// total the caller already has in hand (typically from a just-completed
+    /// background recompute), so only the other, inactive scope needs a
+    /// fresh (synchronous) [`Project::word_count`] call here. Shared by
+    /// [`Project::maybe_roll_over_today`] and [`Project::reset_today`] —
+    /// rebaselining only the active scope would leave the other one's
+    /// baseline stale, so switching to it later would show a wrong, usually
+    /// much too large, Today count.
+    fn rebaseline_both_scopes(&mut self, active_scope: WordCountScope, active_total: usize) {
+        for scope in [
+            WordCountScope::ManuscriptOnly,
+            WordCountScope::EverythingExceptTrash,
+        ] {
+            let total = if scope == active_scope {
+                active_total
+            } else {
+                self.word_count(scope)
+            };
+            self.set_today_baseline_words(scope, total as u32);
+        }
+    }
+
+    /// Automatic daily rollover for Today's Target: re-baselines to
+    /// `current_total` only if `today_baseline_date` isn't already today. A
     /// no-op otherwise, so it's safe to call unconditionally on every word-count
     /// recompute rather than needing its own separate trigger.
     ///
@@ -180,30 +230,36 @@ impl Project {
     /// `streak::DAILY_HISTORY_RETENTION_DAYS`. Deliberately reuses this
     /// existing rollover hook rather than a separate polling mechanism — see
     /// `ProjectMeta::daily_word_counts`'s doc comment for the accepted
-    /// day-boundary-precision limitation this inherits.
-    pub fn maybe_roll_over_session(&mut self, current_total: usize) -> io::Result<()> {
+    /// day-boundary-precision limitation this inherits. `current_total` is
+    /// assumed to be under `self.meta.word_count_scope` (the scope the
+    /// caller's background recompute just ran under).
+    pub fn maybe_roll_over_today(&mut self, current_total: usize) -> io::Result<()> {
         let now = chrono::Local::now();
         let today = now.format("%Y-%m-%d").to_string();
-        if self.meta.session_baseline_date.as_deref() == Some(today.as_str()) {
+        if self.meta.today_baseline_date.as_deref() == Some(today.as_str()) {
             return Ok(());
         }
-        if let Some(prev_date) = self.meta.session_baseline_date.clone() {
-            let words_written =
-                current_total.saturating_sub(self.meta.session_baseline_words as usize) as u32;
+        if let Some(prev_date) = self.meta.today_baseline_date.clone() {
+            let prev_baseline = self.today_baseline_words(self.meta.word_count_scope);
+            let words_written = current_total.saturating_sub(prev_baseline as usize) as u32;
             self.meta.daily_word_counts.insert(prev_date, words_written);
         }
         crate::streak::prune_daily_history(&mut self.meta.daily_word_counts, now.date_naive());
-        self.meta.session_baseline_words = current_total as u32;
-        self.meta.session_baseline_date = Some(today);
+        self.rebaseline_both_scopes(self.meta.word_count_scope, current_total);
+        self.meta.today_baseline_date = Some(today);
         self.save_metadata()
     }
 
-    /// The Word Count panel's explicit "Reset Session" button — re-baselines the
-    /// Session Target to `current_total` right now, unconditionally, unlike
-    /// [`Project::maybe_roll_over_session`]'s same-day no-op.
-    pub fn reset_session(&mut self, current_total: usize) -> io::Result<()> {
-        self.meta.session_baseline_words = current_total as u32;
-        self.meta.session_baseline_date = Some(chrono::Local::now().format("%Y-%m-%d").to_string());
+    /// The Word Count panel's explicit "Reset Today's Count" button —
+    /// re-baselines Today's Target to `current_total` right now, unconditionally, unlike
+    /// [`Project::maybe_roll_over_today`]'s same-day no-op. `current_total` is
+    /// assumed to be under `self.meta.word_count_scope`, same convention as
+    /// [`Project::maybe_roll_over_today`]; rebaselines the other scope too
+    /// (see [`Project::rebaseline_both_scopes`]), so the reset isn't
+    /// immediately undone by switching scope right after clicking it.
+    pub fn reset_today(&mut self, current_total: usize) -> io::Result<()> {
+        self.rebaseline_both_scopes(self.meta.word_count_scope, current_total);
+        self.meta.today_baseline_date = Some(chrono::Local::now().format("%Y-%m-%d").to_string());
         self.save_metadata()
     }
 }
@@ -244,6 +300,51 @@ mod tests {
         assert_eq!(
             reloaded.meta.word_count_scope,
             WordCountScope::EverythingExceptTrash
+        );
+    }
+
+    #[test]
+    fn set_word_count_scope_never_touches_either_scopes_today_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let manuscript = project.create_folder(dir.path(), "Manuscript").unwrap();
+        project
+            .set_folder_role(&manuscript, Some(FolderRole::Manuscript))
+            .unwrap();
+        let scene = project.create_document(&manuscript, "Scene").unwrap();
+        fs::write(&scene, "one two three").unwrap();
+        let outtake = project.create_document(dir.path(), "Outtake").unwrap();
+        fs::write(&outtake, "four five").unwrap();
+
+        // Rolling over today's session baselines both scopes: 3 words under
+        // ManuscriptOnly, 5 under EverythingExceptTrash.
+        project.maybe_roll_over_today(3).unwrap();
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::ManuscriptOnly),
+            3
+        );
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::EverythingExceptTrash),
+            5
+        );
+
+        // Switching scope back and forth is purely a display toggle — it
+        // must not reset or touch either baseline, so no typing at all still
+        // reads "Today: 0 words" under either scope.
+        project
+            .set_word_count_scope(WordCountScope::EverythingExceptTrash)
+            .unwrap();
+        project
+            .set_word_count_scope(WordCountScope::ManuscriptOnly)
+            .unwrap();
+
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::ManuscriptOnly),
+            3
+        );
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::EverythingExceptTrash),
+            5
         );
     }
 
@@ -387,65 +488,71 @@ mod tests {
     }
 
     #[test]
-    fn maybe_roll_over_session_is_a_noop_within_the_same_day() {
+    fn maybe_roll_over_today_is_a_noop_within_the_same_day() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
-        project.maybe_roll_over_session(100).unwrap();
-        let date_after_first_call = project.meta.session_baseline_date.clone();
+        project.maybe_roll_over_today(100).unwrap();
+        let date_after_first_call = project.meta.today_baseline_date.clone();
 
-        project.maybe_roll_over_session(250).unwrap();
+        project.maybe_roll_over_today(250).unwrap();
 
-        assert_eq!(project.meta.session_baseline_words, 100);
-        assert_eq!(project.meta.session_baseline_date, date_after_first_call);
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::ManuscriptOnly),
+            100
+        );
+        assert_eq!(project.meta.today_baseline_date, date_after_first_call);
         assert!(project.meta.daily_word_counts.is_empty());
     }
 
     #[test]
-    fn maybe_roll_over_session_rebaselines_on_a_new_day() {
+    fn maybe_roll_over_today_rebaselines_on_a_new_day() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
-        project.meta.session_baseline_words = 100;
-        project.meta.session_baseline_date = Some("2000-01-01".to_string());
+        project.meta.today_baseline_words_manuscript_only = 100;
+        project.meta.today_baseline_date = Some("2000-01-01".to_string());
         project.save_metadata().unwrap();
 
-        project.maybe_roll_over_session(300).unwrap();
+        project.maybe_roll_over_today(300).unwrap();
 
-        assert_eq!(project.meta.session_baseline_words, 300);
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::ManuscriptOnly),
+            300
+        );
         assert_ne!(
-            project.meta.session_baseline_date,
+            project.meta.today_baseline_date,
             Some("2000-01-01".to_string())
         );
     }
 
     #[test]
-    fn maybe_roll_over_session_logs_nothing_on_the_very_first_call() {
+    fn maybe_roll_over_today_logs_nothing_on_the_very_first_call() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
-        assert!(project.meta.session_baseline_date.is_none());
+        assert!(project.meta.today_baseline_date.is_none());
 
-        project.maybe_roll_over_session(100).unwrap();
+        project.maybe_roll_over_today(100).unwrap();
 
         assert!(project.meta.daily_word_counts.is_empty());
     }
 
     #[test]
-    fn maybe_roll_over_session_logs_the_previous_days_delta_under_its_own_date() {
+    fn maybe_roll_over_today_logs_the_previous_days_delta_under_its_own_date() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
         let yesterday = (chrono::Local::now().date_naive() - chrono::Duration::days(1))
             .format("%Y-%m-%d")
             .to_string();
-        project.meta.session_baseline_words = 100;
-        project.meta.session_baseline_date = Some(yesterday.clone());
+        project.meta.today_baseline_words_manuscript_only = 100;
+        project.meta.today_baseline_date = Some(yesterday.clone());
         project.save_metadata().unwrap();
 
-        project.maybe_roll_over_session(350).unwrap();
+        project.maybe_roll_over_today(350).unwrap();
 
         assert_eq!(project.meta.daily_word_counts.get(&yesterday), Some(&250));
     }
 
     #[test]
-    fn maybe_roll_over_session_prunes_daily_history_older_than_the_retention_window() {
+    fn maybe_roll_over_today_prunes_daily_history_older_than_the_retention_window() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
         let stale_date = (chrono::Local::now().date_naive()
@@ -456,23 +563,181 @@ mod tests {
             .meta
             .daily_word_counts
             .insert(stale_date.clone(), 999);
-        project.meta.session_baseline_date = Some("2000-01-01".to_string());
+        project.meta.today_baseline_date = Some("2000-01-01".to_string());
         project.save_metadata().unwrap();
 
-        project.maybe_roll_over_session(100).unwrap();
+        project.maybe_roll_over_today(100).unwrap();
 
         assert!(!project.meta.daily_word_counts.contains_key(&stale_date));
     }
 
     #[test]
-    fn reset_session_rebaselines_unconditionally() {
+    fn today_count_increases_when_the_days_first_rollover_happened_under_a_different_scope() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
-        project.maybe_roll_over_session(100).unwrap();
+        let manuscript = project.create_folder(dir.path(), "Manuscript").unwrap();
+        project
+            .set_folder_role(&manuscript, Some(FolderRole::Manuscript))
+            .unwrap();
+        let scene = project.create_document(&manuscript, "Scene").unwrap();
+        fs::write(&scene, "one two three").unwrap();
+        let outtake = project.create_document(dir.path(), "Outtake").unwrap();
+        fs::write(&outtake, "four five").unwrap();
 
-        project.reset_session(400).unwrap();
+        // App starts: ManuscriptOnly is still the persisted/default scope,
+        // so the day's first rollover happens under it — EverythingExceptTrash's
+        // baseline is set via the *inactive*-scope branch of
+        // `rebaseline_both_scopes`, not the active-scope one.
+        let opening_total = project.word_count(WordCountScope::ManuscriptOnly);
+        assert_eq!(opening_total, 3);
+        project.maybe_roll_over_today(opening_total).unwrap();
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::EverythingExceptTrash),
+            5,
+            "EverythingExceptTrash's baseline must be captured at app-open too, \
+             even though ManuscriptOnly is the scope driving this rollover"
+        );
 
-        assert_eq!(project.meta.session_baseline_words, 400);
+        // Now the user switches scope (no baseline change) and types+saves
+        // outside the manuscript.
+        project
+            .set_word_count_scope(WordCountScope::EverythingExceptTrash)
+            .unwrap();
+        fs::write(&outtake, "four five six seven eight nine ten").unwrap();
+        let new_total = project.word_count(WordCountScope::EverythingExceptTrash);
+        assert_eq!(new_total, 10);
+        project.maybe_roll_over_today(new_total).unwrap();
+
+        let today_words = new_total.saturating_sub(
+            project.today_baseline_words(WordCountScope::EverythingExceptTrash) as usize,
+        );
+        assert_eq!(
+            today_words, 5,
+            "Today count must reflect the 5 new words typed"
+        );
+    }
+
+    #[test]
+    fn today_count_increases_after_typing_while_everything_except_trash_is_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let manuscript = project.create_folder(dir.path(), "Manuscript").unwrap();
+        project
+            .set_folder_role(&manuscript, Some(FolderRole::Manuscript))
+            .unwrap();
+        let scene = project.create_document(&manuscript, "Scene").unwrap();
+        fs::write(&scene, "one two three").unwrap();
+        let outtake = project.create_document(dir.path(), "Outtake").unwrap();
+        fs::write(&outtake, "four five").unwrap();
+
+        project
+            .set_word_count_scope(WordCountScope::EverythingExceptTrash)
+            .unwrap();
+        let initial_total = project.word_count(WordCountScope::EverythingExceptTrash);
+        assert_eq!(initial_total, 5);
+        project.maybe_roll_over_today(initial_total).unwrap();
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::EverythingExceptTrash),
+            5
+        );
+
+        // "Type" more words into the outtake document and simulate the
+        // save-triggered recompute that follows.
+        fs::write(&outtake, "four five six seven eight nine ten").unwrap();
+        let new_total = project.word_count(WordCountScope::EverythingExceptTrash);
+        assert_eq!(new_total, 10);
+        project.maybe_roll_over_today(new_total).unwrap();
+
+        let today_words = new_total.saturating_sub(
+            project.today_baseline_words(WordCountScope::EverythingExceptTrash) as usize,
+        );
+        assert_eq!(
+            today_words, 5,
+            "Today count must reflect the 5 new words typed"
+        );
+    }
+
+    #[test]
+    fn today_count_increases_across_a_real_day_boundary_while_everything_except_trash_was_already_active()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let outtake = project.create_document(dir.path(), "Outtake").unwrap();
+        fs::write(&outtake, "one two three").unwrap();
+
+        // Simulate yesterday: EverythingExceptTrash was already the
+        // persisted scope, with yesterday's baseline on both fields.
+        project.meta.word_count_scope = WordCountScope::EverythingExceptTrash;
+        project.meta.today_baseline_words_manuscript_only = 3;
+        project.meta.today_baseline_words_everything_except_trash = 3;
+        let yesterday = (chrono::Local::now().date_naive() - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        project.meta.today_baseline_date = Some(yesterday);
+        project.save_metadata().unwrap();
+
+        // The app opens today; the first recompute runs under the
+        // already-persisted EverythingExceptTrash scope.
+        let todays_total = project.word_count(WordCountScope::EverythingExceptTrash);
+        assert_eq!(todays_total, 3);
+        project.maybe_roll_over_today(todays_total).unwrap();
+        let today_words = todays_total.saturating_sub(
+            project.today_baseline_words(WordCountScope::EverythingExceptTrash) as usize,
+        );
+        assert_eq!(today_words, 0, "nothing written yet today");
+
+        // Now type and save 4 more words.
+        fs::write(&outtake, "one two three four five six seven").unwrap();
+        let new_total = project.word_count(WordCountScope::EverythingExceptTrash);
+        project.maybe_roll_over_today(new_total).unwrap();
+        let today_words = new_total.saturating_sub(
+            project.today_baseline_words(WordCountScope::EverythingExceptTrash) as usize,
+        );
+        assert_eq!(today_words, 4);
+    }
+
+    #[test]
+    fn reset_today_rebaselines_unconditionally() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        project.maybe_roll_over_today(100).unwrap();
+
+        project.reset_today(400).unwrap();
+
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::ManuscriptOnly),
+            400
+        );
+    }
+
+    #[test]
+    fn reset_today_also_rebaselines_the_inactive_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let manuscript = project.create_folder(dir.path(), "Manuscript").unwrap();
+        project
+            .set_folder_role(&manuscript, Some(FolderRole::Manuscript))
+            .unwrap();
+        let scene = project.create_document(&manuscript, "Scene").unwrap();
+        fs::write(&scene, "one two three").unwrap();
+        let outtake = project.create_document(dir.path(), "Outtake").unwrap();
+        fs::write(&outtake, "four five").unwrap();
+
+        // Active scope is ManuscriptOnly (the default); reset_today's
+        // current_total (3) is under that scope.
+        project.reset_today(3).unwrap();
+
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::ManuscriptOnly),
+            3
+        );
+        // EverythingExceptTrash must also be freshly rebaselined (to 5), not
+        // left stale — otherwise switching to it right after "Reset Today's
+        // Count" would still show the old, pre-reset Today count.
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::EverythingExceptTrash),
+            5
+        );
     }
 
     #[test]

@@ -11,6 +11,12 @@ use std::time::Instant;
 /// long enough that it's a non-event for CPU/battery.
 const EXTERNAL_SCAN_INTERVAL: Duration = Duration::from_secs(2);
 
+/// How long the open document must sit untouched (no typing or deleting)
+/// before `check_editor_idle` autosaves it — long enough that a pause
+/// mid-sentence doesn't trigger a save, short enough that the Word Count
+/// panel's numbers catch up without the user noticing a lag.
+pub(super) const EDITOR_IDLE_SAVE_DELAY: Duration = Duration::from_secs(2);
+
 impl SmaragdApp {
     /// Notice files added, removed, or changed outside Smaragd — another program,
     /// a sync tool (Dropbox/Syncthing), a manual `git pull` outside the app's own
@@ -61,6 +67,75 @@ impl SmaragdApp {
         // when git isn't enabled, since `refresh_git_dirty_paths` itself
         // checks that first.
         self.refresh_git_dirty_paths();
+    }
+
+    /// Flushes the open document to disk once typing has paused for
+    /// `EDITOR_IDLE_SAVE_DELAY`, purely so the Word Count panel's
+    /// "Current"/"Today" totals — which only ever update on a save, see
+    /// `refresh_word_count_if_needed` — catch up on their own shortly after
+    /// the user stops typing, without needing an explicit save or a
+    /// "Refresh" click.
+    ///
+    /// Deliberately **not** a real save: uses
+    /// `EditorState::flush_for_word_count`, which writes the buffer and
+    /// refreshes `disk_mtime` like a save but leaves `dirty` as it was — see
+    /// that method's doc comment for why. In short, `dirty` is what keeps a
+    /// document in the sync engine's protected/"held" set
+    /// (`SmaragdApp::sync_update_held`); clearing it here would release that
+    /// protection on every multi-second pause instead of only at a real save
+    /// boundary (explicit Save, focus loss, closing the tab), opening a
+    /// window where a remote collaborator's concurrent edit could land on
+    /// disk and then be silently overwritten the next time this document is
+    /// actually saved. So this calls `spawn_word_count_recompute` and
+    /// `Project::invalidate_tag_cache` directly instead of leaning on
+    /// `refresh_word_count_if_needed`'s dirty-edge detector, which a flush
+    /// that never clears `dirty` would never trip.
+    ///
+    /// `editor_idle_since` is set by `track_char_activity` on every actual
+    /// edit (not just the one that first makes the buffer dirty), so this
+    /// fires `EDITOR_IDLE_SAVE_DELAY` after the *last* keystroke, not the
+    /// first — a mid-sentence pause doesn't trigger it; and is cleared again
+    /// after a successful flush (independently of `dirty`, which stays
+    /// true), so the next edit's `track_char_activity` call restarts the
+    /// clock for the *next* pause rather than this flushing every frame
+    /// while the user is away. Schedules a repaint for exactly when the
+    /// delay will next be due, same as `check_external_changes`; falls back
+    /// to a short retry when the editor is dirty but `track_char_activity`
+    /// hasn't run yet this span (just became dirty this same frame), so the
+    /// idle clock is never left waiting on some *other* timer's repaint to
+    /// notice it should start.
+    pub(super) fn check_editor_idle(&mut self, ctx: &egui::Context) {
+        if !self.editor.dirty() {
+            return;
+        }
+        let Some(idle_since) = self.editor_idle_since else {
+            ctx.request_repaint_after(Duration::from_millis(100));
+            return;
+        };
+        let now = Instant::now();
+        let elapsed = now.duration_since(idle_since);
+        if elapsed < EDITOR_IDLE_SAVE_DELAY {
+            ctx.request_repaint_after(EDITOR_IDLE_SAVE_DELAY - elapsed);
+            return;
+        }
+        let store = self.editor_store();
+        match self.editor.flush_for_word_count(store.as_ref()) {
+            Ok(()) => {
+                if let Some(project) = &self.project {
+                    project.invalidate_tag_cache();
+                }
+                self.spawn_word_count_recompute(ctx);
+            }
+            Err(err) => {
+                let path = self
+                    .editor
+                    .open_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                self.push_error_toast(format!("Couldn't refresh word count for {path}: {err}"));
+            }
+        }
+        self.editor_idle_since = None;
     }
 
     /// If the open document's on-disk content moved since it was last read or
@@ -286,5 +361,122 @@ mod tests {
         app.scan_for_external_changes();
 
         assert!(app.git_dirty_paths.contains(&doc));
+    }
+
+    #[test]
+    fn check_editor_idle_is_a_no_op_on_a_clean_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Scene").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.editor.open(&doc).unwrap();
+        let ctx = egui::Context::default();
+
+        app.check_editor_idle(&ctx);
+
+        assert!(!app.editor.dirty());
+    }
+
+    #[test]
+    fn check_editor_idle_does_not_save_before_the_delay_has_elapsed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Scene").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.editor.open(&doc).unwrap();
+        *app.editor.buffer_mut() = "not idle long enough yet".to_string();
+        app.editor.mark_dirty();
+        app.editor_idle_since = Some(Instant::now());
+        let ctx = egui::Context::default();
+
+        app.check_editor_idle(&ctx);
+
+        assert!(app.editor.dirty(), "the idle delay hasn't elapsed yet");
+        assert_eq!(fs::read_to_string(&doc).unwrap(), "");
+    }
+
+    #[test]
+    fn check_editor_idle_flushes_to_disk_once_the_delay_has_elapsed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Scene").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.editor.open(&doc).unwrap();
+        *app.editor.buffer_mut() = "written while idle".to_string();
+        app.editor.mark_dirty();
+        // Simulate the idle delay having already elapsed, rather than
+        // actually sleeping `EDITOR_IDLE_SAVE_DELAY` in the test.
+        app.editor_idle_since = Some(Instant::now() - EDITOR_IDLE_SAVE_DELAY);
+        let ctx = egui::Context::default();
+
+        app.check_editor_idle(&ctx);
+
+        assert_eq!(fs::read_to_string(&doc).unwrap(), "written while idle");
+        // Deliberately still dirty: this is a word-count-only flush, not a
+        // real save, so the document must stay in the sync engine's
+        // protected/"held" set until an actual save boundary — see
+        // `EditorState::flush_for_word_count`'s doc comment.
+        assert!(
+            app.editor.dirty(),
+            "an idle flush must not release sync's hold on this document"
+        );
+        assert!(
+            app.editor_idle_since.is_none(),
+            "the clock resets so the next edit starts a fresh countdown"
+        );
+        assert!(
+            app.word_count.pending.is_some(),
+            "the flush must trigger a word-count recompute directly, since \
+             dirty never clears to drive the usual save-edge detector"
+        );
+    }
+
+    #[test]
+    fn check_editor_idle_waits_for_track_char_activity_to_start_the_clock() {
+        // Dirty, but no edit length-change has been observed yet this
+        // document's open span (`editor_idle_since` is still `None`) — must
+        // not save immediately just because the buffer happens to be dirty.
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Scene").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.editor.open(&doc).unwrap();
+        *app.editor.buffer_mut() = "dirty but no idle clock yet".to_string();
+        app.editor.mark_dirty();
+        assert!(app.editor_idle_since.is_none());
+        let ctx = egui::Context::default();
+
+        app.check_editor_idle(&ctx);
+
+        assert!(app.editor.dirty());
+    }
+
+    #[test]
+    fn track_char_activity_restarts_the_idle_clock_on_every_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Scene").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.editor.open(&doc).unwrap();
+        app.track_char_activity(); // establishes the baseline (empty) length
+
+        *app.editor.buffer_mut() = "a".repeat(10);
+        app.track_char_activity();
+        let first_tick = app.editor_idle_since.expect("an edit must start the clock");
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        *app.editor.buffer_mut() = "a".repeat(20);
+        app.track_char_activity();
+        let second_tick = app.editor_idle_since.expect("still edited");
+
+        assert!(
+            second_tick > first_tick,
+            "a later edit must push the idle clock forward, not leave it at the first edit"
+        );
     }
 }

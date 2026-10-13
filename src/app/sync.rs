@@ -1280,6 +1280,83 @@ mod tests {
         }
     }
 
+    /// Regression test for the data-loss risk `check_editor_idle` was
+    /// specifically designed to avoid: an idle-triggered word-count flush
+    /// (`EditorState::flush_for_word_count`) writes fresh content to disk
+    /// without clearing `dirty`, so — unlike a real save — it must *not*
+    /// release this document from the sync engine's held set. If it did, a
+    /// remote edit arriving during a mid-session typing pause could merge
+    /// into the file, only to be silently clobbered the next time the user
+    /// resumes typing and *any* save path (idle flush included) writes the
+    /// stale local buffer back out. Mirrors
+    /// `an_open_file_with_unsaved_edits_is_held_until_saved_then_merged`,
+    /// substituting an idle flush for the plain `dirty = true` it uses to
+    /// get the file held in the first place.
+    #[test]
+    fn an_idle_flush_does_not_release_the_held_file_to_a_concurrent_remote_edit() {
+        let server = MemoryServer::default();
+        let laptop = tempfile::tempdir().unwrap();
+        let (mut laptop_engine, laptop_transport) = engine(&server, laptop.path(), "pw");
+        std::fs::write(laptop.path().join("Scene.md"), "Line one.\n").unwrap();
+        laptop_engine.sync_once(&laptop_transport).unwrap();
+
+        let (dir, mut app) = app_with_project();
+        inject_runner(&mut app, &server, "pw");
+        let scene = dir.path().join("Scene.md");
+        poll_until(&mut app, "the scene to arrive", |_| {
+            read(&scene) == "Line one.\n"
+        });
+
+        // The user starts editing, types, then pauses long enough for the
+        // idle flush to fire — simulated directly, rather than via the
+        // editor's own text widget.
+        app.editor.open(&scene).unwrap();
+        *app.editor.buffer_mut() = "Line one.\nFrom the desktop, mid-edit.\n".to_string();
+        app.editor.mark_dirty();
+        app.editor_idle_since =
+            Some(Instant::now() - crate::app::external_watch::EDITOR_IDLE_SAVE_DELAY);
+        app.check_editor_idle(&egui::Context::default());
+        assert!(
+            app.editor.dirty(),
+            "an idle flush must leave the document dirty"
+        );
+        assert_eq!(read(&scene), "Line one.\nFrom the desktop, mid-edit.\n");
+        poll_until(&mut app, "the held set to reach the runner", |app| {
+            app.sync.held_sent.contains("Scene.md")
+        });
+
+        // ...while the laptop changes it too.
+        std::fs::write(
+            laptop.path().join("Scene.md"),
+            "Line one.\nFrom the laptop.\n",
+        )
+        .unwrap();
+        laptop_engine.sync_once(&laptop_transport).unwrap();
+        app.sync.activity = None;
+        app.sync_now();
+        poll_until(&mut app, "a pass that holds the open file", |app| {
+            app.sync
+                .activity
+                .as_deref()
+                .is_some_and(|a| a.contains("waiting for you to save"))
+        });
+        assert_eq!(
+            read(&scene),
+            "Line one.\nFrom the desktop, mid-edit.\n",
+            "the idle-flushed, still-unsaved file was overwritten by a remote edit"
+        );
+
+        // A real save releases the hold; sync then merges both edits.
+        std::fs::write(&scene, "From the desktop.\nLine one.\n").unwrap();
+        app.editor.active_tab_mut().unwrap().dirty = false;
+        app.sync_after_save();
+        poll_until(&mut app, "the merged scene", |_| {
+            let text = read(&scene);
+            text.contains("From the desktop.") && text.contains("From the laptop.")
+        });
+        assert!(app.sync.held_sent.is_empty());
+    }
+
     #[test]
     fn a_halted_runner_stays_stopped_until_the_configuration_changes() {
         let server = MemoryServer::default();

@@ -32,14 +32,14 @@ pub enum StreakSubTab {
 /// Renders the Streak dock tab as two inner tabs, à la a mini `egui_dock`:
 /// **Configure** (enable flag, weekly targets, evaluation mode, red
 /// threshold — edited inline the same way the Word Count panel edits its
-/// own Draft Target/Session Target/Track scope, rather than through the
+/// own Draft Target/Today's Target/Track scope, rather than through the
 /// global Settings dialog) and **Streak** (the "Last completed week"
 /// traffic-light badge and the separately labeled "Progress this week" bar
 /// — live, but never drives the badge's color, see
 /// `streak::evaluate_streak`'s doc comment for why — plus a table of this
 /// week's targets vs. actuals). `today_words_so_far` is the same "session
 /// words" quantity `word_count_panel::show` computes (`current_total -
-/// session_baseline_words`).
+/// Project::today_baseline_words` for the active scope).
 pub fn show(
     ui: &mut egui::Ui,
     project: &Project,

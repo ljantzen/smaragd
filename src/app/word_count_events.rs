@@ -15,11 +15,11 @@ impl SmaragdApp {
                     self.push_error_toast(format!("Couldn't save draft target: {err}"));
                 }
             }
-            WordCountEvent::SetSessionTarget(target) => {
+            WordCountEvent::SetTodayTarget(target) => {
                 if let Some(project) = &mut self.project
-                    && let Err(err) = project.set_session_target_words(target)
+                    && let Err(err) = project.set_today_target_words(target)
                 {
-                    self.push_error_toast(format!("Couldn't save session target: {err}"));
+                    self.push_error_toast(format!("Couldn't save today's target: {err}"));
                 }
             }
             WordCountEvent::SetScope(scope) => {
@@ -31,14 +31,15 @@ impl SmaragdApp {
                 self.spawn_word_count_recompute(ctx);
             }
             WordCountEvent::Refresh => self.spawn_word_count_recompute(ctx),
-            WordCountEvent::ResetSession => {
+            WordCountEvent::ResetToday => {
                 let total = self.word_count.cache;
                 if let Some(project) = &mut self.project
-                    && let Err(err) = project.reset_session(total)
+                    && let Err(err) = project.reset_today(total)
                 {
-                    self.push_error_toast(format!("Couldn't reset session: {err}"));
+                    self.push_error_toast(format!("Couldn't reset today's count: {err}"));
                 }
-                self.word_count.char_activity = 0;
+                self.word_count.char_activity_manuscript_only = 0;
+                self.word_count.char_activity_everything_except_trash = 0;
             }
         }
     }
@@ -87,16 +88,26 @@ mod tests {
     }
 
     #[test]
-    fn word_count_event_reset_session_zeroes_char_activity() {
+    fn word_count_event_reset_today_zeroes_char_activity() {
         let dir = tempfile::tempdir().unwrap();
         let project = Project::initialize(dir.path()).unwrap();
         let mut app = SmaragdApp::test_fixture();
         app.project = Some(project);
-        app.word_count.char_activity = 42;
+        app.word_count.char_activity_manuscript_only = 42;
+        app.word_count.char_activity_everything_except_trash = 42;
         let ctx = egui::Context::default();
 
-        app.handle_word_count_event(&ctx, WordCountEvent::ResetSession);
+        app.handle_word_count_event(&ctx, WordCountEvent::ResetToday);
 
-        assert_eq!(app.word_count.char_activity, 0);
+        assert_eq!(
+            app.word_count
+                .char_activity(crate::project::WordCountScope::ManuscriptOnly),
+            0
+        );
+        assert_eq!(
+            app.word_count
+                .char_activity(crate::project::WordCountScope::EverythingExceptTrash),
+            0
+        );
     }
 }

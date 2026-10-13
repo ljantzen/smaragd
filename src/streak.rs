@@ -133,7 +133,7 @@ pub const DAILY_HISTORY_RETENTION_DAYS: i64 = 400;
 /// Drops every entry older than [`DAILY_HISTORY_RETENTION_DAYS`] (and any
 /// entry whose key isn't a valid `%Y-%m-%d` date, defensively — never
 /// panics on a hand-edited or corrupted `project.json`). Called from
-/// `Project::maybe_roll_over_session` on every rollover, so history never
+/// `Project::maybe_roll_over_today` on every rollover, so history never
 /// grows unbounded without needing a separate cleanup pass.
 pub fn prune_daily_history(history: &mut BTreeMap<String, u32>, today: NaiveDate) {
     let cutoff = today - chrono::Duration::days(DAILY_HISTORY_RETENTION_DAYS);
@@ -156,7 +156,7 @@ pub fn week_monday(date: NaiveDate) -> NaiveDate {
 /// percentage) so the two never disagree. `today_words_so_far` is folded in
 /// for `today` itself since `ProjectMeta::daily_word_counts` doesn't get
 /// today's entry until the next day's rollover (see
-/// `Project::maybe_roll_over_session`) — every earlier day in the week comes
+/// `Project::maybe_roll_over_today`) — every earlier day in the week comes
 /// from `history` instead.
 pub fn current_week_progress(
     schedule: &WeeklySchedule,

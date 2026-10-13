@@ -793,7 +793,13 @@ pub fn show(
     if output.response.lost_focus()
         && let Err(err) = editor.save_with_store(store)
     {
-        return Some(EditorEvent::SaveError(format!("Save failed: {err}")));
+        let path = editor
+            .open_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        return Some(EditorEvent::SaveError(format!(
+            "Save failed for {path}: {err}"
+        )));
     }
 
     None

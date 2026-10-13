@@ -382,10 +382,18 @@ fn ensure_parent(files: &dyn ProjectStore, path: &Path) -> io::Result<()> {
 /// Writes via a temp name and a rename, so a crash never leaves a torn file.
 fn write_file(files: &dyn ProjectStore, root: &Path, rel: &str, text: &str) -> io::Result<()> {
     let path = abs(root, rel);
-    ensure_parent(files, &path)?;
+    if let Some(parent) = path.parent() {
+        let result = files.create_dir_all(parent);
+        crate::save_debug::log_write_attempt("sync::write_file (ensure_parent)", parent, &result);
+        result?;
+    }
     let tmp = path.with_extension("md.sync-tmp");
-    files.write(&tmp, text.as_bytes())?;
-    files.rename(&tmp, &path)
+    let write_result = files.write(&tmp, text.as_bytes());
+    crate::save_debug::log_write_attempt("sync::write_file (tmp)", &tmp, &write_result);
+    write_result?;
+    let rename_result = files.rename(&tmp, &path);
+    crate::save_debug::log_write_attempt("sync::write_file (rename)", &path, &rename_result);
+    rename_result
 }
 
 fn move_file(files: &dyn ProjectStore, root: &Path, from: &str, to: &str) -> io::Result<()> {
@@ -718,6 +726,13 @@ impl SyncEngine {
         }
 
         let listing = transport.list_docs();
+        match &listing {
+            Ok(l) => eprintln!(
+                "[sync-debug] transport.list_docs() OK: {} remote docs",
+                l.docs.len()
+            ),
+            Err(e) => eprintln!("[sync-debug] transport.list_docs() FAILED: {:?}", e),
+        }
         let remote: Option<HashMap<DocId, u64>> = listing.as_ref().ok().map(|listing| {
             listing
                 .docs
@@ -733,18 +748,33 @@ impl SyncEngine {
             self.resurrect_edited_tombstones(transport, remote, report)?;
         }
         self.reconcile(sync_files, report)?;
+        eprintln!(
+            "[sync-debug] after reconcile: manifest.dirty={} manifest.pending.len()={} remote_is_some={}",
+            self.manifest.dirty,
+            self.manifest.pending.len(),
+            remote.is_some()
+        );
         for entry in self.live_entries(report) {
             self.sync_doc(&entry, transport, remote.as_ref(), report)?;
         }
         self.sync_meta(transport, remote.as_ref(), report)?;
         if let Some(remote) = &remote {
             self.push_all(transport, report)?;
+            eprintln!(
+                "[sync-debug] after push_all: manifest.pending.len()={} report.pushed_updates={}",
+                self.manifest.pending.len(),
+                report.pushed_updates
+            );
             if sync_files {
                 self.transfer_files(transport, remote, max_file_bytes, report)?;
                 // Conflict copies and revivals from the transfer, this same pass.
                 self.push_all(transport, report)?;
             }
             self.compact_all(transport, report)?;
+        } else {
+            eprintln!(
+                "[sync-debug] remote is None (list_docs failed) -- push_all was SKIPPED, manifest update stays local-only"
+            );
         }
         listing.map(|_| ()).map_err(SyncError::from)
     }
@@ -906,18 +936,52 @@ impl SyncEngine {
         let root = &self.cfg.root;
         let mut scan = scan_docs(files, root);
         let entries = self.live_entries(report);
+        eprintln!(
+            "[sync-debug] scan_docs found {} doc paths: {:?}",
+            scan.len(),
+            scan
+        );
+        eprintln!(
+            "[sync-debug] live manifest entries: {:?}",
+            entries
+                .iter()
+                .map(|e| (e.doc_id, e.path.clone()))
+                .collect::<Vec<_>>()
+        );
+        if !report.skipped_paths.is_empty() {
+            eprintln!(
+                "[sync-debug] skipped_paths (rejected by is_safe_path): {:?}",
+                report.skipped_paths
+            );
+        }
 
         let mut renamed_files: Vec<(String, String)> = Vec::new();
 
         // Remote renames: move our copy to where the manifest now says it lives.
         for entry in &entries {
             let Some(tracked) = self.docs.get_mut(&entry.doc_id) else {
+                eprintln!(
+                    "[sync-debug] entry {:?} path={:?} has no tracked doc on this device, skipping remote-rename check",
+                    entry.doc_id, entry.path
+                );
                 continue;
             };
             let Some(local) = tracked.local_path.clone() else {
                 continue;
             };
+            eprintln!(
+                "[sync-debug] remote-rename check: doc={:?} local_path={:?} manifest_path={:?} scan_has_local={} scan_has_manifest_path={}",
+                entry.doc_id,
+                local,
+                entry.path,
+                scan.contains(&local),
+                scan.contains(&entry.path)
+            );
             if local != entry.path && scan.contains(&local) && !scan.contains(&entry.path) {
+                eprintln!(
+                    "[sync-debug] applying remote rename: {:?} -> {:?}",
+                    local, entry.path
+                );
                 move_file(files, root, &local, &entry.path)?;
                 scan.remove(&local);
                 scan.insert(entry.path.clone());
@@ -979,17 +1043,36 @@ impl SyncEngine {
                 (!scan.contains(&local)).then_some((entry.doc_id, local))
             })
             .collect();
+        eprintln!(
+            "[sync-debug] new_files (untracked, on disk): {:?}",
+            new_files
+        );
+        eprintln!(
+            "[sync-debug] missing (tracked local_path no longer on disk): {:?}",
+            missing
+        );
 
         // A missing file whose content reappears under a new name is a rename.
         let mut new_texts: HashMap<String, String> = HashMap::new();
         for path in std::mem::take(&mut new_files) {
             match read_disk(files, root, &path) {
                 Disk::Text(text) => {
+                    eprintln!(
+                        "[sync-debug] read new_file {:?}: {} bytes, {:?}...",
+                        path,
+                        text.len(),
+                        &text[..text.len().min(60)]
+                    );
                     new_texts.insert(path.clone(), text);
                     new_files.push(path);
                 }
-                Disk::Unreadable => report.skipped_paths.push(path),
-                Disk::Missing => {}
+                Disk::Unreadable => {
+                    eprintln!("[sync-debug] new_file {:?} is Unreadable", path);
+                    report.skipped_paths.push(path)
+                }
+                Disk::Missing => {
+                    eprintln!("[sync-debug] new_file {:?} is Missing (race?)", path);
+                }
             }
         }
         let mut renames = Vec::new();
@@ -998,12 +1081,29 @@ impl SyncEngine {
                 return true;
             };
             let rendered = tracked.doc.render();
+            eprintln!(
+                "[sync-debug] missing doc {:?} old_path={:?}: rendered CRDT text = {} bytes, {:?}...",
+                id,
+                old_path,
+                rendered.len(),
+                &rendered[..rendered.len().min(60)]
+            );
             match new_files.iter().position(|p| new_texts[p] == rendered) {
                 Some(position) => {
+                    eprintln!(
+                        "[sync-debug] MATCH: {:?} renamed to {:?}",
+                        old_path, new_files[position]
+                    );
                     renames.push((*id, old_path.clone(), new_files.remove(position)));
                     false
                 }
-                None => true,
+                None => {
+                    eprintln!(
+                        "[sync-debug] NO MATCH for missing {:?} among new_files {:?}",
+                        old_path, new_files
+                    );
+                    true
+                }
             }
         });
         for (id, old_path, new_path) in renames {
@@ -2405,7 +2505,7 @@ mod tests {
             "logline": "A girl and a fjord.",
             "git_enabled": true,
             "plugins_enabled": true,
-            "session_baseline_words": 4242,
+            "today_baseline_words_manuscript_only": 4242,
         })
     }
 
@@ -2441,7 +2541,7 @@ mod tests {
         // A's per-device state did not follow.
         assert!(!meta.git_enabled);
         assert!(!meta.plugins_enabled, "plugin consent must stay local");
-        assert_eq!(meta.session_baseline_words, 0);
+        assert_eq!(meta.today_baseline_words_manuscript_only, 0);
 
         // B turns plugins on for itself; that never reaches A.
         b.edit_meta(|m| m.plugins_enabled = true);
@@ -2449,7 +2549,7 @@ mod tests {
         converge(&mut [&mut a, &mut b]);
         assert_eq!(a.meta().logline, "Edited on B.");
         assert!(a.meta().plugins_enabled, "A's own value is unchanged");
-        assert_eq!(a.meta().session_baseline_words, 4242);
+        assert_eq!(a.meta().today_baseline_words_manuscript_only, 4242);
         let a_again = a.meta();
         assert!(a_again.git_enabled);
     }

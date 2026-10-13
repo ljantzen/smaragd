@@ -19,6 +19,7 @@ pub mod plugins;
 pub mod pomodoro;
 pub mod project;
 pub mod project_template;
+pub mod save_debug;
 pub mod search;
 pub mod session;
 pub mod settings;

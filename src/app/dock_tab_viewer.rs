@@ -144,11 +144,13 @@ pub(super) struct AppTabViewer<'a> {
     pub(super) pomodoro_durations: crate::pomodoro::PomodoroDurations,
     /// See `SmaragdApp::word_count_cache`.
     pub(super) word_count_cache: usize,
-    /// See `SmaragdApp::char_activity`.
+    /// `WordCountState::char_activity` for the currently active scope — see
+    /// that method's doc comment for why it's not just the raw field.
     pub(super) char_activity: u64,
-    /// The same "session words" quantity `word_count_panel::show` computes
-    /// (`word_count_cache` minus `session_baseline_words`), hoisted up here
-    /// since both the Word Count and Streak tabs need it.
+    /// The same "words typed today" quantity `word_count_panel::show` computes
+    /// (`word_count_cache` minus `Project::today_baseline_words` for the
+    /// active scope), hoisted up here since both the Word Count and Streak
+    /// tabs need it.
     pub(super) today_words_so_far: u32,
     /// Which of the Streak tab's two inner tabs is showing — see
     /// `SmaragdApp::streak_sub_tab`.

@@ -54,7 +54,7 @@ const SCALAR_FIELDS: &[&str] = &[
     "book_author",
     "book_style",
     "draft_target_words",
-    "session_target_words",
+    "today_target_words",
     "word_count_scope",
     "last_spell_check_language",
     "sync_files",
@@ -83,8 +83,9 @@ pub const LOCAL_ONLY_FIELDS: &[&str] = &[
     "git_enabled",
     "git_prompted",
     "plugins_enabled",
-    "session_baseline_words",
-    "session_baseline_date",
+    "today_baseline_words_manuscript_only",
+    "today_baseline_words_everything_except_trash",
+    "today_baseline_date",
     "daily_word_counts",
     "streak_enabled",
     "streak_schedule",
@@ -102,6 +103,47 @@ pub const LOCAL_ONLY_FIELDS: &[&str] = &[
     "clipboard_image_size_limit_enabled",
     "clipboard_image_size_limit_mb",
 ];
+
+/// Overwrites every [`LOCAL_ONLY_FIELDS`] entry in `meta` with the matching
+/// value from `current` — the same "per-device state never syncs" guarantee
+/// [`SyncedFields::into_meta`] already gives the sync engine's own merge
+/// step, applied to [`crate::project::Project::reload_metadata`] too.
+///
+/// `reload_metadata` exists because the sync engine runs on its own thread
+/// with no view of the live, in-memory `Project` — only of whatever's on
+/// disk. Its metadata-merge pass reads `project.json`, merges in any synced
+/// changes, and (if that produced a different file) writes it straight back;
+/// `reload_metadata` is how the running app picks that up. But the pass's
+/// own disk read can land at any point relative to the app's *own* writes
+/// (e.g. the Word Count panel's daily baseline rollover), so the version it
+/// writes back can carry a stale snapshot of fields sync never touches in
+/// the first place. Without this, reloading that snapshot would silently
+/// revert such a field to whatever it was at that stale read — observed as
+/// `today_baseline_date` reverting to an earlier day, which made
+/// `Project::maybe_roll_over_today` treat every subsequent recompute as a
+/// fresh day and re-baseline Today's Target to the live total, pinning
+/// "Today" at 0 no matter how much was typed and saved.
+pub fn preserve_local_only_fields(meta: &mut ProjectMeta, current: &ProjectMeta) {
+    let (Ok(Value::Object(mut target)), Ok(Value::Object(source))) =
+        (serde_json::to_value(&*meta), serde_json::to_value(current))
+    else {
+        return;
+    };
+    for name in LOCAL_ONLY_FIELDS {
+        match source.get(*name) {
+            Some(value) => {
+                target.insert((*name).to_string(), value.clone());
+            }
+            None => {
+                target.remove(*name);
+            }
+        }
+    }
+    if let Ok(restored) = serde_json::from_value(Value::Object(target)) {
+        *meta = restored;
+    }
+}
+
 /// Fields with structure of their own, handled individually below.
 #[cfg_attr(not(test), allow(dead_code))]
 const STRUCTURED_FIELDS: &[&str] = &[
@@ -144,10 +186,11 @@ fn classify_exhaustively(meta: &ProjectMeta) {
         pov_picklist_folder: _,
         status_picklist_folder: _,
         draft_target_words: _,
-        session_target_words: _,
+        today_target_words: _,
         word_count_scope: _,
-        session_baseline_words: _,
-        session_baseline_date: _,
+        today_baseline_words_manuscript_only: _,
+        today_baseline_words_everything_except_trash: _,
+        today_baseline_date: _,
         daily_word_counts: _,
         streak_enabled: _,
         streak_schedule: _,
@@ -1100,7 +1143,7 @@ mod tests {
             "bookmarks": [{ "id": Uuid::from_u128(20).to_string(), "path": "Draft/Ch1.md", "line": 7 }],
             "git_enabled": true,
             "plugins_enabled": true,
-            "session_baseline_words": 1234,
+            "today_baseline_words_manuscript_only": 1234,
             "streak_enabled": true,
         }))
         .unwrap()
@@ -1157,7 +1200,7 @@ mod tests {
             "node_order": {},
             "git_enabled": false,
             "plugins_enabled": false,
-            "session_baseline_words": 5,
+            "today_baseline_words_manuscript_only": 5,
         }))
         .unwrap();
         fields.into_meta(&mut other, &ids).unwrap();
@@ -1177,7 +1220,7 @@ mod tests {
         // Per-device state stays what it was on `other`.
         assert!(!other.git_enabled);
         assert!(!other.plugins_enabled);
-        assert_eq!(other.session_baseline_words, 5);
+        assert_eq!(other.today_baseline_words_manuscript_only, 5);
         assert!(!other.streak_enabled);
     }
 
@@ -1190,7 +1233,7 @@ mod tests {
         b.plugins_enabled = false;
         a.git_enabled = false;
         b.git_enabled = true;
-        b.session_baseline_words = 999;
+        b.today_baseline_words_manuscript_only = 999;
         b.streak_enabled = false;
         b.daily_word_counts.insert("2026-09-01".into(), 500);
         assert_eq!(

@@ -277,10 +277,20 @@ impl Project {
     /// otherwise overwrite them with the stale in-memory copy. Re-applies the manual
     /// binder ordering. Returns whether anything changed. An unreadable file leaves the
     /// current metadata alone.
+    ///
+    /// Before adopting the freshly-read metadata, restores every local-only
+    /// field (see [`crate::sync::meta_crdt::LOCAL_ONLY_FIELDS`]) to its
+    /// current in-memory value via
+    /// [`crate::sync::meta_crdt::preserve_local_only_fields`] — the sync
+    /// engine that triggers this reload only ever sees disk, never this
+    /// `Project`'s live state, so what it just wrote back can carry a stale
+    /// snapshot of a field sync itself never touches. See that function's
+    /// doc comment for the `today_baseline_date` bug this was written to fix.
     pub fn reload_metadata(&mut self) -> bool {
-        let Some(meta) = load_metadata(self.store.as_ref(), &self.root) else {
+        let Some(mut meta) = load_metadata(self.store.as_ref(), &self.root) else {
             return false;
         };
+        crate::sync::meta_crdt::preserve_local_only_fields(&mut meta, &self.meta);
         if meta == self.meta {
             return false;
         }
@@ -577,6 +587,69 @@ mod tests {
         assert_eq!(project.meta.logline, "changed elsewhere");
     }
 
+    /// Regression test for a bug where the sync engine's own metadata-merge
+    /// pass (which only ever sees disk, never this `Project`'s live state —
+    /// see `reload_metadata`'s doc comment) could write back a stale
+    /// snapshot of a local-only field, and reloading it would revert that
+    /// field in memory even though nothing legitimately changed it. Observed
+    /// as `today_baseline_date` reverting to an earlier day mid-session,
+    /// which made `Project::maybe_roll_over_today` re-baseline Today's
+    /// Target to the live total on every subsequent recompute — pinning
+    /// "Today" at 0 forever, no matter how much was typed and saved,
+    /// while "Current" kept climbing normally.
+    #[test]
+    fn reload_metadata_never_lets_a_stale_disk_write_revert_a_local_only_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        // The in-memory project rolls over today's baseline (a local-only
+        // field) and saves it.
+        project.maybe_roll_over_today(5).unwrap();
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::ManuscriptOnly),
+            5
+        );
+        assert!(project.meta.today_baseline_date.is_some());
+
+        // The sync engine's background pass, racing against the above, read
+        // project.json *before* that rollover landed — so its own
+        // read-merge-write cycle writes back a version with a stale,
+        // pre-rollover baseline/date, but a legitimately newer synced field
+        // (logline, standing in for whatever synced change actually
+        // triggered the write-back).
+        let mut stale_write = project.meta.clone();
+        stale_write.today_baseline_date = None;
+        stale_write.today_baseline_words_manuscript_only = 0;
+        stale_write.today_baseline_words_everything_except_trash = 0;
+        stale_write.logline = "synced from elsewhere".into();
+        save_metadata(project.store.as_ref(), &project.root, &stale_write).unwrap();
+
+        // `sync_handle_report` reloads on `report.meta_written` exactly like this.
+        assert!(project.reload_metadata());
+
+        // The synced field came through...
+        assert_eq!(project.meta.logline, "synced from elsewhere");
+        // ...but the local-only baseline must be untouched by the stale write.
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::ManuscriptOnly),
+            5,
+            "a stale sync write must not revert a local-only field"
+        );
+        assert!(project.meta.today_baseline_date.is_some());
+
+        // With the baseline intact, typing more and saving still shows up as
+        // Today count, instead of being re-baselined away to 0.
+        let today_words = 8usize
+            .saturating_sub(project.today_baseline_words(WordCountScope::ManuscriptOnly) as usize);
+        project.maybe_roll_over_today(8).unwrap(); // same-day: must be a no-op
+        assert_eq!(today_words, 3);
+        assert_eq!(
+            project.today_baseline_words(WordCountScope::ManuscriptOnly),
+            5,
+            "same-day rollover must not have reset the baseline"
+        );
+    }
+
     #[test]
     fn metadata_round_trips_through_disk() {
         let dir = tempfile::tempdir().unwrap();
@@ -780,10 +853,11 @@ mod tests {
         assert_eq!(meta.pov_picklist_folder, None);
         assert_eq!(meta.status_picklist_folder, None);
         assert_eq!(meta.draft_target_words, None);
-        assert_eq!(meta.session_target_words, None);
+        assert_eq!(meta.today_target_words, None);
         assert_eq!(meta.word_count_scope, WordCountScope::ManuscriptOnly);
-        assert_eq!(meta.session_baseline_words, 0);
-        assert_eq!(meta.session_baseline_date, None);
+        assert_eq!(meta.today_baseline_words_manuscript_only, 0);
+        assert_eq!(meta.today_baseline_words_everything_except_trash, 0);
+        assert_eq!(meta.today_baseline_date, None);
     }
 
     #[test]

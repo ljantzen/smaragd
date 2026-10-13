@@ -220,14 +220,24 @@ pub(super) struct WordCountState {
     /// existing save paths (explicit save, focus-loss autosave, closing the
     /// document) commits bytes to disk, without needing a call at each site.
     pub(super) last_dirty: bool,
-    /// Characters typed *and* deleted this session, in tracked documents only
-    /// (see `Project::is_path_tracked`) — an activity counter, not a net delta:
-    /// typing 100 characters then deleting them all reads 200, not 0. Purely
-    /// informational (no target), kept only in memory — not persisted to
-    /// `project.json` — and reset when a project is opened (see `set_project`)
-    /// or the panel's "Reset Session" is clicked (see `handle_word_count_event`).
-    /// Updated by `track_char_activity`, called after the dock renders each frame.
-    pub(super) char_activity: u64,
+    /// Characters typed *and* deleted today under `WordCountScope::ManuscriptOnly`
+    /// — an activity counter, not a net delta: typing 100 characters then
+    /// deleting them all reads 200, not 0. See
+    /// `char_activity_everything_except_trash` for why there are two of these
+    /// rather than one scope-gated counter: a keystroke in a document tracked
+    /// by one scope but not the other (see `Project::is_path_tracked`) still
+    /// needs to be credited to whichever scope *does* track it, even while
+    /// that scope isn't the one currently displayed — otherwise switching to
+    /// it later would silently show less activity than was actually typed.
+    /// Purely informational (no target), kept only in memory — not persisted
+    /// to `project.json` — and reset when a project is opened (see
+    /// `set_project`) or the panel's "Reset Today's Count" is clicked (see
+    /// `handle_word_count_event`). Updated by `track_char_activity`, called
+    /// after the dock renders each frame; read via `WordCountState::char_activity`.
+    pub(super) char_activity_manuscript_only: u64,
+    /// The same counter as `char_activity_manuscript_only`, but for keystrokes
+    /// in documents tracked under `WordCountScope::EverythingExceptTrash`.
+    pub(super) char_activity_everything_except_trash: u64,
     /// The open document's buffer length (in `chars()`), as of the last frame
     /// `track_char_activity` ran — compared against the current frame's length
     /// to find how many characters just changed. `None` right after opening or
@@ -239,6 +249,32 @@ pub(super) struct WordCountState {
     /// document) and reset the baseline instead of diffing across two unrelated
     /// buffers.
     pub(super) char_activity_tracked_path: Option<PathBuf>,
+}
+
+impl WordCountState {
+    /// Characters typed and deleted today under `scope` — see
+    /// `char_activity_manuscript_only`'s doc comment for why there are two
+    /// separate counters rather than one gated by whichever scope happens to
+    /// be active.
+    pub(super) fn char_activity(&self, scope: crate::project::WordCountScope) -> u64 {
+        match scope {
+            crate::project::WordCountScope::ManuscriptOnly => self.char_activity_manuscript_only,
+            crate::project::WordCountScope::EverythingExceptTrash => {
+                self.char_activity_everything_except_trash
+            }
+        }
+    }
+
+    fn add_char_activity(&mut self, scope: crate::project::WordCountScope, delta: u64) {
+        match scope {
+            crate::project::WordCountScope::ManuscriptOnly => {
+                self.char_activity_manuscript_only += delta
+            }
+            crate::project::WordCountScope::EverythingExceptTrash => {
+                self.char_activity_everything_except_trash += delta
+            }
+        }
+    }
 }
 
 impl SmaragdApp {
@@ -413,18 +449,20 @@ impl SmaragdApp {
         }
     }
 
-    /// Update `word_count.char_activity` from however much the open document's
-    /// buffer length changed since the last frame — both growing (typing) and
-    /// shrinking (deleting) count toward the total, so typing 100 characters
-    /// then deleting them all adds 200, not 0 (see that field's doc
-    /// comment). Cheap (no disk I/O, no full-project walk — see
-    /// `Project::is_path_tracked`), so unlike `word_count.cache` this runs every
-    /// frame. Called after the dock renders each frame, alongside
-    /// `apply_metadata_edits_if_changed`.
+    /// Update `word_count`'s char-activity counters from however much the open
+    /// document's buffer length changed since the last frame — both growing
+    /// (typing) and shrinking (deleting) count toward the total, so typing 100
+    /// characters then deleting them all adds 200, not 0 (see
+    /// `char_activity_manuscript_only`'s doc comment). Credits *every* scope
+    /// that tracks the open document, not just the currently active one.
+    /// Cheap (no disk I/O, no full-project walk — see `Project::is_path_tracked`),
+    /// so unlike `word_count.cache` this runs every frame. Called after the
+    /// dock renders each frame, alongside `apply_metadata_edits_if_changed`.
     pub(super) fn track_char_activity(&mut self) {
         let Some(open_path) = self.editor.open_path().map(Path::to_path_buf) else {
             self.word_count.char_activity_last_len = None;
             self.word_count.char_activity_tracked_path = None;
+            self.editor_idle_since = None;
             return;
         };
         if self.word_count.char_activity_tracked_path.as_deref() != Some(open_path.as_path()) {
@@ -433,15 +471,29 @@ impl SmaragdApp {
             // nothing meaningful to diff against yet.
             self.word_count.char_activity_tracked_path = Some(open_path.clone());
             self.word_count.char_activity_last_len = Some(self.editor.buffer().chars().count());
+            self.editor_idle_since = None;
             return;
         }
         let current_len = self.editor.buffer().chars().count();
         if let Some(previous_len) = self.word_count.char_activity_last_len {
-            let is_tracked = self.project.as_ref().is_some_and(|project| {
-                project.is_path_tracked(&open_path, project.meta.word_count_scope)
-            });
-            if is_tracked {
-                self.word_count.char_activity += current_len.abs_diff(previous_len) as u64;
+            let delta = current_len.abs_diff(previous_len) as u64;
+            if delta > 0 {
+                // Any actual edit restarts `check_editor_idle`'s countdown —
+                // "idle" means no edits for the delay, not merely dirty for it.
+                self.editor_idle_since = Some(std::time::Instant::now());
+                if let Some(project) = &self.project {
+                    // Credit every scope that tracks this document, not just
+                    // the one currently displayed — see
+                    // `char_activity_manuscript_only`'s doc comment for why.
+                    for scope in [
+                        crate::project::WordCountScope::ManuscriptOnly,
+                        crate::project::WordCountScope::EverythingExceptTrash,
+                    ] {
+                        if project.is_path_tracked(&open_path, scope) {
+                            self.word_count.add_char_activity(scope, delta);
+                        }
+                    }
+                }
             }
         }
         self.word_count.char_activity_last_len = Some(current_len);
@@ -493,9 +545,9 @@ impl SmaragdApp {
     }
 
     /// Check whether an in-flight `word_count.pending` recompute has finished,
-    /// and if so apply it to `word_count.cache` and roll the Session Target's
+    /// and if so apply it to `word_count.cache` and roll Today's Target's
     /// baseline forward if the calendar day has changed (see
-    /// `Project::maybe_roll_over_session`). Called every frame, mirroring
+    /// `Project::maybe_roll_over_today`). Called every frame, mirroring
     /// `poll_git_operation`; a no-op whenever nothing is pending or the
     /// background thread hasn't sent its result yet.
     pub(super) fn poll_word_count(&mut self) {
@@ -514,7 +566,7 @@ impl SmaragdApp {
         self.word_count.cache = result.total;
         self.word_count.folder_totals = result.folder_totals;
         if let Some(project) = &mut self.project {
-            let _ = project.maybe_roll_over_session(result.total);
+            let _ = project.maybe_roll_over_today(result.total);
             let _ = project.maybe_capture_session_baseline(result.total);
         }
     }
@@ -531,7 +583,11 @@ mod char_activity_tests {
         app.track_char_activity();
         app.track_char_activity();
 
-        assert_eq!(app.word_count.char_activity, 0);
+        assert_eq!(
+            app.word_count
+                .char_activity(crate::project::WordCountScope::ManuscriptOnly),
+            0
+        );
     }
 
     #[test]
@@ -542,22 +598,23 @@ mod char_activity_tests {
         let mut app = SmaragdApp::test_fixture();
         app.project = Some(project);
         app.editor.open(&path).unwrap();
+        let scope = crate::project::WordCountScope::ManuscriptOnly;
 
         // First frame with this document open: only establishes the baseline,
         // the initial (empty) length isn't itself counted as "typed."
         app.track_char_activity();
-        assert_eq!(app.word_count.char_activity, 0);
+        assert_eq!(app.word_count.char_activity(scope), 0);
 
         // "Type" 100 characters.
         *app.editor.buffer_mut() = "a".repeat(100);
         app.track_char_activity();
-        assert_eq!(app.word_count.char_activity, 100);
+        assert_eq!(app.word_count.char_activity(scope), 100);
 
         // "Delete" them all back to empty — the example from the bug report:
         // 100 typed + 100 deleted reads 200, not a net 0.
         app.editor.buffer_mut().clear();
         app.track_char_activity();
-        assert_eq!(app.word_count.char_activity, 200);
+        assert_eq!(app.word_count.char_activity(scope), 200);
     }
 
     #[test]
@@ -568,12 +625,13 @@ mod char_activity_tests {
         let second = project.create_document(dir.path(), "Second").unwrap();
         let mut app = SmaragdApp::test_fixture();
         app.project = Some(project);
+        let scope = crate::project::WordCountScope::ManuscriptOnly;
 
         app.editor.open(&first).unwrap();
         app.track_char_activity(); // establishes the baseline (empty) length
         *app.editor.buffer_mut() = "a".repeat(50);
         app.track_char_activity();
-        assert_eq!(app.word_count.char_activity, 50);
+        assert_eq!(app.word_count.char_activity(scope), 50);
 
         // Switch to a different, much longer document.
         app.editor.open(&second).unwrap();
@@ -582,19 +640,20 @@ mod char_activity_tests {
 
         // The 450-character jump between the two unrelated buffers must not
         // be counted as characters typed.
-        assert_eq!(app.word_count.char_activity, 50);
+        assert_eq!(app.word_count.char_activity(scope), 50);
     }
 
     #[test]
-    fn editing_a_document_outside_the_tracked_scope_does_not_count() {
+    fn editing_a_document_outside_the_active_scope_still_counts_toward_the_scope_that_tracks_it() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = Project::initialize(dir.path()).unwrap();
         let manuscript = project.create_folder(dir.path(), "Manuscript").unwrap();
         project
             .set_folder_role(&manuscript, Some(crate::project::FolderRole::Manuscript))
             .unwrap();
-        // ManuscriptOnly is the default scope, and this document lives
-        // outside the one Manuscript-role folder.
+        // ManuscriptOnly is the default (active) scope, and this document
+        // lives outside the one Manuscript-role folder — but it's still
+        // tracked under EverythingExceptTrash (not Trash/Templates).
         let outtake = project.create_document(dir.path(), "Outtake").unwrap();
         let mut app = SmaragdApp::test_fixture();
         app.project = Some(project);
@@ -604,13 +663,74 @@ mod char_activity_tests {
         *app.editor.buffer_mut() = "a".repeat(100);
         app.track_char_activity();
 
-        assert_eq!(app.word_count.char_activity, 0);
+        assert_eq!(
+            app.word_count
+                .char_activity(crate::project::WordCountScope::ManuscriptOnly),
+            0
+        );
+        // Typing here must not be lost just because ManuscriptOnly is the
+        // scope currently on screen — it still counts for the other scope,
+        // ready to show up the moment the user switches to it.
+        assert_eq!(
+            app.word_count
+                .char_activity(crate::project::WordCountScope::EverythingExceptTrash),
+            100
+        );
     }
 }
 
 #[cfg(test)]
 mod word_count_refresh_tests {
     use super::*;
+
+    /// End-to-end: an idle flush (`check_editor_idle`) writes fresh content
+    /// to disk and triggers a word-count recompute *directly* — it
+    /// deliberately leaves `dirty` true (see
+    /// `EditorState::flush_for_word_count`'s doc comment, a sync-safety
+    /// requirement: clearing `dirty` here would release the document from
+    /// sync's protected/"held" set on every typing pause instead of only at
+    /// a real save boundary), so it can't rely on
+    /// `refresh_word_count_if_needed`'s dirty-edge detector the way a real
+    /// save does. Proves the Word Count panel still catches up on its own
+    /// after a typing pause, with no explicit save and no "Refresh" click.
+    #[test]
+    fn an_idle_flush_triggers_a_word_count_recompute_with_no_explicit_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let doc = project.create_document(dir.path(), "Scene").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.editor.open(&doc).unwrap();
+        let ctx = egui::Context::default();
+
+        *app.editor.buffer_mut() = "one two three".to_string();
+        app.editor.mark_dirty();
+        app.refresh_word_count_if_needed(&ctx); // establishes `last_dirty`
+        assert!(app.word_count.pending.is_none(), "not saved yet");
+
+        // The idle delay has elapsed; no Ctrl+S, no focus loss, no Refresh click.
+        app.editor_idle_since =
+            Some(std::time::Instant::now() - super::external_watch::EDITOR_IDLE_SAVE_DELAY);
+        app.check_editor_idle(&ctx);
+        assert!(
+            app.editor.dirty(),
+            "an idle flush must not release the document's sync hold"
+        );
+        assert!(
+            app.word_count.pending.is_some(),
+            "the flush must trigger a recompute directly, since dirty never \
+             clears to drive the usual save-edge detector"
+        );
+
+        for _ in 0..200 {
+            app.poll_word_count();
+            if app.word_count.pending.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(app.word_count.cache, 3);
+    }
 
     #[test]
     fn a_save_edge_triggers_a_recompute() {
@@ -712,6 +832,65 @@ mod word_count_refresh_tests {
 
         assert_eq!(app.word_count.cache, 3);
         assert_eq!(app.word_count.folder_totals.get(&root), Some(&3));
+    }
+
+    #[test]
+    fn today_count_increases_after_a_save_while_everything_except_trash_is_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let manuscript = project.create_folder(dir.path(), "Manuscript").unwrap();
+        project
+            .set_folder_role(&manuscript, Some(crate::project::FolderRole::Manuscript))
+            .unwrap();
+        let outtake = project.create_document(dir.path(), "Outtake").unwrap();
+        fs::write(&outtake, "one two").unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        let ctx = egui::Context::default();
+
+        app.handle_word_count_event(
+            &ctx,
+            ui::word_count_panel::WordCountEvent::SetScope(
+                crate::project::WordCountScope::EverythingExceptTrash,
+            ),
+        );
+        for _ in 0..200 {
+            app.poll_word_count();
+            if app.word_count.pending.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let scope = crate::project::WordCountScope::EverythingExceptTrash;
+        let today_before = app
+            .word_count
+            .cache
+            .saturating_sub(app.project.as_ref().unwrap().today_baseline_words(scope) as usize);
+        assert_eq!(today_before, 0);
+
+        // Simulate typing into the outtake document and saving it.
+        fs::write(&outtake, "one two three four five").unwrap();
+        app.editor.open_collab_tab();
+        app.editor.active_tab_mut().unwrap().dirty = true;
+        app.refresh_word_count_if_needed(&ctx);
+        app.editor.active_tab_mut().unwrap().dirty = false;
+        app.refresh_word_count_if_needed(&ctx);
+        for _ in 0..200 {
+            app.poll_word_count();
+            if app.word_count.pending.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let today_after = app
+            .word_count
+            .cache
+            .saturating_sub(app.project.as_ref().unwrap().today_baseline_words(scope) as usize);
+        assert_eq!(
+            today_after, 3,
+            "Today count must reflect the 3 new words saved while EverythingExceptTrash is active"
+        );
     }
 
     #[test]

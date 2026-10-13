@@ -112,7 +112,8 @@ impl SmaragdApp {
         self.run_backup(BackupTrigger::Open);
         self.reload_plugins();
         self.word_count.last_dirty = false;
-        self.word_count.char_activity = 0;
+        self.word_count.char_activity_manuscript_only = 0;
+        self.word_count.char_activity_everything_except_trash = 0;
         self.word_count.char_activity_last_len = None;
         self.word_count.char_activity_tracked_path = None;
         self.spawn_word_count_recompute(ctx);

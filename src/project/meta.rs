@@ -178,39 +178,53 @@ pub struct ProjectMeta {
     /// together.
     #[serde(default)]
     pub draft_target_words: Option<u32>,
-    /// Today's writing-session goal (Scrivener's "Session Target"), independent
+    /// Today's writing goal (Scrivener's "Session Target"), independent
     /// of `draft_target_words` — see `Project::word_count`'s doc comment for how
-    /// "words written this session" is derived from it.
+    /// "words written today" is derived from it.
     #[serde(default)]
-    pub session_target_words: Option<u32>,
+    pub today_target_words: Option<u32>,
     /// Which documents count toward the Word Count panel's live total — see
     /// [`WordCountScope`].
     #[serde(default)]
     pub word_count_scope: WordCountScope,
-    /// The project's total word count (per `word_count_scope`) as of the start of
-    /// the current writing session — `session_target_words`'s progress is the
-    /// live total minus this baseline, never the raw total. Rolled forward
-    /// automatically on a new calendar day (see
-    /// [`Project::maybe_roll_over_session`]) or manually via "Reset Session" (see
-    /// [`Project::reset_session`]).
+    /// The project's total word count under `WordCountScope::ManuscriptOnly`
+    /// as of the start of today — see
+    /// `today_baseline_words_everything_except_trash` for why there are two
+    /// of these rather than one. `today_target_words`'s progress is the
+    /// live total minus whichever of the two matches `word_count_scope`,
+    /// never the raw total. Rolled forward automatically on a new calendar
+    /// day (see [`Project::maybe_roll_over_today`]) or manually via "Reset
+    /// Today's Count" (see [`Project::reset_today`]) — both rebaseline *both*
+    /// fields together, from a fresh total computed under each scope.
     #[serde(default)]
-    pub session_baseline_words: u32,
+    pub today_baseline_words_manuscript_only: u32,
+    /// The same baseline as `today_baseline_words_manuscript_only`, but
+    /// measured under `WordCountScope::EverythingExceptTrash`. Kept as a
+    /// separate field, rather than one shared baseline, so that switching
+    /// `word_count_scope` back and forth never resets or corrupts the
+    /// Today count: each scope keeps its own baseline, captured under that
+    /// same scope, so toggling between them just changes which of the two
+    /// is being displayed.
+    #[serde(default)]
+    pub today_baseline_words_everything_except_trash: u32,
     /// The date (`YYYY-MM-DD`, `chrono::Local`, same convention as
-    /// `templates.rs`'s `${{date}}`) `session_baseline_words` was captured on —
-    /// `None` before the session mechanism has ever run once.
+    /// `templates.rs`'s `${{date}}`) the `session_baseline_words_*` fields
+    /// were captured on — `None` before the session mechanism has ever run
+    /// once. Shared between both scopes: they're always rebaselined together,
+    /// on the same calendar-day boundary.
     #[serde(default)]
-    pub session_baseline_date: Option<String>,
+    pub today_baseline_date: Option<String>,
     /// Each tracked calendar day's total words written (a delta, not a
     /// cumulative running total), keyed `YYYY-MM-DD` — same string
-    /// convention as `session_baseline_date`. Populated exclusively by
-    /// [`Project::maybe_roll_over_session`] when a new day rolls over, and
+    /// convention as `today_baseline_date`. Populated exclusively by
+    /// [`Project::maybe_roll_over_today`] when a new day rolls over, and
     /// pruned to `streak::DAILY_HISTORY_RETENTION_DAYS` on every write.
     /// Feeds `streak::evaluate_streak` for the Writing Streak feature.
     ///
     /// Accepted precision limitation: a day's logged value is captured
     /// whenever the *first* word-count recompute of the *next* day happens
     /// to fire, not at a precise midnight boundary — the same approximation
-    /// `session_baseline_date`'s rollover already makes. If the app is
+    /// `today_baseline_date`'s rollover already makes. If the app is
     /// opened and typed in before that recompute runs, a few of the new
     /// day's words can bleed into the previous day's logged figure.
     #[serde(default)]
@@ -302,7 +316,7 @@ pub struct ProjectMeta {
     /// `current_session_started` was set — `None` until that first recompute
     /// runs (see `Project::maybe_capture_session_baseline`), same
     /// "captured lazily off the UI thread" reasoning as
-    /// `session_baseline_words`. What `close_session` measures the session's
+    /// `today_baseline_words`. What `close_session` measures the session's
     /// `words_written` against.
     #[serde(default)]
     pub current_session_baseline_words: Option<u32>,

@@ -320,6 +320,15 @@ pub struct SmaragdApp {
     /// `check_external_changes` — see `ProjectMeta::git_auto_commit_enabled`.
     /// `None` with no project open.
     auto_commit_last_run: Option<std::time::Instant>,
+    /// When the open document's buffer last actually changed length (typing
+    /// or deleting) — set by `track_char_activity`, consumed by
+    /// `check_editor_idle`, which flushes it to disk (not a real save — see
+    /// that method's doc comment) once this has sat unchanged for
+    /// `EDITOR_IDLE_SAVE_DELAY`, then clears it back to `None` so the next
+    /// edit starts a fresh countdown for the *next* pause. Also `None`
+    /// whenever the editor is clean or no edit has been observed yet since
+    /// the document was opened/switched to.
+    editor_idle_since: Option<std::time::Instant>,
     /// The open document, set when its on-disk content changed while
     /// `editor.dirty` was still true — an external write racing an unsaved
     /// local edit. Left for `external_conflict_prompt` to ask the user which
@@ -422,6 +431,7 @@ impl SmaragdApp {
             exit_confirm: ui::exit_confirm_prompt::ExitConfirmState::default(),
             external_scan_at: None,
             auto_commit_last_run: None,
+            editor_idle_since: None,
             external_conflict: None,
         };
         app.reload_typeset_styles(&cc.egui_ctx);
@@ -545,6 +555,7 @@ impl SmaragdApp {
             exit_confirm: ui::exit_confirm_prompt::ExitConfirmState::default(),
             external_scan_at: None,
             auto_commit_last_run: None,
+            editor_idle_since: None,
             external_conflict: None,
         }
     }
@@ -706,8 +717,13 @@ impl SmaragdApp {
                 self.toggle_dock_tab_near(DockTab::BeliefTimeline, DockTab::Editor)
             }
             ShortcutAction::Save => {
+                let path = self
+                    .editor
+                    .open_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
                 if let Err(err) = self.save_editor() {
-                    self.push_error_toast(format!("Save failed: {err}"));
+                    self.push_error_toast(format!("Save failed for {path}: {err}"));
                 }
             }
             ShortcutAction::GoBack => self.go_back_document(),
@@ -950,14 +966,24 @@ impl SmaragdApp {
     fn execute_command(&mut self, ctx: &egui::Context, command: Command) {
         match command {
             Command::Save => {
+                let path = self
+                    .editor
+                    .open_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
                 if let Err(err) = self.save_editor() {
-                    self.push_error_toast(format!("Save failed: {err}"));
+                    self.push_error_toast(format!("Save failed for {path}: {err}"));
                 }
             }
             Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Command::SaveAndQuit => {
+                let path = self
+                    .editor
+                    .open_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
                 if let Err(err) = self.save_editor() {
-                    self.push_error_toast(format!("Save failed: {err}"));
+                    self.push_error_toast(format!("Save failed for {path}: {err}"));
                     return;
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1474,14 +1500,16 @@ impl SmaragdApp {
                                 ));
                             }
                             // Only shown once a Draft Target is actually set —
-                            // Session Target progress is dock-panel-only, not
+                            // Today's Target progress is dock-panel-only, not
                             // surfaced here.
                             if let Some(project) = &self.project
                                 && let Some(target) = project.meta.draft_target_words
                             {
                                 ui.label(format!(
                                     "{} : {} / {} words",
-                                    self.word_count.char_activity, self.word_count.cache, target
+                                    self.word_count.char_activity(project.meta.word_count_scope),
+                                    self.word_count.cache,
+                                    target
                                 ));
                             }
                             // Compact traffic-light glyph for the Writing
@@ -1510,10 +1538,10 @@ impl SmaragdApp {
                                     &project.meta.daily_word_counts,
                                     today,
                                 );
-                                let today_words_so_far =
-                                    self.word_count.cache.saturating_sub(
-                                        project.meta.session_baseline_words as usize,
-                                    ) as u32;
+                                let today_words_so_far = self.word_count.cache.saturating_sub(
+                                    project.today_baseline_words(project.meta.word_count_scope)
+                                        as usize,
+                                ) as u32;
                                 let (week_actual, week_target) =
                                     crate::streak::current_week_progress(
                                         &streak_config.schedule,
@@ -1617,6 +1645,7 @@ impl eframe::App for SmaragdApp {
         self.tick_pomodoro(ui.ctx());
         self.check_external_changes(ui.ctx());
         self.maybe_run_auto_commit(ui.ctx());
+        self.check_editor_idle(ui.ctx());
         self.show_toasts(ui.ctx());
         self.clear_status_message_if_expired(ui.ctx());
 
@@ -1882,11 +1911,15 @@ impl eframe::App for SmaragdApp {
                     .project
                     .as_ref()
                     .map(|project| {
-                        self.word_count
-                            .cache
-                            .saturating_sub(project.meta.session_baseline_words as usize)
-                            as u32
+                        self.word_count.cache.saturating_sub(
+                            project.today_baseline_words(project.meta.word_count_scope) as usize,
+                        ) as u32
                     })
+                    .unwrap_or(0);
+                let chars_typed_today = self
+                    .project
+                    .as_ref()
+                    .map(|project| self.word_count.char_activity(project.meta.word_count_scope))
                     .unwrap_or(0);
                 let book_style_id = self.resolve_book_style_id();
                 let mut viewer = AppTabViewer {
@@ -1913,7 +1946,7 @@ impl eframe::App for SmaragdApp {
                     pomodoro: &self.pomodoro,
                     pomodoro_durations: crate::pomodoro::resolve_durations(&self.settings),
                     word_count_cache: self.word_count.cache,
-                    char_activity: self.word_count.char_activity,
+                    char_activity: chars_typed_today,
                     today_words_so_far,
                     streak_sub_tab: &mut self.streak_sub_tab,
                     dashboard_activity_metric: &mut self.dashboard_activity_metric,

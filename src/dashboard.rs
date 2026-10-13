@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// opened in its place (`Project::close_session`) — see
 /// `ProjectMeta::session_log`. Timestamps are local-time, formatted
 /// `%Y-%m-%dT%H:%M:%S` — a plain string rather than a `chrono` type, same
-/// convention `ProjectMeta::session_baseline_date`/`daily_word_counts`
+/// convention `ProjectMeta::today_baseline_date`/`daily_word_counts`
 /// already use, for the same reason: `chrono`'s `Serialize`/`Deserialize`
 /// impls need its `serde` cargo feature, which isn't enabled (see
 /// Cargo.toml).

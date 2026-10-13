@@ -50,8 +50,27 @@ pub struct OpenDocument {
 impl OpenDocument {
     fn save_with_store(&mut self, store: &dyn ProjectStore) -> io::Result<()> {
         if let Some(path) = &self.path {
-            store.write(path, self.buffer.as_bytes())?;
+            let result = store.write(path, self.buffer.as_bytes());
+            crate::save_debug::log_write_attempt("OpenDocument::save_with_store", path, &result);
+            result?;
             self.dirty = false;
+            self.disk_mtime = read_mtime(path);
+        }
+        Ok(())
+    }
+
+    /// Writes the buffer to disk and refreshes `disk_mtime`, same as
+    /// [`Self::save_with_store`], but deliberately leaves `dirty` as it was
+    /// — see `EditorState::flush_for_word_count`'s doc comment for why.
+    fn flush_for_word_count(&mut self, store: &dyn ProjectStore) -> io::Result<()> {
+        if let Some(path) = &self.path {
+            let result = store.write(path, self.buffer.as_bytes());
+            crate::save_debug::log_write_attempt(
+                "OpenDocument::flush_for_word_count",
+                path,
+                &result,
+            );
+            result?;
             self.disk_mtime = read_mtime(path);
         }
         Ok(())
@@ -312,6 +331,28 @@ impl EditorState {
     pub fn save_with_store(&mut self, store: &dyn ProjectStore) -> io::Result<()> {
         if let Some(tab) = self.active_tab_mut() {
             tab.save_with_store(store)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Write the active tab's buffer to its path like [`Self::save_with_store`],
+    /// but leave `dirty` untouched — used by `SmaragdApp::check_editor_idle`'s
+    /// idle-triggered word-count refresh, which needs fresh content on disk
+    /// for `Project::word_count` to read but must *not* make the document
+    /// look "saved" to anything that treats `dirty` as "still actively being
+    /// edited." In particular, the sync engine only protects a document from
+    /// a remote merge landing on it while its path is in `held`, which
+    /// `SmaragdApp::sync_update_held` derives straight from `dirty`
+    /// (`src/app/sync.rs`) — clearing `dirty` here would release that
+    /// protection on every multi-second typing pause instead of only at a
+    /// real save boundary (explicit Save, focus loss, closing the tab), and
+    /// a remote edit that landed during that window would then be silently
+    /// overwritten the next time the user resumes typing and this (or any
+    /// other) save path writes the stale local buffer back out.
+    pub fn flush_for_word_count(&mut self, store: &dyn ProjectStore) -> io::Result<()> {
+        if let Some(tab) = self.active_tab_mut() {
+            tab.flush_for_word_count(store)
         } else {
             Ok(())
         }
