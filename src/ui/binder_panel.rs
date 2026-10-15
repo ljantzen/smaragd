@@ -106,6 +106,7 @@ pub fn show(
     document_row_color: &dyn Fn(&Path) -> Option<egui::Color32>,
     folder_word_counts: &HashMap<PathBuf, usize>,
     git_dirty: &std::collections::HashSet<PathBuf>,
+    unsaved: &std::collections::HashSet<PathBuf>,
     document_stats: &DocumentStatsFn,
 ) -> Option<BinderEvent> {
     let mut event = None;
@@ -123,6 +124,7 @@ pub fn show(
         document_row_color,
         folder_word_counts,
         git_dirty,
+        unsaved,
         document_stats,
     );
 
@@ -271,12 +273,33 @@ fn role_prefix(role: Option<FolderRole>) -> &'static str {
 /// `override_text_color` — so this wins under every theme, not just Default.
 const GIT_DIRTY_MARKER: &str = " •";
 
+/// A trailing marker painted after a row's label when it has unsaved edits in
+/// an open editor tab — distinct from [`GIT_DIRTY_MARKER`] (which means
+/// "uncommitted in git") so the two states, easily confused since both show up
+/// as "a dot on this row," read as different things at a glance: filled circle
+/// for "not yet written to disk," accent-colored bullet for "written but not
+/// committed." Painted in `ui.visuals().warn_fg_color`, which no built-in or
+/// custom `ColorTheme` overrides (see `color_theme::apply`), so unlike
+/// `hyperlink_color` it never needs to double as a theme's own accent and
+/// stays visually distinct from `GIT_DIRTY_MARKER` under every theme. Built
+/// with an explicit `RichText::color(...)` for the same reason
+/// `GIT_DIRTY_MARKER` is — see its doc comment.
+const UNSAVED_MARKER: &str = " ●";
+
 /// A folder counts as dirty if *any* path under it (at any depth) has
 /// uncommitted changes — cheap in practice since `git_dirty` is normally
 /// tiny (only files actually changed since the last commit), so a linear
 /// scan per folder row beats maintaining a second precomputed set.
 fn folder_is_dirty(git_dirty: &std::collections::HashSet<PathBuf>, folder_path: &Path) -> bool {
     git_dirty.iter().any(|path| path.starts_with(folder_path))
+}
+
+/// A folder counts as unsaved if *any* path under it (at any depth) has an
+/// open tab with unsaved edits — same reasoning and cost as `folder_is_dirty`,
+/// over the much smaller `unsaved` set (open tabs, not changed-since-commit
+/// files).
+fn folder_has_unsaved(unsaved: &std::collections::HashSet<PathBuf>, folder_path: &Path) -> bool {
+    unsaved.iter().any(|path| path.starts_with(folder_path))
 }
 
 /// The compact `lines/words/chars` readout painted right-aligned on a
@@ -374,6 +397,7 @@ pub fn set_folder_open(ctx: &egui::Context, path: &Path, open: bool) {
 /// Returns the header's response (click/drag/focus, same as `CollapsingHeader`'s own
 /// `header_response`) and the `CollapsingState` the caller drives (toggle it, then pass
 /// the response to `CollapsingState::show_body_indented` to render the children).
+#[allow(clippy::too_many_arguments)]
 fn folder_header(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -381,6 +405,7 @@ fn folder_header(
     default_open: bool,
     is_selected: bool,
     dirty: bool,
+    unsaved: bool,
     status_color: Option<egui::Color32>,
 ) -> (
     egui::Response,
@@ -399,6 +424,17 @@ fn folder_header(
         wrap_width,
         egui::TextStyle::Button,
     );
+    let unsaved_galley = unsaved.then(|| {
+        egui::WidgetText::from(
+            egui::RichText::new(UNSAVED_MARKER).color(ui.visuals().warn_fg_color),
+        )
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            wrap_width,
+            egui::TextStyle::Button,
+        )
+    });
     let dirty_galley = dirty.then(|| {
         egui::WidgetText::from(
             egui::RichText::new(GIT_DIRTY_MARKER).color(ui.visuals().hyperlink_color),
@@ -410,9 +446,11 @@ fn folder_header(
             egui::TextStyle::Button,
         )
     });
+    let unsaved_width = unsaved_galley.as_ref().map_or(0.0, |g| g.size().x);
     let dirty_width = dirty_galley.as_ref().map_or(0.0, |g| g.size().x);
     let desired_width =
-        text_pos.x + galley.size().x + dirty_width + button_padding.x - available.left();
+        text_pos.x + galley.size().x + unsaved_width + dirty_width + button_padding.x
+            - available.left();
     let desired_size = egui::vec2(desired_width, galley.size().y + 2.0 * button_padding.y)
         .at_least(ui.spacing().interact_size);
     let (_, rect) = ui.allocate_space(desired_size);
@@ -446,9 +484,20 @@ fn folder_header(
         paint_default_icon(ui, openness, &icon_response);
         let label_width = galley.size().x;
         ui.painter().galley(text_pos, galley, visuals.text_color());
+        let mut marker_x = text_pos.x + label_width;
+        if let Some(unsaved_galley) = unsaved_galley {
+            let unsaved_pos = egui::pos2(
+                marker_x,
+                header_response.rect.center().y - unsaved_galley.size().y / 2.0,
+            );
+            marker_x += unsaved_galley.size().x;
+            // See `document_row`'s identical use of `warn_fg_color` for why.
+            ui.painter()
+                .galley(unsaved_pos, unsaved_galley, ui.visuals().warn_fg_color);
+        }
         if let Some(dirty_galley) = dirty_galley {
             let dirty_pos = egui::pos2(
-                text_pos.x + label_width,
+                marker_x,
                 header_response.rect.center().y - dirty_galley.size().y / 2.0,
             );
             // See `document_row`'s identical use of `hyperlink_color` for why.
@@ -470,10 +519,12 @@ fn folder_header(
 /// in a dimmer color, independent of `label`'s own left alignment — the two
 /// are separate galleys rather than one padded string so `stats` stays pinned
 /// to the row's right edge regardless of how long `label` is.
+#[allow(clippy::too_many_arguments)]
 fn document_row(
     ui: &mut egui::Ui,
     label: &str,
     dirty: bool,
+    unsaved: bool,
     stats: Option<&str>,
     is_selected: bool,
     status_color: Option<egui::Color32>,
@@ -488,6 +539,17 @@ fn document_row(
         wrap_width,
         egui::TextStyle::Button,
     );
+    let unsaved_galley = unsaved.then(|| {
+        egui::WidgetText::from(
+            egui::RichText::new(UNSAVED_MARKER).color(ui.visuals().warn_fg_color),
+        )
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            wrap_width,
+            egui::TextStyle::Button,
+        )
+    });
     let dirty_galley = dirty.then(|| {
         egui::WidgetText::from(
             egui::RichText::new(GIT_DIRTY_MARKER).color(ui.visuals().hyperlink_color),
@@ -520,13 +582,18 @@ fn document_row(
             rect.min.x + button_padding.x,
             rect.center().y - galley.size().y / 2.0,
         );
-        let label_width = galley.size().x;
+        let mut marker_x = text_pos.x + galley.size().x;
         ui.painter().galley(text_pos, galley, visuals.text_color());
+        if let Some(unsaved_galley) = unsaved_galley {
+            let unsaved_pos = egui::pos2(marker_x, rect.center().y - unsaved_galley.size().y / 2.0);
+            marker_x += unsaved_galley.size().x;
+            // `warn_fg_color`, not the row's own text color or
+            // `GIT_DIRTY_MARKER`'s accent — see `UNSAVED_MARKER`'s doc comment.
+            ui.painter()
+                .galley(unsaved_pos, unsaved_galley, ui.visuals().warn_fg_color);
+        }
         if let Some(dirty_galley) = dirty_galley {
-            let dirty_pos = egui::pos2(
-                text_pos.x + label_width,
-                rect.center().y - dirty_galley.size().y / 2.0,
-            );
+            let dirty_pos = egui::pos2(marker_x, rect.center().y - dirty_galley.size().y / 2.0);
             // The active theme's accent color (see `color_theme::apply`), not
             // the row's own text color — see `GIT_DIRTY_MARKER`'s doc comment
             // on why this needs to actually stand out.
@@ -560,6 +627,7 @@ fn show_node(
     document_row_color: &dyn Fn(&Path) -> Option<egui::Color32>,
     folder_word_counts: &HashMap<PathBuf, usize>,
     git_dirty: &std::collections::HashSet<PathBuf>,
+    unsaved: &std::collections::HashSet<PathBuf>,
     document_stats: &DocumentStatsFn,
 ) {
     match &node.kind {
@@ -567,12 +635,21 @@ fn show_node(
             let role = project.folder_role(&node.path);
             let label = format!("{}{}", role_prefix(role), node.name);
             let dirty = folder_is_dirty(git_dirty, &node.path);
+            let has_unsaved = folder_has_unsaved(unsaved, &node.path);
             let id = folder_collapsing_id(&node.path);
             let is_selected =
                 folder_row_is_selected(is_root, project_selected, selected_folder, &node.path);
             let status_color = folder_row_color(project, &node.path, folder_word_counts);
-            let (header_response, mut state) =
-                folder_header(ui, id, &label, true, is_selected, dirty, status_color);
+            let (header_response, mut state) = folder_header(
+                ui,
+                id,
+                &label,
+                true,
+                is_selected,
+                dirty,
+                has_unsaved,
+                status_color,
+            );
             visible_rows.push((node.path.clone(), header_response.id));
 
             if header_response.clicked() {
@@ -789,6 +866,7 @@ fn show_node(
                         document_row_color,
                         folder_word_counts,
                         git_dirty,
+                        unsaved,
                         document_stats,
                     );
                 }
@@ -799,11 +877,13 @@ fn show_node(
             let status_color = document_row_color(&node.path);
             let label = document_label(&node.name);
             let dirty = git_dirty.contains(&node.path);
+            let has_unsaved = unsaved.contains(&node.path);
             let stats_label = document_stats_label(document_stats(&node.path));
             let response = document_row(
                 ui,
                 label,
                 dirty,
+                has_unsaved,
                 stats_label.as_deref(),
                 is_selected,
                 status_color,
@@ -913,6 +993,24 @@ mod tests {
         dirty.clear();
         dirty.insert(Path::new("/project/Other Chapter/Scene 1.md").to_path_buf());
         assert!(!folder_is_dirty(&dirty, folder));
+    }
+
+    #[test]
+    fn folder_has_unsaved_true_for_a_direct_or_nested_unsaved_file_false_otherwise() {
+        let folder = Path::new("/project/Chapter 1");
+        let mut unsaved = std::collections::HashSet::new();
+        assert!(!folder_has_unsaved(&unsaved, folder));
+
+        unsaved.insert(Path::new("/project/Chapter 1/Scene 1.md").to_path_buf());
+        assert!(folder_has_unsaved(&unsaved, folder));
+
+        unsaved.clear();
+        unsaved.insert(Path::new("/project/Chapter 1/Sub/Scene 2.md").to_path_buf());
+        assert!(folder_has_unsaved(&unsaved, folder));
+
+        unsaved.clear();
+        unsaved.insert(Path::new("/project/Other Chapter/Scene 1.md").to_path_buf());
+        assert!(!folder_has_unsaved(&unsaved, folder));
     }
 
     #[test]
@@ -1065,6 +1163,7 @@ mod tests {
                     None,
                     &|_| None,
                     &HashMap::new(),
+                    &std::collections::HashSet::new(),
                     &std::collections::HashSet::new(),
                     &|_| None,
                 );

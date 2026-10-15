@@ -520,7 +520,7 @@ impl SmaragdApp {
                     // "S" rather than "V" (Versions' first letter) since View already
                     // claims Alt+V — matches the classic Windows-mnemonic convention
                     // of falling back to a distinguishing later letter on collision.
-                    // Hidden entirely (not just disabled) when the Settings > History
+                    // Hidden entirely (not just disabled) when the Settings > Versions
                     // "Enable Git integration" flag is off — see
                     // `Settings::git_integration_disabled`'s doc comment.
                     if self.settings.git_integration_enabled() {

@@ -19,6 +19,15 @@ this file.
   enlarged letter spanning a few lines, with body text wrapped narrower
   beside it), matching PDF/EPUB export instead of the old oversized inline
   glyph that dwarfed a single line of text.
+- The Binder now also marks a document (or folder, if anything under it
+  qualifies) with a filled dot (`●`) when it has unsaved edits in an open
+  tab — in a different color than the existing accent-colored `•` for
+  uncommitted git changes, so the two states (not yet saved to disk, vs.
+  saved but not yet committed) no longer look like the same thing.
+- Renamed the **Settings > History** category to **Settings > Versions**
+  (it only ever held Git and Backup settings) — it now matches the
+  **Versions** menu and **Version Activity** panel instead of using a
+  different name for the same feature.
 
 ## v1.5.2 — 2026-10-03
 

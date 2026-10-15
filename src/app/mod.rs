@@ -1039,7 +1039,7 @@ impl SmaragdApp {
             Command::Git(git_command) => {
                 if !self.settings.git_integration_enabled() {
                     self.push_error_toast(
-                        "Git integration is disabled — enable it in Settings > History",
+                        "Git integration is disabled — enable it in Settings > Versions",
                     );
                     return;
                 }

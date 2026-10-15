@@ -40,7 +40,7 @@ pub fn show(ui: &mut egui::Ui, data: &VersionActivityData) -> Option<VersionActi
             ui.label("Git integration isn't turned on for this project.");
             ui.weak(
                 "Enable it from the Versions menu, or Project Settings if the \
-                 global switch in Settings > History is already on.",
+                 global switch in Settings > Versions is already on.",
             );
             return;
         }

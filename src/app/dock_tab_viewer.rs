@@ -358,6 +358,12 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             self.document_status_cache.document_stats(path)
                         })
                     };
+                    let unsaved_paths: HashSet<PathBuf> = self
+                        .editor
+                        .iter_tabs()
+                        .filter(|tab| tab.dirty)
+                        .filter_map(|tab| tab.path.clone())
+                        .collect();
                     if let Some(event) = ui::binder_panel::show(
                         ui,
                         project,
@@ -368,6 +374,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                         &document_row_color,
                         self.folder_word_counts,
                         self.git_dirty_paths,
+                        &unsaved_paths,
                         &document_stats,
                     ) {
                         self.actions.push(DockAction::Binder(event));

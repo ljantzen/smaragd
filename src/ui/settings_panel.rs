@@ -29,7 +29,7 @@ pub enum SettingsCategory {
     Editor,
     SpellCheck,
     Templates,
-    History,
+    Versions,
     Sync,
     Pomodoro,
     Shortcuts,
@@ -42,7 +42,7 @@ impl SettingsCategory {
         SettingsCategory::Editor,
         SettingsCategory::SpellCheck,
         SettingsCategory::Templates,
-        SettingsCategory::History,
+        SettingsCategory::Versions,
         SettingsCategory::Sync,
         SettingsCategory::Pomodoro,
         SettingsCategory::Shortcuts,
@@ -55,7 +55,7 @@ impl SettingsCategory {
             SettingsCategory::Editor => "Editor",
             SettingsCategory::SpellCheck => "Spell Check",
             SettingsCategory::Templates => "Templates",
-            SettingsCategory::History => "History",
+            SettingsCategory::Versions => "Versions",
             SettingsCategory::Sync => "Sync",
             SettingsCategory::Pomodoro => "Pomodoro",
             SettingsCategory::Shortcuts => "Shortcuts",
@@ -132,19 +132,19 @@ pub const SETTINGS_INDEX: &[SettingsEntry] = {
         entry(
             "Enable Git integration",
             "version control commit push",
-            History,
+            Versions,
         ),
         entry(
             "Commit message template",
             "git template placeholder date time numFiles linesAdded linesChanged linesDeleted fileList",
-            History,
+            Versions,
         ),
-        entry("Enable automatic backups", "snapshot zip", History),
-        entry("Back up when opening a project", "backup", History),
-        entry("Back up when closing a project", "backup", History),
-        entry("Back up on every manual save", "backup", History),
-        entry("Backups to keep", "backup count", History),
-        entry("Backup folder", "backup directory location", History),
+        entry("Enable automatic backups", "snapshot zip", Versions),
+        entry("Back up when opening a project", "backup", Versions),
+        entry("Back up when closing a project", "backup", Versions),
+        entry("Back up on every manual save", "backup", Versions),
+        entry("Backups to keep", "backup count", Versions),
+        entry("Backup folder", "backup directory location", Versions),
         entry("Enable sync", "server devices", Sync),
         entry("Sync server", "host port path https tls url", Sync),
         entry("Sync passphrase", "password encryption key", Sync),
@@ -284,7 +284,7 @@ pub fn show(
                         dictionary_download_request,
                     ),
                     SettingsCategory::Templates => show_templates_category(ui, settings),
-                    SettingsCategory::History => show_history_category(ui, settings),
+                    SettingsCategory::Versions => show_versions_category(ui, settings),
                     SettingsCategory::Sync => show_sync_category(ui, settings, sync_ui),
                     SettingsCategory::Pomodoro => show_pomodoro_category(ui, settings),
                     SettingsCategory::Shortcuts => show_shortcuts_category(
@@ -875,7 +875,7 @@ fn show_sync_category(
     changed
 }
 
-fn show_history_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
+fn show_versions_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
     let mut changed = false;
     ui.heading("Git");
     ui.add_space(12.0);

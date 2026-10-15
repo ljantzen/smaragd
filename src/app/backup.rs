@@ -43,7 +43,7 @@ impl SmaragdApp {
         };
         let Some(backup_dir) = self.settings.resolve_backup_dir() else {
             self.push_error_toast(
-                "Couldn't determine a backup directory — set one in Settings > History",
+                "Couldn't determine a backup directory — set one in Settings > Versions",
             );
             return;
         };

@@ -187,7 +187,7 @@ fn show_git_category(
     ui.heading("Git");
     ui.add_space(12.0);
     if !settings.git_integration_enabled() {
-        ui.weak("Git integration is turned off — see Settings > History.");
+        ui.weak("Git integration is turned off — see Settings > Versions.");
         return None;
     }
     if !project.meta.git_enabled {

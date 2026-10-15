@@ -266,7 +266,7 @@ pub struct Settings {
     /// applied through (a global `TextStyle` remap, not a per-widget font
     /// choice like `editor_font` is).
     pub ui_font: EditorFont,
-    /// Global kill switch for git integration, set via the Settings > History
+    /// Global kill switch for git integration, set via the Settings > Versions
     /// category. Stored inverted (`false` means enabled) so that this struct's
     /// derived `Default` — which gives every `bool` field `false` — doesn't
     /// silently turn git off for every *existing* settings file on upgrade, the
@@ -294,7 +294,7 @@ pub struct Settings {
     /// "never configured" convention `color_theme`/`backup_dir` use.
     pub git_commit_message_template: Option<String>,
     /// Master switch for automatic project backups (Scrivener-style zipped
-    /// snapshots — see `crate::backup`), set via Settings > History. Unlike
+    /// snapshots — see `crate::backup`), set via Settings > Versions. Unlike
     /// `git_integration_disabled` this is a brand new feature with no prior
     /// behavior to preserve, so it uses this struct's ordinary derived
     /// `Default` (`false`, off) directly — every install, new or upgrading,
