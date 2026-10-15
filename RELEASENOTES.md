@@ -5,6 +5,14 @@ this file.
 
 ## Unreleased
 
+- Added a **project sanity check**, run once right after a project opens: it
+  compares `.smaragd/project.json`'s metadata (manual ordering, folder
+  roles/metadata, trash records, picklist/attachments folder choices, …)
+  against what's actually in the vault, and scans every document for
+  unresolved git merge-conflict markers (`<<<<<<<`/`>>>>>>>`). Anything that
+  doesn't match — most likely from a file deleted or renamed outside
+  Smaragd, a `git pull`, or a sync merge — is listed in a dismissible
+  one-time dialog. Purely informational: nothing is auto-repaired.
 - Added **LaTeX** as an export target: `File > Export…` can now generate
   `.tex` source (plus an `images/` folder, if the manuscript has any) for
   your own XeLaTeX/LuaLaTeX distribution to compile, alongside the existing

@@ -75,6 +75,16 @@ impl SmaragdApp {
             ui::streak_panel::StreakSubTab::Configure
         };
         self.project = Some(project);
+        // Pure, read-only comparison of metadata against the vault that was
+        // just freshly scanned off disk (`load_from_folder`'s own
+        // `scan_project`) — see `project::sanity_check`'s doc comment. Safe
+        // to run unconditionally, unlike the native-dialog side effects
+        // below the `is_test_fixture` guard.
+        self.sanity_check_issues = self
+            .project
+            .as_ref()
+            .map(crate::project::sanity_check::check)
+            .unwrap_or_default();
         self.editor = EditorState::default();
         self.selected_path = None;
         self.last_structural_op = None;

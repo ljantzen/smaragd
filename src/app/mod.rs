@@ -344,6 +344,12 @@ pub struct SmaragdApp {
     /// version wins, rather than either silently clobbering the other. `None`
     /// the rest of the time.
     external_conflict: Option<PathBuf>,
+    /// Issues found by `project::sanity_check::check` the last time a
+    /// project finished opening (see `set_project`) — shown once via
+    /// `ui::sanity_check_prompt`, then cleared on dismissal. Empty whenever
+    /// the most recent check found nothing, which is the overwhelming
+    /// common case.
+    sanity_check_issues: Vec<String>,
 }
 
 impl SmaragdApp {
@@ -443,6 +449,7 @@ impl SmaragdApp {
             auto_commit_last_run: None,
             editor_idle_since: None,
             external_conflict: None,
+            sanity_check_issues: Vec::new(),
         };
         app.reload_typeset_styles(&cc.egui_ctx);
         app.reload_project_templates();
@@ -568,6 +575,7 @@ impl SmaragdApp {
             auto_commit_last_run: None,
             editor_idle_since: None,
             external_conflict: None,
+            sanity_check_issues: Vec::new(),
         }
     }
 
@@ -1324,6 +1332,12 @@ impl SmaragdApp {
                     self.resolve_external_conflict(true);
                 }
             }
+        }
+
+        if !self.sanity_check_issues.is_empty()
+            && ui::sanity_check_prompt::show(ui.ctx(), &self.sanity_check_issues)
+        {
+            self.sanity_check_issues.clear();
         }
 
         if let Some(event) = ui::find_replace_panel::show(ui.ctx(), &mut self.find_replace) {

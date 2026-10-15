@@ -13,6 +13,7 @@ mod queries;
 mod rename_move_delete;
 mod rename_tag;
 mod roles;
+pub mod sanity_check;
 mod scan;
 mod status_colors;
 pub mod store;
