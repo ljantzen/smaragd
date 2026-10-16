@@ -60,7 +60,7 @@ thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "time", "macros", "sync"] }
 toml = "1.1"
 ttf-parser = "0.25"
-typst-as-lib = { version = "0.16.0", features = ["typst-kit-fonts", "typst-kit-embed-fonts"] }
+typst-as-lib = { version = "0.17.0", features = ["typst-kit-fonts", "typst-kit-embed-fonts"] }
 typst-pdf = "0.15.1"
 unicode-normalization = "0.1"
 ureq = "3.4"
