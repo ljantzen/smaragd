@@ -962,7 +962,8 @@ impl SyncEngine {
             let Some(tracked) = self.docs.get_mut(&entry.doc_id) else {
                 crate::sync_debug!(
                     "[sync-debug] entry {:?} path={:?} has no tracked doc on this device, skipping remote-rename check",
-                    entry.doc_id, entry.path
+                    entry.doc_id,
+                    entry.path
                 );
                 continue;
             };
@@ -980,7 +981,8 @@ impl SyncEngine {
             if local != entry.path && scan.contains(&local) && !scan.contains(&entry.path) {
                 crate::sync_debug!(
                     "[sync-debug] applying remote rename: {:?} -> {:?}",
-                    local, entry.path
+                    local,
+                    entry.path
                 );
                 move_file(files, root, &local, &entry.path)?;
                 scan.remove(&local);
