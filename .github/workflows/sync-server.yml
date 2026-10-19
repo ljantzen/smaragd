@@ -16,6 +16,18 @@ on:
       - "src/sync/**"
       - ".github/workflows/sync-server.yml"
       - "scripts/sync-server-smoke-test.sh"
+      # smaragd-sync-e2e path-depends on the root crate (it links the whole
+      # desktop app), so it has its own standalone Cargo.lock that silently
+      # drifts out of sync with it whenever a root dependency changes here —
+      # Dependabot only watches the root `/` directory (.github/dependabot.yml),
+      # so a bump here never otherwise touches a path this workflow watches.
+      # Twice already (406b37de, and the run this comment's commit fixes), that
+      # let a stale e2e lockfile merge to main unnoticed until something
+      # unrelated finally touched src/sync/** and ran `cargo clippy --locked`
+      # against it. Watching these two catches the drift on the bump's own PR
+      # instead.
+      - "Cargo.toml"
+      - "Cargo.lock"
   pull_request:
     branches: [main]
     paths:
@@ -25,6 +37,8 @@ on:
       - "src/sync/**"
       - ".github/workflows/sync-server.yml"
       - "scripts/sync-server-smoke-test.sh"
+      - "Cargo.toml"
+      - "Cargo.lock"
 
 jobs:
   test:
