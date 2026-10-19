@@ -7,6 +7,7 @@ mod auto_commit;
 mod backup;
 mod bookmarks;
 mod collab;
+mod daily_notes;
 mod dictionary_download;
 mod dock;
 mod dock_tab_viewer;
@@ -874,6 +875,7 @@ impl SmaragdApp {
             ShortcutAction::ToggleDashboard => self.toggle_dock_tab(DockTab::Dashboard),
             ShortcutAction::ToggleSyncPanel => self.show_sync_panel(),
             ShortcutAction::SyncNow => self.sync_now(),
+            ShortcutAction::OpenDailyNote => self.open_daily_note(),
             ShortcutAction::ToggleVersionActivity => self.toggle_dock_tab(DockTab::VersionActivity),
             ShortcutAction::ToggleEditorViewMode => {
                 let new_mode = match self.editor_view_mode {
@@ -1076,6 +1078,7 @@ impl SmaragdApp {
                 }
             }
             Command::ToggleSpellCheck => self.toggle_spell_check(),
+            Command::Daily => self.open_daily_note(),
             Command::Plugin(name, arg) => self.run_plugin_command(&name, &arg),
         }
     }

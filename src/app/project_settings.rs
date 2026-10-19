@@ -38,6 +38,18 @@ impl SmaragdApp {
             ProjectSettingsEvent::SetClipboardImageSizeLimitMb(mb) => {
                 project.set_clipboard_image_size_limit_mb(mb)
             }
+            ProjectSettingsEvent::SetDailyNotesEnabled(enabled) => {
+                project.set_daily_notes_enabled(enabled)
+            }
+            ProjectSettingsEvent::SetDailyNotesFolder(folder) => {
+                project.set_daily_notes_folder(&folder)
+            }
+            ProjectSettingsEvent::SetDailyNoteFilenameFormat(format) => {
+                project.set_daily_note_filename_format(format)
+            }
+            ProjectSettingsEvent::SetDailyNoteTemplate(path) => {
+                project.set_daily_note_template(path.as_deref())
+            }
         };
         match result {
             Ok(()) => {

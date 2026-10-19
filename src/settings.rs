@@ -244,6 +244,11 @@ pub struct Settings {
     /// `templates::DEFAULT_DATE_FORMAT` rather than emitting an empty string, the
     /// same fallback it also applies to a format that fails to render at all.
     pub template_date_format: String,
+    /// strftime-style format string for `${{time}}` in "New From Template"
+    /// substitution — the `${{time}}` counterpart of `template_date_format`
+    /// above, same blank-means-unset convention (`templates::format_time`
+    /// falls back to `templates::DEFAULT_TIME_FORMAT`).
+    pub template_time_format: String,
     /// The font the Editor renders in (see `editor_font::EditorFont`). The
     /// Preview tab does *not* use this — its body font comes from whichever
     /// `export::style::TypesetStyle` is selected there instead, so Preview
@@ -1315,6 +1320,7 @@ mod tests {
             color_theme: Some("dracula".to_string()),
             plugin_shortcut_overrides,
             template_date_format: "%d %B %Y".to_string(),
+            template_time_format: "%H:%M".to_string(),
             editor_font: EditorFont::LibertinusSerif,
             editor_font_size: 16.0,
             ui_font: EditorFont::AtkinsonHyperlegible,

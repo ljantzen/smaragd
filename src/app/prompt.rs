@@ -429,8 +429,15 @@ impl SmaragdApp {
             name,
             template_path,
             &self.settings.template_date_format,
+            &self.settings.template_time_format,
         ) {
-            Ok(path) => self.open_document(&path),
+            Ok((path, cursor)) => {
+                self.open_document(&path);
+                if let Some(byte) = cursor {
+                    let len = self.editor.buffer().len();
+                    self.editor.set_pending_cursor(byte.min(len));
+                }
+            }
             Err(err) => self.push_error_toast(format!("Couldn't create file: {err}")),
         }
     }

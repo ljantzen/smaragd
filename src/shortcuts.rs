@@ -162,6 +162,10 @@ pub enum ShortcutAction {
     /// document" row. Distinct from `ToggleBacklinks`, which opens/closes the
     /// separate Backlinks dock tab.
     ToggleInlineBacklinks,
+    /// Open today's daily note, creating it (optionally from a configured
+    /// template) if it doesn't exist yet — see
+    /// `Project::open_or_create_daily_note` and `ProjectSettingsCategory::DailyNotes`.
+    OpenDailyNote,
 }
 
 impl ShortcutAction {
@@ -228,6 +232,7 @@ impl ShortcutAction {
         Self::ToggleVersionActivity,
         Self::ToggleEditorViewMode,
         Self::ToggleInlineBacklinks,
+        Self::OpenDailyNote,
     ];
 
     /// Actions consumed inline inside `editor_panel::show` (see each variant's
@@ -310,6 +315,7 @@ impl ShortcutAction {
             Self::ToggleEditorViewMode => "Toggle Source/Reading View",
             Self::ToggleInlineBacklinks => "Toggle Backlinks in Document",
             Self::ToggleVersionActivity => "Toggle Version Activity",
+            Self::OpenDailyNote => "Open Today's Daily Note",
         }
     }
 
@@ -382,6 +388,7 @@ impl ShortcutAction {
             Self::ToggleEditorViewMode => "toggle_editor_view_mode",
             Self::ToggleInlineBacklinks => "toggle_inline_backlinks",
             Self::ToggleVersionActivity => "toggle_version_activity",
+            Self::OpenDailyNote => "open_daily_note",
         }
     }
 
@@ -454,7 +461,8 @@ impl ShortcutAction {
             | Self::ToggleBookmarksPanel
             | Self::ToggleNotesPanel
             | Self::ToggleSyncPanel
-            | Self::SyncNow => ShortcutCategory::Tools,
+            | Self::SyncNow
+            | Self::OpenDailyNote => ShortcutCategory::Tools,
         }
     }
 
@@ -660,6 +668,9 @@ impl ShortcutAction {
             // Ctrl+Shift+B and `ToggleBookmarksPanel`'s Ctrl+Alt+B are both
             // more specific and so checked first, same reasoning as above.
             Self::ToggleInlineBacklinks => KeyboardShortcut::new(Modifiers::COMMAND, Key::B),
+            // Bare F8 — safe modifier-free per `is_modifier_free_safe_key`, and
+            // otherwise unused.
+            Self::OpenDailyNote => KeyboardShortcut::new(Modifiers::NONE, Key::F8),
         }
     }
 }

@@ -20,6 +20,7 @@
 - [Bookmarks](bookmarks.md)
 - [Notes](notes.md)
 - [Folder Roles](folder-roles.md)
+- [Daily Notes](daily-notes.md)
 - [Import](import.md)
 - [Export](export.md)
     - [Typesetting Styles](export-typesetting-styles.md)

@@ -34,14 +34,16 @@ pub enum ProjectSettingsCategory {
     Sync,
     Binder,
     Attachments,
+    DailyNotes,
 }
 
 impl ProjectSettingsCategory {
-    pub const ALL: [ProjectSettingsCategory; 4] = [
+    pub const ALL: [ProjectSettingsCategory; 5] = [
         ProjectSettingsCategory::Git,
         ProjectSettingsCategory::Sync,
         ProjectSettingsCategory::Binder,
         ProjectSettingsCategory::Attachments,
+        ProjectSettingsCategory::DailyNotes,
     ];
 
     pub fn label(self) -> &'static str {
@@ -50,6 +52,7 @@ impl ProjectSettingsCategory {
             ProjectSettingsCategory::Sync => "Sync",
             ProjectSettingsCategory::Binder => "Binder",
             ProjectSettingsCategory::Attachments => "Attachments",
+            ProjectSettingsCategory::DailyNotes => "Daily Notes",
         }
     }
 }
@@ -71,6 +74,11 @@ pub enum ProjectSettingsEvent {
     SetAttachmentsFolder(Option<PathBuf>),
     SetClipboardImageSizeLimitEnabled(bool),
     SetClipboardImageSizeLimitMb(u32),
+    SetDailyNotesEnabled(bool),
+    SetDailyNotesFolder(String),
+    SetDailyNoteFilenameFormat(String),
+    /// `None` clears the configured template (back to a blank daily note).
+    SetDailyNoteTemplate(Option<PathBuf>),
 }
 
 /// Renders the Project Settings dialog when `open` is true (a no-op
@@ -128,6 +136,7 @@ pub fn show(
                     ProjectSettingsCategory::Sync => show_sync_category(ui, project),
                     ProjectSettingsCategory::Binder => show_binder_category(ui, project),
                     ProjectSettingsCategory::Attachments => show_attachments_category(ui, project),
+                    ProjectSettingsCategory::DailyNotes => show_daily_notes_category(ui, project),
                 };
             });
         });
@@ -367,6 +376,110 @@ fn show_attachments_category(ui: &mut egui::Ui, project: &Project) -> Option<Pro
     event
 }
 
+fn show_daily_notes_category(ui: &mut egui::Ui, project: &Project) -> Option<ProjectSettingsEvent> {
+    let mut event = None;
+    ui.heading("Daily Notes");
+    ui.add_space(12.0);
+
+    let mut enabled = project.daily_notes_enabled();
+    if ui
+        .checkbox(&mut enabled, "Enable Daily Notes")
+        .on_hover_text("Off by default. While off, the shortcut and :daily command do nothing.")
+        .changed()
+    {
+        event = Some(ProjectSettingsEvent::SetDailyNotesEnabled(enabled));
+    }
+    ui.add_space(8.0);
+
+    ui.add_enabled_ui(project.daily_notes_enabled(), |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Folder:");
+            let mut folder_text = project.daily_notes_folder_key().to_string();
+            if ui
+                .text_edit_singleline(&mut folder_text)
+                .on_hover_text(
+                    "Relative to the project root. Also a chrono strftime pattern, so e.g. \
+                     Journal/%Y/%m nests notes under a per-year, per-month subfolder. Created \
+                     automatically if it doesn't exist yet.",
+                )
+                .changed()
+            {
+                event = Some(ProjectSettingsEvent::SetDailyNotesFolder(folder_text));
+            }
+        });
+        ui.weak(format!(
+            "Preview: {}/",
+            crate::templates::format_date(project.daily_notes_folder_key())
+        ));
+        ui.add_space(8.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Filename format:");
+            let mut format_text = project.daily_note_filename_format().to_string();
+            if ui
+                .text_edit_singleline(&mut format_text)
+                .on_hover_text("A chrono strftime pattern, e.g. %Y-%m-%d. Blank uses %Y-%m-%d.")
+                .changed()
+            {
+                event = Some(ProjectSettingsEvent::SetDailyNoteFilenameFormat(
+                    format_text,
+                ));
+            }
+        });
+        ui.weak(format!(
+            "Preview: {}.md",
+            crate::templates::format_date(project.daily_note_filename_format())
+        ));
+        ui.add_space(8.0);
+        crate::ui::settings_panel::date_format_examples_ui(ui);
+        ui.add_space(8.0);
+
+        let candidates = project.template_documents();
+        let current = project.daily_note_template();
+        let none_label = "(None — blank note)";
+        let selected_label = current
+            .as_deref()
+            .and_then(|path| candidates.iter().find(|doc| doc.path == path))
+            .map(|doc| doc.name.as_str())
+            .unwrap_or(none_label);
+        ui.horizontal(|ui| {
+            ui.label("Template:");
+            egui::ComboBox::new("daily_note_template_combo", "")
+                .selected_text(selected_label)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(current.is_none(), none_label).clicked() {
+                        event = Some(ProjectSettingsEvent::SetDailyNoteTemplate(None));
+                    }
+                    for doc in &candidates {
+                        if ui
+                            .selectable_label(
+                                current.as_deref() == Some(doc.path.as_path()),
+                                &doc.name,
+                            )
+                            .clicked()
+                        {
+                            event = Some(ProjectSettingsEvent::SetDailyNoteTemplate(Some(
+                                doc.path.clone(),
+                            )));
+                        }
+                    }
+                });
+        });
+        if candidates.is_empty() {
+            ui.weak(
+                "No templates available — assign a Templates folder role to a folder, then add \
+                 a document inside it.",
+            );
+        }
+        ui.add_space(8.0);
+        ui.weak(
+            "${{date}}/${{time}} inside the template use the formats from Settings > Templates. \
+             ${{previous_day}}/${{next_day}} use this filename format.",
+        );
+    });
+    event
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,6 +570,53 @@ mod tests {
 
         run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
             event = show_attachments_category(ui, &project);
+        });
+
+        // Nothing clicked yet — a bare render reports no event.
+        assert!(event.is_none());
+    }
+
+    #[test]
+    fn daily_notes_category_renders_without_panicking_disabled_and_enabled() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+
+        // Disabled: the folder/format/template controls are grayed out but still
+        // rendered (via `add_enabled_ui`), so this exercises that path too.
+        run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
+            show_daily_notes_category(ui, &project);
+        });
+
+        // Enabled, with a folder format that embeds a `/` (the regression this
+        // guards: that character must render — and be stored — exactly as
+        // typed, not get silently trimmed away) and a configured template.
+        project.set_daily_notes_enabled(true).unwrap();
+        project.set_daily_notes_folder("Journal/%Y/%m").unwrap();
+        let templates_folder = project.create_folder(dir.path(), "Templates").unwrap();
+        project
+            .set_folder_role(
+                &templates_folder,
+                Some(crate::project::FolderRole::Templates),
+            )
+            .unwrap();
+        let template = project.create_document(&templates_folder, "Daily").unwrap();
+        project.set_daily_note_template(Some(&template)).unwrap();
+
+        run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
+            show_daily_notes_category(ui, &project);
+        });
+    }
+
+    #[test]
+    fn daily_notes_category_reports_the_clicked_enabled_checkbox() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::initialize(dir.path()).unwrap();
+        let mut event = None;
+
+        run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
+            event = show_daily_notes_category(ui, &project);
         });
 
         // Nothing clicked yet — a bare render reports no event.

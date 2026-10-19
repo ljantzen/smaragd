@@ -345,6 +345,43 @@ pub struct ProjectMeta {
     /// so a project can auto-commit locally without ever auto-pushing.
     #[serde(default)]
     pub git_auto_commit_push_enabled: bool,
+    /// Master on/off switch for Daily Notes (`ShortcutAction::OpenDailyNote`,
+    /// `:daily`) on this project. Off by default, same as `git_enabled`/
+    /// `streak_enabled` — a feature a project has to opt into rather than one that
+    /// silently starts creating files the first time the shortcut is pressed.
+    /// Unlike those two, this *is* synced (see `sync::meta_crdt::SCALAR_FIELDS`):
+    /// turning it on isn't a per-device action the way enabling git or a local
+    /// plugin folder is, so it stays consistent with the folder/format/template
+    /// settings below, which already sync.
+    #[serde(default)]
+    pub daily_notes_enabled: bool,
+    /// Where Daily Notes are created — a project-relative path, `""` meaning the
+    /// project root. Unlike `attachments_folder`, this is stored as a raw string
+    /// rather than resolved/validated against an existing folder: the whole point
+    /// is that a not-yet-existing subfolder (e.g. "Daily/2026") is valid and gets
+    /// created on demand the first time a daily note is actually written there —
+    /// see `Project::open_or_create_daily_note`. Also a strftime pattern, same as
+    /// `daily_note_filename_format` below (and resolved the same way, through
+    /// `templates::format_date`): e.g. "Journal/%Y/%m" nests daily notes under a
+    /// per-year, per-month subfolder. A plain string with no `%` codes (most
+    /// values) just passes through unchanged, so existing configurations aren't
+    /// affected by this.
+    #[serde(default)]
+    pub daily_notes_folder: String,
+    /// strftime-style format string for a daily note's filename (without the
+    /// `.md` extension) — blank means "not yet configured," resolved to
+    /// `templates::DEFAULT_DATE_FORMAT` the same way `Settings::template_date_format`
+    /// is. Also what `${{previous_day}}`/`${{next_day}}` render with inside a
+    /// daily note's own template, so adjacent-day links match real filenames.
+    #[serde(default)]
+    pub daily_note_filename_format: String,
+    /// The relative key (same `/`-joined, root-is-`""` encoding `folder_roles`
+    /// uses) of the document used as a daily note's template, if any — `None`
+    /// creates a blank daily note instead. Resolved via
+    /// `Project::daily_note_template`, which treats a key pointing at a
+    /// since-deleted document the same as `None` rather than erroring.
+    #[serde(default)]
+    pub daily_note_template: Option<String>,
 }
 
 /// `git_auto_commit_interval_minutes == 0` (not yet configured) resolves to this.

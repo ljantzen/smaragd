@@ -8,23 +8,54 @@ impl Project {
     }
 
     /// Create a new markdown document under `parent` whose initial content is
-    /// `template_path`'s (frontmatter included) with `${{name}}`/`${{date}}`
+    /// `template_path`'s (frontmatter included) with every `${{...}}` placeholder
     /// substituted (see `crate::templates::substitute`) — Scrivener-style "New
-    /// From Template". `template_path` itself is left untouched. `date_format` is
-    /// `Settings::template_date_format`, threaded through rather than read
-    /// directly since `Project` has no access to app-wide `Settings`. Goes through
-    /// the same name-validation and collision-refusal path as `create_document`.
+    /// From Template". `template_path` itself is left untouched. `date_format`/
+    /// `time_format` are `Settings::template_date_format`/`template_time_format`,
+    /// threaded through rather than read directly since `Project` has no access to
+    /// app-wide `Settings`; `${{previous_day}}`/`${{next_day}}` also fall back to
+    /// `date_format` here, since a plain template has no daily-note-specific
+    /// filename format of its own to use instead (contrast
+    /// `open_or_create_daily_note`, which does). Goes through the same
+    /// name-validation and collision-refusal path as `create_document`. Returns the
+    /// new document's path, plus the byte offset of a `${{cursor}}` placeholder in
+    /// its content, if any — see `templates::substitute`.
     pub fn create_document_from_template(
         &mut self,
         parent: &Path,
         filename: &str,
         template_path: &Path,
         date_format: &str,
-    ) -> io::Result<PathBuf> {
+        time_format: &str,
+    ) -> io::Result<(PathBuf, Option<usize>)> {
+        self.create_document_from_template_with_formats(
+            parent,
+            filename,
+            template_path,
+            &crate::templates::TemplateFormats {
+                date: date_format,
+                time: time_format,
+                adjacent_day: date_format,
+            },
+        )
+    }
+
+    /// [`Project::create_document_from_template`], against an explicit
+    /// `TemplateFormats` rather than always falling `${{previous_day}}`/
+    /// `${{next_day}}` back to `date_format` — what `open_or_create_daily_note`
+    /// uses to give those two its own daily-note filename format instead.
+    pub(crate) fn create_document_from_template_with_formats(
+        &mut self,
+        parent: &Path,
+        filename: &str,
+        template_path: &Path,
+        formats: &crate::templates::TemplateFormats,
+    ) -> io::Result<(PathBuf, Option<usize>)> {
         let contents = self.store.read_to_string(template_path)?;
         let name = filename.strip_suffix(".md").unwrap_or(filename);
-        let contents = crate::templates::substitute(&contents, name, date_format);
+        let (contents, cursor) = crate::templates::substitute(&contents, name, formats);
         self.write_new_document(parent, filename, &contents)
+            .map(|path| (path, cursor))
     }
 
     /// Create a new document under `parent` with `contents` written verbatim — no

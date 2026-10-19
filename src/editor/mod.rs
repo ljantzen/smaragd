@@ -185,6 +185,18 @@ impl EditorState {
         }
     }
 
+    /// Like `set_cursor_byte`, but also requests the visible `TextEdit` cursor jump
+    /// there on the next frame (`set_cursor_byte` alone only updates the logical
+    /// `cursor_byte` field — see `editor_panel::show`'s `take_pending_cursor` call,
+    /// which is what actually moves the rendered cursor). Used right after creating
+    /// a document from a template containing a `${{cursor}}` placeholder.
+    pub fn set_pending_cursor(&mut self, byte: usize) {
+        if let Some(tab) = self.active_tab_mut() {
+            tab.cursor_byte = byte;
+            tab.pending_cursor = Some(byte);
+        }
+    }
+
     pub fn pending_cursor(&self) -> Option<usize> {
         self.active_tab().and_then(|tab| tab.pending_cursor)
     }

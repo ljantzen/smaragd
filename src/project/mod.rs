@@ -3,6 +3,7 @@ pub mod attachments;
 mod binder_color_mode;
 mod bookmarks;
 mod create;
+mod daily_notes;
 mod folder_meta;
 mod meta;
 pub mod model;
@@ -1322,12 +1323,13 @@ mod tests {
         let contents = "---\ntype: Character\n---\n## Backstory\n\n";
         fs::write(&template_path, contents).unwrap();
 
-        let new_path = project
-            .create_document_from_template(dir.path(), "Aria", &template_path, "")
+        let (new_path, cursor) = project
+            .create_document_from_template(dir.path(), "Aria", &template_path, "", "")
             .unwrap();
 
         assert_eq!(fs::read_to_string(&new_path).unwrap(), contents);
         assert_eq!(fs::read_to_string(&template_path).unwrap(), contents);
+        assert_eq!(cursor, None);
     }
 
     #[test]
@@ -1337,8 +1339,8 @@ mod tests {
         let template_path = project.create_document(dir.path(), "Template").unwrap();
         fs::write(&template_path, "# ${{name}}\n\nStarted ${{date}}.\n").unwrap();
 
-        let new_path = project
-            .create_document_from_template(dir.path(), "Aria", &template_path, "%Y")
+        let (new_path, _) = project
+            .create_document_from_template(dir.path(), "Aria", &template_path, "%Y", "")
             .unwrap();
 
         let year = chrono::Local::now().format("%Y").to_string();
@@ -1357,7 +1359,7 @@ mod tests {
         fs::write(&existing, "original content").unwrap();
 
         let result =
-            project.create_document_from_template(dir.path(), "Existing", &template_path, "");
+            project.create_document_from_template(dir.path(), "Existing", &template_path, "", "");
 
         assert!(result.is_err());
         assert_eq!(fs::read_to_string(&existing).unwrap(), "original content");
@@ -1370,7 +1372,7 @@ mod tests {
         let template_path = project.create_document(dir.path(), "Template").unwrap();
 
         let result =
-            project.create_document_from_template(dir.path(), "../escaped", &template_path, "");
+            project.create_document_from_template(dir.path(), "../escaped", &template_path, "", "");
 
         assert!(result.is_err());
         assert!(!dir.path().parent().unwrap().join("escaped.md").exists());

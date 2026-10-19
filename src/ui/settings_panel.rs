@@ -129,6 +129,7 @@ pub const SETTINGS_INDEX: &[SettingsEntry] = {
         entry("Spell check in Focus Mode", "", SpellCheck),
         entry("Dictionaries", "download hunspell", SpellCheck),
         entry("Template date format", "${{date}} templates", Templates),
+        entry("Template time format", "${{time}} templates", Templates),
         entry(
             "Enable Git integration",
             "version control commit push",
@@ -703,7 +704,83 @@ fn show_templates_category(ui: &mut egui::Ui, settings: &mut Settings) -> bool {
         "Preview: {}",
         crate::templates::format_date(&settings.template_date_format)
     ));
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label("Time format for ${{time}}:");
+        changed |= ui
+            .text_edit_singleline(&mut settings.template_time_format)
+            .on_hover_text("A chrono strftime pattern, e.g. %H:%M. Blank uses %H:%M.")
+            .changed();
+    });
+    ui.weak(format!(
+        "Preview: {}",
+        crate::templates::format_time(&settings.template_time_format)
+    ));
+    ui.add_space(8.0);
+    ui.collapsing("Available placeholders", |ui| {
+        ui.weak(
+            "${{name}} — the name typed when creating the document.\n\
+             ${{date}} / ${{date:FORMAT}} — today's date, optionally with its own format.\n\
+             ${{time}} / ${{time:FORMAT}} — the current time, optionally with its own format.\n\
+             ${{previous_day}} / ${{next_day}} (also take :FORMAT) — yesterday's/tomorrow's date.\n\
+             ${{cursor}} — where the text cursor lands once the document is created.",
+        );
+    });
+    ui.add_space(4.0);
+    date_format_examples_ui(ui);
+    ui.add_space(4.0);
+    time_format_examples_ui(ui);
     changed
+}
+
+/// Common strftime date patterns as a live-previewed reference list (pattern on
+/// the left, today's date rendered through it on the right) — shown wherever a
+/// user edits a date-format field (Settings > Templates, and Project Settings >
+/// Daily Notes' folder/filename format, which share this same strftime engine —
+/// see `crate::templates`). A collapsing section, not inline, so it doesn't
+/// crowd out the field itself for anyone who already knows strftime.
+pub(crate) fn date_format_examples_ui(ui: &mut egui::Ui) {
+    const EXAMPLES: &[&str] = &[
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%d %B %Y",
+        "%B %-d, %Y",
+        "%A, %d %B %Y",
+        "%Y%m%d",
+        "%Y/%m",
+        "%Y/%m/%d",
+    ];
+    ui.collapsing("Example date formats", |ui| {
+        egui::Grid::new("date_format_examples_grid")
+            .num_columns(2)
+            .spacing([16.0, 4.0])
+            .show(ui, |ui| {
+                for pattern in EXAMPLES {
+                    ui.monospace(*pattern);
+                    ui.weak(crate::templates::format_date(pattern));
+                    ui.end_row();
+                }
+            });
+    });
+}
+
+/// [`date_format_examples_ui`], for time-format fields (Settings > Templates'
+/// `${{time}}` format today; nothing in Daily Notes uses a time format).
+pub(crate) fn time_format_examples_ui(ui: &mut egui::Ui) {
+    const EXAMPLES: &[&str] = &["%H:%M", "%H:%M:%S", "%I:%M %p"];
+    ui.collapsing("Example time formats", |ui| {
+        egui::Grid::new("time_format_examples_grid")
+            .num_columns(2)
+            .spacing([16.0, 4.0])
+            .show(ui, |ui| {
+                for pattern in EXAMPLES {
+                    ui.monospace(*pattern);
+                    ui.weak(crate::templates::format_time(pattern));
+                    ui.end_row();
+                }
+            });
+    });
 }
 
 /// Settings > Sync: the global half of sync setup (server, passphrase, on/off). Pairing a

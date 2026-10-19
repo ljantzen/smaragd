@@ -56,6 +56,8 @@ pub enum Command {
     Tag(String),
     /// Toggle spell check off/on — same as `ShortcutAction::ToggleSpellCheck`.
     ToggleSpellCheck,
+    /// Open today's daily note — same as `ShortcutAction::OpenDailyNote`.
+    Daily,
     /// A `:` command a loaded plugin registered (name, argument) — `app.rs` looks
     /// up which plugin owns `name` and runs it.
     Plugin(String, String),
@@ -87,7 +89,7 @@ pub enum CommandPromptEvent {
 /// point of completion is discoverability; short aliases like `w`/`q`/`x` still work
 /// when typed in full, they just aren't themselves completion targets.
 const COMMAND_NAMES: &[&str] = &[
-    "write", "quit", "wq", "open", "new", "dmode", "theme", "git", "find", "tag", "spell",
+    "write", "quit", "wq", "open", "new", "dmode", "theme", "git", "find", "tag", "spell", "daily",
 ];
 const DARK_MODE_CHOICES: &[&str] = &["dark", "light", "system"];
 const GIT_SUBCOMMANDS: &[&str] = &["enable", "commit", "push", "pull", "backup"];
@@ -128,6 +130,7 @@ fn parse_command(input: &str, plugin_commands: &[String]) -> Result<Command, Str
         "find" => Ok(Command::Find(rest.to_string())),
         "tag" => Ok(Command::Tag(rest.to_string())),
         "spell" => Ok(Command::ToggleSpellCheck),
+        "daily" => Ok(Command::Daily),
         other if plugin_commands.iter().any(|c| c == other) => {
             Ok(Command::Plugin(other.to_string(), rest.to_string()))
         }
@@ -585,6 +588,7 @@ mod tests {
             parse_command("spell", &[]),
             Ok(Command::ToggleSpellCheck)
         ));
+        assert!(matches!(parse_command("daily", &[]), Ok(Command::Daily)));
     }
 
     #[test]
@@ -660,10 +664,10 @@ mod tests {
             completions("w", &[], &[], &[], &[], true),
             vec!["wq", "write", "new"]
         );
-        // Likewise "dmode" (prefix) ahead of "find" (contains "d").
+        // Likewise "daily"/"dmode" (prefix, alphabetical) ahead of "find" (contains "d").
         assert_eq!(
             completions("d", &[], &[], &[], &[], true),
-            vec!["dmode", "find"]
+            vec!["daily", "dmode", "find"]
         );
     }
 

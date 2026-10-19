@@ -14,6 +14,7 @@
 | `:find <text>` | Open Find and Replace pre-filled with `<text>` |
 | `:tag <name>` | Open [Tags](tags.md) pre-filtered to documents carrying `<name>` |
 | `:spell` | Turn [spell check](spell-check.md) off, or back on in the project's last language |
+| `:daily` | Open today's daily note, creating it first if needed (see [Daily Notes](daily-notes.md)) |
 | `:git enable` | Turn on git support for this project |
 | `:git commit [message]` | Commit; prompts for a message if omitted |
 | `:git push` | Push |

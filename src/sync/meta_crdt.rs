@@ -60,13 +60,30 @@ const SCALAR_FIELDS: &[&str] = &[
     "sync_files",
     "story_grid_order_mode",
     "attachment_destination",
+    // Plain strings, not path-translated like `FOLDER_REF_FIELDS` below: a
+    // daily note's folder/filename format are meaningful even before the
+    // folder exists on disk (it's created on demand — see
+    // `Project::open_or_create_daily_note`), so there's no manifest id to
+    // translate through yet. Last-writer-wins means a concurrent rename of
+    // this folder on another device isn't followed, unlike `attachments_folder`
+    // — an accepted tradeoff for a path that's allowed not to exist.
+    "daily_notes_folder",
+    "daily_note_filename_format",
+    // Unlike `git_enabled`/`plugins_enabled`/`streak_enabled` (LOCAL_ONLY_FIELDS
+    // below), turning Daily Notes on/off needs no per-device action of its own —
+    // it's just a gate on the folder/format/template settings above, which
+    // already sync, so this does too for the same reason they do.
+    "daily_notes_enabled",
 ];
-/// `Option<String>` fields holding a folder's path key; synced as that folder's id.
+/// `Option<String>` fields holding a folder or document's path key; synced as
+/// that item's id (despite the name, the mechanism is path-generic — see
+/// `daily_note_template`, which refs a document).
 const FOLDER_REF_FIELDS: &[&str] = &[
     "type_picklist_folder",
     "pov_picklist_folder",
     "status_picklist_folder",
     "attachments_folder",
+    "daily_note_template",
 ];
 /// Prose fields, merged as text.
 const TEXT_FIELDS: &[&str] = &[
@@ -216,6 +233,10 @@ fn classify_exhaustively(meta: &ProjectMeta) {
         attachments_folder: _,
         clipboard_image_size_limit_enabled: _,
         clipboard_image_size_limit_mb: _,
+        daily_notes_enabled: _,
+        daily_notes_folder: _,
+        daily_note_filename_format: _,
+        daily_note_template: _,
     } = meta;
 }
 
