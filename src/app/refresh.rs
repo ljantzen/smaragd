@@ -409,7 +409,8 @@ mod metadata_refresh_tests {
         assert_eq!(app.metadata.draft.section_type, "Scene");
         assert_eq!(app.metadata.draft.tags_text, "foo");
 
-        *app.editor.buffer_mut() = "---\ntype: Scene\ntags:\n  - foo\n  -\n---\nBody.\n".to_string();
+        *app.editor.buffer_mut() =
+            "---\ntype: Scene\ntags:\n  - foo\n  -\n---\nBody.\n".to_string();
         app.refresh_metadata_if_needed();
 
         assert_eq!(
@@ -451,8 +452,7 @@ mod metadata_refresh_tests {
 
     #[test]
     fn the_draft_resyncs_once_the_block_parses_again() {
-        let (_dir, mut app, _path) =
-            app_with_document("---\ntags:\n  - foo\n---\nBody.\n");
+        let (_dir, mut app, _path) = app_with_document("---\ntags:\n  - foo\n---\nBody.\n");
 
         *app.editor.buffer_mut() = "---\ntags:\n  - foo\n  -\n---\nBody.\n".to_string();
         app.refresh_metadata_if_needed();

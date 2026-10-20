@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.6.0 — 2026-10-20
+
 - The Metadata panel's `Tags` row now also shows every `#tag` mentioned in the
   document's body, not just the frontmatter `tags:` list — as its own chip,
   without a **×**, since it isn't stored in `tags:` and can only be changed by

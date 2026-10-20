@@ -337,7 +337,11 @@ fn tags_chip_editor(
 
         let text_only_tags: Vec<&String> = inline_tags
             .iter()
-            .filter(|tag| !tags.iter().any(|existing| existing.eq_ignore_ascii_case(tag)))
+            .filter(|tag| {
+                !tags
+                    .iter()
+                    .any(|existing| existing.eq_ignore_ascii_case(tag))
+            })
             .collect();
         if !text_only_tags.is_empty() {
             // One per line rather than `horizontal_wrapped` (as the frontmatter
