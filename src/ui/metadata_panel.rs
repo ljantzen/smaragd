@@ -140,6 +140,13 @@ pub struct MetadataPicklists<'a> {
 /// buffer (not necessarily saved yet), recomputed by the caller every frame — so it's
 /// a read-only label, not another `draft` buffer, and stays current as the user types
 /// with no extra plumbing beyond this whole panel already re-rendering each frame.
+///
+/// `inline_tags` is `markdown::inline_tags` run over the same live buffer — every
+/// `#tag` written anywhere in the body, not just the frontmatter `tags:` list. These
+/// show up as extra, unremovable chips in the Tags row (see `tags_chip_editor`)
+/// rather than being folded into `draft.tags_text`/`DocumentMeta.tags`: a `#tag` in
+/// the body is edited by editing the body, not by this form, and `to_meta`/
+/// `write_back` must keep writing back only what the user actually typed here.
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
@@ -150,6 +157,8 @@ pub fn show(
     status_color: Option<egui::Color32>,
     pov_color: Option<egui::Color32>,
     known_tags: &[String],
+    inline_tags: &[String],
+    extra_fields: &[(String, String)],
 ) -> Option<MetadataFormEvent> {
     ui.heading("Metadata");
     ui.separator();
@@ -159,7 +168,7 @@ pub fn show(
         return None;
     }
 
-    metadata_fields_grid(
+    let event = metadata_fields_grid(
         ui,
         "document_metadata_grid",
         draft,
@@ -168,7 +177,38 @@ pub fn show(
         pov_color,
         Some(word_count),
         known_tags,
-    )
+        inline_tags,
+    );
+
+    extra_fields_section(ui, extra_fields);
+
+    event
+}
+
+/// A read-only "Other fields" section listing whatever `frontmatter::extra_fields`
+/// found — YAML keys in the document's frontmatter block that the form above
+/// doesn't have a field for (a custom key added by hand, or by another tool).
+/// They're shown here so they're not invisible, but aren't editable through this
+/// form: `write_back` already leaves them untouched no matter what the form does,
+/// and a free-text box per key would need to handle arbitrary YAML types (lists,
+/// nested mappings) this panel has no UI for elsewhere. A no-op (nothing rendered)
+/// when there are none, which is the common case.
+fn extra_fields_section(ui: &mut egui::Ui, extra_fields: &[(String, String)]) {
+    if extra_fields.is_empty() {
+        return;
+    }
+    ui.add_space(8.0);
+    ui.separator();
+    ui.label("Other fields");
+    egui::Grid::new("document_metadata_extra_grid")
+        .num_columns(2)
+        .show(ui, |ui| {
+            for (key, value) in extra_fields {
+                ui.label(format!("{key}:"));
+                ui.label(value);
+                ui.end_row();
+            }
+        });
 }
 
 /// The Type/Status/POV/Word-Count-Target/Tags `egui::Grid` body shared by
@@ -187,6 +227,7 @@ fn metadata_fields_grid(
     pov_color: Option<egui::Color32>,
     word_count: Option<usize>,
     known_tags: &[String],
+    inline_tags: &[String],
 ) -> Option<MetadataFormEvent> {
     let mut event = None;
     egui::Grid::new(id_salt).num_columns(2).show(ui, |ui| {
@@ -234,6 +275,7 @@ fn metadata_fields_grid(
             &mut draft.tags_text,
             &mut draft.tag_input,
             known_tags,
+            inline_tags,
         );
         ui.end_row();
     });
@@ -255,12 +297,19 @@ fn metadata_fields_grid(
 /// one more chip. A candidate that already matches an existing tag
 /// case-insensitively is silently ignored rather than added as a duplicate (see
 /// `add_tag`).
+///
+/// `inline_tags` (see `show`'s doc comment) renders below the frontmatter chips as
+/// its own unremovable row — only those not already case-insensitively present in
+/// `tags_text`, since a tag the user put in both places needs no second chip. They
+/// have no `×`: removing one here would have nothing to write back to, since it
+/// isn't a `tags_text` entry at all.
 fn tags_chip_editor(
     ui: &mut egui::Ui,
     id_salt: &str,
     tags_text: &mut String,
     tag_input: &mut String,
     known_tags: &[String],
+    inline_tags: &[String],
 ) {
     ui.vertical(|ui| {
         let tags = parse_tags_text(tags_text);
@@ -284,6 +333,26 @@ fn tags_chip_editor(
                     *tags_text = remove_tag(tags_text, index);
                 }
             });
+        }
+
+        let text_only_tags: Vec<&String> = inline_tags
+            .iter()
+            .filter(|tag| !tags.iter().any(|existing| existing.eq_ignore_ascii_case(tag)))
+            .collect();
+        if !text_only_tags.is_empty() {
+            // One per line rather than `horizontal_wrapped` (as the frontmatter
+            // chips above use): a chip's `Frame::group` doesn't report a fixed
+            // desired width, so in a Metadata dock tab narrower than one chip,
+            // wrapping would break *inside* the chip — letter by letter — rather
+            // than moving the whole chip to the next line.
+            for tag in text_only_tags {
+                egui::Frame::group(ui.style())
+                    .inner_margin(egui::Margin::symmetric(6, 2))
+                    .show(ui, |ui| {
+                        ui.label(format!("#{tag}"))
+                            .on_hover_text("Found in the document text, not frontmatter");
+                    });
+            }
         }
 
         let response = ui.add(
@@ -335,9 +404,11 @@ fn tags_chip_editor(
 /// Renders a folder's own metadata form — structurally identical to `show`
 /// minus the "Word count:" live readout (a folder has no single open buffer
 /// to compute one from, unlike a document; `word_count_target` itself is
-/// still kept, only the live count is dropped). Shown in place of `show` when
-/// the binder's non-root folder row is selected — see
-/// `app::MetadataState::target`/`ui::binder_panel::BinderEvent::SelectFolder`.
+/// still kept, only the live count is dropped) and minus `inline_tags` for the
+/// same reason (no single body to scan for `#tag` mentions either — passed as
+/// `&[]`). Shown in place of `show` when the binder's non-root folder row is
+/// selected — see `app::MetadataState::target`/
+/// `ui::binder_panel::BinderEvent::SelectFolder`.
 pub fn show_folder(
     ui: &mut egui::Ui,
     draft: &mut MetadataDraft,
@@ -357,6 +428,7 @@ pub fn show_folder(
         pov_color,
         None,
         known_tags,
+        &[],
     )
 }
 

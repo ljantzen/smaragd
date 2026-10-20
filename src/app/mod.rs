@@ -1960,6 +1960,7 @@ impl eframe::App for SmaragdApp {
                     tags_search_text: &mut self.tags.search_text,
                     tag_search_results: &self.tags.search_results,
                     metadata_draft: &mut self.metadata.draft,
+                    metadata_extra_fields: &self.metadata.extra_fields,
                     metadata_target: self.metadata.target.clone(),
                     folder_metadata_draft: &mut self.metadata.folder_draft,
                     document_status_cache: &self.document_status_cache,

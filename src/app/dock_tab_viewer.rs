@@ -107,6 +107,8 @@ pub(super) struct AppTabViewer<'a> {
     pub(super) tags_search_text: &'a mut String,
     pub(super) tag_search_results: &'a [(PathBuf, String)],
     pub(super) metadata_draft: &'a mut MetadataDraft,
+    /// See `MetadataState::extra_fields`.
+    pub(super) metadata_extra_fields: &'a [(String, String)],
     /// See `MetadataTarget` — which of Document/Project/Folder(path) the
     /// Metadata dock currently shows.
     pub(super) metadata_target: MetadataTarget,
@@ -490,6 +492,9 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     },
                     MetadataTarget::Document => {
                         let word_count = crate::frontmatter::count_words(self.editor.buffer());
+                        let inline_tags = crate::markdown::inline_tags(crate::frontmatter::strip(
+                            self.editor.buffer(),
+                        ));
                         let status_color = project
                             .and_then(|p| p.status_color_hex(&self.metadata_draft.status))
                             .and_then(crate::color_theme::parse_hex_color);
@@ -505,6 +510,8 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                             status_color,
                             pov_color,
                             &known_tags,
+                            &inline_tags,
+                            self.metadata_extra_fields,
                         ) {
                             self.actions.push(DockAction::Metadata(event));
                         }

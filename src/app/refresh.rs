@@ -24,6 +24,11 @@ pub(super) struct MetadataState {
     /// There's no "closed" state to represent here, since the Metadata dock
     /// tab's own presence in `dock_state` is what tracks visibility.
     pub(super) draft: MetadataDraft,
+    /// Every YAML key in the open document's frontmatter block that `draft`'s
+    /// fields don't cover (see `frontmatter::extra_fields`) — recomputed
+    /// alongside `draft` for the Metadata panel's read-only "Other fields"
+    /// section, so a custom key isn't silently invisible there.
+    pub(super) extra_fields: Vec<(String, String)>,
     /// Which document `draft`/`last_applied` were last computed for, so a later
     /// frame can tell whether `editor.open_path` has since changed.
     pub(super) computed_for: Option<PathBuf>,
@@ -280,30 +285,63 @@ impl WordCountState {
 impl SmaragdApp {
     /// Refresh `metadata.draft` from the open document's current frontmatter
     /// (parsed from the live buffer, not necessarily what's on disk yet, so it
-    /// reflects any unsaved edits to the block itself) whenever the open document
-    /// has changed since the last computation — a no-op most frames. Called before
-    /// the dock renders each frame, alongside `refresh_backlinks_if_needed`.
+    /// reflects any unsaved edits to the block itself) — either because the open
+    /// document just changed, or because the frontmatter block itself was just
+    /// edited directly in the Editor tab (typing into the raw `tags:`/`status:`
+    /// lines there, rather than through this dock's own form). A no-op most
+    /// frames otherwise. Called before the dock renders each frame, alongside
+    /// `refresh_backlinks_if_needed`.
+    ///
+    /// The second case is why this can't just gate on `computed_for` matching
+    /// `open_path` the way it used to: `apply_metadata_edits_if_changed` is the
+    /// *only* other writer of `last_applied`, and it always sets it to exactly
+    /// what it just wrote, so a `meta != last_applied` mismatch here can only mean
+    /// the buffer changed some other way — never a false positive from this
+    /// dock's own round trip through `write_back`/`parse`.
+    ///
+    /// On the *same* document, a block that doesn't currently parse (e.g. a
+    /// freshly-typed `-` starting a new `tags:` list entry, with no value after
+    /// it yet — valid YAML, but a null list entry `DocumentMeta` can't deserialize
+    /// into, same as any other momentarily-malformed in-progress edit) is left
+    /// alone rather than resynced: `parse`'s own silent-default-on-error fallback
+    /// is right for a one-shot read, but used here it would otherwise flash every
+    /// field empty for as many frames as the block stays unparseable — which to
+    /// the user looks like their edit just got rolled back. The draft simply
+    /// keeps showing whatever it last held until the block parses again.
     pub(super) fn refresh_metadata_if_needed(&mut self) {
         let open_path = self.editor.open_path().map(Path::to_path_buf);
-        if open_path == self.metadata.computed_for {
+        let document_switched = open_path != self.metadata.computed_for;
+        if document_switched {
+            self.metadata.computed_for = open_path.clone();
+            // Only set — never clear — the status message here: most document
+            // switches have nothing wrong with their frontmatter, and blanking
+            // whatever the status bar was already showing (e.g. a just-completed
+            // git operation) on every single switch would be far noisier than
+            // useful.
+            if open_path.is_some()
+                && let Some(err) = crate::frontmatter::validate(self.editor.buffer())
+            {
+                self.push_error_toast(err.to_string());
+            }
+        } else if open_path.is_some()
+            && crate::frontmatter::validate(self.editor.buffer()).is_some()
+        {
             return;
         }
+
         let meta = match &open_path {
             Some(_) => crate::frontmatter::parse(self.editor.buffer()),
             None => DocumentMeta::default(),
         };
-        self.metadata.draft = MetadataDraft::from_meta(&meta);
-        self.metadata.last_applied = meta;
-        self.metadata.computed_for = open_path.clone();
-        // Only set — never clear — the status message here: most document switches
-        // have nothing wrong with their frontmatter, and blanking whatever the
-        // status bar was already showing (e.g. a just-completed git operation) on
-        // every single switch would be far noisier than useful.
-        if open_path.is_some()
-            && let Some(err) = crate::frontmatter::validate(self.editor.buffer())
-        {
-            self.push_error_toast(err.to_string());
+        if !document_switched && meta == self.metadata.last_applied {
+            return;
         }
+        self.metadata.draft = MetadataDraft::from_meta(&meta);
+        self.metadata.extra_fields = match &open_path {
+            Some(_) => crate::frontmatter::extra_fields(self.editor.buffer()),
+            None => Vec::new(),
+        };
+        self.metadata.last_applied = meta;
     }
 
     /// Notice a live edit to `metadata.draft` (typed into the Metadata dock tab this
@@ -327,7 +365,126 @@ impl SmaragdApp {
         self.editor.mark_dirty();
         self.metadata.last_applied = current;
     }
+}
 
+#[cfg(test)]
+mod metadata_refresh_tests {
+    use super::*;
+
+    fn app_with_document(frontmatter: &str) -> (tempfile::TempDir, SmaragdApp, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project::initialize(dir.path()).unwrap();
+        let path = project.create_document(dir.path(), "Scene").unwrap();
+        std::fs::write(&path, frontmatter).unwrap();
+        let mut app = SmaragdApp::test_fixture();
+        app.project = Some(project);
+        app.editor.open(&path).unwrap();
+        app.refresh_metadata_if_needed();
+        (dir, app, path)
+    }
+
+    #[test]
+    fn a_direct_edit_to_the_buffer_s_frontmatter_resyncs_the_draft_without_a_document_switch() {
+        let (_dir, mut app, _path) = app_with_document("---\ntags: [foo]\n---\nBody.\n");
+        assert_eq!(app.metadata.draft.tags_text, "foo");
+
+        // Simulate typing directly into the frontmatter block in the Editor tab,
+        // rather than through the Metadata dock's own Tags field.
+        *app.editor.buffer_mut() = "---\ntags: [foo, bar]\n---\nBody.\n".to_string();
+        app.refresh_metadata_if_needed();
+
+        assert_eq!(app.metadata.draft.tags_text, "foo, bar");
+    }
+
+    #[test]
+    fn a_momentarily_invalid_frontmatter_block_does_not_blank_the_draft() {
+        // The regression this guards against: typing a bare `-` to start a new
+        // `tags:` list entry is valid YAML (a null sequence item) but fails to
+        // deserialize into `DocumentMeta` (`tags: Vec<String>` can't hold a
+        // null) — `parse`'s silent-default-on-error fallback would otherwise
+        // wipe every field in the panel for as long as the block stays
+        // unparseable, which looks exactly like the edit got rolled back.
+        let (_dir, mut app, _path) =
+            app_with_document("---\ntype: Scene\ntags:\n  - foo\n---\nBody.\n");
+        assert_eq!(app.metadata.draft.section_type, "Scene");
+        assert_eq!(app.metadata.draft.tags_text, "foo");
+
+        *app.editor.buffer_mut() = "---\ntype: Scene\ntags:\n  - foo\n  -\n---\nBody.\n".to_string();
+        app.refresh_metadata_if_needed();
+
+        assert_eq!(
+            app.metadata.draft.section_type, "Scene",
+            "the draft should keep showing its last-good values, not blank out"
+        );
+        assert_eq!(app.metadata.draft.tags_text, "foo");
+    }
+
+    #[test]
+    fn typing_a_bare_dash_to_start_a_new_tag_is_not_immediately_rewritten_away() {
+        // The actual regression report: typing `-` to start a new `tags:` list
+        // entry got the keystroke rolled back right away. The root cause was
+        // `frontmatter::parse` keeping that entry as a blank tag — which
+        // `MetadataDraft::to_meta()` then always dropped again (same filtering
+        // `tags_chip_editor` applies to a stray double comma), so the very next
+        // frame's `apply_metadata_edits_if_changed` saw `draft.to_meta() !=
+        // last_applied` and rewrote the block without the blank entry, deleting
+        // the `-` the user had just typed before they could type the tag name
+        // after it.
+        let (_dir, mut app, _path) = app_with_document("---\ntags:\n  - foo\n---\nBody.\n");
+        let edited = "---\ntags:\n  - foo\n  -\n---\nBody.\n".to_string();
+        *app.editor.buffer_mut() = edited.clone();
+
+        app.refresh_metadata_if_needed();
+        app.apply_metadata_edits_if_changed();
+
+        assert_eq!(
+            app.editor.buffer(),
+            edited,
+            "the just-typed `-` line must survive untouched"
+        );
+        assert!(
+            !app.editor.dirty(),
+            "nothing the user did through the Metadata panel changed, so there's \
+             nothing for this to have rewritten the buffer over"
+        );
+    }
+
+    #[test]
+    fn the_draft_resyncs_once_the_block_parses_again() {
+        let (_dir, mut app, _path) =
+            app_with_document("---\ntags:\n  - foo\n---\nBody.\n");
+
+        *app.editor.buffer_mut() = "---\ntags:\n  - foo\n  -\n---\nBody.\n".to_string();
+        app.refresh_metadata_if_needed();
+        assert_eq!(app.metadata.draft.tags_text, "foo");
+
+        *app.editor.buffer_mut() = "---\ntags:\n  - foo\n  - bar\n---\nBody.\n".to_string();
+        app.refresh_metadata_if_needed();
+        assert_eq!(app.metadata.draft.tags_text, "foo, bar");
+    }
+
+    #[test]
+    fn switching_to_a_document_with_invalid_frontmatter_still_resets_the_draft() {
+        let (dir, mut app, _first) = app_with_document("---\ntags: [foo]\n---\nBody.\n");
+        let second_path = app
+            .project
+            .as_mut()
+            .unwrap()
+            .create_document(dir.path(), "Second")
+            .unwrap();
+        std::fs::write(&second_path, "---\ntags:\n  -\n---\nOther body.\n").unwrap();
+
+        app.editor.open(&second_path).unwrap();
+        app.refresh_metadata_if_needed();
+
+        assert_eq!(
+            app.metadata.draft.tags_text, "",
+            "a document switch must always resync, even into invalid frontmatter"
+        );
+    }
+}
+
+impl SmaragdApp {
     /// `refresh_metadata_if_needed`'s equivalent for `MetadataTarget::Folder`:
     /// refresh `metadata.folder_draft` from `Project::folder_meta` whenever
     /// `target` names a folder `folder_computed_for` doesn't match yet.

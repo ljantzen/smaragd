@@ -96,7 +96,21 @@ fn parse_yaml_block(yaml: &str) -> DocumentMeta {
     if yaml.trim().is_empty() {
         return DocumentMeta::default();
     }
-    serde_norway::from_str(yaml).unwrap_or_default()
+    let mut meta: DocumentMeta = serde_norway::from_str(yaml).unwrap_or_default();
+    // A block-style `tags:` list entry with nothing after its `-` yet (valid YAML —
+    // it deserializes as an empty string, not an error) is dropped rather than kept
+    // as a blank tag: besides being meaningless on its own, keeping it here would
+    // make this lossy against `MetadataDraft`'s own round trip, which always drops
+    // blank entries (`tags_chip_editor`'s whole premise — see `parse_tags_text`). If
+    // this `meta` ever became `app::MetadataState::last_applied` with the blank entry
+    // still in it (e.g. because the user typed that bare `-` directly into the
+    // frontmatter block in the Editor, which `refresh_metadata_if_needed` picks up
+    // live), `MetadataDraft::to_meta()` would always compare as different from it —
+    // `apply_metadata_edits_if_changed` would treat that mismatch as a real edit and
+    // immediately rewrite the block, deleting the in-progress `-` entry the instant
+    // it was typed, before its tag name could even be entered.
+    meta.tags.retain(|tag| !tag.trim().is_empty());
+    meta
 }
 
 /// Parse the YAML frontmatter block at the top of `contents`, if any. Never fails —
@@ -108,6 +122,65 @@ pub fn parse(contents: &str) -> DocumentMeta {
     extract_block(contents)
         .map(|fm| parse_yaml_block(fm.yaml))
         .unwrap_or_default()
+}
+
+/// The five YAML keys `DocumentMeta` itself reads (`write_back` touches the same
+/// five, hardcoded there rather than via this constant) — `extra_fields` needs
+/// them to know which keys in the raw mapping to leave out as *not* "extra".
+const KNOWN_KEYS: &[&str] = &["type", "status", "pov", "word_count_target", "tags"];
+
+/// `contents`' frontmatter keys that `DocumentMeta` doesn't know about, in their
+/// original order, each paired with a one-line display rendering of its value —
+/// for the Metadata panel to show read-only, so a custom key (hand-added, or by
+/// another tool) is visible there rather than silently invisible even though
+/// `write_back` already preserves it on disk either way. Empty when there's no
+/// frontmatter block, it's empty, or it doesn't parse as a mapping.
+pub fn extra_fields(contents: &str) -> Vec<(String, String)> {
+    let Some(fm) = extract_block(contents) else {
+        return Vec::new();
+    };
+    if fm.yaml.trim().is_empty() {
+        return Vec::new();
+    }
+    let Ok(mapping) = serde_norway::from_str::<serde_norway::Mapping>(fm.yaml) else {
+        return Vec::new();
+    };
+    mapping
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let key = key.as_str()?.to_string();
+            if KNOWN_KEYS.contains(&key.as_str()) {
+                return None;
+            }
+            Some((key, display_scalar(&value)))
+        })
+        .collect()
+}
+
+/// A one-line, human-readable rendering of an extra frontmatter value for
+/// `extra_fields` — a plain string/number/bool shows as itself; a list or
+/// mapping renders flow-style (`[a, b]`/`{a: 1, b: 2}`) since `serde_norway`
+/// only emits those nested block-style (one entry per line), which wouldn't
+/// fit the panel's single-line rows.
+fn display_scalar(value: &serde_norway::Value) -> String {
+    match value {
+        serde_norway::Value::String(s) => s.clone(),
+        serde_norway::Value::Number(n) => n.to_string(),
+        serde_norway::Value::Bool(b) => b.to_string(),
+        serde_norway::Value::Null => String::new(),
+        serde_norway::Value::Sequence(items) => {
+            let rendered: Vec<String> = items.iter().map(display_scalar).collect();
+            format!("[{}]", rendered.join(", "))
+        }
+        serde_norway::Value::Mapping(entries) => {
+            let rendered: Vec<String> = entries
+                .iter()
+                .map(|(key, value)| format!("{}: {}", display_scalar(key), display_scalar(value)))
+                .collect();
+            format!("{{{}}}", rendered.join(", "))
+        }
+        serde_norway::Value::Tagged(tagged) => display_scalar(&tagged.value),
+    }
 }
 
 /// A diagnostic for a frontmatter block whose YAML content failed to parse — the
@@ -615,5 +688,45 @@ mod tests {
         };
         let result = write_back("Body.\n", &meta);
         assert_eq!(parse(&result).word_count_target, Some(2500));
+    }
+
+    #[test]
+    fn extra_fields_returns_nothing_for_a_block_of_only_known_keys() {
+        let contents = "---\ntype: Scene\nstatus: draft\n---\nBody.\n";
+        assert_eq!(extra_fields(contents), Vec::new());
+    }
+
+    #[test]
+    fn extra_fields_returns_a_custom_scalar_key_alongside_known_ones() {
+        let contents = "---\nstatus: draft\ncustom_field: keep me\n---\nBody.\n";
+        assert_eq!(
+            extra_fields(contents),
+            vec![("custom_field".to_string(), "keep me".to_string())]
+        );
+    }
+
+    #[test]
+    fn extra_fields_renders_a_list_value_as_flow_style_yaml() {
+        let contents = "---\neditors: [Alice, Bob]\n---\nBody.\n";
+        assert_eq!(
+            extra_fields(contents),
+            vec![("editors".to_string(), "[Alice, Bob]".to_string())]
+        );
+    }
+
+    #[test]
+    fn extra_fields_is_empty_when_there_is_no_frontmatter_block() {
+        assert_eq!(extra_fields("Just a heading.\n"), Vec::new());
+    }
+
+    #[test]
+    fn parse_drops_a_blank_tags_list_entry_rather_than_keeping_it_as_an_empty_tag() {
+        // A `-` with nothing after it yet (e.g. a new list entry someone just
+        // started typing directly in the frontmatter block) deserializes
+        // successfully as an empty string, not a parse error — see
+        // `parse_yaml_block`'s doc comment for why that empty entry must not
+        // survive into `DocumentMeta.tags`.
+        let contents = "---\ntags:\n  - foo\n  -\n---\nBody.\n";
+        assert_eq!(parse(contents).tags, vec!["foo".to_string()]);
     }
 }
