@@ -484,7 +484,20 @@ fn render_paragraph(
         let font = ps.body_font(ps.style.body.size_pt as f32);
         return render_spans_wrapped(ui, ps, spans, font, ps.text_color, base_dir);
     }
-    if let Some(drop_cap) = drop_cap_here.then_some(ps.style.drop_cap).flatten() {
+    // A `#tag` is an atomic token, not prose — slicing its leading `#` off to
+    // use as the sunk cap's enlarged initial (as happens below for an ordinary
+    // first word) strands a bare, unstyled `#` glyph with the tag's own
+    // colored/underlined pill orphaned below it, looking broken rather than
+    // like a capital letter. Skip the drop cap when the paragraph's first
+    // actual content is a tag; it falls through to the plain paragraph path
+    // below instead, same as any other non-opening tag paragraph.
+    let opens_with_tag = spans
+        .iter()
+        .find(|s| !s.text.is_empty())
+        .is_some_and(|s| s.tag.is_some());
+    if !opens_with_tag
+        && let Some(drop_cap) = drop_cap_here.then_some(ps.style.drop_cap).flatten()
+    {
         render_paragraph_with_drop_cap(ui, ps, spans, drop_cap, ui.available_width());
         return None;
     }
@@ -878,6 +891,31 @@ fn render_spans_wrapped(
 
         for span in spans {
             if let Some(image) = &span.image {
+                if is_remote_image(&image.src) {
+                    // No network image loader is installed, so a `http(s)://` image
+                    // can never actually load (see `render_image`'s doc comment) —
+                    // rather than hand it to `egui::Image` for a doomed load attempt
+                    // (which paints a near-illegible "⚠" glyph truncated to the tiny
+                    // placeholder size egui picks before any size hint is known),
+                    // show the alt text inline as part of the normal text flow.
+                    let alt = if span.text.is_empty() {
+                        image.src.as_str()
+                    } else {
+                        span.text.as_str()
+                    };
+                    append_span(
+                        &mut job,
+                        ps,
+                        &Span {
+                            text: alt.to_string(),
+                            link: Some(image.src.clone()),
+                            ..Default::default()
+                        },
+                        base_font.clone(),
+                        base_color,
+                    );
+                    continue;
+                }
                 if !job.text.is_empty() {
                     if let Some(activation) =
                         render_text_run(ui, ps, std::mem::take(&mut job), &targets)
@@ -1023,10 +1061,18 @@ fn append_span(job: &mut LayoutJob, ps: &PreviewStyle, span: &Span, font: FontId
     job.append(&span.text, 0.0, format);
 }
 
-/// Load and display an image, resolving a relative `src` against `base_dir`. Loading
-/// state and failures are handled by egui's own image widget (spinner while pending,
-/// `alt` text if it can't be loaded) — remote `http(s)://` images won't load, since no
-/// network image loader is installed, and will just show their alt text.
+/// Whether `src` is a `http://`/`https://` URL — one `render_image` can never
+/// actually load, since no network image loader is installed (see
+/// `render_spans_wrapped`, which routes these to plain alt text instead of here).
+fn is_remote_image(src: &str) -> bool {
+    src.starts_with("http://") || src.starts_with("https://")
+}
+
+/// Load and display a local/embedded image, resolving a relative `src` against
+/// `base_dir`. Loading state and genuine failures (missing file, bad path, ...) are
+/// handled by egui's own image widget: a spinner while pending, a warning glyph plus
+/// `alt` text if it can't be loaded. Remote `http(s)://` images are filtered out
+/// before reaching here — see `is_remote_image`.
 fn render_image(ui: &mut egui::Ui, image: &ImageRef, alt: &str, base_dir: ImageContext<'_>) {
     let uri = resolve_image_uri(&image.src, base_dir);
     let alt_text = if alt.is_empty() {
@@ -1083,6 +1129,15 @@ mod tests {
             dir: None,
             project_root: None,
         }
+    }
+
+    #[test]
+    fn is_remote_image_flags_only_http_and_https() {
+        assert!(is_remote_image("https://example.com/video"));
+        assert!(is_remote_image("http://example.com/pic.png"));
+        assert!(!is_remote_image("data:image/png;base64,abc"));
+        assert!(!is_remote_image("file:///tmp/pic.png"));
+        assert!(!is_remote_image("images/pic.png"));
     }
 
     #[test]
@@ -1285,6 +1340,23 @@ mod tests {
             wikilink: None,
             tag: None,
             image: None,
+        }
+    }
+
+    fn image_span(text: &str, src: &str) -> Span {
+        Span {
+            text: text.to_string(),
+            bold: false,
+            italic: false,
+            strikethrough: false,
+            code: false,
+            link: None,
+            wikilink: None,
+            tag: None,
+            image: Some(ImageRef {
+                src: src.to_string(),
+                title: String::new(),
+            }),
         }
     }
 
@@ -1608,6 +1680,34 @@ mod tests {
     }
 
     #[test]
+    fn remote_image_renders_as_plain_text_instead_of_a_doomed_image_load() {
+        // No network image loader is installed, so `![Text](https://...)` can never
+        // actually load — it must fall back to readable, normally-flowed alt text
+        // rather than `render_image`'s tiny unreadable "⚠" glyph.
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let styles = style::built_in_styles();
+        let style = style::find(&styles, "manuscript").unwrap();
+        let spans = [image_span("A video", "https://example.com/watch")];
+
+        crate::egui_test_support::run_ui_and_discard(
+            &ctx,
+            egui::RawInput::default(),
+            |ui| {
+                let ps = preview_style(style);
+                render_spans_wrapped(
+                    ui,
+                    &ps,
+                    &spans,
+                    ps.body_font(12.0),
+                    ps.text_color,
+                    NO_IMAGE_CONTEXT,
+                );
+            },
+        );
+    }
+
+    #[test]
     fn append_span_leaves_plain_text_without_a_background() {
         let styles = style::built_in_styles();
         let style = style::find(&styles, "manuscript").unwrap();
@@ -1744,6 +1844,50 @@ mod tests {
             let ps = PreviewStyle::new(ui.visuals(), style, &[], &[], 1.0);
             render_paragraph_with_drop_cap(ui, &ps, &spans, drop_cap, 300.0);
         });
+    }
+
+    /// Regression test: a document whose very first paragraph is nothing but an
+    /// inline `#tag` (e.g. a tag line right under the frontmatter) used to have
+    /// its leading `#` sliced off and painted as the sunk drop cap's enlarged
+    /// initial letter, leaving a bare `#` glyph with no tag styling floating
+    /// above the now-detached, still-pill-colored rest of the tag name. A tag
+    /// paragraph opening the document must render as one ordinary (non-drop-capped)
+    /// paragraph instead, same as a tag paragraph anywhere else in the document.
+    #[test]
+    fn a_tag_opening_the_document_does_not_get_drop_capped() {
+        let ctx = egui::Context::default();
+        crate::editor_font::install(&ctx);
+        let styles = style::built_in_styles();
+        let style = style::find(&styles, "trade_paperback").unwrap();
+        assert!(style.drop_cap.is_some());
+        let spans = [tag_span("the-rest-is-politics-leading")];
+
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let ps = PreviewStyle::new(ui.visuals(), style, &[], &[], 1.0);
+                render_paragraph(ui, &ps, &spans, NO_IMAGE_CONTEXT, true);
+            });
+        });
+
+        let text_shapes: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::epaint::Shape::Text(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            text_shapes.len(),
+            1,
+            "expected the whole tag to render as one text run, not split into a \
+             separate drop-cap glyph plus a remainder run"
+        );
+        assert_eq!(
+            text_shapes[0].galley.text(),
+            "#the-rest-is-politics-leading"
+        );
+        output.textures_delta.clear();
     }
 
     #[test]
