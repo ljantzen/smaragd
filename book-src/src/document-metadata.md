@@ -20,9 +20,11 @@ Open **`View > Metadata`** (or **`Ctrl+Shift+M`**) to edit these fields through 
 | `status` | Free-form drafting status — "draft", "revised", "final", or anything you want. |
 | `pov` | Point-of-view character, free text. |
 | `word_count_target` | A target word count for this document. |
-| `tags` | A list of free-form tags, edited as removable pill-style chips rather than typed YAML — click **×** on a chip to remove it, and type into the adjoining box to add one: a comma or Enter commits it, and an autocomplete list of every tag already used elsewhere in the project appears as you type (click a suggestion to accept it). See [Tags](tags.md) for combining these with inline `#tag` mentions and searching by tag. |
+| `tags` | A list of free-form tags, edited as removable pill-style chips rather than typed YAML — click **×** on a chip to remove it, and type into the adjoining box to add one: a comma or Enter commits it, and an autocomplete list of every tag already used elsewhere in the project appears as you type (click a suggestion to accept it). Any `#tag` mentioned in the document's body (not just this list) also shows up here as its own chip, without a **×** — it's not stored in `tags:`, so there's nothing for this form to remove; edit the body text to change it instead. See [Tags](tags.md) for how these two kinds of tags combine project-wide and how to search by tag. |
 
-Any other YAML key you've hand-added to the block (or that some other tool wrote) is left alone — Smaragd never round-trips the whole block through its own data model, so unrelated keys survive a save untouched. The frontmatter block is stripped from the Markdown preview so it doesn't render as a garbled paragraph.
+Any other YAML key you've hand-added to the block (or that some other tool wrote) is left alone — Smaragd never round-trips the whole block through its own data model, so unrelated keys survive a save untouched — and shown read-only in an **Other fields** section below the form, so a custom key isn't invisible just because there's no dedicated row for it. The frontmatter block is stripped from the Markdown preview so it doesn't render as a garbled paragraph.
+
+Edits also flow the other way: hand-editing the frontmatter block directly (in the Editor, or from outside Smaragd) updates this form immediately, the same as editing through it.
 
 The Metadata panel also shows a **Word count** — a live, read-only count of the open document's body (frontmatter excluded), recomputed continuously from whatever's currently in the editor, not just what was last saved.
 

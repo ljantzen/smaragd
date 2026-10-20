@@ -12,7 +12,7 @@ Folders can carry the same five metadata fields a document's own frontmatter doe
 | `Word Count Target` | A target word count for everything nested inside this folder. |
 | `Tags` | Free-form tags, edited the same removable pill-style chips a document's are. |
 
-See [Document Metadata](document-metadata.md) for the fuller description of what each field means and how the chip editor works — it's the identical form, just without a live **Word count** readout, since a folder has no body of its own to count.
+See [Document Metadata](document-metadata.md) for the fuller description of what each field means and how the chip editor works — it's the identical form, just without a live **Word count** readout, an **Other fields** section, or inline-`#tag` chips in `Tags`, since a folder has no file or body of its own for any of those three to read from.
 
 ## What actually uses it
 

@@ -5,6 +5,18 @@ this file.
 
 ## Unreleased
 
+- The Metadata panel's `Tags` row now also shows every `#tag` mentioned in the
+  document's body, not just the frontmatter `tags:` list — as its own chip,
+  without a **×**, since it isn't stored in `tags:` and can only be changed by
+  editing the body text itself.
+- Any YAML key in a document's frontmatter block that the Metadata panel
+  doesn't have a dedicated field for (hand-added, or written by another tool)
+  now shows up read-only under a new **Other fields** section, instead of
+  being invisible there — it was always preserved on save either way.
+- Fixed the Metadata panel going stale when a document's frontmatter block was
+  hand-edited directly (in the Editor, or outside Smaragd) rather than through
+  the panel's own form — it now picks up such edits immediately, the same as
+  switching documents already did.
 - Added a **project sanity check**, run once right after a project opens: it
   compares `.smaragd/project.json`'s metadata (manual ordering, folder
   roles/metadata, trash records, picklist/attachments folder choices, …)
