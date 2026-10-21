@@ -495,8 +495,7 @@ fn render_paragraph(
         .iter()
         .find(|s| !s.text.is_empty())
         .is_some_and(|s| s.tag.is_some());
-    if !opens_with_tag
-        && let Some(drop_cap) = drop_cap_here.then_some(ps.style.drop_cap).flatten()
+    if !opens_with_tag && let Some(drop_cap) = drop_cap_here.then_some(ps.style.drop_cap).flatten()
     {
         render_paragraph_with_drop_cap(ui, ps, spans, drop_cap, ui.available_width());
         return None;
@@ -1690,21 +1689,17 @@ mod tests {
         let style = style::find(&styles, "manuscript").unwrap();
         let spans = [image_span("A video", "https://example.com/watch")];
 
-        crate::egui_test_support::run_ui_and_discard(
-            &ctx,
-            egui::RawInput::default(),
-            |ui| {
-                let ps = preview_style(style);
-                render_spans_wrapped(
-                    ui,
-                    &ps,
-                    &spans,
-                    ps.body_font(12.0),
-                    ps.text_color,
-                    NO_IMAGE_CONTEXT,
-                );
-            },
-        );
+        crate::egui_test_support::run_ui_and_discard(&ctx, egui::RawInput::default(), |ui| {
+            let ps = preview_style(style);
+            render_spans_wrapped(
+                ui,
+                &ps,
+                &spans,
+                ps.body_font(12.0),
+                ps.text_color,
+                NO_IMAGE_CONTEXT,
+            );
+        });
     }
 
     #[test]
