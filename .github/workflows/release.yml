@@ -76,6 +76,16 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Extract release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v ver="v$VERSION " '
+            $0 ~ "^## " ver { found=1; next }
+            /^## / { if (found) exit }
+            found { print }
+          ' RELEASENOTES.md > release-notes-body.md
+
       - name: Build release binary
         run: cargo build --release --locked
 
@@ -221,6 +231,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: dist/*
+          body_path: release-notes-body.md
           prerelease: ${{ steps.version.outputs.prerelease }}
           generate_release_notes: true
 
@@ -254,6 +265,17 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Extract release notes
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v ver="v$VERSION " '
+            $0 ~ "^## " ver { found=1; next }
+            /^## / { if (found) exit }
+            found { print }
+          ' RELEASENOTES.md > release-notes-body.md
+
       - name: Build release binary
         run: cargo build --release --locked
 
@@ -276,6 +298,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: dist/*
+          body_path: release-notes-body.md
           prerelease: ${{ steps.version.outputs.prerelease }}
           generate_release_notes: true
 
@@ -304,6 +327,16 @@ jobs:
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Extract release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v ver="v$VERSION " '
+            $0 ~ "^## " ver { found=1; next }
+            /^## / { if (found) exit }
+            found { print }
+          ' RELEASENOTES.md > release-notes-body.md
 
       - name: Build release binaries (arm64 + x86_64)
         run: |
@@ -362,5 +395,6 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: dist/*
+          body_path: release-notes-body.md
           prerelease: ${{ steps.version.outputs.prerelease }}
           generate_release_notes: true
