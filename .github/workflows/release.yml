@@ -80,6 +80,9 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          # Depends on scripts/release.sh always generating entries as
+          # "## v<version> — <date>" — if that header format ever changes,
+          # update this match too.
           awk -v ver="v$VERSION " '
             $0 ~ "^## " ver { found=1; next }
             /^## / { if (found) exit }
@@ -270,6 +273,9 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          # Depends on scripts/release.sh always generating entries as
+          # "## v<version> — <date>" — if that header format ever changes,
+          # update this match too.
           awk -v ver="v$VERSION " '
             $0 ~ "^## " ver { found=1; next }
             /^## / { if (found) exit }
@@ -332,6 +338,9 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          # Depends on scripts/release.sh always generating entries as
+          # "## v<version> — <date>" — if that header format ever changes,
+          # update this match too.
           awk -v ver="v$VERSION " '
             $0 ~ "^## " ver { found=1; next }
             /^## / { if (found) exit }
