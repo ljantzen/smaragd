@@ -4,7 +4,7 @@ reviewed Hunspell dictionary smaragd can download on request, and
 `placeholders/`, the tiny bundled fallbacks below. The actual per-language
 dictionary files (`<language_code>/`, each with its own `LICENSE` and
 `SOURCE`) live in a separate repo,
-https://github.com/ljantzen/smaragd-dictionaries, not here — see that repo's
+https://github.com/smaragd-editor/smaragd-dictionaries, not here — see that repo's
 own NOTICE for why redistributing them there, as genuinely separate files, is
 fine even where one (`nb_NO`, GPL-2.0-only) would be a real problem if it
 were ever combined or linked into smaragd's own binary.

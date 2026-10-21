@@ -7,7 +7,7 @@
 //! this app's existing Helix-inspired conventions.
 //!
 //! Real dictionaries are hosted in a separate repo,
-//! [smaragd-dictionaries](https://github.com/ljantzen/smaragd-dictionaries)
+//! [smaragd-dictionaries](https://github.com/smaragd-editor/smaragd-dictionaries)
 //! (`<language_code>/` — each with its own `LICENSE`/`SOURCE`, see that
 //! repo's README.md for why redistributing them is fine: they're
 //! independent, unmodified, un-linked data files, GPLv2's own "mere
@@ -176,7 +176,7 @@ impl SpellCheckLanguage {
 /// story. Every field here is metadata (source, license, expected hashes),
 /// never the copyrighted word-list content itself — the actual files live
 /// in the separate
-/// [smaragd-dictionaries](https://github.com/ljantzen/smaragd-dictionaries)
+/// [smaragd-dictionaries](https://github.com/smaragd-editor/smaragd-dictionaries)
 /// repo, `<language_code>/`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CatalogEntry {
@@ -832,7 +832,7 @@ mod tests {
     }
 
     /// Every catalog entry's real dictionary files live in the separate
-    /// [smaragd-dictionaries](https://github.com/ljantzen/smaragd-dictionaries)
+    /// [smaragd-dictionaries](https://github.com/smaragd-editor/smaragd-dictionaries)
     /// repo, not this one (see this module's doc comment for why) — so unlike
     /// when they were bundled here, checking them requires real network
     /// access; ignored by default, same convention
@@ -902,7 +902,7 @@ mod tests {
     /// same convention `collab::net`'s iroh-relay tests use.
     #[test]
     #[ignore = "requires real internet access -- download_urls point at \
-                raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/..."]
+                raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/..."]
     fn download_dictionary_fetches_and_verifies_the_real_english_dictionary() {
         assert!(
             is_misspelled("wonderful", SpellCheckLanguage::English),

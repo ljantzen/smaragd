@@ -9,7 +9,7 @@ into the smaragd binary itself.
 The dictionary files it indexes — the actual third-party, independently
 licensed `.aff`/`.dic` word lists, each with its own `LICENSE`/`SOURCE` — are
 **not** in this repository. They live in their own repo,
-[smaragd-dictionaries](https://github.com/ljantzen/smaragd-dictionaries), so
+[smaragd-dictionaries](https://github.com/smaragd-editor/smaragd-dictionaries), so
 smaragd's own git history doesn't have to carry several dozen megabytes of
 data it never compiles or links against. `download_dictionary`
 (`src/spellcheck.rs`) fetches them from there at runtime and verifies each

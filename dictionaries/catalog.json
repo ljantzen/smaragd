@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "notes": "Catalog of Hunspell dictionaries smaragd hosts and can download on request (Settings > Spell Check > Dictionaries, src/spellcheck.rs, GitHub issue #47). This file itself is compiled into the smaragd binary (include_str!), but each entry's actual dictionary files live in a separate repo, https://github.com/ljantzen/smaragd-dictionaries/<language_code>/, each with its own SOURCE (exact upstream commit pinned, never a moving branch) and LICENSE (the upstream license text, verbatim) -- see that repo's README.md for the full explanation of why redistributing a non-GPL or even GPL-2.0-only dictionary is fine (GPLv2's own 'mere aggregation' allowance: these stay independent, unmodified, un-linked data files, never compiled or linked into the application). `redistributable`/`review_status` reflect this project's own reading of the upstream license/README files at the pinned commit, not a legal opinion for any other use case.",
+  "notes": "Catalog of Hunspell dictionaries smaragd hosts and can download on request (Settings > Spell Check > Dictionaries, src/spellcheck.rs, GitHub issue #47). This file itself is compiled into the smaragd binary (include_str!), but each entry's actual dictionary files live in a separate repo, https://github.com/smaragd-editor/smaragd-dictionaries/<language_code>/, each with its own SOURCE (exact upstream commit pinned, never a moving branch) and LICENSE (the upstream license text, verbatim) -- see that repo's README.md for the full explanation of why redistributing a non-GPL or even GPL-2.0-only dictionary is fine (GPLv2's own 'mere aggregation' allowance: these stay independent, unmodified, un-linked data files, never compiled or linked into the application). `redistributable`/`review_status` reflect this project's own reading of the upstream license/README files at the pinned commit, not a legal opinion for any other use case.",
   "dictionary_source_policy": {
     "description": "Only individually reviewed dictionary artifacts -- pinned to an exact upstream commit, with their license text preserved verbatim and their copyright holder identified -- are distributed. A dictionary whose review_status starts with \"blocked\" is never offered for download regardless of what its own license technically permits.",
     "application_license": "GPL-3.0-or-later",
@@ -26,8 +26,8 @@
         "en_US.dic": "f0b1a234bd178bdd01875b2a392a9647f888b8fe879f79c52aae62c2759b3647"
       },
       "download_urls": {
-        "en_US.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/en_US/en_US.aff",
-        "en_US.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/en_US/en_US.dic"
+        "en_US.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/en_US/en_US.aff",
+        "en_US.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/en_US/en_US.dic"
       }
     },
     {
@@ -49,8 +49,8 @@
         "en_GB.dic": "869fe17ba4ee4b5401c60a666ee2d6a3dcc237f460b7294435df1cc6a799aa57"
       },
       "download_urls": {
-        "en_GB.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/en_GB/en_GB.aff",
-        "en_GB.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/en_GB/en_GB.dic"
+        "en_GB.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/en_GB/en_GB.aff",
+        "en_GB.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/en_GB/en_GB.dic"
       }
     },
     {
@@ -72,8 +72,8 @@
         "nb_NO.dic": "e801e2c5e592e2c2b7d63685f3bffdd4db9615912f0826cd1ae0f4116c7d359d"
       },
       "download_urls": {
-        "nb_NO.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/nb_NO/nb_NO.aff",
-        "nb_NO.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/nb_NO/nb_NO.dic"
+        "nb_NO.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/nb_NO/nb_NO.aff",
+        "nb_NO.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/nb_NO/nb_NO.dic"
       }
     },
     {
@@ -95,8 +95,8 @@
         "nn_NO.dic": "eaf1dc7ee7c848358df9aa231640b054ca4e388f2a870185528e4b229626faa6"
       },
       "download_urls": {
-        "nn_NO.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/nn_NO/nn_NO.aff",
-        "nn_NO.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/nn_NO/nn_NO.dic"
+        "nn_NO.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/nn_NO/nn_NO.aff",
+        "nn_NO.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/nn_NO/nn_NO.dic"
       }
     },
     {
@@ -118,8 +118,8 @@
         "ka_GE.dic": "5963f268e996f1e27e17163873b4d32f41fae2a1e5bef0117126caefe62f5857"
       },
       "download_urls": {
-        "ka_GE.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/ka_GE/ka_GE.aff",
-        "ka_GE.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/ka_GE/ka_GE.dic"
+        "ka_GE.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/ka_GE/ka_GE.aff",
+        "ka_GE.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/ka_GE/ka_GE.dic"
       }
     },
     {
@@ -141,8 +141,8 @@
         "lt_LT.dic": "a751750b040623cf408cf1a3b6f6336141b55ac9519e54068dbeaa52eb395ccd"
       },
       "download_urls": {
-        "lt_LT.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/lt_LT/lt_LT.aff",
-        "lt_LT.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/lt_LT/lt_LT.dic"
+        "lt_LT.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/lt_LT/lt_LT.aff",
+        "lt_LT.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/lt_LT/lt_LT.dic"
       }
     },
     {
@@ -164,8 +164,8 @@
         "ru_RU.dic": "f6047416a0204adbecf3a451b874ec8a97ee37e2cbc714466ef04d8dbcc0d6fc"
       },
       "download_urls": {
-        "ru_RU.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/ru_RU/ru_RU.aff",
-        "ru_RU.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/ru_RU/ru_RU.dic"
+        "ru_RU.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/ru_RU/ru_RU.aff",
+        "ru_RU.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/ru_RU/ru_RU.dic"
       }
     },
     {
@@ -187,8 +187,8 @@
         "fa_IR.dic": "314f31e059994f26e8016c834b14dfd10f74834b3f623a6040265b8f2a9dddab"
       },
       "download_urls": {
-        "fa_IR.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/fa_IR/fa_IR.aff",
-        "fa_IR.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/fa_IR/fa_IR.dic"
+        "fa_IR.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/fa_IR/fa_IR.aff",
+        "fa_IR.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/fa_IR/fa_IR.dic"
       }
     },
     {
@@ -210,8 +210,8 @@
         "ie.dic": "f44d9fad8b6a206f2d517624e70dc60426747d118f6674bd16a71cfedb8a6e6d"
       },
       "download_urls": {
-        "ie.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/ie/ie.aff",
-        "ie.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/ie/ie.dic"
+        "ie.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/ie/ie.aff",
+        "ie.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/ie/ie.dic"
       }
     },
     {
@@ -233,8 +233,8 @@
         "tk_TM.dic": "4c75d6e1c9f4e4780bd1a00828b37b8826232db4b204a96b30b841f94d2a0b81"
       },
       "download_urls": {
-        "tk_TM.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/tk_TM/tk_TM.aff",
-        "tk_TM.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/tk_TM/tk_TM.dic"
+        "tk_TM.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/tk_TM/tk_TM.aff",
+        "tk_TM.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/tk_TM/tk_TM.dic"
       }
     },
     {
@@ -256,8 +256,8 @@
         "fr_FR.dic": "984e933237bc1224a48f42828233be9b03228260ef67aa8e2bdddcd03a26230d"
       },
       "download_urls": {
-        "fr_FR.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/fr_FR/fr_FR.aff",
-        "fr_FR.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/fr_FR/fr_FR.dic"
+        "fr_FR.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/fr_FR/fr_FR.aff",
+        "fr_FR.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/fr_FR/fr_FR.dic"
       }
     },
     {
@@ -279,8 +279,8 @@
         "es_ES.dic": "907f786a8ceb3456722b20ad91dd4dbe99c5c16e45015ea63155e36f26b06d2c"
       },
       "download_urls": {
-        "es_ES.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/es_ES/es_ES.aff",
-        "es_ES.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/es_ES/es_ES.dic"
+        "es_ES.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/es_ES/es_ES.aff",
+        "es_ES.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/es_ES/es_ES.dic"
       }
     },
     {
@@ -302,8 +302,8 @@
         "pt_BR.dic": "32e2edd83541d58613bcc83ef731a79aadf85ed57e977a16c6b5f711a7a36cee"
       },
       "download_urls": {
-        "pt_BR.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/pt_BR/pt_BR.aff",
-        "pt_BR.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/pt_BR/pt_BR.dic"
+        "pt_BR.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/pt_BR/pt_BR.aff",
+        "pt_BR.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/pt_BR/pt_BR.dic"
       }
     },
     {
@@ -325,8 +325,8 @@
         "pt_PT.dic": "fcac21564163586df74ba88cde362bb75560548b35bcaa780558c8f97f43de04"
       },
       "download_urls": {
-        "pt_PT.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/pt_PT/pt_PT.aff",
-        "pt_PT.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/pt_PT/pt_PT.dic"
+        "pt_PT.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/pt_PT/pt_PT.aff",
+        "pt_PT.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/pt_PT/pt_PT.dic"
       }
     },
     {
@@ -348,8 +348,8 @@
         "sv_SE.dic": "540ff8d0d9b05aae66dd919625d3a0bd25026d1e157027e6602e5dd11a07b645"
       },
       "download_urls": {
-        "sv_SE.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/sv_SE/sv_SE.aff",
-        "sv_SE.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/sv_SE/sv_SE.dic"
+        "sv_SE.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/sv_SE/sv_SE.aff",
+        "sv_SE.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/sv_SE/sv_SE.dic"
       }
     },
     {
@@ -371,8 +371,8 @@
         "da_DK.dic": "adae86bb2bec940a3166d9e4456826af9ea74eb29c93b6bf150a732d41332ed2"
       },
       "download_urls": {
-        "da_DK.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/da_DK/da_DK.aff",
-        "da_DK.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/da_DK/da_DK.dic"
+        "da_DK.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/da_DK/da_DK.aff",
+        "da_DK.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/da_DK/da_DK.dic"
       }
     },
     {
@@ -394,8 +394,8 @@
         "de_DE.dic": "b5c781a0cf6f285fb6b9b8ab02fbea104b987104a1efdda8a835837e89e3ec77"
       },
       "download_urls": {
-        "de_DE.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/de_DE/de_DE.aff",
-        "de_DE.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/de_DE/de_DE.dic"
+        "de_DE.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/de_DE/de_DE.aff",
+        "de_DE.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/de_DE/de_DE.dic"
       }
     },
     {
@@ -417,8 +417,8 @@
         "nl_NL.dic": "be192fdc36efd39dde0fb9a5a113143e0a906782e81ed68a74a710edced378d0"
       },
       "download_urls": {
-        "nl_NL.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/nl_NL/nl_NL.aff",
-        "nl_NL.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/nl_NL/nl_NL.dic"
+        "nl_NL.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/nl_NL/nl_NL.aff",
+        "nl_NL.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/nl_NL/nl_NL.dic"
       }
     },
     {
@@ -440,8 +440,8 @@
         "pl_PL.dic": "74b6155391025419967c26913541b55b36d58e80b1028037d4a0b8ddcb18d0b7"
       },
       "download_urls": {
-        "pl_PL.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/pl_PL/pl_PL.aff",
-        "pl_PL.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/pl_PL/pl_PL.dic"
+        "pl_PL.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/pl_PL/pl_PL.aff",
+        "pl_PL.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/pl_PL/pl_PL.dic"
       }
     },
     {
@@ -463,8 +463,8 @@
         "it_IT.dic": "b1348fbdb6f441ea9dd7e33b2cfcb96ead39ccd5e48bf894972774cd5aa86abb"
       },
       "download_urls": {
-        "it_IT.aff": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/it_IT/it_IT.aff",
-        "it_IT.dic": "https://raw.githubusercontent.com/ljantzen/smaragd-dictionaries/main/it_IT/it_IT.dic"
+        "it_IT.aff": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/it_IT/it_IT.aff",
+        "it_IT.dic": "https://raw.githubusercontent.com/smaragd-editor/smaragd-dictionaries/main/it_IT/it_IT.dic"
       }
     }
   ]
