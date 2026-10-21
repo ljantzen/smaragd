@@ -1,6 +1,6 @@
 # Git Integration
 
-Git works alongside [Sync](sync.md): git commits whatever is on disk at that moment, while sync moves the same files between your devices. Sync's own bookkeeping (your device's access token and state) is kept outside the project folder, so it never lands in a commit.
+Git works alongside [Sync](sync.md): git commits whatever is on disk at that moment, while sync moves the same files between your devices. Sync's own bookkeeping (your device's access token and state) is kept outside the project folder, so it never lands in a commit. The two don't coordinate with each other, though — see [Sync and git don't always mix cleanly](sync.md#sync-and-git-dont-always-mix-cleanly) for the ways that can cause real conflicts.
 
 **`Versions` menu**, or **`:git`** commands:
 

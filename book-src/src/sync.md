@@ -128,7 +128,17 @@ Files on your side: a small, non-secret file `.smaragd/sync.json` in the project
 
 ## Sync is not a backup
 
-Sync copies *every* change, including a mistake or a deletion, to all your devices. It keeps no history you can go back to. Keep [backups](backups.md) (and optionally [git](git-integration.md)) switched on as well. Sync and git coexist without trouble: git commits whatever is currently on disk, and sync moves whatever is on disk between devices.
+Sync copies *every* change, including a mistake or a deletion, to all your devices. It keeps no history you can go back to. Keep [backups](backups.md) (and optionally [git](git-integration.md)) switched on as well. Sync and git can be used together — git commits whatever is currently on disk, and sync moves whatever is on disk between devices — but see [below](#sync-and-git-dont-always-mix-cleanly) for ways that combination can still bite you.
+
+## Sync and git don't always mix cleanly
+
+Sync moves whatever is currently on disk; it has no idea about git history, and git history itself isn't synced — each device keeps its own independent set of commits over the same files. That mostly works, but watch for:
+
+- **Unresolved git conflict markers get synced too.** If a `git pull` on one device leaves a file with unresolved `<<<<<<<`/`=======`/`>>>>>>>` conflict markers in it, Sync treats that just like any other edit and copies it to every other device. Smaragd's one-time sanity check, run right after a project opens, flags any document still containing them, but it's still worth resolving a git conflict *before* your next sync pass rather than after.
+- **Git history can diverge between devices.** Because commits aren't synced, two devices can build up their own separate commit history over the same, sync-kept-identical files — more likely with [auto-commit](git-integration.md#auto-commit) switched on. Pushing both histories to the same remote, or pulling one into the other, needs an ordinary git merge to reconcile them; Sync only keeps the *files* in step, not the *commits*.
+- **An automatic commit can capture someone else's change.** Auto-commit fires on its own timer, independent of when a sync pass lands. That's harmless in itself — git just commits whatever happens to be on disk — but a commit you expect to record your own edit can sometimes also pick up a change that just arrived from another device.
+
+If you rely on both, keep [backups](backups.md) on regardless, and treat conflict markers and diverging git history as things to watch for yourself — Sync doesn't resolve either for you.
 
 ## If you run the server
 
