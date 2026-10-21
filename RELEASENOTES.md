@@ -5,6 +5,8 @@ this file.
 
 ## Unreleased
 
+## v1.6.1 — 2026-10-21
+
 ## v1.6.0 — 2026-10-20
 
 - The Metadata panel's `Tags` row now also shows every `#tag` mentioned in the
