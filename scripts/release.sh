@@ -224,4 +224,4 @@ git push origin "$tag"
 
 echo
 echo "Released $tag."
-echo "Watch the build: gh run watch --repo ljantzen/smaragd"
+echo "Watch the build: gh run watch --repo smaragd-editor/smaragd"

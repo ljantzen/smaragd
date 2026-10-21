@@ -27,13 +27,13 @@ jobs:
           PERSONAL_ACCESS_TOKEN: ${{ secrets.CLA_BOT_PAT }}
         with:
           path-to-signatures: signatures/version1/cla.json
-          path-to-document: https://github.com/ljantzen/smaragd/blob/main/CLA.md
+          path-to-document: https://github.com/smaragd-editor/smaragd/blob/main/CLA.md
           branch: cla-signatures
           allowlist: ljantzen,dependabot[bot],dependabot-preview[bot]
           custom-pr-sign-comment: I have read and agree to the Smaragd CLA (CLA.md).
           custom-notsigned-prcomment: |
             Thank you for your contribution! Before this pull request can be merged,
-            please agree to our [Contributor License Agreement](https://github.com/ljantzen/smaragd/blob/main/CLA.md)
+            please agree to our [Contributor License Agreement](https://github.com/smaragd-editor/smaragd/blob/main/CLA.md)
             by posting the following as a comment on this pull request:
 
             > I have read and agree to the Smaragd CLA (CLA.md).
