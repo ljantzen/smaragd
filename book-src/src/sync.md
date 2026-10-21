@@ -15,7 +15,7 @@ Sync is one of three ways Smaragd can move a project around, and they do differe
 
 ## What you need
 
-- **A sync server.** It's a single small program you run on a machine you control — a home server, a VPS, a Raspberry Pi — either as a Docker container or directly, for example as a systemd service. Setting one up is covered in the server's own [self-hosting guide](https://github.com/smaragd-editor/smaragd/tree/main/crates/smaragd-sync-server); it takes a few minutes with Docker. If someone else runs one for you, you just need its address.
+- **A sync server.** It's a single small program you run on a machine you control — a home server, a VPS, a Raspberry Pi — either as a Docker container or directly, for example as a systemd service. Setting one up is covered in the server's own [self-hosting guide](https://github.com/smaragd-editor/smaragd-sync/tree/main/smaragd-sync-server); it takes a few minutes with Docker. If someone else runs one for you, you just need its address.
 - **A passphrase** you choose. It encrypts your data, and you enter the *same* one on every device.
 
 ## Setting it up
@@ -142,7 +142,7 @@ If you rely on both, keep [backups](backups.md) on regardless, and treat conflic
 
 ## If you run the server
 
-The server's own [self-hosting guide](https://github.com/smaragd-editor/smaragd/tree/main/crates/smaragd-sync-server) has the details; the short version of what to expect:
+The server's own [self-hosting guide](https://github.com/smaragd-editor/smaragd-sync/tree/main/smaragd-sync-server) has the details; the short version of what to expect:
 
 - **It looks after itself.** It clears out expired pairing codes, deletes vaults whose last device left 30 days ago (adjustable), and keeps its database file small, all in the background. `smaragd-sync-server admin list` shows every vault, and `admin delete-vault`, `purge-empty` and `vacuum` clean up by hand; run them with `docker exec` (or directly, without Docker) while the server is running.
 - **You still need to** back up its data volume, install updates, and watch disk space. Deleted files' encrypted history stays on the server until its vault is deleted.
@@ -157,7 +157,7 @@ The server's own [self-hosting guide](https://github.com/smaragd-editor/smaragd/
 
 - **"The sync passphrase doesn't match this vault"** — the passphrase here differs from the one used when the vault was created. Correct it in Settings > Sync; sync restarts by itself.
 - **"This device was removed from the vault"** — another device revoked it, or the vault was deleted. Choose *Stop syncing this project*, then join again with a new ticket if you want.
-- **Create Vault says the server only lets its administrator create vaults** — enter the server's admin token when asked (it's set by whoever runs the server). If you run the server yourself and have lost the token, the server's [self-hosting guide](https://github.com/smaragd-editor/smaragd/tree/main/crates/smaragd-sync-server#troubleshooting) shows how to look it up or set a new one; existing vaults are unaffected.
+- **Create Vault says the server only lets its administrator create vaults** — enter the server's admin token when asked (it's set by whoever runs the server). If you run the server yourself and have lost the token, the server's [self-hosting guide](https://github.com/smaragd-editor/smaragd-sync/tree/main/smaragd-sync-server#troubleshooting) shows how to look it up or set a new one; existing vaults are unaffected.
 - **"That doesn't look like a pairing ticket"** — copy the whole ticket, with nothing added or missing. Tickets are single-use and expire after 10 minutes; make a new one if in doubt.
 - **"The last pass failed: … vault is full"** — the vault has reached the storage limit set by whoever runs the server (1 GB by default). Smaragd already compacts old history on its own, so a vault that is still full holds that much current material; the server's operator needs to raise its quota (`SMARAGD_SYNC_VAULT_QUOTA_MB`). Nothing is lost meanwhile: your edits wait on this device and go up once there is room.
 - **"… has a change too large to upload"** — a single save added more than about 8 MB to one document (for example a very large paste, or an image pasted in as text), which is more than the server accepts in one piece. Ordinary writing never comes close — 8 MB is over a million words. Only that document stops syncing; everything else carries on, and your other devices show it as an empty file for now. Remove the oversized content and save — it then syncs normally again, with nothing lost. Until you do, the Sync panel keeps the warning up.

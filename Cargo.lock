@@ -6636,12 +6636,12 @@ dependencies = [
 [[package]]
 name = "smaragd-sync-protocol"
 version = "0.1.0"
+source = "git+https://github.com/smaragd-editor/smaragd-sync#2c97863f7b51f87f3bea75bff0822dd3e2b6ed54"
 dependencies = [
  "base64 0.23.1",
  "bs58",
  "postcard",
  "serde",
- "serde_json",
  "thiserror 2.0.21",
  "uuid",
 ]

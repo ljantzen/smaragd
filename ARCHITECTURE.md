@@ -103,17 +103,31 @@ Binder, Backlinks, Tags, Metadata, Editor, Preview, Corkboard, Story Grid, Belie
 
 Sync keeps a project identical across a user's own devices through a **blind** server: it stores and relays sealed CRDT updates and can read none of them (contrast `collab/`, which is live, peer-to-peer and serverless). All merging happens on the clients. Files are CRDT documents (`sync/crdt.rs`); a manifest CRDT (`sync/manifest.rs`) maps stable document ids to paths, so renames and deletes merge too. Binary files, when a project opts in, are manifest entries of kind `file` whose update logs hold whole encrypted versions instead of CRDT updates (`sync/engine/binaries.rs`); the server can't tell the two apart. See the module docs in `src/sync/engine.rs` for the reconcile pass, the join/adoption rules, and the safety rails.
 
-The repository is a Cargo workspace with **three deliberately separate lockfiles**:
+The server, the shared protocol crate, and the end-to-end tests live in separate
+repos:
 
 ```
-Cargo.toml / Cargo.lock       the desktop app (+ crates/smaragd-sync-protocol as a workspace member)
-crates/
-  smaragd-sync-protocol/      wire types shared by client and server: ids, encrypted-envelope layout + AAD, the SyncTicket pairing code, HTTP API request/response types (its rustdoc is the protocol reference)
-  smaragd-sync-server/        the axum + SQLite server, its Dockerfile/compose file and self-hosting README. Its OWN workspace and Cargo.lock. Also runs unattended housekeeping (`maintenance.rs`: expired pairing codes, vaults with no devices left after a retention period, vacuum when worthwhile) and has an operator CLI (`admin.rs`: list/delete-vault/purge-empty/vacuum/maintenance, destructive ones need --yes)
-  smaragd-sync-e2e/           end-to-end tests: the real client + engine (from the app crate) against the real server. Its OWN workspace and Cargo.lock
+smaragd-editor/smaragd            this repo: the desktop app
+smaragd-editor/smaragd-sync       smaragd-sync-protocol/  wire types shared by client and server: ids,
+                                                           encrypted-envelope layout + AAD, the SyncTicket
+                                                           pairing code, HTTP API request/response types
+                                                           (its rustdoc is the protocol reference)
+                                   smaragd-sync-server/    the axum + SQLite server, its Dockerfile/compose
+                                                           file and self-hosting README. Also runs unattended
+                                                           housekeeping (maintenance.rs: expired pairing codes,
+                                                           vaults with no devices left after a retention
+                                                           period, vacuum when worthwhile) and has an operator
+                                                           CLI (admin.rs: list/delete-vault/purge-empty/vacuum/
+                                                           maintenance, destructive ones need --yes)
+smaragd-editor/smaragd-sync-e2e   end-to-end tests: the real client + engine (via a git dependency on this
+                                   repo) against the real server (via a git dependency on smaragd-sync)
 ```
 
-The server and e2e crates are `exclude`d from the root workspace because `scripts/update-flatpak-sources.sh` feeds the *entire* root `Cargo.lock` to the flatpak generator (CI diffs the result): server dependencies (axum, rusqlite, ...) must not enter it. The e2e crate is separate from the server so the server's Docker build (which cannot see the app) never has to resolve a path dependency on the app. `just check` runs all three; `.github/workflows/sync-server.yml` runs the server and e2e jobs and builds/publishes the image.
+This repo depends on `smaragd-sync-protocol` as a **git dependency** (see root
+`Cargo.toml`) rather than a path dependency, since the crate no longer lives in this
+tree. `smaragd-sync-e2e` is kept out of both other repos because it links the whole
+desktop app *and* the server: neither this repo's Flatpak-vendored lockfile nor
+`smaragd-sync`'s Docker build should have to resolve the other's dependency tree.
 
 Where state lives: nothing secret goes inside the project folder (`git.rs` runs `git add -A`; `backup.rs` zips `.smaragd/`). The engine's CRDT state goes through `sync::state::StateStore` (an OS data-dir location, chosen by the app), keys are derived in memory from the passphrase and never written to disk, and the server holds only hashes of device tokens and pairing codes.
 

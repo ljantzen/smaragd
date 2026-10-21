@@ -48,7 +48,7 @@ Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https
 - Dashboard: session count/length, word count, and documents created/modified over time, plus activity-by-day-of-week and activity-by-hour charts 
 - Fully remappable keyboard shortcuts 
 - Real-time peer-to-peer private collaborative editing with no shared server infrastructure
-- *(Experimental)* Background **sync** of a project across your own devices through a small server you host yourself (Docker image included, with built-in housekeeping and an admin CLI): end-to-end encrypted, so the server only ever stores ciphertext, with edits from different devices merged automatically — see the [self-hosting guide](crates/smaragd-sync-server/README.md) 
+- *(Experimental)* Background **sync** of a project across your own devices through a small server you host yourself (Docker image included, with built-in housekeeping and an admin CLI): end-to-end encrypted, so the server only ever stores ciphertext, with edits from different devices merged automatically — see the [self-hosting guide](https://github.com/smaragd-editor/smaragd-sync/blob/main/smaragd-sync-server/README.md) 
 - Spell check with on-demand Hunspell dictionary downloads for 20 languages, right-click suggestions, and "Add to Dictionary" for names and invented words
 
 ## Running
@@ -62,17 +62,17 @@ cargo run
 A [`justfile`](justfile) wraps the common commands (`just --list` to see all of them):
 
 ```sh
-just check         # fmt-check + clippy + test (app, sync server, end-to-end) — same as CI, run before committing
+just check         # fmt-check + clippy + test — same as CI, run before committing
 just test          # cargo test --workspace --all-targets --all-features
 just clippy        # cargo clippy --workspace --all-targets --all-features -- -D warnings
 just fmt           # cargo fmt --all
-just server-check  # fmt-check + clippy + test for the sync server (its own Cargo workspace)
-just e2e           # end-to-end tests: the real sync client against the real server
-just docker-build  # build the sync server's Docker image
-just docker-smoke  # build it and smoke-test it as a running container, as CI does
 ```
 
-The sync server and its end-to-end tests are separate Cargo workspaces under `crates/` (see [ARCHITECTURE.md](ARCHITECTURE.md#sync-self-hosted-server) for why); the server has its own [self-hosting guide](crates/smaragd-sync-server/README.md).
+The sync server, the wire protocol it shares with the client, and its end-to-end
+tests live in separate repos (see [ARCHITECTURE.md](ARCHITECTURE.md#sync-self-hosted-server)
+for why): [smaragd-sync](https://github.com/smaragd-editor/smaragd-sync) (server +
+protocol, with its own [self-hosting guide](https://github.com/smaragd-editor/smaragd-sync/blob/main/smaragd-sync-server/README.md))
+and [smaragd-sync-e2e](https://github.com/smaragd-editor/smaragd-sync-e2e).
 
 (Equivalent plain `cargo` commands work too, if you don't have [`just`](https://github.com/casey/just) installed — see the justfile for the exact invocations.)
 
