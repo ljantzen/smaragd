@@ -1,6 +1,6 @@
 # Installation
 
-Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https://github.com/ljantzen/smaragd/releases/latest). They're built by CI, not signed with a paid code-signing certificate, so Windows and macOS both show a first-run warning — this is expected, not a sign of a broken or tampered download.
+Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https://github.com/smaragd-editor/smaragd/releases/latest). They're built by CI, not signed with a paid code-signing certificate, so Windows and macOS both show a first-run warning — this is expected, not a sign of a broken or tampered download.
 
 ## Windows
 
@@ -24,7 +24,7 @@ macOS tags anything downloaded via a browser with a quarantine attribute (`com.a
 
 ## Linux
 
-Four package formats are published on the [Releases page](https://github.com/ljantzen/smaragd/releases/latest):
+Four package formats are published on the [Releases page](https://github.com/smaragd-editor/smaragd/releases/latest):
 
 - **AppImage** — portable, no installation. Needs its executable bit set before it will run:
 
@@ -52,7 +52,7 @@ Four package formats are published on the [Releases page](https://github.com/lja
 
 ## Building from source
 
-Building it yourself with `cargo install` or `cargo run` (see the [README](https://github.com/ljantzen/smaragd#running)) only places the binary — none of the steps above that give the packaged builds their icon happen. What you get instead depends on the platform, because of a limitation in the windowing library Smaragd uses (winit), which only supports setting a window icon at runtime on **Windows and X11** — it's a no-op on Wayland and macOS:
+Building it yourself with `cargo install` or `cargo run` (see the [README](https://github.com/smaragd-editor/smaragd#running)) only places the binary — none of the steps above that give the packaged builds their icon happen. What you get instead depends on the platform, because of a limitation in the windowing library Smaragd uses (winit), which only supports setting a window icon at runtime on **Windows and X11** — it's a no-op on Wayland and macOS:
 
 | Platform | `cargo install`/`cargo run` | Packaged build (above) |
 |---|---|---|

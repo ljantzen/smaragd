@@ -17,7 +17,7 @@
     </p>
   </description>
   <launchable type="desktop-id">io.github.ljantzen.Smaragd.desktop</launchable>
-  <url type="homepage">https://github.com/ljantzen/smaragd</url>
-  <url type="bugtracker">https://github.com/ljantzen/smaragd/issues</url>
+  <url type="homepage">https://github.com/smaragd-editor/smaragd</url>
+  <url type="bugtracker">https://github.com/smaragd-editor/smaragd/issues</url>
   <content_rating type="oars-1.1" />
 </component>

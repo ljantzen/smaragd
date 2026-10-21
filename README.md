@@ -4,11 +4,11 @@ Smaragd is a native desktop authoring tool for writers.
 
 A project is a folder of `.md` files and subfolders marked with a `.smaragd/project.json` file. There is no proprietary bundle format, but not just any folder either. `File > New Project` creates one from scratch; `File > Open Project` on a folder that hasn't been used by smaragd before offers to set it up in place rather than refusing outright. `.smaragd/project.json` stores manuscript ordering and folder roles that the filesystem can't express; if its *contents* are corrupt (as opposed to the marker being absent, which instead means "not a project yet") smaragd falls back to defaults rather than erroring.
 
-See the [User Manual](https://ljantzen.github.io/smaragd/manual/) for a full user-facing guide to every feature below.
+See the [User Manual](https://smaragd-editor.github.io/smaragd/manual/) for a full user-facing guide to every feature below.
 
 ## Installing
 
-Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https://github.com/ljantzen/smaragd/releases/latest). They aren't signed with a paid code-signing certificate, so Windows and macOS show a first-run warning — expected, not a broken download. See [Installation](https://ljantzen.github.io/smaragd/manual/installation.html) in the user manual for how to get past it on each OS.
+Prebuilt binaries for Linux, Windows, and macOS are on the [Releases page](https://github.com/smaragd-editor/smaragd/releases/latest). They aren't signed with a paid code-signing certificate, so Windows and macOS show a first-run warning — expected, not a broken download. See [Installation](https://smaragd-editor.github.io/smaragd/manual/installation.html) in the user manual for how to get past it on each OS.
 
 ## Features
 
@@ -107,7 +107,7 @@ The source of truth is a single raster image, [`assets/smaragd-icon.png`](assets
 
 Ways to close that gap for `cargo install`/`cargo run` users, roughly in order of effort, none currently implemented:
 
-1. **Point people at the packaged builds instead.** The [Releases page](https://github.com/ljantzen/smaragd/releases/latest) already gets this right everywhere; `cargo install` is a build-from-source path, not the primary distribution channel.
+1. **Point people at the packaged builds instead.** The [Releases page](https://github.com/smaragd-editor/smaragd/releases/latest) already gets this right everywhere; `cargo install` is a build-from-source path, not the primary distribution channel.
 2. **A self-install subcommand** (e.g. `smaragd --install-desktop-file`) that writes a `.desktop` file and the icon PNG into `~/.local/share/applications` and `~/.local/share/icons/hicolor/256x256/apps/`, then refreshes the desktop/icon caches if the relevant tools are present. Both source files can be embedded in the binary via `include_bytes!`/`include_str!`, so no extra assets are needed at install time. This would fix X11 and Wayland alike, since both key off a real `.desktop` file — but only if the running window's app-id/WM class matches the installed file's name, which nothing currently sets explicitly on Linux (see the `ViewportBuilder` in `src/main.rs`); that would need checking too.
 3. **macOS has no `.desktop`-file equivalent fix** — Dock icon support fundamentally wants a real `.app` bundle. Either keep documenting that macOS users should use `Smaragd.app` from Releases rather than `cargo install`, or set the Dock icon programmatically at startup via `NSApplication.setApplicationIconImage` (e.g. through `objc2-app-kit`), which works for a bare binary without a bundle but is macOS-specific code for a cosmetic gap on an unsupported install path.
 

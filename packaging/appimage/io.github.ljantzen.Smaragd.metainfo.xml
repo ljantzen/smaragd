@@ -23,12 +23,12 @@
     that filename.
   -->
   <launchable type="desktop-id">smaragd.desktop</launchable>
-  <url type="homepage">https://github.com/ljantzen/smaragd</url>
-  <url type="bugtracker">https://github.com/ljantzen/smaragd/issues</url>
+  <url type="homepage">https://github.com/smaragd-editor/smaragd</url>
+  <url type="bugtracker">https://github.com/smaragd-editor/smaragd/issues</url>
   <screenshots>
     <screenshot type="default">
       <caption>Binder, editor, corkboard, and dockable panels</caption>
-      <image>https://ljantzen.github.io/smaragd/white-desktop.png</image>
+      <image>https://smaragd-editor.github.io/smaragd/white-desktop.png</image>
     </screenshot>
   </screenshots>
   <content_rating type="oars-1.1" />

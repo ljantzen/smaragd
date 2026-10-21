@@ -5,4 +5,4 @@ It borrows ideas from Scrivener (binder, folder roles, templates), Longform/Obsi
 Lisa Cron's *Story Genius* (structured story cards), and Helix (color themes, `:` command prompt).
 
 This manual covers what the app does and how to use it. For internals (source layout, build/test commands),
-see the main [README](https://github.com/ljantzen/smaragd#readme) and [ARCHITECTURE.md](https://github.com/ljantzen/smaragd/blob/main/ARCHITECTURE.md).
+see the main [README](https://github.com/smaragd-editor/smaragd#readme) and [ARCHITECTURE.md](https://github.com/smaragd-editor/smaragd/blob/main/ARCHITECTURE.md).

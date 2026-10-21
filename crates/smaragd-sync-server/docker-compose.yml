@@ -17,7 +17,7 @@ services:
       context: ../..
       dockerfile: crates/smaragd-sync-server/Dockerfile
     # ... or comment `build` out and pull a published image instead:
-    image: ghcr.io/ljantzen/smaragd-sync-server:latest
+    image: ghcr.io/smaragd-editor/smaragd-sync-server:latest
     restart: unless-stopped
     ports:
       # Localhost only: plain HTTP carries device tokens and the admin token in the clear,

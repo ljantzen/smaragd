@@ -4,7 +4,7 @@ version = "1.6.1"
 edition = "2024"
 license = "GPL-3.0-or-later"
 description = "A native desktop authoring tool for writers"
-repository = "https://github.com/ljantzen/smaragd"
+repository = "https://github.com/smaragd-editor/smaragd"
 
 # The root package is also a workspace member. The sync *server* and the crate that
 # tests it end to end are deliberately excluded: each is its own workspace with its

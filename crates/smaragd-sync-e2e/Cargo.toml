@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 description = "End-to-end tests: the real Smaragd sync client and engine against the real sync server"
-repository = "https://github.com/ljantzen/smaragd"
+repository = "https://github.com/smaragd-editor/smaragd"
 publish = false
 
 # Its own workspace (and lockfile), like the server: this crate links the whole

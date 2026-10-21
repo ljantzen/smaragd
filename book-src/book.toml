@@ -6,5 +6,5 @@ language = "en"
 src = "src"
 
 [output.html]
-git-repository-url = "https://github.com/ljantzen/smaragd"
-edit-url-template = "https://github.com/ljantzen/smaragd/edit/main/book-src/{path}"
+git-repository-url = "https://github.com/smaragd-editor/smaragd"
+edit-url-template = "https://github.com/smaragd-editor/smaragd/edit/main/book-src/{path}"

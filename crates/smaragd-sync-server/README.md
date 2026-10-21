@@ -61,7 +61,7 @@ docker run -d --name smaragd-sync --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -v smaragd-sync-data:/data \
   -e SMARAGD_SYNC_ADMIN_TOKEN="$TOKEN" \
-  ghcr.io/ljantzen/smaragd-sync-server:latest
+  ghcr.io/smaragd-editor/smaragd-sync-server:latest
 ```
 
 This publishes the port on **localhost only**: the server speaks plain HTTP, so other
