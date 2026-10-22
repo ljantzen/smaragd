@@ -5,6 +5,12 @@ this file.
 
 ## Unreleased
 
+- Fixed a security issue in Scrivener import: a crafted project's `.scrivx`
+  binder file could point an item's `UUID` at an absolute path or one
+  containing `..`, causing Smaragd to read an arbitrary file from your
+  computer (or, on Windows, a UNC path from a remote host) into the imported
+  project. UUIDs are now validated before use.
+
 ## v1.6.1 — 2026-10-21
 
 ## v1.6.0 — 2026-10-20
