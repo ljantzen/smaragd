@@ -253,11 +253,28 @@ fn child_nodes(item: &RawItem, project_dir: &Path) -> Vec<ImportedNode> {
         .collect()
 }
 
+/// Whether `uuid` is safe to use as a single path component under
+/// `Files/Data/`. The `.scrivx` binder is untrusted input (it can come from
+/// someone else's project), so a `UUID` attribute that is absolute, contains
+/// a separator, or walks up with `..` must be rejected rather than joined
+/// straight onto the filesystem.
+fn is_safe_uuid_component(uuid: &str) -> bool {
+    !uuid.is_empty()
+        && !uuid.contains('/')
+        && !uuid.contains('\\')
+        && !uuid.contains('\0')
+        && !uuid.starts_with('.')
+        && !uuid.contains(':')
+}
+
 /// `Files/Data/<uuid>/content.rtf`, or `content.txt` if that's what exists
 /// instead (Scrivener supports plain-text documents too) — `None` (empty
 /// content, not an import failure) if neither file exists, e.g. a genuinely
-/// empty placeholder document.
+/// empty placeholder document, or if `uuid` isn't a safe path component.
 fn read_item_content(project_dir: &Path, uuid: &str) -> Option<String> {
+    if !is_safe_uuid_component(uuid) {
+        return None;
+    }
     let item_dir = project_dir.join("Files").join("Data").join(uuid);
     if let Ok(bytes) = fs::read(item_dir.join("content.rtf")) {
         return Some(rtf_to_markdown(&bytes));
@@ -687,6 +704,21 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn read_item_content_rejects_traversal_and_absolute_uuids() {
+        assert!(!is_safe_uuid_component("../../../etc/passwd"));
+        assert!(!is_safe_uuid_component("/etc/passwd"));
+        assert!(!is_safe_uuid_component(r"\\attacker-host\share"));
+        assert!(!is_safe_uuid_component(".."));
+        assert!(!is_safe_uuid_component(""));
+        assert!(is_safe_uuid_component("00000000-0000-0000-0000-000000000000"));
+
+        assert_eq!(
+            read_item_content(Path::new("/nonexistent"), "../../../etc/passwd"),
+            None
+        );
     }
 
     #[test]
