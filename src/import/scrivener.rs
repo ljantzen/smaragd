@@ -713,7 +713,9 @@ mod tests {
         assert!(!is_safe_uuid_component(r"\\attacker-host\share"));
         assert!(!is_safe_uuid_component(".."));
         assert!(!is_safe_uuid_component(""));
-        assert!(is_safe_uuid_component("00000000-0000-0000-0000-000000000000"));
+        assert!(is_safe_uuid_component(
+            "00000000-0000-0000-0000-000000000000"
+        ));
 
         assert_eq!(
             read_item_content(Path::new("/nonexistent"), "../../../etc/passwd"),
