@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import ProjectView from "./ProjectView.svelte";
 
   // Phase 1 proof-of-concept: the first real IPC round trip (one command,
   // one push event) through the Tauri shell, backed by the real
@@ -35,7 +36,7 @@
 </script>
 
 <main>
-  <h1>Smaragd (Tauri shell — Phase 1 scaffold)</h1>
+  <h1>Smaragd (Tauri shell)</h1>
 
   {#if snapshot}
     <section class="pomodoro">
@@ -54,6 +55,8 @@
   {:else}
     <p>Loading…</p>
   {/if}
+
+  <ProjectView />
 </main>
 
 <style>

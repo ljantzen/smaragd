@@ -1,4 +1,5 @@
 mod pomodoro;
+mod project;
 
 use pomodoro::PomodoroHandle;
 
@@ -12,6 +13,11 @@ pub fn run() {
             pomodoro::pomodoro_start,
             pomodoro::pomodoro_pause,
             pomodoro::pomodoro_skip,
+            project::project_open,
+            project::project_close,
+            project::project_binder_tree,
+            project::document_read,
+            project::document_save,
         ])
         .setup(|app| {
             pomodoro::spawn_ticker(app.handle().clone());
