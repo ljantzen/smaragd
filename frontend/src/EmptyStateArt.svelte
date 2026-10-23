@@ -31,19 +31,33 @@
     <line x1="130" y1="97" x2="158" y2="126" />
   </g>
 
-  <!-- Quill: a curved spine from the nib up to the feather's tip, with
-       barbs fanning out, longest at the middle and tapering toward both
-       ends — resting diagonally across the gem. -->
+  <!-- Quill: a curved spine (rachis) from the nib up to the feather's
+       tip, with barbs fanning to both sides and angled back toward the
+       nib — the actual direction real feather barbs grow, which a first
+       pass of this got backwards (angled toward the tip, reading as a
+       twig rather than a feather). Barbs taper shortest at both ends and
+       widest at the middle, the usual feather silhouette. -->
   <g class="quill">
     <path d="M180,310 C160,240 130,140 140,20" />
     <path d="M180,310 L175,320 M180,310 L185,318" />
-    <line x1="176" y1="280" x2="164.1" y2="272.6" />
-    <line x1="170" y1="245" x2="151.3" y2="233.3" />
-    <line x1="162" y1="208" x2="136.5" y2="192.1" />
-    <line x1="155" y1="170" x2="126.1" y2="152" />
-    <line x1="150" y1="130" x2="124.5" y2="114.1" />
-    <line x1="146" y1="90" x2="127.3" y2="78.3" />
-    <line x1="143" y1="55" x2="131.1" y2="47.6" />
+    <line x1="173.8" y1="288.1" x2="165.6" y2="293.8" />
+    <line x1="173.8" y1="288.1" x2="182.0" y2="293.8" />
+    <line x1="167.2" y1="264.5" x2="150.8" y2="275.9" />
+    <line x1="167.2" y1="264.5" x2="183.6" y2="275.9" />
+    <line x1="160.7" y1="239.2" x2="137.7" y2="255.2" />
+    <line x1="160.7" y1="239.2" x2="183.7" y2="255.2" />
+    <line x1="154.4" y1="212.2" x2="126.5" y2="231.6" />
+    <line x1="154.4" y1="212.2" x2="182.3" y2="231.6" />
+    <line x1="148.8" y1="183.8" x2="117.6" y2="205.5" />
+    <line x1="148.8" y1="183.8" x2="180.0" y2="205.5" />
+    <line x1="144.0" y1="153.8" x2="116.1" y2="173.2" />
+    <line x1="144.0" y1="153.8" x2="171.9" y2="173.2" />
+    <line x1="140.5" y1="122.3" x2="117.5" y2="138.3" />
+    <line x1="140.5" y1="122.3" x2="164.5" y2="138.3" />
+    <line x1="138.4" y1="89.5" x2="122.0" y2="100.9" />
+    <line x1="138.4" y1="89.5" x2="154.8" y2="100.9" />
+    <line x1="138.2" y1="55.4" x2="130.0" y2="61.1" />
+    <line x1="138.2" y1="55.4" x2="146.4" y2="61.1" />
   </g>
 </svg>
 
