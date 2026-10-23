@@ -37,14 +37,10 @@
 <section class="project">
   {#if !project.value}
     <div class="empty-state">
-      <EmptyStateArt />
-      <div class="open-screen">
-        <h2>Open a project</h2>
-        <button onclick={pickFolder}>Browse…</button>
-        {#if project.openError}
-          <p class="error">{project.openError}</p>
-        {/if}
-      </div>
+      <EmptyStateArt onClick={pickFolder} />
+      {#if project.openError}
+        <p class="error">{project.openError}</p>
+      {/if}
     </div>
   {:else if viewport.isMobile}
     <!-- Phase 9: a minimal top bar, not the desktop toolbar — "Reveal in
@@ -96,13 +92,6 @@
        the dock layout's own white panels aren't affected once a project
        is open. */
     background: #f1e6cf;
-  }
-
-  .open-screen {
-    width: 100%;
-    max-width: 40rem;
-    box-sizing: border-box;
-    text-align: center;
   }
 
   .toolbar {
