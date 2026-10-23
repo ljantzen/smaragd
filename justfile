@@ -48,6 +48,30 @@ check: fmt-check clippy test
 coverage:
     cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
+# Install frontend/ npm dependencies (needed once, and after any package.json change)
+tauri-install:
+    npm --prefix frontend ci
+
+# Run the Tauri shell in dev mode with hot reload
+tauri-dev:
+    frontend/node_modules/.bin/tauri dev
+
+# Build and bundle the Tauri shell for release; output lands in target/release/bundle/
+tauri-build:
+    frontend/node_modules/.bin/tauri build
+
+# Type-check the frontend (Svelte + TypeScript) without building it
+frontend-check:
+    npx --prefix frontend svelte-check --tsconfig frontend/tsconfig.json
+
+# Build the frontend alone (just the Vite/Svelte bundle, no Rust)
+frontend-build:
+    npm --prefix frontend run build
+
+# Regenerate app-tauri/icons/ from assets/smaragd-icon.png
+tauri-icon:
+    cd app-tauri && ../frontend/node_modules/.bin/tauri icon ../assets/smaragd-icon.png
+
 # Cut a release: bump version, roll RELEASENOTES.md, check, commit, tag, push. Usage: just release 0.6.2 [--dry-run|--yes]
 release version *args:
     ./scripts/release.sh {{ version }} {{ args }}
