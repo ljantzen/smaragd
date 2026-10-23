@@ -1,25 +1,38 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { project, closeProject } from "./stores/project.svelte";
+  import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+  import { invoke } from "@tauri-apps/api/core";
+  import { project, closeProject, openFindReplace } from "./stores/project.svelte";
+  import AboutDialog from "./AboutDialog.svelte";
   import { dockLayoutRegistry } from "./stores/dockLayoutRegistry.svelte";
   import { settingsStore, saveSettingsDebounced } from "./stores/settings.svelte";
-  import { SHORTCUT_ACTIONS, effectiveCombo, runShortcutAction } from "./shortcuts";
-  import { notImplemented } from "./stores/toast.svelte";
+  import { SHORTCUT_ACTIONS, effectiveCombo, runShortcutAction, registerShortcutHandler } from "./shortcuts";
+  import { notImplemented, showToast } from "./stores/toast.svelte";
 
   // Desktop menu bar matching the real egui app's 8-menu structure
   // (app/src/app/menu_bar.rs) as closely as this port's actual
-  // functionality allows — every item from that file is represented here,
-  // but many call notImplemented() rather than a real action: Export,
-  // Find & Replace, Command Prompt, Search Everywhere, real git commit/
-  // push/pull (Version Activity is still read-only — Phase 7), Reload
-  // Plugins (no plugin engine), saved named dock Layouts (Reset Layout only
-  // restores the hardcoded default, same as Phase 5), About, docx/epub/PDF/
-  // Scrivener import. These are listed for structural fidelity, not
-  // because they work — same honesty convention as StubPanel elsewhere in
-  // this app. Submenus (Recent Projects, Import, Theme, Color Binder By,
-  // Layouts, multi-folder Export) are flattened to single items rather than
-  // true nested flyouts — a scope cut, not a design choice; Theme
-  // specifically gets a flat one-level list since color_theme.ts is real.
+  // functionality allows. Every item from that file is represented; most
+  // now call a real action — Export, Find & Replace, Command Prompt,
+  // Search Everywhere, git Commit/Push/Pull/Commit+Push, saved named
+  // Layouts, About, and docx/epub/PDF/Scrivener Import were all stubbed
+  // notImplemented() placeholders until this pass, listed for structural
+  // fidelity first and wired for real once a user asked for them.
+  //
+  // Still genuinely stubbed, deliberately: New/Open/Recent Project, Open
+  // Document (project-lifecycle UI beyond the open screen, out of this
+  // pass's scope), Project Settings (a whole second dialog, not built),
+  // Exit (no Tauri equivalent wired), Focus Mode / Toggle Spell Check
+  // (features that don't exist in this build), and Reload Plugins/Enable
+  // Project Plugins — that one is different in kind, not just unfinished:
+  // there is no plugin engine anywhere in this Tauri port (no Rhai
+  // scripting, no :command registration), so there's nothing to reload.
+  // It's left as a clear "no plugin engine in this build" message rather
+  // than faked as if a real action were just missing its wiring.
+  //
+  // Submenus (Recent Projects, Import's per-format choice, Color Binder
+  // By) are flattened or replaced with a native file-picker's own format
+  // filter rather than built as true nested flyouts — a scope cut.
   let openMenu = $state<string | null>(null);
 
   type Item =
@@ -62,6 +75,69 @@
 
   const hasProject = $derived(!!project.value);
 
+  async function pickAndImport(format: "docx" | "epub" | "pdf") {
+    if (!project.value) return;
+    const extensions: Record<string, string[]> = {
+      docx: ["docx"],
+      epub: ["epub"],
+      pdf: ["pdf"],
+    };
+    const path = await openFileDialog({
+      multiple: false,
+      filters: [{ name: format.toUpperCase(), extensions: extensions[format] }],
+    });
+    if (typeof path !== "string") return;
+    try {
+      await invoke("import_file", {
+        root: project.value.root,
+        parent: project.value.root,
+        format,
+        filePath: path,
+      });
+      showToast("Imported");
+    } catch (err) {
+      showToast(`Import failed: ${err}`);
+    }
+  }
+
+  async function pickAndImportScrivener() {
+    if (!project.value) return;
+    const dir = await openFileDialog({ directory: true, multiple: false });
+    if (typeof dir !== "string") return;
+    try {
+      await invoke("import_scrivener", {
+        root: project.value.root,
+        parent: project.value.root,
+        scrivenerDir: dir,
+      });
+      showToast("Imported");
+    } catch (err) {
+      showToast(`Import failed: ${err}`);
+    }
+  }
+
+  function reloadPlugins() {
+    showToast("No plugin engine in this build — there's nothing to reload yet.");
+  }
+
+  async function saveCurrentLayout() {
+    const name = window.prompt("Save current layout as:");
+    if (!name) return;
+    dockLayoutRegistry.api?.saveCurrentLayoutAs(name);
+    showToast(`Layout "${name}" saved`);
+  }
+
+  function layoutItems(): Item[] {
+    const names = dockLayoutRegistry.api?.listSavedLayouts() ?? [];
+    if (names.length === 0) {
+      return [{ label: "No saved layouts", action: () => {}, disabled: true }];
+    }
+    return names.map((name) => ({
+      label: name,
+      action: () => dockLayoutRegistry.api?.loadSavedLayout(name),
+    }));
+  }
+
   const menus: { id: string; label: string; items: () => Item[] }[] = [
     {
       id: "file",
@@ -78,8 +154,11 @@
         { label: "Go Back", action: () => runShortcutAction("go_back") },
         { label: "Go Forward", action: () => runShortcutAction("go_forward") },
         { separator: true },
-        { label: "Import…", action: () => notImplemented("Import") },
-        { label: "Export Manuscript…", action: () => notImplemented("Export Manuscript") },
+        { label: "Import Word Document (.docx)…", action: () => pickAndImport("docx") },
+        { label: "Import EPUB (.epub)…", action: () => pickAndImport("epub") },
+        { label: "Import PDF (.pdf)…", action: () => pickAndImport("pdf") },
+        { label: "Import Scrivener Project…", action: pickAndImportScrivener },
+        { label: "Export Manuscript…", action: () => (showExport = true), disabled: !hasProject },
         { separator: true },
         { label: "Settings…", action: () => (showSettings = true) },
         {
@@ -141,16 +220,23 @@
         { separator: true },
         { label: "Sync Panel", action: () => dock("sync") },
         { label: "Sync Now", action: () => runShortcutAction("sync_now") },
+        { separator: true },
+        { label: "Reload Plugins", action: reloadPlugins },
+        { label: "Enable Project Plugins", action: reloadPlugins },
       ],
     },
     {
       id: "versions",
       label: "Versions",
       items: () => [
-        { label: "Commit", action: () => notImplemented("Git Commit") },
-        { label: "Commit and Push", action: () => notImplemented("Git Commit and Push") },
-        { label: "Push", action: () => notImplemented("Git Push") },
-        { label: "Pull", action: () => notImplemented("Git Pull") },
+        { label: "Commit", action: () => runShortcutAction("git_commit"), disabled: !hasProject },
+        {
+          label: "Commit and Push",
+          action: () => runShortcutAction("git_commit_and_push"),
+          disabled: !hasProject,
+        },
+        { label: "Push", action: () => runShortcutAction("git_push"), disabled: !hasProject },
+        { label: "Pull", action: () => runShortcutAction("git_pull"), disabled: !hasProject },
         { separator: true },
         { label: "Version Activity", action: () => dock("versionactivity") },
       ],
@@ -170,8 +256,9 @@
       id: "window",
       label: "Window",
       items: () => [
-        { label: "Save Current Layout…", action: () => notImplemented("Save Current Layout") },
-        { label: "Layouts", action: () => notImplemented("Saved Layouts") },
+        { label: "Save Current Layout…", action: saveCurrentLayout },
+        { label: "Layouts", action: () => {}, disabled: true },
+        ...layoutItems(),
         { separator: true },
         {
           label: "Restore Default Layout",
@@ -188,7 +275,7 @@
           action: () => openUrl("https://ljantzen.github.io/smaragd/manual/"),
         },
         { separator: true },
-        { label: "About", action: () => notImplemented("About") },
+        { label: "About", action: () => (showAbout = true) },
       ],
     },
   ];
@@ -208,6 +295,44 @@
   }
 
   let showSettings = $state(false);
+  let showAbout = $state(false);
+  let showCommandPrompt = $state(false);
+  let showSearchEverywhere = $state(false);
+  let showExport = $state(false);
+  let showGitCommit = $state(false);
+  let gitCommitAndPush = $state(false);
+
+  onMount(() => {
+    registerShortcutHandler("find_replace", openFindReplace);
+    registerShortcutHandler("command_prompt", () => (showCommandPrompt = true));
+    registerShortcutHandler("search_everywhere", () => (showSearchEverywhere = true));
+    registerShortcutHandler("git_commit", () => {
+      gitCommitAndPush = false;
+      showGitCommit = true;
+    });
+    registerShortcutHandler("git_commit_and_push", () => {
+      gitCommitAndPush = true;
+      showGitCommit = true;
+    });
+    registerShortcutHandler("git_push", async () => {
+      if (!project.value) return;
+      try {
+        const result = await invoke<{ files: string[] }>("git_push", { root: project.value.root });
+        showToast(`Pushed (${result.files.length} file(s))`);
+      } catch (err) {
+        showToast(`Push failed: ${err}`);
+      }
+    });
+    registerShortcutHandler("git_pull", async () => {
+      if (!project.value) return;
+      try {
+        const result = await invoke<{ files: string[] }>("git_pull", { root: project.value.root });
+        showToast(`Pulled (${result.files.length} file(s))`);
+      } catch (err) {
+        showToast(`Pull failed: ${err}`);
+      }
+    });
+  });
 
   function handleWindowClick(event: MouseEvent) {
     if (!(event.target as HTMLElement).closest(".menu-bar")) close();
@@ -249,6 +374,34 @@
 {#if showSettings}
   {#await import("./SettingsDialog.svelte") then { default: SettingsDialog }}
     <SettingsDialog onClose={() => (showSettings = false)} />
+  {/await}
+{/if}
+
+{#if showAbout}
+  <AboutDialog onClose={() => (showAbout = false)} />
+{/if}
+
+{#if showCommandPrompt}
+  {#await import("./CommandPrompt.svelte") then { default: CommandPrompt }}
+    <CommandPrompt onClose={() => (showCommandPrompt = false)} />
+  {/await}
+{/if}
+
+{#if showSearchEverywhere}
+  {#await import("./SearchEverywhere.svelte") then { default: SearchEverywhere }}
+    <SearchEverywhere onClose={() => (showSearchEverywhere = false)} />
+  {/await}
+{/if}
+
+{#if showExport}
+  {#await import("./ExportDialog.svelte") then { default: ExportDialog }}
+    <ExportDialog onClose={() => (showExport = false)} />
+  {/await}
+{/if}
+
+{#if showGitCommit}
+  {#await import("./GitCommitDialog.svelte") then { default: GitCommitDialog }}
+    <GitCommitDialog onClose={() => (showGitCommit = false)} andPush={gitCommitAndPush} />
   {/await}
 {/if}
 

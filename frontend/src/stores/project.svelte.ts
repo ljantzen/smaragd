@@ -43,7 +43,9 @@ export const project = $state<{
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let previewTimer: ReturnType<typeof setTimeout> | undefined;
-let editorRef: { setDocument: (text: string) => void } | undefined;
+let editorRef:
+  | { setDocument: (text: string) => void; openFindReplace: () => void }
+  | undefined;
 
 /** Called by EditorPanel.svelte on mount/unmount. A panel reopened from the
  * Window menu (or moved to a new group, which remounts its content) needs
@@ -52,6 +54,10 @@ let editorRef: { setDocument: (text: string) => void } | undefined;
 export function registerEditor(ref: typeof editorRef) {
   editorRef = ref;
   if (editorRef && project.selectedPath) editorRef.setDocument(project.documentText);
+}
+
+export function openFindReplace() {
+  editorRef?.openFindReplace();
 }
 
 export async function openProject(root: string) {

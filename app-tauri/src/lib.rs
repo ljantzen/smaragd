@@ -1,4 +1,6 @@
 mod collab;
+mod git_ops;
+mod manuscript;
 mod panels;
 mod pomodoro;
 mod project;
@@ -64,6 +66,14 @@ pub fn run() {
             settings::settings_load,
             settings::settings_save,
             settings::color_themes_list,
+            git_ops::git_commit_message_preview,
+            git_ops::git_commit,
+            git_ops::git_push,
+            git_ops::git_pull,
+            manuscript::manuscript_folders,
+            manuscript::export_manuscript,
+            manuscript::import_file,
+            manuscript::import_scrivener,
         ])
         .setup(|app| {
             pomodoro::spawn_ticker(app.handle().clone());

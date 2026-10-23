@@ -103,6 +103,41 @@
     }, 250);
   }
 
+  // Window > Save Current Layout…/Layouts/Restore Default Layout — a named
+  // map of full dockview snapshots in their own localStorage key, separate
+  // from the single "current layout" STORAGE_KEY persists automatically.
+  // Simpler than the real app's own saved_layouts.json (no dedicated Tauri
+  // settings round trip for something this small and purely presentational).
+  const SAVED_LAYOUTS_KEY = "smaragd.saved-layouts.v1";
+
+  function readSavedLayouts(): Record<string, unknown> {
+    try {
+      return JSON.parse(localStorage.getItem(SAVED_LAYOUTS_KEY) ?? "{}");
+    } catch {
+      return {};
+    }
+  }
+
+  export function listSavedLayouts(): string[] {
+    return Object.keys(readSavedLayouts()).sort();
+  }
+
+  export function saveCurrentLayoutAs(name: string) {
+    if (!api) return;
+    const layouts = readSavedLayouts();
+    layouts[name] = api.toJSON();
+    localStorage.setItem(SAVED_LAYOUTS_KEY, JSON.stringify(layouts));
+  }
+
+  export function loadSavedLayout(name: string) {
+    if (!api) return;
+    const layouts = readSavedLayouts();
+    const saved = layouts[name];
+    if (!saved) return;
+    api.fromJSON(saved as Parameters<DockviewApi["fromJSON"]>[0]);
+    persist();
+  }
+
   onMount(() => {
     api = createDockview(container, {
       theme: themeLight,
@@ -141,7 +176,13 @@
       }
     }
     if (!restored) defaultLayout();
-    registerDockLayout({ openPanel, resetLayout });
+    registerDockLayout({
+      openPanel,
+      resetLayout,
+      listSavedLayouts,
+      saveCurrentLayoutAs,
+      loadSavedLayout,
+    });
   });
 
   onDestroy(() => {

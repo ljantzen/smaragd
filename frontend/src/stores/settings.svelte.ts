@@ -26,6 +26,7 @@ export type Settings = {
   editor_font_size: number;
   ui_font: EditorFontId;
   git_integration_disabled: boolean;
+  git_commit_message_template: string | null;
   backup_enabled: boolean;
   backup_on_open: boolean;
   backup_on_close: boolean;
@@ -69,6 +70,7 @@ function defaults(): Settings {
     editor_font_size: 0,
     ui_font: "Proportional",
     git_integration_disabled: false,
+    git_commit_message_template: null,
     backup_enabled: false,
     backup_on_open: false,
     backup_on_close: false,

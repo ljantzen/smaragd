@@ -158,6 +158,7 @@ impl std::fmt::Debug for SecretString {
 const MAX_RECENT_PROJECTS: usize = 10;
 const DEFAULT_BACKUP_KEEP_COUNT: u32 = 10;
 const DEFAULT_UI_SCALE: f32 = 1.0;
+const DEFAULT_GIT_COMMIT_MESSAGE_TEMPLATE: &str = "Smaragd backup\n\n{{fileList}}";
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -184,6 +185,11 @@ pub struct Settings {
     pub ui_font: EditorFont,
 
     pub git_integration_disabled: bool,
+    /// `None` means "not yet configured" — resolved to
+    /// `DEFAULT_GIT_COMMIT_MESSAGE_TEMPLATE` by `resolve_git_commit_message_template`.
+    /// Added after this struct's initial port, once a real git-commit menu
+    /// action actually needed it.
+    pub git_commit_message_template: Option<String>,
 
     pub backup_enabled: bool,
     pub backup_on_open: bool,
@@ -264,6 +270,12 @@ impl Settings {
         } else {
             self.ui_scale
         }
+    }
+
+    pub fn resolve_git_commit_message_template(&self) -> String {
+        self.git_commit_message_template
+            .clone()
+            .unwrap_or_else(|| DEFAULT_GIT_COMMIT_MESSAGE_TEMPLATE.to_string())
     }
 }
 

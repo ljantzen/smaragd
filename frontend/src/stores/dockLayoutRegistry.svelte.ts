@@ -8,6 +8,9 @@
 type DockLayoutApi = {
   openPanel: (id: string) => void;
   resetLayout: () => void;
+  listSavedLayouts: () => string[];
+  saveCurrentLayoutAs: (name: string) => void;
+  loadSavedLayout: (name: string) => void;
 };
 
 export const dockLayoutRegistry = $state<{ api: DockLayoutApi | null }>({ api: null });
