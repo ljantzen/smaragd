@@ -1,0 +1,53 @@
+[package]
+name = "smaragd-core"
+version = "1.6.2"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "UI-agnostic project/sync/export logic for Smaragd, shared by the desktop and (future) mobile shells"
+repository = "https://github.com/smaragd-editor/smaragd"
+
+[dependencies]
+# Argon2id for the sync passphrase KDF (src/sync/crypto.rs).
+argon2 = { version = "0.6", default-features = false, features = ["alloc"] }
+base64 = "0.23"
+blake3 = "1.8.5"
+bs58 = "0.5.1"
+chacha20poly1305 = "0.11.0"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+directories = "6.0"
+docx-rs = "0.4.22"
+epub-builder = "0.8.3"
+ignore = "0.4"
+iroh = "1.0.3"
+nucleo-matcher = "0.3"
+pdf-extract = "0.12.0"
+postcard = { version = "1.1.3", features = ["use-std"] }
+pulldown-cmark = "0.13"
+quick-xml = "0.42"
+rand = "0.10.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_norway = "0.9"
+sha2 = "0.11"
+smaragd-sync-protocol = { git = "https://github.com/smaragd-editor/smaragd-sync" }
+spellbook = "0.4.2"
+thiserror = "2.0.19"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "time", "macros", "sync"] }
+toml = "1.1"
+typst-as-lib = { version = "0.17.0", features = ["typst-kit-fonts", "typst-kit-embed-fonts"] }
+typst-pdf = "0.15.1"
+unicode-normalization = "0.1"
+ureq = "3.4"
+uuid = { version = "1.24", features = ["v4", "serde", "rng-getrandom"] }
+yrs = "0.28.0"
+zeroize = "1"
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+# Exposes test-only fixtures/fakes (`sync::fake`, `collab::CollabSession::test_fixture`,
+# `editor::EditorState::test_with_tab`, ...) so the app crate's own tests can use
+# them too, without making them part of the normal public API.
+test-support = []
