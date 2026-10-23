@@ -7,6 +7,7 @@
 pub mod attachments;
 pub mod backup;
 pub mod collab;
+pub mod color_theme;
 pub mod dashboard;
 pub mod debug_flags;
 pub mod document_history;
@@ -23,6 +24,7 @@ pub mod project;
 pub mod project_template;
 pub mod save_debug;
 pub mod search;
+pub mod settings;
 pub mod spellcheck;
 pub mod streak;
 pub mod sync;

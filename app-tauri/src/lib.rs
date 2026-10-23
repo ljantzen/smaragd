@@ -2,6 +2,7 @@ mod collab;
 mod panels;
 mod pomodoro;
 mod project;
+mod settings;
 mod story_cards;
 mod sync;
 
@@ -60,6 +61,9 @@ pub fn run() {
             panels::note_delete,
             panels::dashboard_summary,
             panels::version_activity,
+            settings::settings_load,
+            settings::settings_save,
+            settings::color_themes_list,
         ])
         .setup(|app| {
             pomodoro::spawn_ticker(app.handle().clone());

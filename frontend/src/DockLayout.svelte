@@ -13,6 +13,7 @@
 
   import StubPanel from "./panels/StubPanel.svelte";
   import { PANEL_TITLES, PANEL_COMPONENTS } from "./panelRegistry";
+  import { registerDockLayout, unregisterDockLayout } from "./stores/dockLayoutRegistry.svelte";
 
   const STORAGE_KEY = "smaragd.dock-layout.v1";
 
@@ -130,10 +131,12 @@
       }
     }
     if (!restored) defaultLayout();
+    registerDockLayout({ openPanel, resetLayout });
   });
 
   onDestroy(() => {
     api?.clear();
+    unregisterDockLayout();
   });
 </script>
 
