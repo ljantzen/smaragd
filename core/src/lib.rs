@@ -18,6 +18,7 @@ pub mod fuzzy;
 pub mod git;
 pub mod import;
 pub mod markdown;
+pub mod pomodoro;
 pub mod project;
 pub mod project_template;
 pub mod save_debug;

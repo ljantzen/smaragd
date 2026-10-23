@@ -1,2 +1,7 @@
 target/
 /book-src/book
+
+# Frontend (frontend/) and Tauri shell (app-tauri/) build artifacts.
+node_modules/
+frontend/dist/
+app-tauri/gen/

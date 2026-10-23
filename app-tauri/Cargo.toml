@@ -1,0 +1,21 @@
+[package]
+name = "smaragd-tauri"
+version = "1.6.2"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Tauri shell for Smaragd (desktop + mobile) — Phase 1 scaffold of the egui -> Tauri migration"
+repository = "https://github.com/smaragd-editor/smaragd"
+
+[lib]
+name = "smaragd_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+smaragd-core = { path = "../core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
