@@ -19,16 +19,30 @@
   import PomodoroPanel from "./panels/PomodoroPanel.svelte";
   import CollabPanel from "./panels/CollabPanel.svelte";
   import SyncPanel from "./panels/SyncPanel.svelte";
+  import BacklinksPanel from "./panels/BacklinksPanel.svelte";
+  import TagsPanel from "./panels/TagsPanel.svelte";
+  import MetadataPanel from "./panels/MetadataPanel.svelte";
+  import BeliefTimelinePanel from "./panels/BeliefTimelinePanel.svelte";
+  import WordCountPanel from "./panels/WordCountPanel.svelte";
+  import StreakPanel from "./panels/StreakPanel.svelte";
+  import BookmarksPanel from "./panels/BookmarksPanel.svelte";
+  import NotesPanel from "./panels/NotesPanel.svelte";
+  import DashboardPanel from "./panels/DashboardPanel.svelte";
+  import VersionActivityPanel from "./panels/VersionActivityPanel.svelte";
   import StubPanel from "./panels/StubPanel.svelte";
 
   const STORAGE_KEY = "smaragd.dock-layout.v1";
 
   // Every tab the real app's DockTab enum has (app/src/app/dock.rs), mapped
-  // to its dockview panel title. Binder/Editor/Preview/Corkboard/StoryGrid/
-  // Pomodoro/Collab/Sync have real content (Phases 1-4, 6); the rest render
-  // StubPanel until Phase 7. All of them are real dockview panels today —
-  // split/float/close/reopen/persist works on a stub exactly like a
-  // finished panel, which is the thing Phase 5 exists to prove.
+  // to its dockview panel title. All of them now have real content as of
+  // Phase 7 (Settings and Daily Notes aren't DockTab entries in the real
+  // app either — Settings is a separate window/dialog the Settings/
+  // shortcuts/color_theme/plugins core-split flagged back in Phase 0 would
+  // need first, and Daily Notes is a toolbar action that opens a document,
+  // not its own tab — both deliberately out of this phase). StubPanel stays
+  // imported as the dockview fallback renderer for any future tab added
+  // before its real content exists, same role it played for all of these
+  // between Phase 5 and now.
   const PANEL_TITLES: Record<string, string> = {
     binder: "Binder",
     editor: "Editor",
@@ -59,6 +73,16 @@
     pomodoro: PomodoroPanel,
     collab: CollabPanel,
     sync: SyncPanel,
+    backlinks: BacklinksPanel,
+    tags: TagsPanel,
+    metadata: MetadataPanel,
+    belieftimeline: BeliefTimelinePanel,
+    wordcount: WordCountPanel,
+    streak: StreakPanel,
+    bookmarks: BookmarksPanel,
+    notes: NotesPanel,
+    dashboard: DashboardPanel,
+    versionactivity: VersionActivityPanel,
   };
 
   let container: HTMLDivElement;

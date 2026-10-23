@@ -16,6 +16,7 @@ use std::time::Instant;
 use serde::Serialize;
 use smaragd_core::pomodoro::{PomodoroDurations, PomodoroPhase, PomodoroState};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_notification::NotificationExt;
 
 const TICK_EVENT: &str = "pomodoro://tick";
 
@@ -100,14 +101,29 @@ pub fn pomodoro_skip(handle: State<PomodoroHandle>) {
 }
 
 /// Spawns the 1Hz background ticker. Called once from `run()` at startup.
+///
+/// Phase 7: `notify-rust` -> `tauri-plugin-notification`, the one native
+/// integration swap from the plan's §4 list that already had a concrete,
+/// single call site to mirror exactly (see app/src/notifications.rs's doc
+/// comment: Pomodoro phase changes are its *only* user). `tick()` already
+/// returns `Option<PhaseTransition>` on exactly the frame a phase completes
+/// on its own (never on `skip` — see its doc comment) for precisely this.
 pub fn spawn_ticker(app: AppHandle) {
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
             let handle = app.state::<PomodoroHandle>();
-            {
+            let transition = {
                 let mut state = handle.state.lock().expect("pomodoro state mutex poisoned");
-                state.tick(Instant::now(), &handle.durations);
+                state.tick(Instant::now(), &handle.durations)
+            };
+            if let Some(transition) = transition {
+                let _ = app
+                    .notification()
+                    .builder()
+                    .title(format!("{} complete", transition.completed.label()))
+                    .body(format!("Starting {}", transition.next.label()))
+                    .show();
             }
             let payload = snapshot(&handle);
             let _ = app.emit(TICK_EVENT, payload);

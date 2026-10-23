@@ -1,4 +1,5 @@
 mod collab;
+mod panels;
 mod pomodoro;
 mod project;
 mod story_cards;
@@ -12,6 +13,9 @@ use sync::SyncState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(PomodoroHandle::default())
         .manage(CollabState::default())
         .manage(SyncState::default())
@@ -44,6 +48,18 @@ pub fn run() {
             sync::sync_demo_start,
             sync::sync_demo_stop,
             sync::sync_demo_now,
+            panels::backlinks_for,
+            panels::all_tags,
+            panels::documents_with_tag,
+            panels::document_metadata,
+            panels::word_count,
+            panels::streak_status,
+            panels::bookmarks_list,
+            panels::bookmark_delete,
+            panels::notes_list,
+            panels::note_delete,
+            panels::dashboard_summary,
+            panels::version_activity,
         ])
         .setup(|app| {
             pomodoro::spawn_ticker(app.handle().clone());

@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
   // Phase 6: real push-event collab, not a per-frame poll — see
   // app-tauri/src/collab.rs for the wake-driven drain-thread architecture.
@@ -117,6 +118,17 @@
     sharedText = "";
   }
 
+  // Phase 7: arboard -> @tauri-apps/plugin-clipboard-manager. The host code
+  // is a long opaque string meant to be pasted by a peer — copying it by
+  // hand would be the whole UX friction point of this flow.
+  let copied = $state(false);
+  async function copyCode() {
+    if (!status.code) return;
+    await writeText(status.code);
+    copied = true;
+    setTimeout(() => (copied = false), 1500);
+  }
+
   let editTimer: ReturnType<typeof setTimeout> | undefined;
   function onEdit() {
     clearTimeout(editTimer);
@@ -140,6 +152,7 @@
       <span>Role: {status.role}</span>
       {#if status.code}
         <span>Code: <code>{status.code}</code></span>
+        <button onclick={copyCode}>{copied ? "Copied" : "Copy"}</button>
       {/if}
       {#if status.peer_connected}
         <span class="ok">Peer connected{status.peer_fingerprint ? ` (${status.peer_fingerprint})` : ""}</span>

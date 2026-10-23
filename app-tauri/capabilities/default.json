@@ -3,5 +3,11 @@
   "identifier": "default",
   "description": "Capabilities for the main window. Deny-by-default: only the plugin permissions actually needed are listed here — custom app commands (pomodoro::*) are app code, not plugin-gated, and are reachable without a separate ACL entry.",
   "windows": ["main"],
-  "permissions": ["core:default", "opener:default"]
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "dialog:default",
+    "clipboard-manager:default",
+    "notification:default"
+  ]
 }
