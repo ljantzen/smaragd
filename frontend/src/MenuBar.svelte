@@ -3,7 +3,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
   import { invoke } from "@tauri-apps/api/core";
-  import { project, closeProject, openFindReplace } from "./stores/project.svelte";
+  import { project, closeProject, openProject, openFindReplace } from "./stores/project.svelte";
   import AboutDialog from "./AboutDialog.svelte";
   import { dockLayoutRegistry } from "./stores/dockLayoutRegistry.svelte";
   import { settingsStore, saveSettingsDebounced } from "./stores/settings.svelte";
@@ -19,9 +19,9 @@
   // notImplemented() placeholders until this pass, listed for structural
   // fidelity first and wired for real once a user asked for them.
   //
-  // Still genuinely stubbed, deliberately: New/Open/Recent Project, Open
-  // Document (project-lifecycle UI beyond the open screen, out of this
-  // pass's scope), Project Settings (a whole second dialog, not built),
+  // Still genuinely stubbed, deliberately: New Project, Recent Projects,
+  // Open Document (project-lifecycle UI beyond a folder picker, out of
+  // this pass's scope), Project Settings (a whole second dialog, not built),
   // Exit (no Tauri equivalent wired), Focus Mode / Toggle Spell Check
   // (features that don't exist in this build), and Reload Plugins/Enable
   // Project Plugins — that one is different in kind, not just unfinished:
@@ -74,6 +74,15 @@
   }
 
   const hasProject = $derived(!!project.value);
+
+  // "Use the open screen" was a dead end: it isn't visible once a project
+  // is already open, which is exactly when someone wants File > Open
+  // Project to switch to a different one. Same folder-picker + openProject
+  // flow ProjectView.svelte's own "Browse…" button uses.
+  async function pickAndOpenProject() {
+    const selected = await openFileDialog({ directory: true, multiple: false });
+    if (typeof selected === "string") await openProject(selected);
+  }
 
   async function pickAndImport(format: "docx" | "epub" | "pdf") {
     if (!project.value) return;
@@ -144,7 +153,7 @@
       label: "File",
       items: () => [
         { label: "New Project…", action: () => notImplemented("New Project") },
-        { label: "Open Project…", action: () => notImplemented("Open Project (use the open screen)") },
+        { label: "Open Project…", action: pickAndOpenProject },
         { label: "Recent Projects", action: () => notImplemented("Recent Projects") },
         { label: "Close Project", action: closeProject, disabled: !hasProject },
         { separator: true },
