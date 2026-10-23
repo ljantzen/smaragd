@@ -1,14 +1,9 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import MarkdownEditor from "./MarkdownEditor.svelte";
-
-  // Phase 2 proof-of-concept: project::open + document::read/save round
-  // tripping through IPC. Deliberately not the real Binder UI (that's
-  // Phase 4) — a flat recursive file-tree list is enough to prove the
-  // command layer and DTOs before building the real widgets on top of them.
-  type BinderNodeDto =
-    | { kind: "Folder"; name: string; path: string; children: BinderNodeDto[] }
-    | { kind: "Document"; name: string; path: string };
+  import BinderTree, { type BinderNodeDto } from "./BinderTree.svelte";
+  import CorkboardView from "./CorkboardView.svelte";
+  import StoryGridView from "./StoryGridView.svelte";
 
   type ProjectSummary = {
     root: string;
@@ -16,9 +11,12 @@
     tree: BinderNodeDto;
   };
 
+  type View = "binder" | "corkboard" | "storygrid";
+
   let rootInput = $state("");
   let project = $state<ProjectSummary | null>(null);
   let openError = $state<string | null>(null);
+  let view = $state<View>("binder");
 
   let selectedPath = $state<string | null>(null);
   let documentText = $state("");
@@ -108,6 +106,10 @@
       saveDocument();
     }
   }
+
+  function onTreeChange(newTree: BinderNodeDto) {
+    if (project) project.tree = newTree;
+  }
 </script>
 
 <section class="project">
@@ -127,48 +129,44 @@
   {:else}
     <div class="toolbar">
       <strong>{project.book_title ?? project.root}</strong>
+      <div class="view-tabs">
+        <button class:active={view === "binder"} onclick={() => (view = "binder")}>Binder</button>
+        <button class:active={view === "corkboard"} onclick={() => (view = "corkboard")}>Corkboard</button>
+        <button class:active={view === "storygrid"} onclick={() => (view = "storygrid")}>Story Grid</button>
+      </div>
       <button onclick={closeProject}>Close</button>
     </div>
-    <div class="workspace">
-      <nav class="tree">
-        {#snippet node(n: BinderNodeDto)}
-          {#if n.kind === "Folder"}
-            <details open>
-              <summary>{n.name}</summary>
-              <ul>
-                {#each n.children as child}
-                  <li>{@render node(child)}</li>
-                {/each}
-              </ul>
-            </details>
+
+    {#if view === "binder"}
+      <div class="workspace">
+        <BinderTree
+          root={project.root}
+          tree={project.tree}
+          {selectedPath}
+          onSelect={openDocument}
+          {onTreeChange}
+        />
+        <div class="document">
+          {#if selectedPath}
+            <div class="editor-preview">
+              <MarkdownEditor bind:this={editor} value={documentText} onChange={onEditorChange} />
+              <div class="preview">{@html previewHtml}</div>
+            </div>
+            <div class="doc-toolbar">
+              {#if saveStatus === "saving"}<span>Saving…</span>{/if}
+              {#if saveStatus === "saved"}<span>Saved</span>{/if}
+              {#if documentError}<span class="error">{documentError}</span>{/if}
+            </div>
           {:else}
-            <button
-              class="doc"
-              class:selected={selectedPath === n.path}
-              onclick={() => openDocument(n.path)}
-            >
-              {n.name}
-            </button>
+            <p>Select a document.</p>
           {/if}
-        {/snippet}
-        {@render node(project.tree)}
-      </nav>
-      <div class="document">
-        {#if selectedPath}
-          <div class="editor-preview">
-            <MarkdownEditor bind:this={editor} value={documentText} onChange={onEditorChange} />
-            <div class="preview">{@html previewHtml}</div>
-          </div>
-          <div class="doc-toolbar">
-            {#if saveStatus === "saving"}<span>Saving…</span>{/if}
-            {#if saveStatus === "saved"}<span>Saved</span>{/if}
-            {#if documentError}<span class="error">{documentError}</span>{/if}
-          </div>
-        {:else}
-          <p>Select a document.</p>
-        {/if}
+        </div>
       </div>
-    </div>
+    {:else if view === "corkboard"}
+      <CorkboardView root={project.root} />
+    {:else}
+      <StoryGridView root={project.root} />
+    {/if}
   {/if}
 </section>
 
@@ -193,7 +191,18 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 1rem;
     margin-bottom: 0.75rem;
+  }
+
+  .view-tabs {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  .view-tabs button.active {
+    background: #557;
+    color: white;
   }
 
   .workspace {
@@ -201,32 +210,6 @@
     grid-template-columns: 16rem 1fr;
     gap: 1rem;
     min-height: 20rem;
-  }
-
-  .tree {
-    border: 1px solid #ccc;
-    padding: 0.5rem;
-    overflow: auto;
-  }
-
-  .tree ul {
-    list-style: none;
-    margin: 0;
-    padding-left: 1rem;
-  }
-
-  .tree .doc {
-    display: block;
-    width: 100%;
-    text-align: left;
-    background: none;
-    border: none;
-    padding: 0.2rem 0.3rem;
-    cursor: pointer;
-  }
-
-  .tree .doc.selected {
-    background: #eef;
   }
 
   .document {

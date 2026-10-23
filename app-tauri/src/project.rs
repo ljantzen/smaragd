@@ -93,3 +93,101 @@ pub fn document_save(path: String, contents: String) -> Result<(), String> {
 pub fn render_markdown(markdown: String) -> String {
     smaragd_core::markdown::render_html(&markdown)
 }
+
+#[derive(Serialize)]
+pub struct CreateResult {
+    tree: BinderNodeDto,
+    path: String,
+}
+
+fn load(root: &str) -> Result<Project, String> {
+    Project::load_from_folder(Path::new(root)).map_err(|e| e.to_string())
+}
+
+/// `rescan()` is called explicitly after every mutation below rather than
+/// trusted to each `Project` method's own internals — every one of them
+/// already does rescan+persist as part of its contract, but staying explicit
+/// here means this command layer doesn't silently break if that ever
+/// changes for one call path and not another.
+#[tauri::command]
+pub fn binder_create_document(
+    root: String,
+    parent: String,
+    name: String,
+) -> Result<CreateResult, String> {
+    let mut project = load(&root)?;
+    let path = project
+        .create_document(Path::new(&parent), &name)
+        .map_err(|e| e.to_string())?;
+    project.rescan();
+    Ok(CreateResult {
+        tree: BinderNodeDto::from(&project.tree.root),
+        path: path.display().to_string(),
+    })
+}
+
+#[tauri::command]
+pub fn binder_create_folder(
+    root: String,
+    parent: String,
+    name: String,
+) -> Result<BinderNodeDto, String> {
+    let mut project = load(&root)?;
+    project
+        .create_folder(Path::new(&parent), &name)
+        .map_err(|e| e.to_string())?;
+    project.rescan();
+    Ok(BinderNodeDto::from(&project.tree.root))
+}
+
+#[tauri::command]
+pub fn binder_rename(
+    root: String,
+    path: String,
+    new_name: String,
+) -> Result<BinderNodeDto, String> {
+    let mut project = load(&root)?;
+    project
+        .rename(Path::new(&path), &new_name)
+        .map_err(|e| e.to_string())?;
+    project.rescan();
+    Ok(BinderNodeDto::from(&project.tree.root))
+}
+
+#[tauri::command]
+pub fn binder_delete(root: String, path: String) -> Result<BinderNodeDto, String> {
+    let mut project = load(&root)?;
+    project
+        .delete(Path::new(&path))
+        .map_err(|e| e.to_string())?;
+    project.rescan();
+    Ok(BinderNodeDto::from(&project.tree.root))
+}
+
+#[tauri::command]
+pub fn binder_move(
+    root: String,
+    path: String,
+    new_parent: String,
+) -> Result<BinderNodeDto, String> {
+    let mut project = load(&root)?;
+    project
+        .move_item(Path::new(&path), Path::new(&new_parent))
+        .map_err(|e| e.to_string())?;
+    project.rescan();
+    Ok(BinderNodeDto::from(&project.tree.root))
+}
+
+#[tauri::command]
+pub fn binder_move_before(
+    root: String,
+    path: String,
+    before: String,
+) -> Result<BinderNodeDto, String> {
+    let mut project = load(&root)?;
+    project
+        .move_item_before(Path::new(&path), Path::new(&before))
+        .map_err(|e| e.to_string())?;
+    project.rescan();
+    Ok(BinderNodeDto::from(&project.tree.root))
+}

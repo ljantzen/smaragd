@@ -1,5 +1,6 @@
 mod pomodoro;
 mod project;
+mod story_cards;
 
 use pomodoro::PomodoroHandle;
 
@@ -19,6 +20,16 @@ pub fn run() {
             project::document_read,
             project::document_save,
             project::render_markdown,
+            project::binder_create_document,
+            project::binder_create_folder,
+            project::binder_rename,
+            project::binder_delete,
+            project::binder_move,
+            project::binder_move_before,
+            story_cards::story_cards_list,
+            story_cards::story_card_upsert,
+            story_cards::story_card_delete,
+            story_cards::story_card_move,
         ])
         .setup(|app| {
             pomodoro::spawn_ticker(app.handle().clone());
