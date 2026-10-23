@@ -6648,7 +6648,7 @@ dependencies = [
 [[package]]
 name = "smaragd-sync-protocol"
 version = "0.1.0"
-source = "git+https://github.com/smaragd-editor/smaragd-sync#2c97863f7b51f87f3bea75bff0822dd3e2b6ed54"
+source = "git+https://github.com/smaragd-editor/smaragd-sync#0a098086210aa39cd5540c6465b21590a08e81ee"
 dependencies = [
  "base64 0.23.1",
  "bs58",
@@ -7029,7 +7029,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
