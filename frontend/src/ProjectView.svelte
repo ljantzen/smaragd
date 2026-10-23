@@ -82,26 +82,19 @@
 
   .empty-state {
     flex: 1;
-    position: relative;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-  }
-
-  .empty-state :global(.empty-state-art) {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    pointer-events: none;
+    gap: 1.5rem;
+    overflow: auto;
+    padding: 1rem;
+    box-sizing: border-box;
   }
 
   .open-screen {
-    position: relative;
     width: 100%;
     max-width: 40rem;
-    margin: 2rem auto;
-    padding: 0 1rem;
     box-sizing: border-box;
     text-align: center;
   }
