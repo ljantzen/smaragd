@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import MarkdownEditor from "./MarkdownEditor.svelte";
 
   // Phase 2 proof-of-concept: project::open + document::read/save round
   // tripping through IPC. Deliberately not the real Binder UI (that's
@@ -23,6 +24,15 @@
   let documentText = $state("");
   let documentError = $state<string | null>(null);
   let saveStatus = $state<"idle" | "saving" | "saved" | "error">("idle");
+  let previewHtml = $state("");
+
+  let editor = $state<MarkdownEditor>();
+  // Phase 3's "autosave" requirement: debounce document_save to 800ms after
+  // the last keystroke rather than saving on every change (one IPC round
+  // trip per keystroke would be wasteful and, on a slow disk, could start
+  // queuing up out of order) or requiring a manual Save click.
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let previewTimer: ReturnType<typeof setTimeout> | undefined;
 
   async function openProject() {
     openError = null;
@@ -40,17 +50,43 @@
     project = null;
     selectedPath = null;
     documentText = "";
+    previewHtml = "";
   }
 
   async function openDocument(path: string) {
+    // Flush any pending autosave for the document being navigated away from
+    // before switching, so the last few keystrokes aren't lost.
+    flushPendingSave();
+
     documentError = null;
     saveStatus = "idle";
-    selectedPath = path;
     try {
-      documentText = await invoke<string>("document_read", { path });
+      const text = await invoke<string>("document_read", { path });
+      documentText = text;
+      // Fetched before `selectedPath` flips, so when the document pane first
+      // mounts `MarkdownEditor` it reads the already-correct text via its
+      // `value` prop rather than racing the mount against this await.
+      selectedPath = path;
+      editor?.setDocument(text);
+      schedulePreview();
     } catch (err) {
       documentError = String(err);
     }
+  }
+
+  function onEditorChange(text: string) {
+    documentText = text;
+    saveStatus = "idle";
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveDocument, 800);
+    schedulePreview();
+  }
+
+  function schedulePreview() {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(async () => {
+      previewHtml = await invoke<string>("render_markdown", { markdown: documentText });
+    }, 300);
   }
 
   async function saveDocument() {
@@ -62,6 +98,14 @@
     } catch (err) {
       documentError = String(err);
       saveStatus = "error";
+    }
+  }
+
+  function flushPendingSave() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = undefined;
+      saveDocument();
     }
   }
 </script>
@@ -111,9 +155,12 @@
       </nav>
       <div class="document">
         {#if selectedPath}
-          <textarea bind:value={documentText}></textarea>
+          <div class="editor-preview">
+            <MarkdownEditor bind:this={editor} value={documentText} onChange={onEditorChange} />
+            <div class="preview">{@html previewHtml}</div>
+          </div>
           <div class="doc-toolbar">
-            <button onclick={saveDocument} disabled={saveStatus === "saving"}>Save</button>
+            {#if saveStatus === "saving"}<span>Saving…</span>{/if}
             {#if saveStatus === "saved"}<span>Saved</span>{/if}
             {#if documentError}<span class="error">{documentError}</span>{/if}
           </div>
@@ -188,11 +235,18 @@
     gap: 0.5rem;
   }
 
-  .document textarea {
+  .editor-preview {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
     flex: 1;
     min-height: 16rem;
-    font-family: ui-monospace, monospace;
-    padding: 0.5rem;
+  }
+
+  .preview {
+    overflow: auto;
+    border: 1px solid #ccc;
+    padding: 0.5rem 0.75rem;
   }
 
   .doc-toolbar {

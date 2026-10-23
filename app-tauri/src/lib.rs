@@ -18,6 +18,7 @@ pub fn run() {
             project::project_binder_tree,
             project::document_read,
             project::document_save,
+            project::render_markdown,
         ])
         .setup(|app| {
             pomodoro::spawn_ticker(app.handle().clone());

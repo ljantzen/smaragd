@@ -1,4 +1,6 @@
-use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{
+    Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd, html,
+};
 
 /// A block-level markdown element, in document order.
 #[derive(Debug, Clone, PartialEq)]
@@ -128,6 +130,24 @@ fn current_sink<'a>(
 /// arbitrarily deep nesting (e.g. a blockquote inside a list inside a blockquote) or
 /// footnotes — a flat block list with single-level list nesting covers what an author
 /// actually writes, and matches what `ui::markdown_preview` renders.
+/// Render `markdown` straight to HTML via `pulldown-cmark`, for the web
+/// frontend's preview pane — unlike [`parse`], this doesn't special-case
+/// wikilinks/tags or produce the `Block`/`Span` tree `ui::markdown_preview`
+/// (egui's painter-based renderer) needs; it's plain CommonMark+tables/strikethrough
+/// HTML that a `<div>` can render directly. Wikilink/tag-aware preview is a
+/// later refinement once the Svelte preview pane needs it.
+pub fn render_html(markdown: &str) -> String {
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TASKLISTS);
+
+    let parser = Parser::new_ext(markdown, options);
+    let mut out = String::new();
+    html::push_html(&mut out, parser);
+    out
+}
+
 pub fn parse(markdown: &str) -> Vec<Block> {
     let (markdown, tags) = extract_tags(markdown);
     let (markdown, wikilinks) = extract_wikilinks(&markdown);
@@ -1125,6 +1145,23 @@ mod tests {
             text: text.to_string(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn render_html_produces_basic_commonmark_markup() {
+        let html = render_html("# Title\n\nSome *emphasis* and **strong** text.\n");
+        assert!(html.contains("<h1>Title</h1>"));
+        assert!(html.contains("<em>emphasis</em>"));
+        assert!(html.contains("<strong>strong</strong>"));
+    }
+
+    #[test]
+    fn render_html_supports_tables_strikethrough_and_task_lists() {
+        let html =
+            render_html("| a | b |\n|---|---|\n| 1 | 2 |\n\n~~gone~~\n\n- [x] done\n- [ ] todo\n");
+        assert!(html.contains("<table>"));
+        assert!(html.contains("<del>gone</del>"));
+        assert!(html.contains("checked"));
     }
 
     #[test]

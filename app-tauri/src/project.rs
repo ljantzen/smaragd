@@ -88,3 +88,8 @@ pub fn document_save(path: String, contents: String) -> Result<(), String> {
         .write(Path::new(&path), contents.as_bytes())
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn render_markdown(markdown: String) -> String {
+    smaragd_core::markdown::render_html(&markdown)
+}
