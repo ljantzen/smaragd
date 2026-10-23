@@ -14,7 +14,7 @@
 
 <style>
   .empty-state-art {
-    width: min(90vw, 40rem);
+    width: min(95vw, 60rem);
     height: auto;
     border-radius: 4px;
   }

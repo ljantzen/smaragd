@@ -90,6 +90,12 @@
     overflow: auto;
     padding: 1rem;
     box-sizing: border-box;
+    /* Sampled from the illustration's own paper background (empty-state-
+       background.png) so the page doesn't show a stark white edge around
+       it — scoped to just this empty-state screen, not the whole app, so
+       the dock layout's own white panels aren't affected once a project
+       is open. */
+    background: #f1e6cf;
   }
 
   .open-screen {
