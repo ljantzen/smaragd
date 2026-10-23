@@ -24,7 +24,7 @@ eframe = "0.36"
 egui = { version = "0.36", features = ["serde"] }
 egui_dock = { version = "0.21", features = ["serde"] }
 egui_extras = { version = "0.36.1", features = ["image", "file"] }
-egui_plot = "0.37"
+egui_plot = "0.38"
 epub-builder = "0.8.3"
 ignore = "0.4"
 # PNG-encoding clipboard images for pasting into the editor (src/attachments.rs).
