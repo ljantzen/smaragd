@@ -123,7 +123,17 @@
     if (saved) {
       try {
         api.fromJSON(JSON.parse(saved));
-        restored = true;
+        // A successfully parsed layout can still be empty — e.g. persist()
+        // firing on a layout-change event before any panel had been added
+        // yet (confirmed: happened during this app's own automated dev-
+        // launch smoke tests, which start the webview, trigger a layout
+        // event, and get killed by a timeout well before defaultLayout()'s
+        // panels would normally land — see this fix's commit message).
+        // That's indistinguishable from a corrupt file unless checked for
+        // explicitly: fromJSON doesn't throw on it, so without this check
+        // `restored` stays true and the user is left with a real, valid,
+        // completely empty dock forever after.
+        restored = api.panels.length > 0;
       } catch {
         // Falls through to defaultLayout() below — a corrupt or
         // incompatible (e.g. pre-Phase-5) saved layout shouldn't leave the
