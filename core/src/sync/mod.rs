@@ -41,5 +41,7 @@ pub mod runner;
 pub mod state;
 pub mod transport;
 
+#[cfg(feature = "test-support")]
+pub mod demo;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake;

@@ -17,16 +17,18 @@
   import EditorPanel from "./panels/EditorPanel.svelte";
   import PreviewPanel from "./panels/PreviewPanel.svelte";
   import PomodoroPanel from "./panels/PomodoroPanel.svelte";
+  import CollabPanel from "./panels/CollabPanel.svelte";
+  import SyncPanel from "./panels/SyncPanel.svelte";
   import StubPanel from "./panels/StubPanel.svelte";
 
   const STORAGE_KEY = "smaragd.dock-layout.v1";
 
   // Every tab the real app's DockTab enum has (app/src/app/dock.rs), mapped
   // to its dockview panel title. Binder/Editor/Preview/Corkboard/StoryGrid/
-  // Pomodoro have real content built in Phases 1-4; the rest render
+  // Pomodoro/Collab/Sync have real content (Phases 1-4, 6); the rest render
   // StubPanel until Phase 7. All of them are real dockview panels today —
   // split/float/close/reopen/persist works on a stub exactly like a
-  // finished panel, which is the thing this phase exists to prove.
+  // finished panel, which is the thing Phase 5 exists to prove.
   const PANEL_TITLES: Record<string, string> = {
     binder: "Binder",
     editor: "Editor",
@@ -55,6 +57,8 @@
     corkboard: CorkboardView,
     storygrid: StoryGridView,
     pomodoro: PomodoroPanel,
+    collab: CollabPanel,
+    sync: SyncPanel,
   };
 
   let container: HTMLDivElement;
