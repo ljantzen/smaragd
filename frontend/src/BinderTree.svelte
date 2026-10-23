@@ -1,11 +1,11 @@
-<script lang="ts" module>
-  export type BinderNodeDto =
-    | { kind: "Folder"; name: string; path: string; children: BinderNodeDto[] }
-    | { kind: "Document"; name: string; path: string };
-</script>
-
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import {
+    type BinderNodeDto,
+    project,
+    openDocument,
+    onTreeChange,
+  } from "./stores/project.svelte";
 
   // Phase 4: the real Binder, replacing Phase 2's read-only recursive list —
   // create/rename/delete and drag-and-drop move/reorder, all round-tripping
@@ -16,19 +16,13 @@
   // to keep this phase's scope to "the tree + DnD interaction, working
   // end-to-end", not the full binder_panel.rs feature set (templates, role
   // badges, picklist-source toggles, status colors, trash restore, ...).
-  let {
-    root,
-    tree,
-    selectedPath,
-    onSelect,
-    onTreeChange,
-  }: {
-    root: string;
-    tree: BinderNodeDto;
-    selectedPath: string | null;
-    onSelect: (path: string) => void;
-    onTreeChange: (tree: BinderNodeDto) => void;
-  } = $props();
+  //
+  // Phase 5: reads/writes the shared project store directly rather than
+  // taking root/tree/selectedPath/onSelect/onTreeChange as props — this
+  // component is now mounted standalone inside a dockview panel, with no
+  // parent to pass them down from.
+  const root = $derived(project.value!.root);
+  const tree = $derived(project.value!.tree);
 
   let error = $state<string | null>(null);
   let dragOverPath = $state<string | null>(null);
@@ -55,7 +49,7 @@
     );
     if (result) {
       onTreeChange(result.tree);
-      onSelect(result.path);
+      openDocument(result.path);
     }
   }
 
@@ -156,10 +150,10 @@
     >
       <button
         class="doc"
-        class:selected={selectedPath === n.path}
+        class:selected={project.selectedPath === n.path}
         draggable="true"
         ondragstart={(e) => onDragStart(e, n.path)}
-        onclick={() => onSelect(n.path)}
+        onclick={() => openDocument(n.path)}
       >
         {n.name}
       </button>

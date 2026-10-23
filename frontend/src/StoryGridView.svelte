@@ -6,6 +6,7 @@
     upsertStoryCard,
     moveStoryCard,
   } from "./storyCards";
+  import { project } from "./stores/project.svelte";
 
   // Phase 4 Story Grid: the same story-card list Corkboard edits, as an
   // ordered table instead of a wrapping card grid, with drag-to-reorder
@@ -14,7 +15,10 @@
   // modes (manuscript order vs. card order) and a Belief Timeline view —
   // not ported here; this phase's job was proving a second, structurally
   // different native view over the same IPC-backed data, not full parity.
-  let { root }: { root: string } = $props();
+  //
+  // Phase 5: reads `root` from the shared project store rather than a
+  // prop — mounted standalone inside a dockview panel now.
+  const root = $derived(project.value!.root);
 
   let cards = $state<StoryCard[]>([]);
   let error = $state<string | null>(null);

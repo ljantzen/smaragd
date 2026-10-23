@@ -7,6 +7,7 @@
     upsertStoryCard,
     deleteStoryCard,
   } from "./storyCards";
+  import { project } from "./stores/project.svelte";
 
   // Phase 4 Corkboard: a wrapping grid of story cards, each a reduced "spine"
   // view (scene number / cause / effect / why it matters) of core's full
@@ -16,7 +17,11 @@
   // surfaced here yet; the goal of this phase is a real Svelte rebuild of
   // the grid/CRUD interaction, not full field parity with corkboard_panel.rs
   // on day one.
-  let { root }: { root: string } = $props();
+  //
+  // Phase 5: reads `root` from the shared project store rather than a prop —
+  // mounted standalone inside a dockview panel now, with no parent to pass
+  // it down from.
+  const root = $derived(project.value!.root);
 
   let cards = $state<StoryCard[]>([]);
   let error = $state<string | null>(null);

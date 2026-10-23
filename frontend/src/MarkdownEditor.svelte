@@ -65,10 +65,9 @@
 
 <style>
   .editor {
-    flex: 1;
+    height: 100%;
     min-height: 16rem;
     overflow: auto;
-    border: 1px solid #ccc;
     text-align: left;
   }
 
