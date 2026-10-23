@@ -3,6 +3,7 @@
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import DockLayout from "./DockLayout.svelte";
   import MobileShell from "./MobileShell.svelte";
+  import EmptyStateArt from "./EmptyStateArt.svelte";
   import { project, closeProject, openProject } from "./stores/project.svelte";
   import { viewport } from "./stores/viewport.svelte";
 
@@ -35,12 +36,15 @@
 
 <section class="project">
   {#if !project.value}
-    <div class="open-screen">
-      <h2>Open a project</h2>
-      <button onclick={pickFolder}>Browse…</button>
-      {#if project.openError}
-        <p class="error">{project.openError}</p>
-      {/if}
+    <div class="empty-state">
+      <EmptyStateArt />
+      <div class="open-screen">
+        <h2>Open a project</h2>
+        <button onclick={pickFolder}>Browse…</button>
+        {#if project.openError}
+          <p class="error">{project.openError}</p>
+        {/if}
+      </div>
     </div>
   {:else if viewport.isMobile}
     <!-- Phase 9: a minimal top bar, not the desktop toolbar — "Reveal in
@@ -76,12 +80,30 @@
     flex-direction: column;
   }
 
+  .empty-state {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .empty-state :global(.empty-state-art) {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
   .open-screen {
+    position: relative;
     width: 100%;
     max-width: 40rem;
     margin: 2rem auto;
     padding: 0 1rem;
     box-sizing: border-box;
+    text-align: center;
   }
 
   .toolbar {
