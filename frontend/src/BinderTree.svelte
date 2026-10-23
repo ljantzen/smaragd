@@ -77,6 +77,23 @@
     if (newTree) onTreeChange(newTree);
   }
 
+  // Phase 9: a non-drag way to move an item. HTML5 drag-and-drop (the
+  // existing onDropOnFolder/onDropOnDocument handlers below) simply never
+  // fires on touch — iOS Safari/WKWebView and Android Chrome don't
+  // implement the HTML5 DnD spec for touch input at all, only mouse — so
+  // without this, moving anything would be impossible on mobile, not just
+  // inconvenient. A folder-path prompt rather than a visual picker, same
+  // "ship the interaction, not the polish" tradeoff every other action
+  // here already makes.
+  async function moveTo(path: string, name: string) {
+    const destination = window.prompt(`Move "${name}" to (absolute folder path):`, root);
+    if (!destination) return;
+    const newTree = await run(
+      invoke<BinderNodeDto>("binder_move", { root, path, newParent: destination }),
+    );
+    if (newTree) onTreeChange(newTree);
+  }
+
   function onDragStart(e: DragEvent, path: string) {
     e.dataTransfer?.setData("text/plain", path);
     e.dataTransfer!.effectAllowed = "move";
@@ -130,6 +147,7 @@
           <button title="New document" onclick={() => newDocument(n.path)}>+file</button>
           <button title="New folder" onclick={() => newFolder(n.path)}>+folder</button>
           <button title="Rename" onclick={() => rename(n.path, n.name)}>rename</button>
+          <button title="Move" onclick={() => moveTo(n.path, n.name)}>move</button>
           <button title="Delete" onclick={() => remove(n.path, n.name)}>del</button>
         </span>
       </summary>
@@ -159,6 +177,7 @@
       </button>
       <span class="actions">
         <button title="Rename" onclick={() => rename(n.path, n.name)}>rename</button>
+        <button title="Move" onclick={() => moveTo(n.path, n.name)}>move</button>
         <button title="Delete" onclick={() => remove(n.path, n.name)}>del</button>
       </span>
     </div>
@@ -221,9 +240,22 @@
     white-space: nowrap;
   }
 
-  summary:hover .actions,
-  .doc-row:hover .actions {
-    display: inline-flex;
+  /* Phase 9: hover-reveal only where hover actually exists. A touch
+     device has no hover state at all, so these buttons were simply
+     unreachable there before this — always-visible is the fix, not a
+     tap-to-reveal step, since that would just move the same problem one
+     level up (the first tap would need *something* to be visible). */
+  @media (hover: hover) {
+    summary:hover .actions,
+    .doc-row:hover .actions {
+      display: inline-flex;
+    }
+  }
+
+  @media (hover: none) {
+    .actions {
+      display: inline-flex;
+    }
   }
 
   .actions button {

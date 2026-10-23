@@ -2,7 +2,9 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import DockLayout from "./DockLayout.svelte";
+  import MobileShell from "./MobileShell.svelte";
   import { project, closeProject, openProject } from "./stores/project.svelte";
+  import { viewport } from "./stores/viewport.svelte";
 
   // Phase 5: the Binder/Editor/Preview/Corkboard/Story Grid views (and the
   // document-pane plumbing) that used to live here directly moved out to
@@ -44,6 +46,19 @@
     {#if project.openError}
       <p class="error">{project.openError}</p>
     {/if}
+  {:else if viewport.isMobile}
+    <!-- Phase 9: a minimal top bar, not the desktop toolbar — "Reveal in
+         file manager" has no mobile equivalent (the plan's own note on
+         that action), but Close still needs to live somewhere. A real
+         mobile app bar (with a proper back gesture) is a later
+         refinement. -->
+    <div class="mobile-toolbar">
+      <strong>{project.value.book_title ?? project.value.root}</strong>
+      <button onclick={closeProject}>Close</button>
+    </div>
+    <div class="mobile-host">
+      <MobileShell />
+    </div>
   {:else}
     <div class="toolbar">
       <strong>{project.value.book_title ?? project.value.root}</strong>
@@ -82,6 +97,27 @@
     align-items: center;
     gap: 1rem;
     margin-bottom: 0.5rem;
+  }
+
+  .mobile-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    border-bottom: 1px solid #ccc;
+    font-size: 0.85rem;
+  }
+
+  .mobile-toolbar strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-host {
+    flex: 1;
+    min-height: 0;
   }
 
   .dock-host {

@@ -2,7 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover: required on iOS for env(safe-area-inset-*) to
+         report real values instead of 0 (see MobileShell.svelte's tab bar
+         padding, Phase 9). user-scalable=no: this is an app, not a
+         document — pinch-zoom would fight CodeMirror's own touch handling
+         rather than help it. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
+    />
     <title>Smaragd</title>
   </head>
   <body>

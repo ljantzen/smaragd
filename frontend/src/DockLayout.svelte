@@ -11,79 +11,17 @@
   // to import; see the Phase 5 commit message for how that was confirmed.
   import "dockview-core/dist/dockview-core.js";
 
-  import BinderTree from "./BinderTree.svelte";
-  import CorkboardView from "./CorkboardView.svelte";
-  import StoryGridView from "./StoryGridView.svelte";
-  import EditorPanel from "./panels/EditorPanel.svelte";
-  import PreviewPanel from "./panels/PreviewPanel.svelte";
-  import PomodoroPanel from "./panels/PomodoroPanel.svelte";
-  import CollabPanel from "./panels/CollabPanel.svelte";
-  import SyncPanel from "./panels/SyncPanel.svelte";
-  import BacklinksPanel from "./panels/BacklinksPanel.svelte";
-  import TagsPanel from "./panels/TagsPanel.svelte";
-  import MetadataPanel from "./panels/MetadataPanel.svelte";
-  import BeliefTimelinePanel from "./panels/BeliefTimelinePanel.svelte";
-  import WordCountPanel from "./panels/WordCountPanel.svelte";
-  import StreakPanel from "./panels/StreakPanel.svelte";
-  import BookmarksPanel from "./panels/BookmarksPanel.svelte";
-  import NotesPanel from "./panels/NotesPanel.svelte";
-  import DashboardPanel from "./panels/DashboardPanel.svelte";
-  import VersionActivityPanel from "./panels/VersionActivityPanel.svelte";
   import StubPanel from "./panels/StubPanel.svelte";
+  import { PANEL_TITLES, PANEL_COMPONENTS } from "./panelRegistry";
 
   const STORAGE_KEY = "smaragd.dock-layout.v1";
 
-  // Every tab the real app's DockTab enum has (app/src/app/dock.rs), mapped
-  // to its dockview panel title. All of them now have real content as of
-  // Phase 7 (Settings and Daily Notes aren't DockTab entries in the real
-  // app either — Settings is a separate window/dialog the Settings/
-  // shortcuts/color_theme/plugins core-split flagged back in Phase 0 would
-  // need first, and Daily Notes is a toolbar action that opens a document,
-  // not its own tab — both deliberately out of this phase). StubPanel stays
-  // imported as the dockview fallback renderer for any future tab added
-  // before its real content exists, same role it played for all of these
-  // between Phase 5 and now.
-  const PANEL_TITLES: Record<string, string> = {
-    binder: "Binder",
-    editor: "Editor",
-    preview: "Preview",
-    corkboard: "Corkboard",
-    storygrid: "Story Grid",
-    pomodoro: "Pomodoro",
-    backlinks: "Backlinks",
-    tags: "Tags",
-    metadata: "Metadata",
-    belieftimeline: "Belief Timeline",
-    wordcount: "Word Count",
-    collab: "Collab",
-    sync: "Sync",
-    streak: "Streak",
-    bookmarks: "Bookmarks",
-    notes: "Notes",
-    dashboard: "Dashboard",
-    versionactivity: "Version Activity",
-  };
-
-  const REAL_COMPONENTS: Record<string, any> = {
-    binder: BinderTree,
-    editor: EditorPanel,
-    preview: PreviewPanel,
-    corkboard: CorkboardView,
-    storygrid: StoryGridView,
-    pomodoro: PomodoroPanel,
-    collab: CollabPanel,
-    sync: SyncPanel,
-    backlinks: BacklinksPanel,
-    tags: TagsPanel,
-    metadata: MetadataPanel,
-    belieftimeline: BeliefTimelinePanel,
-    wordcount: WordCountPanel,
-    streak: StreakPanel,
-    bookmarks: BookmarksPanel,
-    notes: NotesPanel,
-    dashboard: DashboardPanel,
-    versionactivity: VersionActivityPanel,
-  };
+  // Panel set/titles now live in panelRegistry.ts, shared with
+  // MobileShell.svelte (Phase 9) — Settings and Daily Notes stay out of it
+  // for the same reason noted there: neither is a DockTab in the real app.
+  // StubPanel stays imported as the dockview fallback renderer for any
+  // future tab added before its real content exists.
+  const REAL_COMPONENTS = PANEL_COMPONENTS;
 
   let container: HTMLDivElement;
   let api: DockviewApi | undefined;

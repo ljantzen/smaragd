@@ -22,7 +22,6 @@
 
   let cards = $state<StoryCard[]>([]);
   let error = $state<string | null>(null);
-  let draggingId = $state<string | null>(null);
 
   onMount(async () => {
     try {
@@ -40,16 +39,17 @@
     }
   }
 
-  function onDragStart(id: string) {
-    draggingId = id;
-  }
-
-  async function onDrop(targetIndex: number) {
-    if (!draggingId) return;
-    const id = draggingId;
-    draggingId = null;
+  // Phase 9: up/down buttons instead of drag-to-reorder — HTML5 DnD
+  // doesn't fire on touch input at all (see BinderTree.svelte's moveTo for
+  // the same issue there), so a touch-only mobile session had no way to
+  // reorder cards before this. Replacing the drag handle outright rather
+  // than keeping both: two different reorder mechanisms side by side is
+  // more to maintain for no real benefit once one of them works everywhere.
+  async function move(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= cards.length) return;
     try {
-      cards = await moveStoryCard(root, id, targetIndex);
+      cards = await moveStoryCard(root, cards[index].id, target);
     } catch (err) {
       error = String(err);
     }
@@ -70,13 +70,11 @@
     </thead>
     <tbody>
       {#each cards as card, index (card.id)}
-        <tr
-          draggable="true"
-          ondragstart={() => onDragStart(card.id)}
-          ondragover={(e) => e.preventDefault()}
-          ondrop={() => onDrop(index)}
-        >
-          <td class="handle">⋮⋮</td>
+        <tr>
+          <td class="handle">
+            <button disabled={index === 0} onclick={() => move(index, -1)}>▲</button>
+            <button disabled={index === cards.length - 1} onclick={() => move(index, 1)}>▼</button>
+          </td>
           <td><input bind:value={card.scene_number} onblur={() => save(card)} /></td>
           <td><input bind:value={card.cause} onblur={() => save(card)} /></td>
           <td><input bind:value={card.effect} onblur={() => save(card)} /></td>
@@ -112,10 +110,15 @@
   }
 
   .handle {
-    cursor: grab;
-    text-align: center;
-    color: #999;
-    width: 1.5rem;
+    display: flex;
+    gap: 0.15rem;
+    width: 3rem;
+  }
+
+  .handle button {
+    flex: 1;
+    padding: 0.1rem;
+    font-size: 0.7rem;
   }
 
   .error {
