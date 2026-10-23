@@ -37,15 +37,17 @@
 
 <section class="project">
   {#if !project.value}
-    <h2>Open a project</h2>
-    <form onsubmit={(e) => { e.preventDefault(); openProject(rootInput); }}>
-      <input type="text" placeholder="/path/to/project" bind:value={rootInput} />
-      <button type="button" onclick={pickFolder}>Browse…</button>
-      <button type="submit">Open</button>
-    </form>
-    {#if project.openError}
-      <p class="error">{project.openError}</p>
-    {/if}
+    <div class="open-screen">
+      <h2>Open a project</h2>
+      <form onsubmit={(e) => { e.preventDefault(); openProject(rootInput); }}>
+        <input type="text" placeholder="/path/to/project" bind:value={rootInput} />
+        <button type="button" onclick={pickFolder}>Browse…</button>
+        <button type="submit">Open</button>
+      </form>
+      {#if project.openError}
+        <p class="error">{project.openError}</p>
+      {/if}
+    </div>
   {:else if viewport.isMobile}
     <!-- Phase 9: a minimal top bar, not the desktop toolbar — "Reveal in
          file manager" has no mobile equivalent (the plan's own note on
@@ -74,11 +76,18 @@
 <style>
   .project {
     width: 100%;
-    max-width: 70rem;
     height: 100%;
     text-align: left;
     display: flex;
     flex-direction: column;
+  }
+
+  .open-screen {
+    width: 100%;
+    max-width: 40rem;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    box-sizing: border-box;
   }
 
   form {
@@ -96,7 +105,8 @@
     justify-content: space-between;
     align-items: center;
     gap: 1rem;
-    margin-bottom: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #ccc;
   }
 
   .mobile-toolbar {

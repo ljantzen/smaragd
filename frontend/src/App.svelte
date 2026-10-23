@@ -52,22 +52,16 @@
     position: relative;
   }
 
+  /* No padding/centering here — the dock layout should fill the whole
+     window (a centered, width-capped column was the "gigantic bezel"
+     reported on a wide desktop window). ProjectView's own "open a project"
+     screen applies its own narrower, padded wrapper around just that form;
+     everything else (DockLayout, MobileShell) goes edge-to-edge. */
   .body {
     flex: 1;
     min-height: 0;
     display: flex;
-    justify-content: center;
-    padding: 1rem;
-    box-sizing: border-box;
-  }
-
-  /* Phase 9: edge-to-edge on phone-width viewports — MobileShell already
-     has its own padding/safe-area handling, and the 1rem gutter here just
-     wastes screen space a phone doesn't have to spare. */
-  @media (max-width: 819px) {
-    .body {
-      padding: 0;
-    }
+    flex-direction: column;
   }
 
   .toast {
