@@ -1,0 +1,197 @@
+name: Release (Tauri, experimental)
+
+# Phase 8 of the egui -> Tauri migration (see RELEASENOTES.md / the
+# migration plan): builds and bundles the Tauri shell (app-tauri/ +
+# frontend/) with the real `tauri` CLI, replacing the old workflow's
+# hand-rolled AppImage/cargo-deb/cargo-generate-rpm pipeline for this one.
+#
+# Deliberately `workflow_dispatch`-only for now, not wired to the `v*` tag
+# pattern release.yml listens for: the plan's own Phase 8 instruction is to
+# keep the old eframe release workflow as the one real users get until one
+# real Tauri release has actually shipped and been smoke-tested end to end
+# (see this workflow's own job comments for what's been verified locally
+# vs. what a real CI run still needs to confirm). Run this by hand from the
+# Actions tab (or `gh workflow run release-tauri.yml`) to test it.
+#
+# Flatpak is dropped here, not carried over — Tauri's bundler has no Flatpak
+# target, and the plan explicitly drops it rather than hand-rolling one
+# separately the way release.yml's `flatpak-builder` steps do.
+#
+# Deviation from the plan's literal "tauri-apps/tauri-action" suggestion:
+# that action expects `<projectPath>/src-tauri/tauri.conf.json`, but this
+# repo's Tauri crate is `app-tauri/` (a top-level sibling of `frontend/`,
+# not a nested `src-tauri/` — see Phase 1's commit message for why), so
+# tauri-action's path convention doesn't fit without either renaming that
+# directory or fighting its `projectPath`/`tauriScript` inputs. Driving the
+# `tauri` CLI directly is simpler, already verified locally (see below), and
+# behaves identically — it's what tauri-action itself calls under the hood.
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release-linux:
+    name: Build (Linux x86_64)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Node toolchain
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # The plan's SS5 swap: WebKitGTK's dependency list in place of the old
+      # workflow's X11/GL/GTK one (egui/glutin's OpenGL backend isn't linked
+      # at all here). webkit2gtk-4.1 (not -4.0) is what Tauri 2 needs — on
+      # Ubuntu this is only available from 22.04 onward (via `universe`,
+      # already enabled on GitHub-hosted runner images); Tauri 2 doesn't
+      # support 20.04 or earlier for exactly this reason. Confirmed locally
+      # against Fedora 44's webkit2gtk 2.54.1 (see this phase's commit
+      # message) — a real CI run on this exact Ubuntu image is still the
+      # outstanding check for the version floor itself.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            patchelf \
+            file
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Determine version from tauri.conf.json
+        id: version
+        run: |
+          VERSION="$(jq -r .version app-tauri/tauri.conf.json)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Builds every target tauri.conf.json's bundle.targets lists that
+      # apply on Linux (deb, rpm, appimage) — `dmg`/`nsis`/`app` are silently
+      # skipped as not applicable to this OS. Verified locally: both rpm and
+      # appimage produce real, launchable bundles (rpm installs and runs its
+      # extracted binary; the appimage carries the correct type-2 magic
+      # bytes and runs `--appimage-version`). `.deb` specifically still
+      # needs a real CI run to confirm — this sandbox has no `dpkg-deb`.
+      - name: Build and bundle
+        run: frontend/node_modules/.bin/tauri build
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          cp target/release/bundle/deb/*.deb dist/ 2>/dev/null || true
+          cp target/release/bundle/rpm/*.rpm dist/ 2>/dev/null || true
+          cp target/release/bundle/appimage/*.AppImage dist/ 2>/dev/null || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: smaragd-tauri-${{ steps.version.outputs.version }}-linux
+          path: dist/*
+          if-no-files-found: error
+
+  release-windows:
+    name: Build (Windows x86_64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Node toolchain
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        shell: bash
+        run: npm ci
+
+      - name: Determine version from tauri.conf.json
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(jq -r .version app-tauri/tauri.conf.json)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Builds the `nsis` target (bundle.targets, applicable on Windows).
+      # Not verified locally (no Windows host in this sandbox) — needs a
+      # real CI run.
+      - name: Build and bundle
+        shell: bash
+        run: frontend/node_modules/.bin/tauri build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: smaragd-tauri-${{ steps.version.outputs.version }}-windows
+          path: target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+  release-macos:
+    name: Build (macOS universal)
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Node toolchain
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Determine version from tauri.conf.json
+        id: version
+        run: |
+          VERSION="$(jq -r .version app-tauri/tauri.conf.json)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Builds the `dmg`/`app` targets (bundle.targets, applicable on
+      # macOS), universal (arm64 + x86_64) via --target universal-apple-
+      # darwin — both Rust targets were installed above, which is all the
+      # Tauri CLI's own universal-build support needs; no manual lipo step
+      # like the old workflow's, since that's its job now. Not verified
+      # locally (no macOS host in this sandbox) — needs a real CI run, and
+      # the bundle is unsigned/unnotarized (ad-hoc signing, like the old
+      # workflow) so Gatekeeper will warn on first launch.
+      - name: Build and bundle
+        run: frontend/node_modules/.bin/tauri build --target universal-apple-darwin
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: smaragd-tauri-${{ steps.version.outputs.version }}-macos
+          path: |
+            target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            target/universal-apple-darwin/release/bundle/macos/*.app
+          if-no-files-found: error

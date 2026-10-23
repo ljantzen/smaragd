@@ -3,7 +3,7 @@ name = "smaragd-tauri"
 version = "1.6.2"
 edition = "2024"
 license = "GPL-3.0-or-later"
-description = "Tauri shell for Smaragd (desktop + mobile) — Phase 1 scaffold of the egui -> Tauri migration"
+description = "Smaragd — a novel-writing and manuscript editor (Tauri desktop + mobile shell, in progress; the egui-based io.github.ljantzen.smaragd release remains current and stable)"
 repository = "https://github.com/smaragd-editor/smaragd"
 
 [lib]
